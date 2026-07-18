@@ -132,7 +132,7 @@ function SurveyKirimModal({ r, onClose, sendWA, showNotif, addAgentLog, auditUse
   );
 }
 
-function LaporanTimView({ laporanReports, setLaporanReports, ordersData, setOrdersData, invoicesData, setInvoicesData, priceListData, currentUser, isMobile, laporanDateFilter, setLaporanDateFilter, laporanDateFrom, setLaporanDateFrom, laporanDateTo, setLaporanDateTo, laporanSvcFilter, setLaporanSvcFilter, laporanStatusFilter, setLaporanStatusFilter, laporanTeamFilter, setLaporanTeamFilter, searchLaporan, setSearchLaporan, searchLoading, laporanPage, setLaporanPage, userAccounts, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setEditStockMats, setLaporanInstallItems, setActiveMenu, safeArr, fotoSrc, showConfirm, showNotif, addAgentLog, auditUserName, getLocalDate, fmt, updateServiceReport, deleteServiceReport, insertInvoice, deleteInvoice, updateOrder, updateOrderStatus, markInvoicePaid, lookupHargaGlobal, hargaPerUnitFromTipe, getBracketKey, hitungLabor, sendWA, supabase, LAP_PAGE_SIZE, INSTALL_ITEMS, downloadServiceReportPDF, setInvTxData, setInventoryData, updateCustomerTierAfterOrder, customersData, setCustomersData, apiFetch }) {
+function LaporanTimView({ laporanReports, setLaporanReports, ordersData, setOrdersData, invoicesData, setInvoicesData, priceListData, currentUser, isMobile, laporanDateFilter, setLaporanDateFilter, laporanDateFrom, setLaporanDateFrom, laporanDateTo, setLaporanDateTo, laporanSvcFilter, setLaporanSvcFilter, laporanStatusFilter, setLaporanStatusFilter, laporanTeamFilter, setLaporanTeamFilter, searchLaporan, setSearchLaporan, searchLoading, laporanPage, setLaporanPage, userAccounts, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setEditStockMats, setLaporanInstallItems, setActiveMenu, safeArr, fotoSrc, showConfirm, showNotif, addAgentLog, auditUserName, getLocalDate, fmt, updateServiceReport, deleteServiceReport, insertInvoice, deleteInvoice, updateOrder, updateOrderStatus, markInvoicePaid, lookupHargaGlobal, hargaPerUnitFromTipe, getBracketKey, hitungLabor, isServiceBesarPekerjaan, sendWA, supabase, LAP_PAGE_SIZE, INSTALL_ITEMS, downloadServiceReportPDF, setInvTxData, setInventoryData, updateCustomerTierAfterOrder, customersData, setCustomersData, apiFetch }) {
 const _todayLap = getLocalDate?.() || new Date().toISOString().slice(0, 10);
 const [lapViewMode, setLapViewMode] = useState("detail"); // "rekap" | "detail" — default detail
 const [rekapDate, setRekapDate]     = useState(_todayLap);
@@ -467,10 +467,11 @@ const buildVerifyInvoice = (r, ord, dealPricesOverride) => {
         unitsWithTipe.forEach((u) => {
           // Harga deal per-klien maintenance menang bila match STRICT tipe+PK
           const dealPrice = dealPrices ? clientCleaningUnitPrice(dealPrices, u) : null;
-          const hargaUnit = dealPrice != null ? dealPrice : hargaPerUnitFromTipe(r.service, u.tipe, priceListData);
+          const svcBesarOpt = { serviceBesar: isServiceBesarPekerjaan(u.pekerjaan) };
+          const hargaUnit = dealPrice != null ? dealPrice : hargaPerUnitFromTipe(r.service, u.tipe, priceListData, svcBesarOpt);
           if (hargaUnit > 0) {
             const unitLabel = u.label || u.merk || ("Unit " + (u.unit_no || "?"));
-            const bracketLabel = getBracketKey(r.service, u.tipe) || u.tipe;
+            const bracketLabel = getBracketKey(r.service, u.tipe, svcBesarOpt) || u.tipe;
             vMDetail.unshift({
               nama: (r.service || "") + " " + bracketLabel + " (" + unitLabel + ")" + (dealPrice != null ? " — harga kontrak" : ""),
               jumlah: 1, satuan: "unit",
@@ -667,10 +668,11 @@ const verifyLaporan = async (r) => {
             withTipeD.forEach(u => {
               // Paritas dgn buildVerifyInvoice: harga deal klien maintenance menang bila match
               const dpD = dealPricesV ? clientCleaningUnitPrice(dealPricesV, u) : null;
-              const hp = dpD != null ? dpD : hargaPerUnitFromTipe(r.service, u.tipe, priceListData);
+              const svcBesarOptD = { serviceBesar: isServiceBesarPekerjaan(u.pekerjaan) };
+              const hp = dpD != null ? dpD : hargaPerUnitFromTipe(r.service, u.tipe, priceListData, svcBesarOptD);
               if (hp > 0) {
                 const lbl = u.label || u.merk || ("Unit " + (u.unit_no || "?"));
-                const bk = getBracketKey(r.service, u.tipe) || u.tipe;
+                const bk = getBracketKey(r.service, u.tipe, svcBesarOptD) || u.tipe;
                 vMDetailD.unshift({ nama: r.service + " " + bk + " (" + lbl + ")" + (dpD != null ? " — harga kontrak" : ""), jumlah: 1, satuan: "unit", harga_satuan: hp, subtotal: hp, keterangan: "jasa" });
               }
             });

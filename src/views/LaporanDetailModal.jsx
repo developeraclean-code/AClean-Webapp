@@ -9,7 +9,7 @@ export default function LaporanDetailModal({ ctx }) {
     INSTALL_ITEMS, KONDISI_SBL, KONDISI_SDH, PEKERJAAN_OPT, SATUAN_OPT, TIPE_AC_OPT,
     _apiFetch, _apiHeaders, activeEditUnitIdx, addAgentLog, auditUserName, currentUser,
     downloadServiceReportPDF, editGratisAlasan, editLaporanForm, editLaporanFotos, editLaporanMode, editPhotoMode,
-    editRepairType, editStockMats, getBracketKey, hargaPerUnitFromTipe, hitungLabor, invUnitsData,
+    editRepairType, editStockMats, getBracketKey, hargaPerUnitFromTipe, hitungLabor, invUnitsData, isServiceBesarPekerjaan,
     inventoryData, invoicesData, isMobile, laporanBarangItems, laporanInstallItems, lookupHargaGlobal,
     ordersData, priceListData, safeArr, selectedLaporan, setActiveEditUnitIdx, setEditGratisAlasan,
     setEditLaporanForm, setEditLaporanFotos, setEditLaporanMode, setEditPhotoMode, setEditRepairType, setEditStockMats,
@@ -627,10 +627,11 @@ export default function LaporanDetailModal({ ctx }) {
                         unitsWithTipe.forEach((u) => {
                           // Harga deal klien maintenance menang bila match STRICT tipe+PK
                           const dealPrice = dealPricesEdit ? clientCleaningUnitPrice(dealPricesEdit, u) : null;
-                          const hargaUnit = dealPrice != null ? dealPrice : hargaPerUnitFromTipe(selectedLaporan.service, u.tipe, priceListData);
+                          const svcBesarOptEdit = { serviceBesar: isServiceBesarPekerjaan(u.pekerjaan) };
+                          const hargaUnit = dealPrice != null ? dealPrice : hargaPerUnitFromTipe(selectedLaporan.service, u.tipe, priceListData, svcBesarOptEdit);
                           if (hargaUnit > 0) {
                             const unitLabel = u.label || u.merk || ("Unit " + (u.unit_no || "?"));
-                            const bracketLabel = getBracketKey(selectedLaporan.service, u.tipe) || u.tipe;
+                            const bracketLabel = getBracketKey(selectedLaporan.service, u.tipe, svcBesarOptEdit) || u.tipe;
                             vMDetail.unshift({
                               nama: selectedLaporan.service + " " + bracketLabel + " (" + unitLabel + ")" + (dealPrice != null ? " — harga kontrak" : ""),
                               jumlah: 1, satuan: "unit",

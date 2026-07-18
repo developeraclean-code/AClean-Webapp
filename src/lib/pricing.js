@@ -122,8 +122,14 @@ export const tipeToPkNumber = (tipe) => {
   return isNaN(num) ? 1 : num;
 };
 
+// true kalau unit ditandai "Deep Cleaning (Service Besar)" di daftar pekerjaan —
+// dipakai getBracketKey/hargaPerUnitFromTipe untuk override ke harga Jasa Service Besar.
+export const isServiceBesarPekerjaan = (pekerjaan) =>
+  Array.isArray(pekerjaan) && pekerjaan.includes("Deep Cleaning (Service Besar)");
+
 // Mapping tipe AC → bracket PK di PRICE_LIST. Return null kalau service tak dikenal.
-export const getBracketKey = (service, tipe) => {
+// opts.serviceBesar = true → override ke bracket "Jasa Service Besar" (Cleaning saja).
+export const getBracketKey = (service, tipe, opts = {}) => {
   const pk = tipeToPkNumber(tipe);
   const t = String(tipe || "").toLowerCase();
   const isCassette = t.includes("cassette");
@@ -131,6 +137,9 @@ export const getBracketKey = (service, tipe) => {
   const isDuct = t.includes("duct") || (t.includes("standing") && !isFloorStanding);
 
   if (service === "Cleaning") {
+    if (opts.serviceBesar) {
+      return pk <= 1 ? "Jasa Service Besar 0,5PK - 1PK" : "Jasa Service Besar 1,5PK - 2,5PK";
+    }
     if (isFloorStanding) {
       if (pk <= 2.5) return "AC Floor Standing 2-2.5PK";
       if (pk <= 3) return "AC Floor Standing 3PK";
@@ -170,8 +179,8 @@ export const getBracketKey = (service, tipe) => {
 };
 
 // Harga per unit. Prioritas: priceListData DB row active → priceFallback (jika > 0) → 0.
-export const hargaPerUnitFromTipe = (service, tipe, priceListData = [], priceFallback = PRICE_LIST_DEFAULT) => {
-  const bracket = getBracketKey(service, tipe);
+export const hargaPerUnitFromTipe = (service, tipe, priceListData = [], priceFallback = PRICE_LIST_DEFAULT, opts = {}) => {
+  const bracket = getBracketKey(service, tipe, opts);
   if (!bracket) return 0;
   const dbRow = priceListData.find(r =>
     r.is_active !== false && r.service === service && r.type === bracket);
@@ -180,10 +189,11 @@ export const hargaPerUnitFromTipe = (service, tipe, priceListData = [], priceFal
   return fallback;
 };
 
-// Total labor dari array units.
+// Total labor dari array units. Unit dengan pekerjaan "Deep Cleaning (Service Besar)"
+// otomatis pakai bracket harga Jasa Service Besar (lihat isServiceBesarPekerjaan).
 export const hitungLaborFromUnits = (service, units, priceListData = [], priceFallback = PRICE_LIST_DEFAULT) => {
   if (!Array.isArray(units) || units.length === 0) return 0;
-  return units.reduce((sum, u) => sum + hargaPerUnitFromTipe(service, u.tipe, priceListData, priceFallback), 0);
+  return units.reduce((sum, u) => sum + hargaPerUnitFromTipe(service, u.tipe, priceListData, priceFallback, { serviceBesar: isServiceBesarPekerjaan(u.pekerjaan) }), 0);
 };
 
 // Bangun PRICE_LIST shape dari rows DB. Menggantikan duplikasi loader.

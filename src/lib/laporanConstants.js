@@ -6,10 +6,12 @@ export const KONDISI_SBL = [
   "AC Tidak Dingin",
   "AC Bau Tidak Sedap",
   "AC Bocor Air",
+  "AC Mampet Karna Lendir / Lumut",
   "AC Bunyi Berisik",
   "AC Tidak Menyala",
   "Freon Habis/Kurang",
   "Kompresor Bermasalah",
+  "AC Error",
 ];
 
 export const KONDISI_SDH = [
@@ -19,9 +21,10 @@ export const KONDISI_SDH = [
   "AC Rusak Perlu Pergantian Unit",
   "Semua Fungsi Normal",
   "Perlu Test Press",
-  "Perlu Pengisian Freon",
+  "Perlu Pengisian / Tambah Freon",
   "Perlu Service Besar",
-  "Perlu Pergantian Parts",
+  "Tidak Melakukan Cek Freon",
+  "Tidak Melakukan Cek Ampere",
 ];
 
 const PEKERJAAN_BY_SERVICE = {

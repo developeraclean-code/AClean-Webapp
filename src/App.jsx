@@ -23,7 +23,7 @@ import {
   INSTALL_ITEMS, TIPE_AC_OPT, SATUAN_OPT, maintUnitToHist, acUnitToHist, mkUnit, isUnitDone,
 } from "./lib/laporanConstants.js";
 import {
-  PRICE_LIST_DEFAULT, getBracketKey,
+  PRICE_LIST_DEFAULT, getBracketKey, isServiceBesarPekerjaan,
   hargaPerUnitFromTipe as hargaPerUnitFromTipeLib,
   hitungLaborFromUnits as hitungLaborFromUnitsLib,
   buildPriceListFromDB as buildPriceListFromDBLib,
@@ -202,8 +202,8 @@ async function fetchInvoiceLogoUrl() {
 }
 
 // Wrapper: pass PRICE_LIST cache sebagai fallback ke lib pricing.
-const hargaPerUnitFromTipe = (service, tipe, priceListData = []) =>
-  hargaPerUnitFromTipeLib(service, tipe, priceListData, PRICE_LIST);
+const hargaPerUnitFromTipe = (service, tipe, priceListData = [], opts = {}) =>
+  hargaPerUnitFromTipeLib(service, tipe, priceListData, PRICE_LIST, opts);
 const hitungLaborFromUnits = (service, units, priceListData = []) =>
   hitungLaborFromUnitsLib(service, units, priceListData, PRICE_LIST);
 const buildPriceListFromDB = (rows) => buildPriceListFromDBLib(rows, PRICE_LIST_DEFAULT);
@@ -3863,7 +3863,7 @@ export default function ACleanWebApp() {
       auditUserName={auditUserName} getLocalDate={getLocalDate} fmt={fmt}
       updateServiceReport={updateServiceReport} deleteServiceReport={deleteServiceReport} insertInvoice={insertInvoice} deleteInvoice={deleteInvoice}
       updateOrder={updateOrder} updateOrderStatus={updateOrderStatus} markInvoicePaid={markInvoicePaid}
-      lookupHargaGlobal={lookupHargaGlobal} hargaPerUnitFromTipe={hargaPerUnitFromTipe} getBracketKey={getBracketKey} hitungLabor={hitungLabor}
+      lookupHargaGlobal={lookupHargaGlobal} hargaPerUnitFromTipe={hargaPerUnitFromTipe} getBracketKey={getBracketKey} hitungLabor={hitungLabor} isServiceBesarPekerjaan={isServiceBesarPekerjaan}
       sendWA={sendWA} supabase={supabase} LAP_PAGE_SIZE={LAP_PAGE_SIZE} INSTALL_ITEMS={INSTALL_ITEMS}
       downloadServiceReportPDF={downloadServiceReportPDF}
       setInvTxData={setInvTxData} setInventoryData={setInventoryData}
@@ -4203,8 +4203,8 @@ export default function ACleanWebApp() {
     INSTALL_ITEMS, _apiHeaders, addAgentLog, appSettings, auditUserName, buildInvoiceDetail,
     checkInvoiceConsistency, classifyMaterial, currentUser, customersData, deductInventory,
     deleteInvoice, describeInconsistency, fmt, hargaPerUnitFromTipe, hitungLabor,
-    hitungMaterialTotal, insertInvoice, inventoryData, invoicesData, isTrackedByCode,
-    isTrackedByName, isUnitDone, laporanBarangItems, laporanCatatan, laporanCleaningInRepair,
+    hitungMaterialTotal, insertInvoice, inventoryData, invoicesData, isServiceBesarPekerjaan,
+    isTrackedByCode, isTrackedByName, isUnitDone, laporanBarangItems, laporanCatatan, laporanCleaningInRepair,
     laporanFotos, laporanInstallItems, laporanJasaItems, laporanMaterials, laporanModal,
     laporanRekomendasi, laporanRepairItems, laporanRepairType, laporanSurveyCatatan,
     laporanSurveyHasil, laporanUnits, lookupHargaGlobal, multiDayProjectKey, normalizeLines,
@@ -4731,7 +4731,7 @@ export default function ACleanWebApp() {
             INSTALL_ITEMS, KONDISI_SBL, KONDISI_SDH, PEKERJAAN_OPT, SATUAN_OPT, TIPE_AC_OPT,
             _apiFetch, _apiHeaders, activeEditUnitIdx, addAgentLog, auditUserName, currentUser,
             downloadServiceReportPDF, editGratisAlasan, editLaporanForm, editLaporanFotos, editLaporanMode, editPhotoMode,
-            editRepairType, editStockMats, getBracketKey, hargaPerUnitFromTipe, hitungLabor, invUnitsData,
+            editRepairType, editStockMats, getBracketKey, hargaPerUnitFromTipe, hitungLabor, invUnitsData, isServiceBesarPekerjaan,
             inventoryData, invoicesData, isMobile, laporanBarangItems, laporanInstallItems, lookupHargaGlobal,
             ordersData, priceListData, safeArr, selectedLaporan, setActiveEditUnitIdx, setEditGratisAlasan,
             setEditLaporanForm, setEditLaporanFotos, setEditLaporanMode, setEditPhotoMode, setEditRepairType, setEditStockMats,

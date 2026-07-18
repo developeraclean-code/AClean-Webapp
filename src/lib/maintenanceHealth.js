@@ -26,9 +26,10 @@ export const RED_CONDITIONS = [
 ];
 export const WARN_CONDITIONS = [
   "Perlu Pergantian Sparepart",
-  "Perlu Pergantian Parts",
+  "Perlu Pergantian Parts", // label lama (dihapus dari KONDISI_SDH) — tetap match laporan historis
   "Perlu Test Press",
-  "Perlu Pengisian Freon",
+  "Perlu Pengisian Freon", // label lama — tetap match laporan historis
+  "Perlu Pengisian / Tambah Freon",
   "Perlu Service Besar",
 ];
 

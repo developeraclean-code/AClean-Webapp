@@ -6,8 +6,8 @@ export async function submitLaporan({
   INSTALL_ITEMS, _apiHeaders, addAgentLog, appSettings, auditUserName, buildInvoiceDetail,
   checkInvoiceConsistency, classifyMaterial, currentUser, customersData, deductInventory,
   deleteInvoice, describeInconsistency, fmt, hargaPerUnitFromTipe, hitungLabor,
-  hitungMaterialTotal, insertInvoice, inventoryData, invoicesData, isTrackedByCode,
-  isTrackedByName, isUnitDone, laporanBarangItems, laporanCatatan, laporanCleaningInRepair,
+  hitungMaterialTotal, insertInvoice, inventoryData, invoicesData, isServiceBesarPekerjaan,
+  isTrackedByCode, isTrackedByName, isUnitDone, laporanBarangItems, laporanCatatan, laporanCleaningInRepair,
   laporanFotos, laporanInstallItems, laporanJasaItems, laporanMaterials, laporanModal,
   laporanRekomendasi, laporanRepairItems, laporanRepairType, laporanSurveyCatatan,
   laporanSurveyHasil, laporanUnits, lookupHargaGlobal, multiDayProjectKey, normalizeLines,
@@ -462,7 +462,7 @@ export async function submitLaporan({
       if (isCleaningMaint && !hasCleaningJasa) {
         const unitsWithTipe = (laporanUnits || []).filter(u => u && u.tipe);
         svcFeeBaseline = unitsWithTipe.length > 0
-          ? unitsWithTipe.reduce((s, u) => s + hargaPerUnitFromTipe(svc, u.tipe, priceListData), 0)
+          ? unitsWithTipe.reduce((s, u) => s + hargaPerUnitFromTipe(svc, u.tipe, priceListData, { serviceBesar: isServiceBesarPekerjaan(u.pekerjaan) }), 0)
           : hitungLabor(svc, laporanModal.type, laporanUnits.length);
       }
 
