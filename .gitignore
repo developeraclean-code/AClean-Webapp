@@ -16,4 +16,5 @@ playwright/.cache/
 .vercel
 
 # Claude Code local config
-.claude/
+.claude/*
+!.claude/skills/

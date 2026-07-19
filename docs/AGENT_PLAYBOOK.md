@@ -119,6 +119,30 @@ di satu jalur WAJIB dicerminkan di jalur satunya, lalu tes KEDUA jalur.
 | Cron entry baru di vercel.json | Dispatcher `task=tick` (lihat §B) |
 | PDF dari state lokal | State basi → refetch baris segar sebelum generate/kirim PDF |
 | Delete user via Supabase client | Tidak ada RLS policy → `/api/manage-user` |
+| Anggap daftar migrasi = skema DB lengkap | Ada kolom dibuat di luar migrasi (contoh: `invoices.approved_at`, terverifikasi 2026-07-19) → sebelum pakai kolom "yang katanya ada", cek `information_schema.columns` di Supabase |
+
+## Fase Akhir — Destilasi Pelajaran (loop self-learning)
+
+Playbook ini hanya sepintar pelajaran terakhir yang masuk. Di AKHIR tugas, kalau sesi ini
+mengungkap salah satu dari:
+
+- **Asumsi yang ternyata salah** (milikmu atau milik dokumentasi/memory) — contoh nyata:
+  kolom `invoices.approved_at` tidak pernah ada di migrasi mana pun, harus diverifikasi ke DB;
+- **Gotcha baru** (perilaku library/API/DB yang menjebak);
+- **Insiden / bug produksi** dan akar masalahnya;
+- **Fakta CLAUDE.md/playbook yang basi** (ketahuan beda dengan kode nyata);
+
+→ jalankan skill **`distill`** (atau lakukan manual): tulis pelajaran itu ke tempat yang tepat
+SEBELUM mengakhiri sesi. Aturan:
+
+1. **Hanya fakta terverifikasi** (ada bukti file:baris / query / reproduksi) — spekulasi dilarang masuk.
+2. **Satu pelajaran = satu baris** kalau bisa. Tempatnya: baris baru di Anti-Pattern Checklist,
+   kalimat di § playbook yang relevan, atau koreksi fakta di CLAUDE.md. JANGAN bikin file baru.
+3. **Cek dulu apakah sudah tercakup** — update baris yang ada, jangan duplikasi.
+4. **Anggaran ukuran: playbook maks ~250 baris, CLAUDE.md maks ~300 baris.** Kalau menambah
+   membuat lewat batas → wajib memangkas/menggabung baris lama dulu. Playbook yang gemuk =
+   dibaca sekilas = sama saja bodoh.
+5. Perubahan playbook ikut di-commit bersama pekerjaan (biar ter-review), bukan diam-diam.
 
 ## Verifikasi & Selesai
 

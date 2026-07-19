@@ -75,4 +75,4 @@ Item paling fatal kalau gagal: **A3, A4, A5** (risiko WA bocor / task mati senya
 
 | Tanggal | Model | Skor A | Skor B | Total | Catatan |
 |---|---|---|---|---|---|
-| | | | | | |
+| 2026-07-19 | Sonnet 5 | 43/45 (A1+A2 tak terkonfirmasi dari transkrip) | 40/40 | 83–98/100 | Semua item fatal (A3/A4/A5) lolos penuh. Kelemahan: A8 verifikasi berhenti di lint+build; klaim `approved_at` benar tapi tanpa verifikasi ke DB (dibuktikan reviewer). Kode dibuang sesuai protokol. |

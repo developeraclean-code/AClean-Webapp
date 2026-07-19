@@ -13,6 +13,7 @@ edit pertama. Ringkasnya:
 4. **Tugas >1 file → tulis rencana 3-5 baris dulu** (file, urutan, risiko, cara verifikasi).
 5. **Cek Anti-Pattern Checklist** di playbook sebelum menganggap kode selesai.
 6. Selesai = terverifikasi end-to-end (build + flow nyata), bukan "kelihatannya benar".
+7. **Sesi ini mengungkap asumsi salah / gotcha baru / fakta dokumen yang basi? → jalankan skill `distill`** sebelum mengakhiri — tulis pelajarannya ke playbook agar sesi berikutnya tidak mengulang kesalahan yang sama.
 
 ## Commands
 
