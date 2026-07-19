@@ -14,7 +14,7 @@ import { sb, sendWA, log, OWNER_PHONE } from "./_tasks/_shared.js";
 import { taskCleanup, taskR2Cleanup90d, taskExpenseFotoCleanup30d, taskPaymentProofCleanup90d, taskSnapshotCleanup, taskWaCleanup, taskLogCleanup } from "./_tasks/cleanup.js";
 import { taskReminder, taskDaily, taskStock, taskServisReminder, taskVoucherExpiryReminder, taskLaporanStaleAlert, taskMaterialPulangReminder, taskWeeklyReport, taskMorningDispatch, taskRatingPrompt } from "./_tasks/reminders.js";
 import { taskWaSnapshot, taskWaBackfill, taskScanBuktiBayar } from "./_tasks/wa-ai.js";
-import { taskProjectAlerts, taskAutoReturnBrought, taskBackupData, taskPayrollWA, taskBonusEligible, taskMaintenanceContractExpiry, taskMaintenanceFollowupAlert } from "./_tasks/ops.js";
+import { taskProjectAlerts, taskAutoReturnBrought, taskBackupData, taskPayrollWA, taskBonusEligible, taskMaintenanceContractExpiry, taskMaintenanceFollowupAlert, taskMaintenancePmDue } from "./_tasks/ops.js";
 
 // Initialize Sentry
 initSentry();
@@ -53,6 +53,7 @@ async function taskTick() {
     { t: "laporan-stale",              fn: taskLaporanStaleAlert,          h: 10 },
     { t: "maintenance-followup-alert", fn: taskMaintenanceFollowupAlert,   h: 10 },
     { t: "maintenance-contract-expiry", fn: taskMaintenanceContractExpiry, h: 10, dow: 1 },
+    { t: "maintenance-pm-due",         fn: taskMaintenancePmDue,          h: 8,  dow: 1 },
     { t: "snapshot-cleanup",           fn: taskSnapshotCleanup,            h: 10 },
     { t: "bonus-eligible",           fn: taskBonusEligible,          h: 7 },
     { t: "payroll-wa",               fn: taskPayrollWA,              h: 18, dow: 6 },
@@ -180,6 +181,7 @@ export default async function handler(req, res) {
       "laporan-stale":              taskLaporanStaleAlert,
       "maintenance-followup-alert":  taskMaintenanceFollowupAlert,
       "maintenance-contract-expiry": taskMaintenanceContractExpiry,
+      "maintenance-pm-due":          taskMaintenancePmDue,
       "material-pulang-reminder":   taskMaterialPulangReminder,
       "payroll-wa":       taskPayrollWA,
       "bonus-eligible":   taskBonusEligible,

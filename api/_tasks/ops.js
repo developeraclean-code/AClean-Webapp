@@ -443,3 +443,58 @@ export async function taskMaintenanceFollowupAlert() {
   return { staleCount: stale.length, waSent };
 }
 
+
+// TASK: maintenance-pm-due — Senin 08:00 WIB mingguan
+// Roda pengingat PPM: WA ke Owner berisi unit yang jadwal servisnya SUDAH lewat
+// (overdue) + yang jatuh tempo ≤7 hari, dikelompokkan per klien. Melengkapi
+// auto-roll jadwal di autolog (portal.js) — roll bikin jadwal maju, task ini
+// memastikan yang terlewat tidak senyap. Toggle: maintenance_pm_due_enabled.
+// ══════════════════════════════════════════════════
+export async function taskMaintenancePmDue() {
+  const { data: togData } = await sb.from("app_settings").select("key,value")
+    .in("key", ["maintenance_pm_due_enabled", "cron_jobs"]);
+  const togMap = Object.fromEntries((togData || []).map(s => [s.key, s.value]));
+  if (!isCronJobEnabled(togMap, "maintenance_pm_due_enabled") || togMap["maintenance_pm_due_enabled"] !== "true") {
+    await log("MAINTENANCE_PM_DUE", "Dilewati — maintenance_pm_due_enabled OFF", "INFO");
+    return { skipped: true };
+  }
+  const ownerPhone = process.env.OWNER_PHONE;
+  if (!ownerPhone) return { skipped: true, reason: "OWNER_PHONE not set" };
+
+  const today = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10); // WIB
+  const in7 = new Date(Date.now() + 7 * 3600_000 + 7 * 86400000).toISOString().slice(0, 10);
+
+  const { data: units } = await sb
+    .from("maintenance_units")
+    .select("id,unit_code,location,next_service_date,client_id,maintenance_clients(name)")
+    .eq("status", "active")
+    .not("next_service_date", "is", null)
+    .lte("next_service_date", in7)
+    .order("next_service_date")
+    .limit(500);
+
+  if (!units?.length) {
+    await log("MAINTENANCE_PM_DUE", "Tidak ada unit jatuh tempo ≤7 hari", "INFO");
+    return { checked: true, due: 0 };
+  }
+
+  // Kelompokkan per klien: hitung overdue vs minggu ini
+  const byClient = {};
+  for (const u of units) {
+    const nama = u.maintenance_clients?.name || "(tanpa klien)";
+    if (!byClient[nama]) byClient[nama] = { overdue: 0, minggu: 0, contoh: [] };
+    const g = byClient[nama];
+    if (u.next_service_date < today) g.overdue++; else g.minggu++;
+    if (g.contoh.length < 3) g.contoh.push(`${u.unit_code}${u.location ? " (" + u.location + ")" : ""} — ${u.next_service_date}`);
+  }
+  const totOverdue = units.filter(u => u.next_service_date < today).length;
+  const totMinggu = units.length - totOverdue;
+
+  const lines = Object.entries(byClient).map(([nama, g]) =>
+    `🏢 *${nama}*\n${g.overdue ? `   🔴 ${g.overdue} unit TERLEWAT\n` : ""}${g.minggu ? `   🟡 ${g.minggu} unit jatuh tempo minggu ini\n` : ""}${g.contoh.map(c => "   • " + c).join("\n")}`);
+
+  const msg = `📅 *JADWAL PM MAINTENANCE*\n\nTotal: 🔴 ${totOverdue} terlewat · 🟡 ${totMinggu} minggu ini\n\n${lines.join("\n\n")}\n\nBuat order dari menu Maintenance → tab Unit (pilih unit → Buat Order).`;
+  await sendWA(ownerPhone, msg);
+  await log("MAINTENANCE_PM_DUE", `Alert PM: ${totOverdue} overdue + ${totMinggu} minggu ini (${Object.keys(byClient).length} klien)`, "INFO");
+  return { ok: true, overdue: totOverdue, due_week: totMinggu };
+}

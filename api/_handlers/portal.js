@@ -83,6 +83,28 @@ export async function maintenance(req, res) {
       const body = req.body || {};
       const action = String(body.action || "");
 
+      // ── Auto-roll jadwal PM: dipanggil tiap kali log servis tercatat (autolog
+      // dari verify laporan + create-log manual). Tanpa ini roda PPM tidak maju:
+      // servis tercatat tapi next_service_date diam → unit tampak overdue selamanya
+      // (temuan audit 18 Jul 2026: TIDAK ADA satupun titik tulis otomatis sebelumnya).
+      // Cukup tulis last_service_date — next_service_date DIHITUNG TRIGGER DB
+      // trg_compute_next_service (migrasi 064: last + interval bulan, default 3).
+      // Jangan hitung next di sini: trigger BEFORE UPDATE menimpa nilai app (satu
+      // sumber kebenaran = trigger). Guard anti-mundur: log backfill tanggal lama
+      // tidak menimpa jadwal yang lebih baru.
+      const rollUnitSchedule = async (unitIdList, svcDate) => {
+        const ids = [...new Set((unitIdList || []).filter(Boolean))];
+        if (!ids.length || !svcDate) return;
+        try {
+          const uRes = await fetch(REST("maintenance_units?id=in.(" + encodeURIComponent(ids.join(",")) + ")&select=id,last_service_date"), { headers });
+          const uData = await uRes.json();
+          await Promise.all((Array.isArray(uData) ? uData : []).map(u => {
+            if (u.last_service_date && svcDate < u.last_service_date) return null; // anti-mundur
+            return fetch(REST("maintenance_units?id=eq." + encodeURIComponent(u.id)), { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ last_service_date: svcDate }) });
+          }));
+        } catch (e) { console.warn("[maintenance] roll jadwal gagal (non-blocking):", e.message); }
+      };
+
       // ── Role gate per-action: mutasi & data finansial = Owner/Admin saja ──
       // Teknisi/Helper hanya boleh aksi read-only non-finansial yang dipakai
       // prefill modal laporan (openLaporanModal & modal order: klien + unit registry).
@@ -104,6 +126,50 @@ export async function maintenance(req, res) {
           const r = await fetch(REST("maintenance_clients?select=*&order=created_at.desc"), { headers });
           if (!r.ok) return res.status(500).json({ error: "DB error", detail: await r.text() });
           return res.status(200).json({ clients: await r.json() });
+        }
+
+        // ── T3: overview lintas-klien — cockpit harian Owner/Admin di halaman depan
+        // Maintenance. 3 query agregat (BUKAN per-klien) → per client_id: unit
+        // total/overdue, temuan open, tunggakan invoice. Frontend gabung by id.
+        if (action === "overview") {
+          const today = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10); // WIB
+          const [uRes, fRes, iRes, oRes] = await Promise.all([
+            fetch(REST("maintenance_units?select=client_id,status,next_service_date&limit=5000"), { headers }),
+            fetch(REST("maintenance_followups?select=client_id,status&status=in.(open,scheduled,in_progress)&limit=2000"), { headers }),
+            // SEMUA invoice outstanding (bukan cuma yang ber-maintenance_client_id) —
+            // atribusi klien juga via order job_id, SAMA dgn list-invoices, supaya angka
+            // cockpit = angka panel Tunggakan di dalam klien (jangan dua kebenaran).
+            fetch(REST("invoices?select=job_id,maintenance_client_id,total,status,remaining_amount,paid_amount&status=in.(UNPAID,OVERDUE,PARTIAL_PAID)&limit=2000"), { headers }),
+            fetch(REST("orders?select=id,maintenance_client_id&maintenance_client_id=not.is.null&limit=5000"), { headers }),
+          ]);
+          const units = uRes.ok ? await uRes.json() : [];
+          const fus = fRes.ok ? await fRes.json() : [];
+          const invs = iRes.ok ? await iRes.json() : [];
+          const ords = oRes.ok ? await oRes.json() : [];
+          const orderClient = new Map(ords.map(o => [o.id, o.maintenance_client_id]));
+          const by = {};
+          const g = (id) => (by[id] = by[id] || { units: 0, overdue: 0, followups: 0, tunggakan: 0, tunggakan_n: 0 });
+          units.forEach(u => {
+            if (!u.client_id) return;
+            const c = g(u.client_id);
+            if (u.status !== "retired" && u.status !== "nonaktif") c.units++;
+            // Overdue termasuk unit rusak/perlu_perbaikan — justru paling butuh perhatian.
+            // Dikecualikan: retired/nonaktif (keluar armada) & baru (belum mulai siklus).
+            if (!["retired", "nonaktif", "baru"].includes(u.status) && u.next_service_date && u.next_service_date < today) c.overdue++;
+          });
+          fus.forEach(f => { if (f.client_id) g(f.client_id).followups++; });
+          invs.forEach(i => {
+            const cid = i.maintenance_client_id || orderClient.get(i.job_id);
+            if (!cid) return; // bukan invoice klien maintenance
+            const c = g(cid);
+            // Paritas dgn panel Tunggakan InvoiceTab: remaining_amount → fallback
+            // total - paid_amount (clamp ≥0), bukan langsung total penuh.
+            const sisa = i.remaining_amount != null
+              ? Number(i.remaining_amount)
+              : Math.max(0, Number(i.total || 0) - Number(i.paid_amount || 0));
+            c.tunggakan += sisa; c.tunggakan_n++;
+          });
+          return res.status(200).json({ overview: by, today });
         }
         // ---- LINK AUDIT (pemeriksa missing-link maintenance) ----
         // Mendeteksi pekerjaan maintenance yang link unit/client/invoice-nya putus, supaya
@@ -359,10 +425,17 @@ export async function maintenance(req, res) {
             refrigerant: u.refrigerant || null,
             year_installed: u.year_installed ? parseInt(u.year_installed) : null,
             serial_no: u.serial_no || null,
-            status: ["active", "rusak", "retired"].includes(u.status) ? u.status : "active",
+            // Whitelist LENGKAP sesuai opsi UI (STATUSES di MaintenanceView) — dulu cuma
+            // 3 nilai → status "baru"/"perlu_perbaikan"/dll dipaksa jadi "active" DIAM-DIAM
+            // (bug: unit baru langsung dianggap aktif & ikut ke-autolog). Temuan audit 18 Jul.
+            status: ["active", "baru", "perlu_perbaikan", "dalam_perbaikan", "nonaktif", "rusak", "retired"].includes(u.status) ? u.status : "active",
             notes: u.notes || null,
             high_freq: u.high_freq === true || u.high_freq === "true",
             service_interval_months: u.service_interval_months != null && u.service_interval_months !== "" ? Number(u.service_interval_months) : 3,
+            // last_service_date opsional (dipakai GantiUnitModal utk baseline unit pengganti;
+            // trigger DB lantas menghitung next_service_date) — tanpa ini pengganti tak punya
+            // jadwal & hilang dari radar PM sampai servis pertama.
+            ...(u.last_service_date ? { last_service_date: u.last_service_date } : {}),
           });
           const valid = body.units.filter(u => String(u.unit_code || "").trim());
           if (!valid.length) return res.status(400).json({ error: "unit_code wajib di tiap unit" });
@@ -527,6 +600,7 @@ export async function maintenance(req, res) {
           };
           const r = await fetch(REST("maintenance_logs"), { method: "POST", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(payload) });
           if (!r.ok) return res.status(400).json({ error: "Gagal simpan log", detail: await r.text() });
+          await rollUnitSchedule([payload.unit_id], payload.service_date); // roda PPM maju
           return res.status(200).json({ log: (await r.json())[0] });
         }
         if (action === "update-log") {
@@ -1031,10 +1105,37 @@ export async function maintenance(req, res) {
             else console.warn("[autolog] followup insert warn:", await fRes.text());
           }
 
+          // ── T1: roda PPM maju — roll jadwal semua unit yang tercatat servis ──
+          const svcDateRoll = order.date || new Date().toISOString().slice(0, 10);
+          await rollUnitSchedule(unitPairs.map(p => p.uid), svcDateRoll);
+
+          // ── T1: auto-close temuan yang order-nya ini (follow-up → order → verified) ──
+          // Temuan dibuatkan order via tombol "Buat Order" (order_id tersimpan);
+          // begitu laporan order diverifikasi (autolog jalan) → temuan otomatis tuntas.
+          let followupsClosed = 0;
+          try {
+            const fuQ = "maintenance_followups?order_id=eq." + encodeURIComponent(order.id) + "&status=in.(open,scheduled,in_progress)";
+            const fuChk = await fetch(REST(fuQ + "&select=id"), { headers });
+            const fuOpen = await fuChk.json();
+            if (Array.isArray(fuOpen) && fuOpen.length) {
+              const fuUpd = await fetch(REST(fuQ), {
+                method: "PATCH", headers: { ...headers, Prefer: "return=representation" },
+                body: JSON.stringify({
+                  status: "done", resolved_date: svcDateRoll,
+                  resolved_by: order.teknisi || "auto-verify",
+                  resolution: "Selesai via order " + order.id + " (laporan terverifikasi)",
+                }),
+              });
+              if (fuUpd.ok) followupsClosed = (await fuUpd.json()).length;
+              else console.warn("[autolog] auto-close followup warn:", await fuUpd.text());
+            }
+          } catch (e) { console.warn("[autolog] auto-close followup gagal (non-blocking):", e.message); }
+
           const capped = repUnits.length > 0 && repUnits.length < unitIds.length;
           return res.status(200).json({
             created: createdLogs.length,
             followups_created: followupsCreated,
+            followups_closed: followupsClosed,
             enriched: { photos: repFotos.length, units_detail: repUnits.length },
             ...(capped ? { capped_from: unitIds.length, capped_to: effectiveUnitIds.length, reason: "hanya unit yang dilaporkan di laporan teknisi" } : {}),
           });

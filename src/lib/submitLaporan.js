@@ -89,6 +89,30 @@ export async function submitLaporan({
       if (!lanjut) return;
     }
 
+    // ── 3b. Job klien kontrak maintenance: warning kualitas input (NON-BLOCKING —
+    // keputusan Owner 17 Jul 2026: warning saja, tanpa blok). Ampere & foto per unit
+    // adalah bahan Kartu Kesehatan Unit + PDF Kesehatan Aset yang dikirim ke klien —
+    // laporan tanpa itu melemahkan nilai kontrak. Teknisi tetap bisa lanjut.
+    if (laporanModal?.maintenance_client_id) {
+      const tanpaAmpere = laporanUnits.filter(u => u && !(parseFloat(u.ampere_akhir) > 0)).length;
+      const fotoTersimpan = laporanFotos.filter(f => f.url).length;
+      const kurang = [];
+      if (tanpaAmpere > 0) kurang.push(`${tanpaAmpere} unit belum diisi Ampere Akhir`);
+      if (fotoTersimpan < laporanUnits.length) kurang.push(`foto baru ${fotoTersimpan} dari ${laporanUnits.length} unit`);
+      if (kurang.length > 0) {
+        const lanjutMaint = await showConfirm({
+          icon: "🏢", title: "Job Klien Kontrak — Data Belum Lengkap",
+          message: `Laporan untuk klien maintenance sebaiknya lengkap:\n• ${kurang.join("\n• ")}\n\nData ini dipakai untuk Kartu Kesehatan Unit & laporan PDF ke klien.\nLanjut submit tanpa melengkapi?`,
+          confirmText: "Lanjut Submit",
+        });
+        if (!lanjutMaint) return; // teknisi memilih melengkapi dulu
+      }
+      // Nudge BAP: bukti serah terima bertanda tangan PIC memperkuat penagihan B2B
+      if (appSettings?.bap_enabled === "true") {
+        showNotif("🏢 Job klien kontrak — setelah submit, minta TTD PIC via tombol BAP di laporan.");
+      }
+    }
+
     // ── 4. Siapkan materials yang efektif ──
     // Install: pakai laporanInstallItems, lainnya: pakai laporanMaterials
     // Only jasa items here — barang items are now consolidated into laporanBarangItems

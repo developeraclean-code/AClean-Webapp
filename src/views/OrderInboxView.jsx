@@ -315,7 +315,7 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, w
                           {isDone && "✓ "}{o.time?.slice(0,5)}–{endStr}{isConflict && " ⚠️"}
                         </div>
                         <div style={{ color: cs.text, fontWeight: 700, fontSize: 10, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textDecoration: isDone ? "line-through" : "none" }}>
-                          {o.customer}
+                          {o.maintenance_client_id && <span title="Job klien kontrak maintenance">🏢 </span>}{o.customer}
                         </div>
                         <div style={{ color: cs.muted, fontSize: 9, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                           {o.teknisi || "?"} · {o.service}{o.units > 1 ? ` ×${o.units}` : ""}
@@ -328,6 +328,11 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, w
                             borderRadius: 8, padding: "8px 10px", minWidth: 190, boxShadow: "0 4px 20px #0008",
                           }} onClick={e => e.stopPropagation()}>
                             <div style={{ fontWeight: 800, fontSize: 12, color: cs.text, marginBottom: 4 }}>{o.customer}</div>
+                            {o.maintenance_client_id && (
+                              <div style={{ display: "inline-block", background: "#0ea5e922", border: "1px solid #0ea5e944", color: "#38bdf8", padding: "1px 8px", borderRadius: 99, fontSize: 10, fontWeight: 700, marginBottom: 4 }}>
+                                🏢 Maintenance{Array.isArray(o.maintenance_unit_ids) && o.maintenance_unit_ids.length > 0 ? ` · ${o.maintenance_unit_ids.length} unit terpilih` : ""}
+                              </div>
+                            )}
                             <div style={{ fontSize: 11, color: cs.muted }}>{o.time?.slice(0,5)} – {endStr} ({Math.round(durMin/60*10)/10} jam)</div>
                             <div style={{ fontSize: 11, color: cs.muted }}>{o.service}{o.units > 1 ? ` · ${o.units} unit` : ""}</div>
                             {o.teknisi && <div style={{ fontSize: 11, color: blockColor, fontWeight: 700, marginTop: 2 }}>{o.teknisi}{o.helper ? ` · ${o.helper}` : ""}</div>}

@@ -219,9 +219,18 @@ export default function MaintenanceView({
     return j;
   }, [apiFetch]);
 
+  // T3: overview lintas-klien — { [client_id]: {units, overdue, followups, tunggakan, tunggakan_n} }
+  const [overview, setOverview] = useState({});
   const loadClients = useCallback(async () => {
     setLoading(true);
-    try { const j = await call("list-clients"); setClients(j.clients || []); }
+    try {
+      const [j, ov] = await Promise.all([
+        call("list-clients"),
+        call("overview").catch(() => null), // overview opsional — daftar klien tetap tampil
+      ]);
+      setClients(j.clients || []);
+      if (ov?.overview) setOverview(ov.overview);
+    }
     catch (e) { showNotif("❌ " + e.message); }
     finally { setLoading(false); }
   }, [call, showNotif]);
@@ -298,9 +307,25 @@ export default function MaintenanceView({
         {loading ? <div style={{ color: cs.muted }}>Memuat…</div> :
           clients.length === 0 ? <div style={{ color: cs.muted }}>Belum ada perusahaan. Klik "+ Tambah Perusahaan".</div> :
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(290px,1fr))", gap: 12 }}>
+              {/* ── T3: cockpit lintas-klien — total masalah sekali pandang ── */}
+              {(() => {
+                const tot = Object.values(overview).reduce((a, o) => ({
+                  overdue: a.overdue + (o.overdue || 0), fu: a.fu + (o.followups || 0),
+                  tun: a.tun + (o.tunggakan || 0), tunN: a.tunN + (o.tunggakan_n || 0),
+                }), { overdue: 0, fu: 0, tun: 0, tunN: 0 });
+                if (!tot.overdue && !tot.fu && !tot.tunN) return null;
+                return (
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+                    {tot.overdue > 0 && <span style={{ background: cs.red + "18", border: "1px solid " + cs.red + "44", color: cs.red, padding: "6px 12px", borderRadius: 9, fontSize: 12, fontWeight: 800 }}>🔴 {tot.overdue} unit PM terlewat</span>}
+                    {tot.fu > 0 && <span style={{ background: (cs.yellow || "#eab308") + "18", border: "1px solid " + (cs.yellow || "#eab308") + "44", color: cs.yellow || "#eab308", padding: "6px 12px", borderRadius: 9, fontSize: 12, fontWeight: 800 }}>🔧 {tot.fu} temuan belum tuntas</span>}
+                    {tot.tunN > 0 && <span style={{ background: cs.accent + "18", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "6px 12px", borderRadius: 9, fontSize: 12, fontWeight: 800 }}>💰 {fmtRp(tot.tun)} tunggakan ({tot.tunN} inv)</span>}
+                  </div>
+                );
+              })()}
               {clients.map(c => {
                 const contractDays = daysUntil(c.contract_end_date);
                 const contractWarn = contractDays !== null && contractDays <= 30;
+                const ov = overview[c.id];
                 return (
                   <div key={c.id} style={{ ...card, cursor: "pointer" }}>
                     <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
@@ -317,6 +342,9 @@ export default function MaintenanceView({
                           <span style={{ ...pillGray, fontSize: 10 }}>{c.token_active ? "🔓 Portal aktif" : "🔒 Portal off"}</span>
                           {c.contract_value && <span style={{ ...pillBlue, fontSize: 10 }}>{fmtRp(c.contract_value)}/thn</span>}
                           {contractWarn && <span style={{ background: cs.yellow + "22", color: cs.yellow, padding: "2px 7px", borderRadius: 999, fontSize: 10, fontWeight: 700 }}>⚠️ Kontrak {contractDays <= 0 ? "EXPIRED" : contractDays + "h lagi"}</span>}
+                          {ov && ov.overdue > 0 && <span style={{ background: cs.red + "22", color: cs.red, padding: "2px 7px", borderRadius: 999, fontSize: 10, fontWeight: 700 }}>🔴 {ov.overdue} PM lewat</span>}
+                          {ov && ov.followups > 0 && <span style={{ background: (cs.yellow || "#eab308") + "22", color: cs.yellow || "#eab308", padding: "2px 7px", borderRadius: 999, fontSize: 10, fontWeight: 700 }}>🔧 {ov.followups} temuan</span>}
+                          {ov && ov.tunggakan_n > 0 && <span style={{ background: cs.accent + "22", color: cs.accent, padding: "2px 7px", borderRadius: 999, fontSize: 10, fontWeight: 700 }}>💰 {fmtRp(ov.tunggakan)}</span>}
                         </div>
                       </div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0 }}>
@@ -545,6 +573,7 @@ function UnitsTab({ sel, units, setUnits, logs = [], call, showNotif, showConfir
   const [healthFilter, setHealthFilter] = useState(""); // "" | SEHAT | PERHATIAN | BERMASALAH | NO_DATA
   const [trendUnit, setTrendUnit] = useState(null);     // unit yang dibuka grafik trennya
   const [showHealthPdf, setShowHealthPdf] = useState(false);
+  const [gantiUnit, setGantiUnit] = useState(null);     // unit lama yang mau diganti fisik AC-nya
   const [edit, setEdit] = useState(null);
   const [qrUnit, setQrUnit] = useState(null);
   const [showCsv, setShowCsv] = useState(false);
@@ -804,6 +833,7 @@ function UnitsTab({ sel, units, setUnits, logs = [], call, showNotif, showConfir
                       <button onClick={() => setTrendUnit(u)} style={miniBtn} title="Tren ampere & tekanan">📈</button>
                       <button onClick={() => setQrUnit(u)} style={miniBtn} title="QR Unit">QR</button>
                       <button onClick={() => setEdit(u)} style={miniBtn} title="Edit">✏️</button>
+                      {u.status !== "retired" && <button onClick={() => setGantiUnit(u)} style={miniBtn} title="Ganti unit AC (retire lama + daftarkan pengganti)">♻️</button>}
                       {isOwner && <button onClick={() => del(u)} style={{ ...miniBtn, color: cs.red }}>🗑</button>}
                     </div>
                   )}
@@ -814,6 +844,7 @@ function UnitsTab({ sel, units, setUnits, logs = [], call, showNotif, showConfir
         </div>}
 
       {edit !== null && <UnitFormModal unit={edit} onClose={() => setEdit(null)} onSave={save} />}
+      {gantiUnit && <GantiUnitModal oldUnit={gantiUnit} sel={sel} call={call} showNotif={showNotif} setUnits={setUnits} onClose={() => setGantiUnit(null)} />}
       {trendUnit && <UnitTrendModal unit={trendUnit} logs={logs} onClose={() => setTrendUnit(null)} />}
       {showHealthPdf && (
         <Suspense fallback={<div onClick={() => setShowHealthPdf(false)} style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 600, display: "flex", alignItems: "center", justifyContent: "center", color: cs.muted }}>Memuat modul PDF…</div>}>
@@ -953,6 +984,87 @@ function CreateOrderModal({ sel, pickedUnits, today, teknisiData, onClose, onCre
         </div>
       </div>
     </div>
+  );
+}
+
+// ── T3: Ganti Unit AC — retire unit lama + daftarkan pengganti di posisi yang sama.
+// Riwayat servis TETAP di unit lama (unit_id lama); tautan dua arah lewat notes.
+// Sebelumnya proses ini manual 2 langkah dan sering bikin identitas unit putus.
+function GantiUnitModal({ oldUnit, sel, call, showNotif, setUnits, onClose }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [f, setF] = useState({
+    unit_code: (oldUnit.unit_code || "") + "-R",
+    brand: "", ac_type: oldUnit.ac_type || "split", capacity_pk: oldUnit.capacity_pk || "",
+    refrigerant: oldUnit.refrigerant || "", serial_no: "", year_installed: new Date().getFullYear(),
+  });
+  const [busy, setBusy] = useState(false);
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  const doGanti = async () => {
+    if (!f.unit_code.trim()) { showNotif("❌ Kode unit baru wajib"); return; }
+    setBusy(true);
+    try {
+      // 1) Daftarkan unit pengganti (posisi/lokasi & interval ikut unit lama)
+      const baru = {
+        client_id: sel.id, unit_code: f.unit_code.trim(), location: oldUnit.location || "",
+        brand: f.brand || null, ac_type: f.ac_type, capacity_pk: f.capacity_pk || null,
+        refrigerant: f.refrigerant || null, serial_no: f.serial_no || null,
+        year_installed: f.year_installed || null, status: "active",
+        service_interval_months: oldUnit.service_interval_months || null,
+        high_freq: oldUnit.high_freq || false,
+        // Baseline jadwal: hari pemasangan dihitung sbg "servis" pertama → trigger DB
+        // mengisi next_service_date, unit pengganti langsung masuk radar PM.
+        last_service_date: today,
+        notes: `Pengganti ${oldUnit.unit_code} (${today})${oldUnit.notes ? " · " + oldUnit.notes : ""}`,
+      };
+      const j1 = await call("save-units", { client_id: sel.id, units: [baru] });
+      const savedBaru = (j1.units || [])[0];
+      if (!savedBaru) {
+        // Respons tak memuat unit — bisa jadi TERSIMPAN di DB tapi balasan janggal.
+        // Jangan diklik ulang buta (risiko unit dobel) — refresh dulu.
+        showNotif("⚠️ Respons server janggal — refresh daftar unit dulu sebelum coba lagi (cek apakah unit pengganti sudah masuk).");
+        return;
+      }
+      // 2) Retire unit lama + tautan ke pengganti — kalau gagal, beri tahu (jangan senyap)
+      try {
+        const j2 = await call("save-units", { client_id: sel.id, units: [{ ...oldUnit, status: "retired", notes: `${oldUnit.notes ? oldUnit.notes + " · " : ""}Diganti ${today} → ${savedBaru.unit_code}` }] });
+        const savedLama = (j2.units || [])[0] || { ...oldUnit, status: "retired" };
+        setUnits(prev => [...prev.filter(x => x.id !== savedLama.id && x.id !== savedBaru.id), savedLama, savedBaru]
+          .sort((a, b) => String(a.unit_code).localeCompare(String(b.unit_code))));
+        showNotif(`✅ ${oldUnit.unit_code} di-retire → pengganti ${savedBaru.unit_code} aktif. Riwayat lama tetap tersimpan di unit lama.`);
+      } catch (e2) {
+        setUnits(prev => [...prev.filter(x => x.id !== savedBaru.id), savedBaru].sort((a, b) => String(a.unit_code).localeCompare(String(b.unit_code))));
+        showNotif(`⚠️ Unit baru ${savedBaru.unit_code} terdaftar, tapi retire ${oldUnit.unit_code} gagal: ${e2.message} — retire manual via Edit.`);
+      }
+      onClose();
+    } catch (e) { showNotif("❌ " + e.message); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Overlay onClose={onClose}>
+      <div style={{ fontWeight: 700, color: cs.text, fontSize: 16, marginBottom: 4 }}>♻️ Ganti Unit — {oldUnit.unit_code}</div>
+      <div style={{ fontSize: 12, color: cs.muted, marginBottom: 12 }}>
+        {oldUnit.location || "(tanpa lokasi)"} · unit lama jadi <b>Retired</b> (riwayat servis tetap tersimpan), pengganti terdaftar aktif di posisi yang sama.
+      </div>
+      <Field l="Kode Unit Baru *"><input value={f.unit_code} onChange={e => set("unit_code", e.target.value)} style={inp} /></Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field l="Merk"><input value={f.brand} onChange={e => set("brand", e.target.value)} style={inp} placeholder="mis. Daikin" /></Field>
+        <Field l="Kapasitas (PK)"><input type="number" step="0.25" value={f.capacity_pk} onChange={e => set("capacity_pk", e.target.value)} style={inp} /></Field>
+        <Field l="Refrigerant"><input value={f.refrigerant} onChange={e => set("refrigerant", e.target.value)} style={inp} placeholder="R32" /></Field>
+        <Field l="Serial No."><input value={f.serial_no} onChange={e => set("serial_no", e.target.value)} style={inp} placeholder="dari nameplate" /></Field>
+        <Field l="Tahun Pasang"><input type="number" value={f.year_installed} onChange={e => set("year_installed", e.target.value)} style={inp} /></Field>
+        <Field l="Jenis">
+          <select value={f.ac_type} onChange={e => set("ac_type", e.target.value)} style={inp}>
+            {AC_TYPES.map(t => <option key={t} value={t}>{AC_TYPE_LABELS[t]}</option>)}
+          </select>
+        </Field>
+      </div>
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
+        <button onClick={onClose} style={btnGhost}>Batal</button>
+        <button onClick={doGanti} disabled={busy} style={{ ...btn, opacity: busy ? 0.6 : 1 }}>{busy ? "⏳ Memproses…" : "♻️ Ganti Unit"}</button>
+      </div>
+    </Overlay>
   );
 }
 
@@ -1647,6 +1759,47 @@ function InvoiceTab({ sel, units, logs, call, showNotif }) {
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // ── T2: rekap tunggakan klien ini (aging + WA penagihan ke PIC) ──
+  const [clientInvs, setClientInvs] = useState(null); // null = loading
+  const [invLoadErr, setInvLoadErr] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    if (!sel?.id) return;
+    call("list-invoices", { client_id: sel.id })
+      .then(j => { if (alive) setClientInvs(j.invoices || []); })
+      .catch(() => { if (alive) { setClientInvs([]); setInvLoadErr(true); } });
+    return () => { alive = false; };
+    // Deps sel?.id saja — `call` tidak stabil antar render App (lihat loadClients)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sel?.id]);
+
+  const tunggakan = useMemo(() => {
+    const outs = (clientInvs || []).filter(i => ["UNPAID", "OVERDUE", "PARTIAL_PAID"].includes(String(i.status || "").toUpperCase()));
+    const today = new Date();
+    const rows = outs.map(i => {
+      // Sisa tagihan: remaining_amount → fallback total - paid_amount (clamp ≥0).
+      // Jangan langsung total penuh: PARTIAL_PAID legacy tanpa remaining_amount
+      // bikin angka WA penagihan ke klien KELEBIHAN (temuan review 19 Jul 2026).
+      const sisa = i.remaining_amount != null
+        ? Number(i.remaining_amount)
+        : Math.max(0, Number(i.total || 0) - Number(i.paid_amount || 0));
+      const baseDate = i.due || i.created_at;
+      const umur = baseDate ? Math.max(0, Math.floor((today - new Date(baseDate)) / 86400000)) : 0;
+      return { ...i, sisa, umur, baseDate };
+    }).sort((a, b) => b.umur - a.umur);
+    return { rows, total: rows.reduce((s, r) => s + r.sisa, 0), tertua: rows[0]?.umur || 0 };
+  }, [clientInvs]);
+
+  const waTagihUrl = useMemo(() => {
+    if (!sel?.pic_phone || !tunggakan.rows.length) return null;
+    let ph = String(sel.pic_phone).replace(/\D/g, "");
+    if (ph.startsWith("0")) ph = "62" + ph.slice(1);
+    else if (ph.startsWith("8")) ph = "62" + ph; // tersimpan tanpa 0/62 → tetap valid
+    const daftar = tunggakan.rows.slice(0, 8).map(r => `• ${r.id} (${fmtDate(r.baseDate)}) — ${fmtRp(r.sisa)}`).join("\n");
+    const msg = `Yth. ${sel.pic_name || "Bapak/Ibu"} (${sel.name}),\n\nBerikut pengingat tagihan servis AC yang belum terselesaikan:\n${daftar}\n\nTotal: ${fmtRp(tunggakan.total)}\n\nMohon konfirmasinya. Terima kasih 🙏\n— AClean`;
+    return `https://wa.me/${ph}?text=${encodeURIComponent(msg)}`;
+  }, [sel, tunggakan]);
+
   const unitById = Object.fromEntries(units.map(u => [u.id, u]));
   const calcPrice = (l) => Number(l.cost) > 0 ? Number(l.cost) : maintPrice(unitById[l.unit_id]?.capacity_pk);
 
@@ -1703,6 +1856,44 @@ function InvoiceTab({ sel, units, logs, call, showNotif }) {
     <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-start" }}>
       {/* Kiri: daftar log */}
       <div style={{ flex: "1 1 320px", minWidth: 0 }}>
+        {/* ── T2: Rekap tunggakan klien (aging + WA penagihan) ── */}
+        <div style={{ ...card, marginBottom: 12, borderLeft: "4px solid " + (tunggakan.rows.length ? (tunggakan.tertua > 14 ? cs.red : (cs.yellow || "#eab308")) : cs.green) }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ fontWeight: 700, color: cs.text, fontSize: 13 }}>💰 Tunggakan Klien</div>
+            {clientInvs === null ? (
+              <span style={{ fontSize: 12, color: cs.muted }}>Memuat…</span>
+            ) : tunggakan.rows.length === 0 ? (
+              <span style={{ fontSize: 12, color: cs.green }}>✅ Tidak ada tagihan tertunggak{invLoadErr ? " (data invoice gagal dimuat — coba refresh)" : ""}</span>
+            ) : (
+              <>
+                <span style={{ fontSize: 13, fontWeight: 800, color: tunggakan.tertua > 14 ? cs.red : (cs.yellow || "#eab308") }}>
+                  {fmtRp(tunggakan.total)} · {tunggakan.rows.length} invoice · tertua {tunggakan.tertua} hari
+                </span>
+                {waTagihUrl && (
+                  <a href={waTagihUrl} target="_blank" rel="noreferrer"
+                    style={{ marginLeft: "auto", background: "#25D36622", border: "1px solid #25D36644", color: "#25D366", padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 700, textDecoration: "none" }}>
+                    📱 WA Penagihan ke PIC
+                  </a>
+                )}
+              </>
+            )}
+          </div>
+          {tunggakan.rows.length > 0 && (
+            <div style={{ marginTop: 8, display: "grid", gap: 4 }}>
+              {tunggakan.rows.slice(0, 6).map(r => (
+                <div key={r.id} style={{ display: "flex", gap: 8, fontSize: 12, color: cs.muted }}>
+                  <span style={{ fontFamily: "monospace", color: cs.text }}>{r.id}</span>
+                  <span>{fmtDate(r.baseDate)}</span>
+                  <span style={{ color: r.umur > 14 ? cs.red : cs.muted }}>{r.umur} hari</span>
+                  <span style={{ marginLeft: "auto", fontWeight: 700, color: cs.text }}>{fmtRp(r.sisa)}</span>
+                  <span style={{ fontSize: 10, alignSelf: "center", color: r.status === "PARTIAL_PAID" ? (cs.yellow || "#eab308") : cs.red }}>{r.status}</span>
+                </div>
+              ))}
+              {tunggakan.rows.length > 6 && <div style={{ fontSize: 11, color: cs.muted }}>+{tunggakan.rows.length - 6} lagi — lihat menu Invoice</div>}
+            </div>
+          )}
+        </div>
+
         {/* Filter bar */}
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10, flexWrap: "wrap" }}>
           <span style={{ color: cs.muted, fontSize: 12 }}>Filter bulan:</span>
@@ -2366,8 +2557,8 @@ function FollowupTab({ sel, units, logs, call, showNotif, showConfirm, isOwner, 
       setOrdersData?.(prev => prev.some(o => o.id === jobId) ? prev : [orderPayload, ...prev]);
       // Tandai temuan terjadwal — kalau gagal, order tetap ada (jangan senyap)
       try {
-        // order_id ikut disimpan (kolom sudah ada sejak migrasi 099) — fondasi
-        // auto-close temuan saat laporan order ini nanti diverifikasi.
+        // order_id ikut disimpan (kolom dari migrasi 126) — fondasi auto-close
+        // temuan saat laporan order ini nanti diverifikasi (autolog portal.js).
         await call("update-followup", { id: f.id, status: "scheduled", order_id: jobId });
         // Pola sama dgn updateStatus: filter aktif apa pun (selain "all") → baris
         // yang berubah status keluar dari list filter tsb.
@@ -2394,7 +2585,10 @@ function FollowupTab({ sel, units, logs, call, showNotif, showConfirm, isOwner, 
     finally { setLoading(false); }
   }, [sel, call, showNotif, catFilter]);
 
-  useEffect(() => { load(); }, [load]);
+  // Deps state-kunci saja — `load` memuat `call`/`showNotif` yang identitasnya
+  // berubah tiap render App → deps [load] = re-fetch spam (trap loadClients).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [sel?.id, catFilter]);
 
   const updateStatus = async (id, newStatus) => {
     try {
@@ -2573,7 +2767,10 @@ function ManifestTab({ sel, units, call, showNotif }) {
     finally { setLoaded(true); }
   }, [sel, date, call, showNotif]);
 
-  useEffect(() => { load(); }, [load]);
+  // Deps state-kunci saja — `load` memuat `call`/`showNotif` yang identitasnya
+  // berubah tiap render App → deps [load] = re-fetch spam (trap loadClients).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [sel?.id, date]);
 
   const setAssign = (uid, key, val) => setAssignments(p => ({ ...p, [uid]: { ...(p[uid] || {}), [key]: val } }));
 
@@ -2774,7 +2971,10 @@ function PriceTab({ sel, call, showNotif, showConfirm, isOwner }) {
       .catch(e => showNotif("❌ " + e.message))
       .finally(() => setLoading(false));
   }, [call, sel.id, showNotif]);
-  useEffect(() => { load(); }, [load]);
+  // Deps state-kunci saja — `load` memuat `call`/`showNotif` yang identitasnya
+  // berubah tiap render App → deps [load] = re-fetch spam (trap loadClients).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [sel?.id]);
 
   const blank = { service_type: "Cuci Rutin", ac_type: "", capacity_pk: "", unit_price: "", notes: "" };
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }));
@@ -2866,7 +3066,10 @@ function LinkTab({ sel, units, call, showNotif, showConfirm }) {
       .catch(e => showNotif("❌ " + e.message))
       .finally(() => setLoading(false));
   }, [call, days, showNotif]);
-  useEffect(() => { load(); }, [load]);
+  // Deps state-kunci saja — `load` memuat `call`/`showNotif` yang identitasnya
+  // berubah tiap render App → deps [load] = re-fetch spam (trap loadClients).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [days]);
 
   // Tautkan 1 klik: order kandidat (HP cocok) → set maintenance_client_id ke perusahaan ini.
   const doLink = async (r) => {
@@ -3089,6 +3292,40 @@ function ContractTab({ sel, call, showNotif, showConfirm, isOwner, currentUser }
   const [genModal, setGenModal] = useState(null);
   const [busy, setBusy] = useState(false);
 
+  // ── T2: realisasi kontrak — invoice klien utk dibandingkan dgn nilai kontrak ──
+  const [cInvs, setCInvs] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    if (!sel?.id) return;
+    call("list-invoices", { client_id: sel.id })
+      .then(j => { if (alive) setCInvs(j.invoices || []); })
+      .catch(() => {}); // panel realisasi opsional — kontrak tetap tampil tanpa angka invoice
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sel?.id]);
+
+  // Realisasi per kontrak: invoice dlm rentang start..end (by created_at)
+  const realisasi = useCallback((c) => {
+    if (!c?.start_date) return null;
+    const end = c.end_date || "9999-12-31";
+    const inRange = cInvs.filter(i => {
+      // created_at = timestamptz UTC → geser +7 jam dulu (WIB) sebelum ambil tanggal;
+      // tanpa ini invoice yang dibuat pagi WIB di hari pertama kontrak jatuh ke
+      // tanggal UTC sehari sebelumnya dan keluar dari realisasi (boundary bug).
+      const t = new Date(i.created_at || 0).getTime();
+      const d = t ? new Date(t + 7 * 3600_000).toISOString().slice(0, 10) : "";
+      return d >= c.start_date && d <= end && String(i.status || "").toUpperCase() !== "CANCELLED";
+    });
+    const tertagih = inRange.reduce((s, i) => s + Number(i.total || 0), 0);
+    const terbayar = inRange.reduce((s, i) => {
+      const st = String(i.status || "").toUpperCase();
+      if (st === "PAID") return s + Number(i.total || 0);
+      if (st === "PARTIAL_PAID") return s + Number(i.paid_amount || 0);
+      return s;
+    }, 0);
+    return { n: inRange.length, tertagih, terbayar };
+  }, [cInvs]);
+
   const load = useCallback(async () => {
     setLoading(true);
     try { const j = await call("list-contracts", { client_id: sel.id }); setContracts(j.contracts || []); }
@@ -3096,7 +3333,10 @@ function ContractTab({ sel, call, showNotif, showConfirm, isOwner, currentUser }
     finally { setLoading(false); }
   }, [call, sel.id, showNotif]);
 
-  useEffect(() => { load(); }, [load]);
+  // Deps state-kunci saja — `load` memuat `call`/`showNotif` yang identitasnya
+  // berubah tiap render App → deps [load] = re-fetch spam (trap loadClients).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [sel?.id]);
 
   const saveContract = async (form) => {
     setBusy(true);
@@ -3169,6 +3409,28 @@ function ContractTab({ sel, call, showNotif, showConfirm, isOwner, currentUser }
                       <div><span style={{ color: cs.muted }}>Periode: </span><b style={{ color: cs.text }}>{fmtDate(c.start_date)} – {fmtDate(c.end_date)}</b></div>
                       <div><span style={{ color: cs.muted }}>Nilai: </span><b style={{ color: cs.accent }}>{fmtRp(c.value)}</b></div>
                       <div><span style={{ color: cs.muted }}>Siklus: </span><b style={{ color: cs.text }}>{BILLING_CYCLE_LABELS[c.billing_cycle] || c.billing_cycle} · {fmtRp(c.billing_amount)}</b></div>
+                      {/* ── T2: kontrak vs realisasi (tertagih & terbayar dlm periode kontrak) ── */}
+                      {(() => {
+                        const r = realisasi(c);
+                        if (!r) return null;
+                        const nilai = Number(c.value || 0);
+                        const pct = nilai > 0 ? Math.round((r.tertagih / nilai) * 100) : null;
+                        const under = nilai > 0 && pct < 100;
+                        return (
+                          <div style={{ marginTop: 6, padding: "6px 10px", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7 }}>
+                            <div style={{ fontSize: 11, color: cs.muted }}>
+                              Realisasi: <b style={{ color: cs.text }}>{fmtRp(r.tertagih)}</b> tertagih ({r.n} inv)
+                              · <b style={{ color: cs.green }}>{fmtRp(r.terbayar)}</b> terbayar
+                              {pct != null && <span style={{ color: under ? (cs.yellow || "#eab308") : cs.green, fontWeight: 700 }}> · {pct}% dari nilai kontrak{under ? " — cek billing tertinggal" : ""}</span>}
+                            </div>
+                            {nilai > 0 && (
+                              <div style={{ marginTop: 4, height: 5, background: cs.border, borderRadius: 99, overflow: "hidden" }}>
+                                <div style={{ width: Math.min(100, pct) + "%", height: "100%", background: under ? (cs.yellow || "#eab308") : cs.green }} />
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                       <div><span style={{ color: cs.muted }}>Kunjungan: </span><b style={{ color: cs.text }}>{c.visits_per_year}x/tahun</b></div>
                       <div><span style={{ color: cs.muted }}>Layanan: </span><b style={{ color: cs.text }}>{(c.services_included || []).join(", ")}</b></div>
                     </div>
@@ -3318,7 +3580,10 @@ function WorkOrderTab({ sel, units, call, showNotif, showConfirm, isOwner, curre
     finally { setLoading(false); }
   }, [call, sel.id, showNotif]);
 
-  useEffect(() => { load(); }, [load]);
+  // Deps state-kunci saja — `load` memuat `call`/`showNotif` yang identitasnya
+  // berubah tiap render App → deps [load] = re-fetch spam (trap loadClients).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [sel?.id]);
 
   const saveWO = async (form) => {
     setBusy(true);
