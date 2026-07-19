@@ -2,6 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ⚡ Protokol Eksekusi (WAJIB — sebelum menulis kode apa pun)
+
+**Baca [docs/AGENT_PLAYBOOK.md](docs/AGENT_PLAYBOOK.md) section yang sesuai tipe tugasmu** sebelum
+edit pertama. Ringkasnya:
+
+1. **Verifikasi dulu, klaim belakangan** — grep/baca kode nyata sebelum menyatakan sesuatu ada/berperilaku tertentu. Dokumentasi & memory bisa basi.
+2. **Cari yang sudah ada sebelum menulis baru** — helper di `src/lib/`, query di `src/data/reads.js`/`writes.js`, shared backend di `api/_*.js`.
+3. **Pakai skill repo** kalau cocok: `new-migration`, `cron-toggle-check`, `role-access-check`, `extract-modal`, `verify`.
+4. **Tugas >1 file → tulis rencana 3-5 baris dulu** (file, urutan, risiko, cara verifikasi).
+5. **Cek Anti-Pattern Checklist** di playbook sebelum menganggap kode selesai.
+6. Selesai = terverifikasi end-to-end (build + flow nyata), bukan "kelihatannya benar".
+
 ## Commands
 
 ```bash
@@ -23,14 +35,14 @@ Optional integrations: `FONNTE_TOKEN` (WhatsApp via Fonnte), `ANTHROPIC_API_KEY`
 
 ## Architecture
 
-**Frontend:** React app with a monolithic root component in [src/App.jsx](src/App.jsx) (~13,000 lines). Navigation is handled by `activeMenu` state → `renderContent()` → lazy-loaded view components.
+**Frontend:** React app with a monolithic root component in [src/App.jsx](src/App.jsx) (~5,000 lines — sudah dipangkas dari 13k via ekstraksi view/modal). Navigation is handled by `activeMenu` state → `renderContent()` → lazy-loaded view components.
 
 Views are split into dedicated files under `src/views/`. Heavy views are lazy-loaded via `React.lazy()`.
 
 **Backend:** Vercel serverless functions in [api/](api/):
-- [`api/[route].js`](api/[route].js) — Unified router (WhatsApp send/receive, image upload, AI proxy, token exchange)
+- [`api/[route].js`](api/[route].js) — Unified router (~80 baris), route di-delegate ke modul [api/_handlers/](api/_handlers/) (auth-token, customer, foto, misc, monitor, portal, voucher, wa)
 - [`api/ara-chat.js`](api/ara-chat.js) — AI assistant proxy (Claude/OpenAI/Gemini/Groq with fallback)
-- [`api/cron-reminder.js`](api/cron-reminder.js) — Scheduled tasks: overdue invoice reminders, daily WA report to owner, stock alerts, WA chat cleanup, laporan stale alert
+- [`api/cron-reminder.js`](api/cron-reminder.js) — Dispatcher cron (~220 baris), task di modul [api/_tasks/](api/_tasks/) (reminders, ops, cleanup, wa-ai, _shared). Task baru = tambah di _tasks/, BUKAN cron entry vercel.json
 - [`api/_auth.js`](api/_auth.js) — Shared middleware: CORS, rate limiting, internal token validation
 
 **Database:** Supabase (PostgreSQL). Frontend connects via `@supabase/supabase-js` (anon key). Backend uses `SUPABASE_SERVICE_KEY`. No ORM — raw Supabase query builder throughout.
@@ -148,10 +160,13 @@ src/
     ToolBagView.jsx        # Tas Teknisi (Tool Bag) — checklist 24 alat/tas + history check WA
 
 api/
-  [route].js              # Unified API router
+  [route].js              # Unified API router (delegasi ke _handlers/)
+  _handlers/              # Modul route: auth-token, customer, foto, misc, monitor, portal, voucher, wa
+  cron-reminder.js        # Dispatcher cron (delegasi ke _tasks/; dipicu task=tick + GitHub Actions ping)
+  _tasks/                 # Modul cron task: reminders, ops, cleanup, wa-ai, _shared
   ara-chat.js             # AI proxy
-  cron-reminder.js        # Cron tasks (12 tasks, lihat vercel.json untuk jadwal)
   _auth.js                # Auth middleware
+  _*.js                   # Shared util backend (logger, r2-upload, ai-text, ai-vision, validate, dll)
 
 docs/                     # Dokumentasi: SOP_ADMIN_ROLE.md (role/access), SENTRY_*, IMPLEMENTATION_DETAILS, dll
 migrations/               # SQL migration files (run manually in Supabase SQL Editor)
@@ -191,7 +206,14 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
 119       # Applied — RLS role-tier tabel finansial (invoices*, payment*, quotations, order_bonuses, kasbon, price list)
 120       # Applied — DELETE guard server-side (orders/service_reports = Owner/Admin, customers = Owner)
 121       # Applied — exclusion constraint ts_no_overlap_active (anti dobel-book technician_schedule, btree_gist)
+122       # Applied — project_daily_reports RLS authenticated + website_content (CATATAN: nomor 122 dobel, 2 file)
+123       # Applied — website_content fix anon read
+124       # report_card_sent_columns (belum commit ke git — cek status Applied sebelum pakai kolomnya)
+125       # Applied — maintenance_log measurements
+126       # Applied — followup→order link (kolom order_id)
 ```
+
+> Migrasi baru: pakai skill `new-migration`; nomor = tertinggi + 1 (hati-hati nomor dobel seperti 122).
 
 **RLS server-side (117–120, applied 2026-07-03):** pembatasan role kini di-enforce di DB, bukan hanya UI. Tabel finansial (invoices, invoice_items/payments, payment_logs, quotations, order_bonuses, kasbon_requests, weekly_payroll, price_list, ac_price_list) hanya bisa diakses Owner/Admin/Finance; teknisi hanya baris job miliknya via `is_my_job(job_id)` / match nama. Perubahan `user_profiles.role` hanya Owner (trigger `trg_guard_user_profiles`). Rollback: `migrations/_rollback_pre117_policies.sql`.
 
