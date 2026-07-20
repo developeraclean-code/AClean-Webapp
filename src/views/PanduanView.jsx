@@ -237,6 +237,57 @@ function LaporanGuide() {
   );
 }
 
+function ToolBagGuide() {
+  return (
+    <div style={{ display: "grid", gap: 16 }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 10, padding: "10px 13px" }}>
+        <span style={{ fontSize: 18 }}>ℹ️</span>
+        <div style={{ fontSize: 12, color: cs.muted, lineHeight: 1.5 }}>Cek kelengkapan tas langsung di app — <b style={{ color: cs.text }}>tanpa perlu WA</b>. Hasil AI langsung tampil di layar.</div>
+      </div>
+
+      <div style={card}>
+        <div style={cardHead(cs.accent)}>
+          <span style={{ fontSize: 20 }}>🎒</span>
+          <div style={{ fontWeight: 800, fontSize: 14, color: cs.text }}>Cara Cek Tas Teknisi</div>
+        </div>
+        <div style={cardBody}>
+          <Bullet icon="1️⃣">Buka menu <b>Alat Saya</b> → cari card <b>"🎒 Cek Tas Teknisi"</b>.</Bullet>
+          <Bullet icon="2️⃣">Pilih tas kamu (<b>Tas 1 – Tas 10</b>) dari dropdown.</Bullet>
+          <Bullet icon="3️⃣">Pilih sesi: <b>🌅 Pagi</b> (sebelum berangkat) atau <b>🌇 Pulang</b> (selesai kerja).</Bullet>
+          <Bullet icon="4️⃣">Tekan <b>"📸 Foto Isi Tas"</b> → foto semua alat dalam 1 jepretan, pastikan terang &amp; jelas.</Bullet>
+          <div style={gold}>⏳ AI butuh ±15 detik menganalisa — tunggu sampai hasil muncul, jangan tutup halaman.</div>
+        </div>
+      </div>
+
+      <div style={card}>
+        <div style={cardHead(cs.green)}>
+          <span style={{ fontSize: 20 }}>📊</span>
+          <div style={{ fontWeight: 800, fontSize: 14, color: cs.text }}>Arti Hasil Cek</div>
+        </div>
+        <div style={cardBody}>
+          <div style={{ background: cs.green + "10", border: "1px solid " + cs.green + "33", borderRadius: 8, padding: 10 }}>
+            <div style={{ fontWeight: 800, fontSize: 12, color: cs.green }}>✅ OK</div>
+            <div style={{ fontSize: 11.5, color: cs.muted, marginTop: 2 }}>Semua alat wajib terdeteksi lengkap. Tidak perlu tindakan apa-apa.</div>
+          </div>
+          <div style={{ background: cs.yellow + "10", border: "1px solid " + cs.yellow + "33", borderRadius: 8, padding: 10 }}>
+            <div style={{ fontWeight: 800, fontSize: 12, color: cs.yellow }}>⚠️ WARNING</div>
+            <div style={{ fontSize: 11.5, color: cs.muted, marginTop: 2 }}>Ada alat non-wajib (🟡) tidak terdeteksi. Cek lagi tas, atau lapor kalau memang hilang.</div>
+          </div>
+          <div style={{ background: cs.red + "10", border: "1px solid " + cs.red + "33", borderRadius: 8, padding: 10 }}>
+            <div style={{ fontWeight: 800, fontSize: 12, color: cs.red }}>🚨 CRITICAL</div>
+            <div style={{ fontSize: 11.5, color: cs.muted, marginTop: 2 }}>Ada alat <b style={{ color: cs.text }}>WAJIB (🔴)</b> tidak terdeteksi — Owner otomatis dapat notifikasi WA. Segera cek/lengkapi tas.</div>
+          </div>
+          <div style={{ background: cs.muted + "10", border: "1px solid " + cs.muted + "33", borderRadius: 8, padding: 10 }}>
+            <div style={{ fontWeight: 800, fontSize: 12, color: cs.muted }}>❌ ERROR</div>
+            <div style={{ fontSize: 11.5, color: cs.muted, marginTop: 2 }}>Foto buram/gelap/terlalu jauh, AI tidak bisa membaca. Foto ulang dengan pencahayaan cukup.</div>
+          </div>
+          <div style={gold}>⭐ Alat yang tidak seharusnya ada di tas tertentu tidak akan dihitung "hilang" — sudah otomatis diabaikan sistem berdasarkan checklist tas itu.</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function PanduanView() {
   const [tab, setTab] = useState("laporan");
 
@@ -247,18 +298,22 @@ export default function PanduanView() {
         <div style={{ fontSize: 13, color: cs.muted, marginTop: 2 }}>Baca sambil kerja kalau bingung — semua sesuai alur asli di app.</div>
       </div>
 
-      <div style={{ display: "flex", gap: 6, background: cs.surface, borderRadius: 10, padding: 4, marginBottom: 16 }}>
+      <div style={{ display: "flex", gap: 6, background: cs.surface, borderRadius: 10, padding: 4, marginBottom: 16, flexWrap: "wrap" }}>
         <button onClick={() => setTab("material")}
-          style={{ flex: 1, padding: "9px 10px", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 12.5, background: tab === "material" ? cs.accent : "transparent", color: tab === "material" ? "#0a0f1e" : cs.muted }}>
+          style={{ flex: 1, minWidth: 100, padding: "9px 10px", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 12.5, background: tab === "material" ? cs.accent : "transparent", color: tab === "material" ? "#0a0f1e" : cs.muted }}>
           📥 Input Material
         </button>
         <button onClick={() => setTab("laporan")}
-          style={{ flex: 1, padding: "9px 10px", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 12.5, background: tab === "laporan" ? cs.accent : "transparent", color: tab === "laporan" ? "#0a0f1e" : cs.muted }}>
+          style={{ flex: 1, minWidth: 100, padding: "9px 10px", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 12.5, background: tab === "laporan" ? cs.accent : "transparent", color: tab === "laporan" ? "#0a0f1e" : cs.muted }}>
           📝 Cara Isi Laporan
+        </button>
+        <button onClick={() => setTab("toolbag")}
+          style={{ flex: 1, minWidth: 100, padding: "9px 10px", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 12.5, background: tab === "toolbag" ? cs.accent : "transparent", color: tab === "toolbag" ? "#0a0f1e" : cs.muted }}>
+          🎒 Tas Teknisi
         </button>
       </div>
 
-      {tab === "material" ? <MaterialGuide /> : <LaporanGuide />}
+      {tab === "material" ? <MaterialGuide /> : tab === "laporan" ? <LaporanGuide /> : <ToolBagGuide />}
     </div>
   );
 }

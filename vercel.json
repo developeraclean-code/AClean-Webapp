@@ -44,6 +44,10 @@
       "maxDuration": 60,
       "memory": 512
     },
+    "api/upload-toolbag.js": {
+      "maxDuration": 60,
+      "memory": 512
+    },
     "api/cron-reminder.js": {
       "maxDuration": 30
     }

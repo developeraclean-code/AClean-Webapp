@@ -4104,7 +4104,7 @@ export default function ACleanWebApp() {
       case "alatsaya": return (
         <Suspense fallback={<div style={{ padding: 20, textAlign: "center", color: cs.muted }}>Memuat…</div>}>
           <MyToolsView supabase={supabase} currentUser={currentUser} showNotif={showNotif}
-            teknisiData={teknisiData} TODAY={TODAY} />
+            teknisiData={teknisiData} TODAY={TODAY} _apiFetch={_apiFetch} _apiHeaders={_apiHeaders} />
         </Suspense>
       );
       case "panduan": return (
