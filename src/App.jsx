@@ -113,6 +113,7 @@ const MaintenanceView = lazy(() => import("./views/MaintenanceView.jsx"));
 const MaterialCheckoutView   = lazy(() => import("./views/MaterialCheckoutView.jsx"));
 const WebsiteContentView = lazy(() => import("./views/WebsiteContentView.jsx"));
 const PanduanView = lazy(() => import("./views/PanduanView.jsx"));
+const KodeErrorView = lazy(() => import("./views/KodeErrorView.jsx"));
 const MyToolsView            = lazy(() => import("./views/MyToolsView.jsx"));
 const ProjectLaporanModal    = lazy(() => import("./views/ProjectLaporanModal.jsx"));
 const OrderFormModal         = lazy(() => import("./views/OrderFormModal.jsx"));
@@ -2271,6 +2272,8 @@ export default function ACleanWebApp() {
   const canAccess = (menu) => {
     if (!currentUser) return false;
     const role = currentUser.role;
+    // Kode Error: referensi teknis statis, semua role boleh akses (Owner/Admin/Teknisi/Helper/Finance)
+    if (menu === "kodeerror") return true;
     // Owner: semua akses kecuali menu khusus teknisi (myreport, matcheckout, panduan)
     if (role === "Owner") return menu !== "myreport" && menu !== "matcheckout" && menu !== "alatsaya" && menu !== "panduan";
     // Admin: semua operasional KECUALI pricelist (Owner only per SOP), settings, myreport
@@ -3407,6 +3410,7 @@ export default function ACleanWebApp() {
     { id: "alatsaya", icon: "🧰", label: "Alat Saya" },
     { id: "komisi", icon: "💰", label: "Komisi Saya" },
     { id: "panduan", icon: "📖", label: "Panduan" },
+    { id: "kodeerror", icon: "🚨", label: "Kode Error" },
   ];
   const menuItems = currentUser ? ALL_MENU.filter(m => canAccess(m.id)) : ALL_MENU;
 
@@ -4110,6 +4114,11 @@ export default function ACleanWebApp() {
       case "panduan": return (
         <Suspense fallback={<div style={{ padding: 20, textAlign: "center", color: cs.muted }}>Memuat…</div>}>
           <PanduanView />
+        </Suspense>
+      );
+      case "kodeerror": return (
+        <Suspense fallback={<div style={{ padding: 20, textAlign: "center", color: cs.muted }}>Memuat…</div>}>
+          <KodeErrorView />
         </Suspense>
       );
       case "biaya": return renderExpenses();
