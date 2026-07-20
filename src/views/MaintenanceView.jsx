@@ -306,56 +306,8 @@ export default function MaintenanceView({
         </div>
         {loading ? <div style={{ color: cs.muted }}>Memuat…</div> :
           clients.length === 0 ? <div style={{ color: cs.muted }}>Belum ada perusahaan. Klik "+ Tambah Perusahaan".</div> :
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(290px,1fr))", gap: 12 }}>
-              {/* ── T3: cockpit lintas-klien — total masalah sekali pandang ── */}
-              {(() => {
-                const tot = Object.values(overview).reduce((a, o) => ({
-                  overdue: a.overdue + (o.overdue || 0), fu: a.fu + (o.followups || 0),
-                  tun: a.tun + (o.tunggakan || 0), tunN: a.tunN + (o.tunggakan_n || 0),
-                }), { overdue: 0, fu: 0, tun: 0, tunN: 0 });
-                if (!tot.overdue && !tot.fu && !tot.tunN) return null;
-                return (
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-                    {tot.overdue > 0 && <span style={{ background: cs.red + "18", border: "1px solid " + cs.red + "44", color: cs.red, padding: "6px 12px", borderRadius: 9, fontSize: 12, fontWeight: 800 }}>🔴 {tot.overdue} unit PM terlewat</span>}
-                    {tot.fu > 0 && <span style={{ background: (cs.yellow || "#eab308") + "18", border: "1px solid " + (cs.yellow || "#eab308") + "44", color: cs.yellow || "#eab308", padding: "6px 12px", borderRadius: 9, fontSize: 12, fontWeight: 800 }}>🔧 {tot.fu} temuan belum tuntas</span>}
-                    {tot.tunN > 0 && <span style={{ background: cs.accent + "18", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "6px 12px", borderRadius: 9, fontSize: 12, fontWeight: 800 }}>💰 {fmtRp(tot.tun)} tunggakan ({tot.tunN} inv)</span>}
-                  </div>
-                );
-              })()}
-              {clients.map(c => {
-                const contractDays = daysUntil(c.contract_end_date);
-                const contractWarn = contractDays !== null && contractDays <= 30;
-                const ov = overview[c.id];
-                return (
-                  <div key={c.id} style={{ ...card, cursor: "pointer" }}>
-                    <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-                      <div onClick={() => openClient(c)} style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 700, color: cs.text, fontSize: 15 }}>{c.name}</div>
-                        <div style={{ color: cs.muted, fontSize: 12, marginTop: 4 }}>
-                          {c.pic_name ? `PIC: ${c.pic_name}` : "PIC belum diisi"}{c.pic_phone ? ` · ${c.pic_phone}` : ""}
-                        </div>
-                        {c.address && <div style={{ color: cs.muted, fontSize: 11, marginTop: 2 }}>{c.address}</div>}
-                        <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-                          <span style={c.contract_status === "active" ? pillGreen : pillGray}>
-                            {c.contract_status === "active" ? "● Aktif" : "Nonaktif"}
-                          </span>
-                          <span style={{ ...pillGray, fontSize: 10 }}>{c.token_active ? "🔓 Portal aktif" : "🔒 Portal off"}</span>
-                          {c.contract_value && <span style={{ ...pillBlue, fontSize: 10 }}>{fmtRp(c.contract_value)}/thn</span>}
-                          {contractWarn && <span style={{ background: cs.yellow + "22", color: cs.yellow, padding: "2px 7px", borderRadius: 999, fontSize: 10, fontWeight: 700 }}>⚠️ Kontrak {contractDays <= 0 ? "EXPIRED" : contractDays + "h lagi"}</span>}
-                          {ov && ov.overdue > 0 && <span style={{ background: cs.red + "22", color: cs.red, padding: "2px 7px", borderRadius: 999, fontSize: 10, fontWeight: 700 }}>🔴 {ov.overdue} PM lewat</span>}
-                          {ov && ov.followups > 0 && <span style={{ background: (cs.yellow || "#eab308") + "22", color: cs.yellow || "#eab308", padding: "2px 7px", borderRadius: 999, fontSize: 10, fontWeight: 700 }}>🔧 {ov.followups} temuan</span>}
-                          {ov && ov.tunggakan_n > 0 && <span style={{ background: cs.accent + "22", color: cs.accent, padding: "2px 7px", borderRadius: 999, fontSize: 10, fontWeight: 700 }}>💰 {fmtRp(ov.tunggakan)}</span>}
-                        </div>
-                      </div>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0 }}>
-                        <button onClick={e => { e.stopPropagation(); setClientModal(c); }} style={miniBtn} title="Edit perusahaan">✏️</button>
-                        {isOwner && <button onClick={e => { e.stopPropagation(); deleteClient(c); }} style={{ ...miniBtn, color: cs.red }} title="Hapus perusahaan">🗑</button>}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>}
+            <ClientListGrouped clients={clients} overview={overview} openClient={openClient}
+              setClientModal={setClientModal} deleteClient={deleteClient} isOwner={isOwner} />}
         {clientModal !== null && (
           <ClientFormModal client={clientModal} onClose={() => setClientModal(null)} onSave={saveClient} busy={busy} />
         )}
@@ -425,6 +377,125 @@ export default function MaintenanceView({
           </>
         );
       })()}
+    </div>
+  );
+}
+
+// ─────────── DAFTAR KLIEN — dikelompokkan per status, kartu konsisten ───────────
+// Redesign 20 Jul 2026: sebelumnya semua badge (kontrak/portal/nilai/PM-lewat/
+// temuan/tunggakan) numpuk di satu baris wrap per kartu → tinggi kartu beda-beda
+// & warna saling tumpuk, terlihat berantakan. Sekarang: info statis jadi teks
+// polos satu baris, badge warna HANYA untuk masalah nyata (dipisah garis), dan
+// klien dikelompokkan "Perlu Tindakan" (ada masalah, diurutkan makin genting)
+// vs "Kondisi Baik" (alfabetis) — jadi Owner langsung tahu mana yang harus dicek.
+function clientEllipsis(extra) {
+  return { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", ...extra };
+}
+
+function IssueChip({ icon, text, color }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, background: color + "18", border: "1px solid " + color + "44", color, padding: "3px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>
+      {icon} {text}
+    </span>
+  );
+}
+
+function ClientCard({ c, ov, contractDays, contractWarn, hasIssue, openClient, setClientModal, deleteClient, isOwner }) {
+  return (
+    <div style={{ ...card, padding: 14, cursor: "pointer" }} onClick={() => openClient(c)}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 700, color: cs.text, fontSize: 15, ...clientEllipsis() }}>🏢 {c.name}</div>
+          <div style={{ color: cs.muted, fontSize: 12, marginTop: 3, ...clientEllipsis() }}>
+            {c.pic_name ? `PIC: ${c.pic_name}` : "PIC belum diisi"}{c.pic_phone ? ` · ${c.pic_phone}` : ""}
+          </div>
+          {c.address && <div style={{ color: cs.muted, fontSize: 11, marginTop: 2, ...clientEllipsis() }}>📍 {c.address}</div>}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0 }}>
+          <button onClick={e => { e.stopPropagation(); setClientModal(c); }} style={miniBtn} title="Edit perusahaan">✏️</button>
+          {isOwner && <button onClick={e => { e.stopPropagation(); deleteClient(c); }} style={{ ...miniBtn, color: cs.red }} title="Hapus perusahaan">🗑</button>}
+        </div>
+      </div>
+
+      {/* Info statis — teks polos, bukan pill berwarna, biar tak bersaing dgn badge masalah */}
+      <div style={{ color: cs.muted, fontSize: 11, marginTop: 9, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ color: c.contract_status === "active" ? cs.green : cs.muted, fontWeight: 600 }}>
+          {c.contract_status === "active" ? "● Aktif" : "○ Nonaktif"}
+        </span>
+        <span>{c.token_active ? "🔓 Portal aktif" : "🔒 Portal off"}</span>
+        {c.contract_value && <span>{fmtRp(c.contract_value)}/thn</span>}
+      </div>
+
+      {/* Badge masalah — HANYA muncul kalau ada, dipisah garis dari info statis */}
+      {hasIssue && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 9, paddingTop: 9, borderTop: "1px solid " + cs.border }}>
+          {ov?.overdue > 0 && <IssueChip icon="🔴" text={`${ov.overdue} PM lewat`} color={cs.red} />}
+          {ov?.followups > 0 && <IssueChip icon="🔧" text={`${ov.followups} temuan`} color={cs.yellow || "#eab308"} />}
+          {ov?.tunggakan_n > 0 && <IssueChip icon="💰" text={fmtRp(ov.tunggakan)} color={cs.accent} />}
+          {contractWarn && <IssueChip icon="⚠️" text={contractDays <= 0 ? "Kontrak expired" : `Kontrak ${contractDays}h lagi`} color={cs.yellow || "#eab308"} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ClientListGrouped({ clients, overview, openClient, setClientModal, deleteClient, isOwner }) {
+  const rows = useMemo(() => clients.map(c => {
+    const ov = overview[c.id];
+    const contractDays = daysUntil(c.contract_end_date);
+    const contractWarn = contractDays !== null && contractDays <= 30;
+    const overdue = ov?.overdue || 0, followups = ov?.followups || 0, tunggakanN = ov?.tunggakan_n || 0;
+    // Skor urutan urgensi — bukan nilai bisnis, cuma penentu tampil paling atas.
+    const score = overdue * 3 + followups * 2 + tunggakanN * 2 + (contractWarn ? 1 : 0);
+    return { c, ov, contractDays, contractWarn, hasIssue: score > 0, score };
+  }), [clients, overview]);
+
+  const perluTindakan = rows.filter(r => r.hasIssue).sort((a, b) => b.score - a.score);
+  const kondisiBaik = rows.filter(r => !r.hasIssue).sort((a, b) => a.c.name.localeCompare(b.c.name));
+
+  const totOverdue = perluTindakan.reduce((s, r) => s + (r.ov?.overdue || 0), 0);
+  const totFu = perluTindakan.reduce((s, r) => s + (r.ov?.followups || 0), 0);
+  const totTun = perluTindakan.reduce((s, r) => s + (r.ov?.tunggakan || 0), 0);
+  const totTunN = perluTindakan.reduce((s, r) => s + (r.ov?.tunggakan_n || 0), 0);
+
+  const grid = { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(290px,1fr))", gap: 12 };
+
+  return (
+    <div>
+      {/* ── Cockpit lintas-klien — total masalah sekali pandang ── */}
+      {(totOverdue > 0 || totFu > 0 || totTunN > 0) && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 18 }}>
+          {totOverdue > 0 && <IssueChip icon="🔴" text={`${totOverdue} unit PM terlewat`} color={cs.red} />}
+          {totFu > 0 && <IssueChip icon="🔧" text={`${totFu} temuan belum tuntas`} color={cs.yellow || "#eab308"} />}
+          {totTunN > 0 && <IssueChip icon="💰" text={`${fmtRp(totTun)} tunggakan (${totTunN} inv)`} color={cs.accent} />}
+        </div>
+      )}
+
+      {perluTindakan.length > 0 && (
+        <div style={{ marginBottom: 22 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: cs.red, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
+            🔴 Perlu Tindakan <span style={{ color: cs.muted, fontWeight: 400 }}>({perluTindakan.length})</span>
+          </div>
+          <div style={grid}>
+            {perluTindakan.map(r => (
+              <ClientCard key={r.c.id} {...r} openClient={openClient} setClientModal={setClientModal} deleteClient={deleteClient} isOwner={isOwner} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {kondisiBaik.length > 0 && (
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: cs.green, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
+            🟢 Kondisi Baik <span style={{ color: cs.muted, fontWeight: 400 }}>({kondisiBaik.length})</span>
+          </div>
+          <div style={grid}>
+            {kondisiBaik.map(r => (
+              <ClientCard key={r.c.id} {...r} openClient={openClient} setClientModal={setClientModal} deleteClient={deleteClient} isOwner={isOwner} />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
