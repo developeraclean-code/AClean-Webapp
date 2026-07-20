@@ -283,13 +283,15 @@ export const fetchDaysWorkedFromOrders = (supabase, userName, periodStart, perio
 // Auto-hitung hari masuk dari kotak Team (daily_team_slots) untuk satu periode.
 // Hanya slot CONFIRMED yang dihitung — begitu terassign di kotak & di-confirm,
 // orang dianggap masuk walau job-nya kosong (order belum ada / masih bisa berubah).
+// Kapasitas tim 8 orang (migrasi 127, naik dari 4) — member5-8 WAJIB ikut di-cek,
+// kalau tidak 4 anggota tambahan per tim tak dapat kredit hari-masuk payroll.
 export const fetchAssignedDaysFromSlots = (supabase, userName, periodStart, periodEnd) =>
   supabase.from("daily_team_slots")
-    .select("date,member1,member2,member3,member4")
+    .select("date,member1,member2,member3,member4,member5,member6,member7,member8")
     .eq("confirmed", true)
     .gte("date", periodStart)
     .lte("date", periodEnd)
-    .or(`member1.eq.${userName},member2.eq.${userName},member3.eq.${userName},member4.eq.${userName}`);
+    .or(`member1.eq.${userName},member2.eq.${userName},member3.eq.${userName},member4.eq.${userName},member5.eq.${userName},member6.eq.${userName},member7.eq.${userName},member8.eq.${userName}`);
 
 // Kasbon periode — sum dari expenses kasbon per orang
 // PENTING: ilike untuk match case-insensitive (mitigasi data lama "putra" / "Putra" / dll)

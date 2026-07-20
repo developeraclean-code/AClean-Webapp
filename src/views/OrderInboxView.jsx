@@ -115,12 +115,10 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, w
   function getSlotMembers(slotName) {
     const s = (dailySlots || []).find(d => d.date === currentDate && d.slot === slotName);
     if (!s) return [];
-    return [
-      s.member1 ? { name: s.member1, role: s.member1_role || "teknisi" } : null,
-      s.member2 ? { name: s.member2, role: s.member2_role || "helper" } : null,
-      s.member3 ? { name: s.member3, role: s.member3_role || "helper" } : null,
-      s.member4 ? { name: s.member4, role: s.member4_role || "helper" } : null,
-    ].filter(Boolean);
+    return Array.from({ length: MEMBER_COUNT }, (_, i) => {
+      const n = i + 1;
+      return s[`member${n}`] ? { name: s[`member${n}`], role: s[`member${n}_role`] || (n <= 4 ? "teknisi" : "helper") } : null;
+    }).filter(Boolean);
   }
 
   return (
@@ -406,14 +404,16 @@ const DAY_NAMES  = ["Min","Sen","Sel","Rab","Kam","Jum","Sab"];
 // ─────────────────────────────────────────────
 function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknisi, teknisiData, availability, setAvailabilityStatus, getSlotData, slotMembers, slotMemberRoles, saveSlot, confirmSlot, slotLoading, dailySlots, ordersData, teamPresets, onBulkDispatch, bulkDispatching }) {
 
-  // Berapa row yang ditampilkan per slot (2 default, bisa expand ke 4)
-  const [expandedSlots, setExpandedSlots] = useState({});
+  // Berapa row yang ditampilkan per slot (2 default, expand progresif s/d 8 —
+  // migrasi 127: kapasitas naik dari 4 ke 8 orang/tim, 4 teknisi + 4 helper).
+  const [expandedSlots, setExpandedSlots] = useState({}); // slotName → jumlah row hasil klik "+Tambah"
   function visibleRows(slotName, slot) {
-    if (expandedSlots[slotName]) return 4;
-    // Tampilkan 3/4 kalau sudah ada isinya
-    if (slot.member3 || slot.member4) return 4;
-    if (slot.member2) return 3;  // kalau ada helper ke-2, tampilkan row 3 sekalian
-    return 2;  // default: teknisi + helper
+    let lastFilled = 0;
+    for (let i = 1; i <= MEMBER_COUNT; i++) { if (slot[`member${i}`]) lastFilled = i; }
+    // Tampilkan sampai 1 baris kosong setelah anggota terakhir yang terisi
+    // (siap diisi lagi), minimal 2, maksimal 8; tombol "+Tambah" menambah 1 baris.
+    const base = Math.min(MEMBER_COUNT, Math.max(2, lastFilled + 1));
+    return Math.min(MEMBER_COUNT, Math.max(base, expandedSlots[slotName] || 0));
   }
 
   function isAvail(name, date) {
@@ -432,9 +432,9 @@ function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknis
   };
   const [availEditor, setAvailEditor] = useState(null);
 
-  const memberFields = ["member1","member2","member3","member4"];
-  const roleFields   = ["member1_role","member2_role","member3_role","member4_role"];
-  const defaultRoles = ["teknisi","helper","helper","helper"];
+  const memberFields = Array.from({ length: MEMBER_COUNT }, (_, i) => `member${i + 1}`);
+  const roleFields   = Array.from({ length: MEMBER_COUNT }, (_, i) => `member${i + 1}_role`);
+  const defaultRoles = Array.from({ length: MEMBER_COUNT }, (_, i) => i < 4 ? "teknisi" : "helper");
 
   // Hitung order count per slot per hari
   function orderCount(date, slotName) {
@@ -578,20 +578,27 @@ function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknis
           const isConfirmed = slot.confirmed;
           const hadirList = activeTeknisi.filter(t => isAvail(t.name, slotDate));
 
+          const isStandby = !!slot.standby;
           return (
             <div key={slotName} style={{
-              background: cs.card, border: "2px solid " + (isConfirmed ? cs.green : members.length > 0 ? cs.accent + "44" : cs.border),
+              background: cs.card, border: "2px solid " + (isConfirmed ? cs.green : isStandby ? "#3b82f6" : members.length > 0 ? cs.accent + "44" : cs.border),
               borderRadius: 10, padding: 12,
             }}>
               {/* Header slot */}
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, gap: 6 }}>
                 <div style={{ fontWeight: 800, fontSize: 13, color: isConfirmed ? cs.green : cs.text }}>{slotName}</div>
-                <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
                   {ordCount > 0 && (
                     <span style={{ background: cs.accent + "22", color: cs.accent, borderRadius: 5, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>
                       {ordCount} job
                     </span>
                   )}
+                  {/* Standby: tandai tim ini siaga/cadangan hari ini — independen dari Confirm */}
+                  <button onClick={() => saveSlot(slotDate, slotName, { ...slot, standby: !isStandby })} disabled={slotLoading}
+                    title={isStandby ? "Klik untuk lepas status Standby" : "Tandai tim ini Standby (siaga) hari ini"}
+                    style={{ background: isStandby ? "#3b82f622" : "transparent", border: "1px solid " + (isStandby ? "#3b82f6" : cs.border), color: isStandby ? "#3b82f6" : cs.muted, borderRadius: 6, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: slotLoading ? "not-allowed" : "pointer" }}>
+                    🔵 Standby
+                  </button>
                   {isConfirmed
                     ? <span style={{ color: cs.green, fontSize: 10, fontWeight: 700 }}>✓ Confirmed</span>
                     : members.length > 0 && (
@@ -604,7 +611,7 @@ function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknis
                 </div>
               </div>
 
-              {/* Member rows — default 2, expand ke 4 */}
+              {/* Member rows — default 2, expand progresif s/d 8 (4 teknisi + 4 helper) */}
               {memberFields.slice(0, visibleRows(slotName, slot)).map((mf, idx) => {
                 const rolef = roleFields[idx];
                 const val = slot[mf] || "";
@@ -654,10 +661,10 @@ function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknis
                   </div>
                 );
               })}
-              {/* Tombol + Tambah untuk row ke-3/4 */}
-              {visibleRows(slotName, slot) < 4 && !isConfirmed && (
+              {/* Tombol + Tambah — nambah 1 baris per klik, s/d maks 8 orang/tim */}
+              {visibleRows(slotName, slot) < MEMBER_COUNT && !isConfirmed && (
                 <button
-                  onClick={() => setExpandedSlots(p => ({ ...p, [slotName]: true }))}
+                  onClick={() => setExpandedSlots(p => ({ ...p, [slotName]: Math.min(MEMBER_COUNT, visibleRows(slotName, slot) + 1) }))}
                   style={{ background: "transparent", border: "1px dashed " + cs.border, color: cs.muted, borderRadius: 5, padding: "2px 8px", fontSize: 10, cursor: "pointer", width: "100%", marginTop: 2 }}>
                   + Tambah anggota
                 </button>
@@ -695,7 +702,7 @@ function SafetyNetPanel({ slotDate, dailySlots, availability, ordersData, teknis
     const confirmedSlots = dailySlots.filter(s => s.date === slotDate && s.confirmed);
     const result = [];
     for (const slot of confirmedSlots) {
-      const members = [slot.member1, slot.member2, slot.member3, slot.member4].filter(Boolean);
+      const members = Array.from({ length: MEMBER_COUNT }, (_, i) => slot[`member${i + 1}`]).filter(Boolean);
       const absentMembers = members.filter(name => {
         const rec = availability.find(a => a.teknisi === name && a.date === slotDate);
         return rec && rec.is_available === false;
@@ -744,7 +751,7 @@ function SafetyNetPanel({ slotDate, dailySlots, availability, ordersData, teknis
 
   const availableTeknisi = [...new Set(
     dailySlots.filter(s => s.date === slotDate)
-      .flatMap(s => [s.member1, s.member2, s.member3, s.member4].filter(Boolean))
+      .flatMap(s => Array.from({ length: MEMBER_COUNT }, (_, i) => s[`member${i + 1}`]).filter(Boolean))
   )].filter(name => {
     const rec = availability.find(a => a.teknisi === name && a.date === slotDate);
     return !rec || rec.is_available !== false;
@@ -837,7 +844,19 @@ const TEAM_SLOTS_BASE = [
   "Maintenance 01", "Maintenance 02",
 ];
 const MEMBER_ROLES = ["teknisi", "helper"];
-const EMPTY_SLOT = { member1: "", member1_role: "teknisi", member2: "", member2_role: "helper", member3: "", member3_role: "helper", member4: "", member4_role: "helper", confirmed: false };
+// Kapasitas tim: 8 orang (4 teknisi + 4 helper) — migrasi 127, naik dari 4 orang.
+const MEMBER_COUNT = 8;
+const EMPTY_SLOT = {
+  member1: "", member1_role: "teknisi",
+  member2: "", member2_role: "teknisi",
+  member3: "", member3_role: "teknisi",
+  member4: "", member4_role: "teknisi",
+  member5: "", member5_role: "helper",
+  member6: "", member6_role: "helper",
+  member7: "", member7_role: "helper",
+  member8: "", member8_role: "helper",
+  confirmed: false, standby: false,
+};
 
 // Panel assign tim ke project per hari (hanya muncul kalau ada project BERJALAN
 // yang tanggal terpilih masuk rentang mulai→target). Assign → buat order type=Project
@@ -1027,12 +1046,18 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     return () => { alive = false; };
   }, [supabase]);
 
-  // Slot tim aktif: base 10 + tim ekstra dari preset, urut by nomor
+  // Slot tim aktif: base 10 + tim ekstra dari preset, urut by nomor.
+  // Team NN SELALU didahulukan, Maintenance NN (dan preset lain) di akhir —
+  // sebelumnya sort murni by digit ("Maintenance 01" vs "Team 01" sama-sama
+  // angka 1) bikin Maintenance menyelip di antara Team 01/02 (temuan 20 Jul 2026).
   const TEAM_SLOTS = useMemo(() => {
     const all = Array.from(new Set([...TEAM_SLOTS_BASE, ...Object.keys(teamPresets)]));
-    return all.sort((a, b) =>
-      (parseInt(a.match(/\d+/)?.[0] || "0", 10)) - (parseInt(b.match(/\d+/)?.[0] || "0", 10))
-    );
+    const rank = (name) => name.startsWith("Team ") ? 0 : 1;
+    return all.sort((a, b) => {
+      const r = rank(a) - rank(b);
+      if (r !== 0) return r;
+      return (parseInt(a.match(/\d+/)?.[0] || "0", 10)) - (parseInt(b.match(/\d+/)?.[0] || "0", 10));
+    });
   }, [teamPresets]);
 
   // Load data saat mount
@@ -1080,19 +1105,37 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
 
   // Semua anggota dalam sebuah slot (nama saja, filter empty)
   function slotMembers(slot) {
-    return [slot.member1, slot.member2, slot.member3, slot.member4].filter(Boolean);
+    return Array.from({ length: MEMBER_COUNT }, (_, i) => slot[`member${i + 1}`]).filter(Boolean);
   }
 
   function slotMemberRoles(slot) {
-    return [
-      slot.member1 ? { name: slot.member1, role: slot.member1_role } : null,
-      slot.member2 ? { name: slot.member2, role: slot.member2_role } : null,
-      slot.member3 ? { name: slot.member3, role: slot.member3_role } : null,
-      slot.member4 ? { name: slot.member4, role: slot.member4_role } : null,
-    ].filter(Boolean);
+    return Array.from({ length: MEMBER_COUNT }, (_, i) => {
+      const n = i + 1;
+      return slot[`member${n}`] ? { name: slot[`member${n}`], role: slot[`member${n}_role`] } : null;
+    }).filter(Boolean);
   }
 
   // Upsert slot ke DB + auto-propagate ke orders dgn team_slot ini
+  // Propagasi ke kolom orders: hingga 3 teknisi + 3 helper (TFIELDS/HFIELDS —
+  // kapasitas kolom orders yang sudah ada & dipakai luas di conflict-check/bonus/
+  // WA dispatch). Slot tim boleh sampai 8 orang (migrasi 127); kalau lebih dari
+  // 3 teknisi atau 3 helper, sisanya TETAP tercatat di roster tim (kehadiran/
+  // payroll via daily_team_slots) tapi tidak ikut ditandai di baris order.
+  function buildTeamPropagatePayload(members) {
+    let teknisiMembers = members.filter(m => (m.role || "").toLowerCase() === "teknisi");
+    let helperMembers = members.filter(m => (m.role || "").toLowerCase() !== "teknisi");
+    if (teknisiMembers.length === 0 && helperMembers.length > 0) {
+      // Fallback: order butuh minimal 1 penanggung jawab — kalau tak ada yg
+      // berperan teknisi, anggota pertama tetap dianggap teknisi utama.
+      teknisiMembers = [helperMembers[0]];
+      helperMembers = helperMembers.slice(1);
+    }
+    const payload = { last_changed_by: auditUserName() };
+    TFIELDS.forEach((f, i) => { payload[f] = teknisiMembers[i]?.name || null; });
+    HFIELDS.forEach((f, i) => { payload[f] = helperMembers[i]?.name || null; });
+    return payload;
+  }
+
   async function saveSlot(date, slotName, fields) {
     setSlotLoading(true);
     const payload = { date, slot: slotName, ...fields, updated_at: new Date().toISOString() };
@@ -1109,15 +1152,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     // (jaring untuk order yang dibuat sebelum slot diisi atau saat backfill member)
     const members = slotMemberRoles(data);
     if (members.length > 0) {
-      const utama = members.find(m => (m.role || "").toLowerCase() === "teknisi") || members[0];
-      const helpers = members.filter(m => m !== utama);
-      const propagatePayload = {
-        teknisi: utama.name,
-        helper:  helpers[0]?.name || null,
-        helper2: helpers[1]?.name || null,
-        helper3: helpers[2]?.name || null,
-        last_changed_by: auditUserName(),
-      };
+      const propagatePayload = buildTeamPropagatePayload(members);
       await supabase.from("orders")
         .update(propagatePayload)
         .eq("date", date).eq("team_slot", slotName)
@@ -1138,17 +1173,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     const members = slotMemberRoles(slot);
     if (members.length === 0) return showNotif("Isi minimal 1 anggota dulu", "error");
 
-    // Tentukan teknisi utama (member pertama bertipe teknisi, fallback member1)
-    const utama = members.find(m => m.role === "teknisi") || members[0];
-    const helpers = members.filter(m => m !== utama);
-
-    const updatePayload = {
-      teknisi: utama.name,
-      helper:  helpers[0]?.name || null,
-      helper2: helpers[1]?.name || null,
-      helper3: helpers[2]?.name || null,
-      last_changed_by: auditUserName(),
-    };
+    const updatePayload = buildTeamPropagatePayload(members);
 
     // Update semua orders hari itu dengan team_slot ini
     const { error: ordErr } = await supabase.from("orders")
@@ -1270,7 +1295,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     const primaryTeknisi = patch.teknisi !== undefined ? patch.teknisi : existing?.teknisi;
     const autoSlot = primaryTeknisi
       ? (dailySlots.find(s => s.date === date &&
-          [s.member1, s.member2, s.member3, s.member4].includes(primaryTeknisi))?.slot || null)
+          Array.from({ length: MEMBER_COUNT }, (_, i) => s[`member${i + 1}`]).includes(primaryTeknisi))?.slot || null)
       : null;
 
     if (existing) {
