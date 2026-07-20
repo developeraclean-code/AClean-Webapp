@@ -112,6 +112,7 @@ const ProjectApp = lazy(() => import("./project/ProjectApp.jsx"));
 const MaintenanceView = lazy(() => import("./views/MaintenanceView.jsx"));
 const MaterialCheckoutView   = lazy(() => import("./views/MaterialCheckoutView.jsx"));
 const WebsiteContentView = lazy(() => import("./views/WebsiteContentView.jsx"));
+const PanduanView = lazy(() => import("./views/PanduanView.jsx"));
 const MyToolsView            = lazy(() => import("./views/MyToolsView.jsx"));
 const ProjectLaporanModal    = lazy(() => import("./views/ProjectLaporanModal.jsx"));
 const OrderFormModal         = lazy(() => import("./views/OrderFormModal.jsx"));
@@ -2270,19 +2271,20 @@ export default function ACleanWebApp() {
   const canAccess = (menu) => {
     if (!currentUser) return false;
     const role = currentUser.role;
-    // Owner: semua akses kecuali menu khusus teknisi (myreport, matcheckout)
-    if (role === "Owner") return menu !== "myreport" && menu !== "matcheckout" && menu !== "alatsaya";
+    // Owner: semua akses kecuali menu khusus teknisi (myreport, matcheckout, panduan)
+    if (role === "Owner") return menu !== "myreport" && menu !== "matcheckout" && menu !== "alatsaya" && menu !== "panduan";
     // Admin: semua operasional KECUALI pricelist (Owner only per SOP), settings, myreport
     // docs/SOP_ADMIN_ROLE.md: Admin = input & edit only, no delete, no price list, no settings
     // Statistik (reports), Deleted Audit (deletedaudit) → Owner only
     if (role === "Admin") {
-      const adminBlocked = ["settings", "myreport", "matcheckout", "alatsaya", "monitoring", "wa_groups", "finance", "pricelist", "reports", "deletedaudit", "website"];
+      const adminBlocked = ["settings", "myreport", "matcheckout", "alatsaya", "panduan", "monitoring", "wa_groups", "finance", "pricelist", "reports", "deletedaudit", "website"];
       return !adminBlocked.includes(menu);
     }
     // Teknisi & Helper: dashboard, jadwal, laporan sendiri, material harian, + Komisi Saya (dilindungi PIN
     // per-teknisi bila Owner set commission_pin — layer-2 anti "intip" data keuangan sensitif)
+    // + Panduan (tutorial in-app statis, khusus Teknisi/Helper — lihat PanduanView.jsx)
     if (role === "Teknisi" || role === "Helper")
-      return menu === "dashboard" || menu === "schedule" || menu === "myreport" || menu === "matcheckout" || menu === "alatsaya" || menu === "komisi";
+      return menu === "dashboard" || menu === "schedule" || menu === "myreport" || menu === "matcheckout" || menu === "alatsaya" || menu === "komisi" || menu === "panduan";
     // Finance: akses finance hub, invoice, biaya, statistik
     if (role === "Finance")
       return ["finance", "invoice", "biaya", "reports"].includes(menu);
@@ -3404,6 +3406,7 @@ export default function ACleanWebApp() {
     { id: "matcheckout", icon: "📥", label: "Material Harian" },
     { id: "alatsaya", icon: "🧰", label: "Alat Saya" },
     { id: "komisi", icon: "💰", label: "Komisi Saya" },
+    { id: "panduan", icon: "📖", label: "Panduan" },
   ];
   const menuItems = currentUser ? ALL_MENU.filter(m => canAccess(m.id)) : ALL_MENU;
 
@@ -4102,6 +4105,11 @@ export default function ACleanWebApp() {
         <Suspense fallback={<div style={{ padding: 20, textAlign: "center", color: cs.muted }}>Memuat…</div>}>
           <MyToolsView supabase={supabase} currentUser={currentUser} showNotif={showNotif}
             teknisiData={teknisiData} TODAY={TODAY} />
+        </Suspense>
+      );
+      case "panduan": return (
+        <Suspense fallback={<div style={{ padding: 20, textAlign: "center", color: cs.muted }}>Memuat…</div>}>
+          <PanduanView />
         </Suspense>
       );
       case "biaya": return renderExpenses();
