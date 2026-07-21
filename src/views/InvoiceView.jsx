@@ -1740,6 +1740,7 @@ return (
             {inv.status === "UNPAID" && (
               <>
                 <button onClick={() => { setSelectedInvoice(inv); setModalPDF(true); }} style={{ background: "#25D36622", border: "1px solid #25D36644", color: "#25D366", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>📤 Kirim ke Customer</button>
+                {currentUser?.role === "Owner" && (
                 <button onClick={async () => {
                   if (await showConfirm({
                     icon: "💰", title: "Tandai Lunas?",
@@ -1747,6 +1748,7 @@ return (
                     confirmText: "Ya, Lunas"
                   })) { const pp = invoicesData.find(i => i.id === inv.id); markPaid(pp || inv); }
                 }} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>💰 Tandai Lunas</button>
+                )}
                 <button onClick={() => payPanelInvId === inv.id ? setPayPanelInvId(null) : openPayPanel(inv)}
                   style={{ background: "#06b6d422", border: "1px solid #06b6d444", color: "#06b6d4", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
                   {payPanelInvId === inv.id ? "✕ Tutup" : "💳 Catat Pembayaran"}
@@ -1788,6 +1790,7 @@ return (
             {inv.status === "OVERDUE" && (
               <>
                 <button onClick={() => { setSelectedInvoice(inv); setModalPDF(true); }} style={{ background: "#25D36622", border: "1px solid #25D36644", color: "#25D366", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>📤 Kirim ke Customer</button>
+                {currentUser?.role === "Owner" && (
                 <button onClick={async () => {
                   if (await showConfirm({
                     icon: "💰", title: "Tandai Lunas?",
@@ -1795,6 +1798,7 @@ return (
                     confirmText: "Ya, Lunas"
                   })) { const pp = invoicesData.find(i => i.id === inv.id); markPaid(pp || inv); }
                 }} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>💰 Tandai Lunas</button>
+                )}
                 <button onClick={() => payPanelInvId === inv.id ? setPayPanelInvId(null) : openPayPanel(inv)}
                   style={{ background: "#06b6d422", border: "1px solid #06b6d444", color: "#06b6d4", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
                   {payPanelInvId === inv.id ? "✕ Tutup" : "💳 Catat Pembayaran"}
@@ -1809,6 +1813,7 @@ return (
                   <span style={{ color: "#06b6d4", fontWeight: 700 }}>💳 Partial: {fmt(Number(inv.paid_amount) || 0)} terbayar</span>
                   <span style={{ color: cs.muted }}> · sisa {fmt(Number(inv.remaining_amount) ?? ((inv.total || 0) - (Number(inv.paid_amount) || 0)))}</span>
                 </div>
+                {currentUser?.role === "Owner" && (
                 <button onClick={async () => {
                   if (await showConfirm({
                     icon: "💰", title: "Lunasi Sisa?",
@@ -1816,6 +1821,7 @@ return (
                     confirmText: "Ya, Lunas"
                   })) { const pp = invoicesData.find(i => i.id === inv.id); markPaid(pp || inv); }
                 }} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>💰 Lunasi Sisa</button>
+                )}
                 <button onClick={() => payPanelInvId === inv.id ? setPayPanelInvId(null) : openPayPanel(inv)}
                   style={{ background: "#06b6d422", border: "1px solid #06b6d444", color: "#06b6d4", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
                   {payPanelInvId === inv.id ? "✕ Tutup" : "💳 Riwayat Bayar"}
