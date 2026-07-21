@@ -4125,7 +4125,7 @@ export default function ACleanWebApp() {
       );
       case "tatatertib": return (
         <Suspense fallback={<div style={{ padding: 20, textAlign: "center", color: cs.muted }}>Memuat…</div>}>
-          <TeamGuidelinesView supabase={supabase} currentUser={currentUser} showNotif={showNotif} />
+          <TeamGuidelinesView supabase={supabase} currentUser={currentUser} showNotif={showNotif} showConfirm={showConfirm} />
         </Suspense>
       );
       case "biaya": return renderExpenses();
