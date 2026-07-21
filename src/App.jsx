@@ -114,6 +114,7 @@ const MaterialCheckoutView   = lazy(() => import("./views/MaterialCheckoutView.j
 const WebsiteContentView = lazy(() => import("./views/WebsiteContentView.jsx"));
 const PanduanView = lazy(() => import("./views/PanduanView.jsx"));
 const KodeErrorView = lazy(() => import("./views/KodeErrorView.jsx"));
+const TeamGuidelinesView = lazy(() => import("./views/TeamGuidelinesView.jsx"));
 const MyToolsView            = lazy(() => import("./views/MyToolsView.jsx"));
 const ProjectLaporanModal    = lazy(() => import("./views/ProjectLaporanModal.jsx"));
 const OrderFormModal         = lazy(() => import("./views/OrderFormModal.jsx"));
@@ -2287,7 +2288,7 @@ export default function ACleanWebApp() {
     // per-teknisi bila Owner set commission_pin — layer-2 anti "intip" data keuangan sensitif)
     // + Panduan (tutorial in-app statis, khusus Teknisi/Helper — lihat PanduanView.jsx)
     if (role === "Teknisi" || role === "Helper")
-      return menu === "dashboard" || menu === "schedule" || menu === "myreport" || menu === "matcheckout" || menu === "alatsaya" || menu === "komisi" || menu === "panduan";
+      return menu === "dashboard" || menu === "schedule" || menu === "myreport" || menu === "matcheckout" || menu === "alatsaya" || menu === "komisi" || menu === "panduan" || menu === "tatatertib";
     // Finance: akses finance hub, invoice, biaya, statistik
     if (role === "Finance")
       return ["finance", "invoice", "biaya", "reports"].includes(menu);
@@ -3411,6 +3412,7 @@ export default function ACleanWebApp() {
     { id: "komisi", icon: "💰", label: "Komisi Saya" },
     { id: "panduan", icon: "📖", label: "Panduan" },
     { id: "kodeerror", icon: "🚨", label: "Kode Error" },
+    { id: "tatatertib", icon: "📋", label: "Tata Tertib" },
   ];
   const menuItems = currentUser ? ALL_MENU.filter(m => canAccess(m.id)) : ALL_MENU;
 
@@ -4119,6 +4121,11 @@ export default function ACleanWebApp() {
       case "kodeerror": return (
         <Suspense fallback={<div style={{ padding: 20, textAlign: "center", color: cs.muted }}>Memuat…</div>}>
           <KodeErrorView />
+        </Suspense>
+      );
+      case "tatatertib": return (
+        <Suspense fallback={<div style={{ padding: 20, textAlign: "center", color: cs.muted }}>Memuat…</div>}>
+          <TeamGuidelinesView supabase={supabase} currentUser={currentUser} showNotif={showNotif} />
         </Suspense>
       );
       case "biaya": return renderExpenses();
