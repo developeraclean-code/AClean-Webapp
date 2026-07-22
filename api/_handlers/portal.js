@@ -108,7 +108,11 @@ export async function maintenance(req, res) {
       // ── Role gate per-action: mutasi & data finansial = Owner/Admin saja ──
       // Teknisi/Helper hanya boleh aksi read-only non-finansial yang dipakai
       // prefill modal laporan (openLaporanModal & modal order: klien + unit registry).
-      const ROLE_EXEMPT = new Set(["list-clients", "list-units"]);
+      // list-unit-health & propose-new-unit: dipakai teknisi/helper dari modal laporan,
+      // TIDAK di-gate Owner/Admin di sini — masing-masing punya gate SENDIRI di bawah
+      // (lebih longgar tapi scope datanya sempit). CATATAN: "list-logs" SENGAJA TIDAK
+      // di-exempt — responsnya memuat cost + enrich total/paid invoice (data finansial).
+      const ROLE_EXEMPT = new Set(["list-clients", "list-units", "list-unit-health", "propose-new-unit"]);
       if (!ROLE_EXEMPT.has(action)) {
         const callerRole = await resolveCallerRole(req, SU, SK);
         // null = legacy INTERNAL_API_SECRET (server-to-server) → sistem, izinkan.
@@ -116,6 +120,16 @@ export async function maintenance(req, res) {
           return res.status(403).json({ error: "Forbidden: aksi maintenance ini butuh role Owner/Admin" });
         }
       }
+
+      // Gate lapangan: Teknisi/Helper/Owner/Admin. Role DIVERIFIKASI SERVER-SIDE lewat
+      // resolveCallerRole (decode JWT → lookup user_profiles.role), JANGAN percaya role
+      // yang dikirim di body — X-Internal-Token dipegang semua user login, termasuk teknisi.
+      const requireFieldStaff = async () => {
+        const role = await resolveCallerRole(req, SU, SK);
+        if (role === null) return null;                            // server-to-server (cron) → izinkan
+        if (["Owner", "Admin", "Teknisi", "Helper"].includes(role)) return role;
+        return false;                                              // "" (token invalid) atau role lain
+      };
 
       const genToken = () => "mtk_" + Array.from({ length: 40 }, () =>
         "abcdefghijklmnopqrstuvwxyz0123456789"[Math.floor(Math.random() * 36)]).join("");
@@ -411,6 +425,74 @@ export async function maintenance(req, res) {
           if (!r.ok) return res.status(500).json({ error: "DB error", detail: await r.text() });
           return res.status(200).json({ units: await r.json() });
         }
+        // ── Riwayat unit versi RINGKAS untuk badge kesehatan di modal laporan teknisi ──
+        // Sengaja TIDAK memakai "list-logs": itu mengembalikan select=* (termasuk cost)
+        // + enrich total/paid invoice = data finansial yang hanya untuk Owner/Admin.
+        // Di sini hanya kolom yang dibutuhkan unitHealth() (src/lib/maintenanceHealth.js):
+        // unit_id, service_date, measurements, description, materials (materials ditulis
+        // autolog TANPA harga — lihat komentar "Harga TIDAK disertakan" di autolog).
+        if (action === "list-unit-health") {
+          const roleOk = await requireFieldStaff();
+          if (roleOk === false) return res.status(403).json({ error: "Forbidden" });
+          if (!body.client_id) return res.status(400).json({ error: "client_id wajib" });
+          const r = await fetch(REST("maintenance_logs?client_id=eq." + encodeURIComponent(body.client_id)
+            + "&select=unit_id,service_date,measurements,description,materials&order=service_date.desc&limit=2000"), { headers });
+          if (!r.ok) return res.status(500).json({ error: "DB error", detail: await r.text() });
+          return res.status(200).json({ logs: await r.json() });
+        }
+
+        // ── Unit baru ditemukan teknisi di lapangan → masuk registry sbg 'baru' ──
+        // Scope SEMPIT: hanya INSERT 1 baris. Tidak bisa update/hapus unit existing
+        // (itu tetap milik save-units/delete-unit yang Owner/Admin-only). status='baru'
+        // = antre verifikasi admin; konvensi existing memperlakukan 'baru' sebagai
+        // "belum perlu servis" (di-skip autolog & hitungan PM overdue).
+        if (action === "propose-new-unit") {
+          const roleOk = await requireFieldStaff();
+          if (roleOk === false) return res.status(403).json({ error: "Forbidden" });
+          if (!body.client_id) return res.status(400).json({ error: "client_id wajib" });
+          const u = body.unit || {};
+          const lokasi = String(u.location || "").trim();
+          const kode = String(u.unit_code || "").trim();
+          if (!lokasi && !kode) return res.status(400).json({ error: "Lokasi atau kode unit wajib diisi" });
+          // UNIQUE(client_id, unit_code) per migrasi 059 → auto-generate bila kosong.
+          const unitCode = kode || ("BARU-" + Date.now().toString(36).toUpperCase().slice(-5));
+          const pengaju = String(body.proposed_by || "").trim() || "teknisi";
+          const payload = {
+            client_id: body.client_id,
+            unit_code: unitCode,
+            location: lokasi || null,
+            brand: u.brand || null,
+            ac_type: u.ac_type || null,
+            capacity_pk: u.capacity_pk != null && u.capacity_pk !== "" ? Number(u.capacity_pk) : null,
+            refrigerant: u.refrigerant || null,
+            status: "baru",
+            service_interval_months: 3,
+            notes: `Diajukan dari lapangan oleh ${pengaju}${body.job_id ? " (order " + body.job_id + ")" : ""}`,
+          };
+          const r = await fetch(REST("maintenance_units"), {
+            method: "POST", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(payload),
+          });
+          if (!r.ok) {
+            const detail = await r.text();
+            const dup = /duplicate key|unique/i.test(detail);
+            return res.status(400).json({ error: dup ? "Kode unit sudah dipakai di klien ini — ganti kode" : "Gagal simpan unit baru", detail });
+          }
+          const saved = (await r.json())[0];
+          // Notifikasi admin (pola sama MAINTENANCE_REGISTRY_REVIEW) — non-blocking.
+          fetch(SU + "/rest/v1/agent_logs", {
+            method: "POST",
+            headers: { apikey: SK, Authorization: "Bearer " + SK, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "MAINTENANCE_NEW_UNIT_PROPOSED",
+              severity: "warn", category: "maintenance", status: "WARNING",
+              detail: `Unit baru "${saved.unit_code}" (${saved.location || "-"}) diajukan ${pengaju} dari order ${body.job_id || "-"}. Cek & aktifkan di Maintenance → tab Unit.`,
+              metadata: { client_id: body.client_id, unit_id: saved.id, job_id: body.job_id || null, proposed_by: pengaju },
+              time: new Date().toISOString(),
+            }),
+          }).catch(() => {});
+          return res.status(200).json({ unit: saved });
+        }
+
         if (action === "save-units") {
           // batch unit (insert baru / update existing). body.units = [{id?, client_id, unit_code, ...}]
           // Row ber-id → PATCH by id (aman saat ganti unit_code). Row baru → INSERT.
@@ -978,14 +1060,19 @@ export async function maintenance(req, res) {
           const reportedMaintIds = [...new Set(repUnits.map(ru => (ru && ru.maint_unit_id) || null).filter(Boolean))];
           let unitPairs; // [{ uid, lu }] — lu = unit laporan (boleh null)
           if (reportedMaintIds.length) {
-            // Validasi: hanya terima unit aktif (non-baru) milik klien ini — termasuk unit yang
-            // ditambah teknisi via "Tambah dari Daftar Maintenance" (belum tentu ada di unitIds).
+            // Validasi kepemilikan: unit harus milik klien ini. Status 'baru' SENGAJA
+            // TIDAK dikecualikan di jalur ini — teknisi menyebut unit itu secara
+            // EKSPLISIT di laporan, artinya benar-benar dikerjakan, jadi riwayatnya
+            // wajib tercatat. (Skip 'baru' tetap berlaku di jalur bulk/default baris
+            // ~953, yang memang untuk mencegah AC baru dipasang ikut ter-log massal.)
+            // Tanpa pengecualian ini, unit yang diajukan teknisi via "+ Tambah Unit
+            // Baru" (masuk sbg status 'baru') hilang dari history tanpa error apa pun.
             const candidateIds = [...new Set([...unitIds, ...reportedMaintIds])];
             let validSet = new Set(candidateIds);
             try {
               const vRes = await fetch(REST("maintenance_units?id=in.(" + encodeURIComponent(candidateIds.join(",")) + ")&client_id=eq." + encodeURIComponent(clientId) + "&select=id,status"), { headers });
               const vData = await vRes.json();
-              if (Array.isArray(vData)) validSet = new Set(vData.filter(u => u.status !== "baru").map(u => u.id));
+              if (Array.isArray(vData)) validSet = new Set(vData.map(u => u.id));
             } catch (_) {}
             const seen = new Set();
             unitPairs = repUnits

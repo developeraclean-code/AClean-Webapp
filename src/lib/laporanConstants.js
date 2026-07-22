@@ -157,7 +157,12 @@ export const maintUnitToHist = (mu) => {
     ducted: "AC Split Duct", standing: "AC Floor Standing",
   };
   const base = AC_TYPE_BASE[mu.ac_type] || "AC Split";
-  const pkNum = mu.capacity_pk != null && String(mu.capacity_pk).trim() !== "" ? String(mu.capacity_pk).trim() : "1";
+  // Kapasitas datang sebagai TEKS dari PostgREST dgn skala apa adanya ("2", "2.0",
+  // "3.00"). Nol di belakang harus dinormalkan, kalau tidak "AC Split 2.0PK" tidak
+  // cocok daftar TIPE_AC_OPT → tipe kosong → teknisi dipaksa koreksi manual padahal
+  // datanya sudah benar (verifikasi prod 20 Jul 2026: 15 unit gagal HANYA karena ini).
+  const pkRaw = mu.capacity_pk != null && String(mu.capacity_pk).trim() !== "" ? String(mu.capacity_pk).trim() : "1";
+  const pkNum = pkRaw.includes(".") ? pkRaw.replace(/0+$/, "").replace(/\.$/, "") : pkRaw;
   const candidate = `${base} ${pkNum}PK`;
   return {
     label: `${mu.unit_code} — ${mu.location || ""}`.replace(/— $/, "").trim(),
@@ -213,3 +218,21 @@ export const mkUnit = (no, hist = null) => {
 // Step 2 — unit dianggap selesai jika ada pekerjaan + minimal 1 kondisi
 export const isUnitDone = (u) =>
   u.pekerjaan.length > 0 && (u.kondisi_sebelum.length > 0 || u.kondisi_setelah.length > 0);
+
+// ── Remap referensi unit_no setelah SATU unit dihapus dari laporan ──
+// Nomor unit adalah posisi (1..n) yang bergeser saat ada yang dihapus, sedangkan
+// foto / cleaning-in-repair / baris jasa & barang menyimpan nomor itu. Tanpa remap,
+// referensi diam-diam menunjuk unit yang SALAH (mis. jasa "Ganti Kapasitor" untuk
+// Unit 3 jadi menempel ke unit yang tadinya Unit 4). Dipakai SEMUA jalur hapus unit
+// supaya perilakunya identik — jangan tulis ulang logika ini per tempat.
+export const remapUnitNo = (val, deletedNo) => {
+  if (val == null) return null;
+  if (val === deletedNo) return null;      // referensi ke unit yang dihapus → jadi umum
+  return val > deletedNo ? val - 1 : val;
+};
+
+// Helper daftar: buang entri milik unit yang dihapus, geser sisanya (utk array nomor
+// polos seperti laporanCleaningInRepair).
+export const remapUnitNoList = (list, deletedNo) => (list || [])
+  .filter(n => n !== deletedNo)
+  .map(n => (n > deletedNo ? n - 1 : n));

@@ -5,7 +5,9 @@ import { categoryFromCatalog } from "../lib/invoicing.js";
 import {
   KONDISI_SBL, KONDISI_SDH, PEKERJAAN_OPT, MATERIAL_PRESET,
   INSTALL_ITEMS, TIPE_AC_OPT, mkUnit, isUnitDone, maintUnitToHist, acUnitToHist,
+  remapUnitNo, remapUnitNoList,
 } from "../lib/laporanConstants.js";
+import MaintUnitPickerStep from "./MaintUnitPickerStep.jsx";
 
 // Debounce lokal (disalin dari App.jsx module-level) — untuk search material
 function useDebounce(value, delay) {
@@ -49,6 +51,8 @@ export default function LaporanTeknisiModal({
   unitPresetHistory, setUnitPresetHistory,
   unitPresetSelected, setUnitPresetSelected,
   maintUnitPool,
+  maintLogsPool = [],
+  onNewUnitProposed,
   acUnitPool = [],
   // refs
   fotoInputRef, fotoUnitInputRef, fotoTargetUnitRef,
@@ -68,8 +72,6 @@ export default function LaporanTeknisiModal({
   const debouncedMatSearchQuery = useDebounce(matSearchQuery, 200);
   const [jasaManualText, setJasaManualText] = useState({});
   const [repairManualText, setRepairManualText] = useState({});
-  const [showAddMaintUnitModal, setShowAddMaintUnitModal] = useState(false);
-  const [addMaintSelected, setAddMaintSelected] = useState(new Set());
   // Picker registry unit AC (customer reguler) — cermin maint
   const [showAddAcUnitModal, setShowAddAcUnitModal] = useState(false);
   const [addAcSelected, setAddAcSelected] = useState(new Set());
@@ -244,84 +246,6 @@ export default function LaporanTeknisiModal({
     );
   };
 
-  // ── TAMBAH UNIT DARI DAFTAR MAINTENANCE ──
-  const AddMaintUnitModal = () => {
-    if (!showAddMaintUnitModal) return null;
-    const available = maintUnitPool.filter(mu => !laporanUnits.some(u => u.maint_unit_id === mu.id));
-
-    const handleAdd = () => {
-      const toAdd = available.filter(mu => addMaintSelected.has(mu.id));
-      if (toAdd.length === 0) return;
-      setLaporanUnits(prev => {
-        const next = [...prev];
-        toAdd.forEach(mu => next.push(mkUnit(next.length + 1, maintUnitToHist(mu))));
-        return next.map((u, i) => ({ ...u, unit_no: i + 1 }));
-      });
-      setActiveUnitIdx(laporanUnits.length);
-      setShowAddMaintUnitModal(false);
-      setAddMaintSelected(new Set());
-    };
-
-    return (
-      <div style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 710, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setShowAddMaintUnitModal(false)}>
-        <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 14, width: "100%", maxWidth: 500, maxHeight: "80vh", overflowY: "auto", padding: 20 }} onClick={e => e.stopPropagation()}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-            <h3 style={{ fontWeight: 800, fontSize: 16, color: cs.text, margin: 0 }}>🏢 Tambah Unit dari Daftar Maintenance</h3>
-            <button onClick={() => setShowAddMaintUnitModal(false)} style={{ background: "none", border: "none", color: cs.muted, fontSize: 20, cursor: "pointer" }}>×</button>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 14 }}>
-            <div style={{ fontSize: 12, color: cs.muted }}>
-              Unit terdaftar yang belum ada di laporan. Centang yang dikerjakan di lapangan — data langsung terisi otomatis.
-            </div>
-            {available.length > 0 && (
-              <button onClick={() => setAddMaintSelected(addMaintSelected.size === available.length ? new Set() : new Set(available.map(mu => mu.id)))}
-                style={{ flexShrink: 0, background: cs.border, color: cs.text, border: "none", borderRadius: 7, padding: "5px 10px", cursor: "pointer", fontWeight: 600, fontSize: 11 }}>
-                {addMaintSelected.size === available.length ? "Hapus semua" : "Pilih semua"}
-              </button>
-            )}
-          </div>
-          {available.length === 0 ? (
-            <div style={{ fontSize: 12, color: cs.muted, fontStyle: "italic", marginBottom: 16 }}>Semua unit terdaftar sudah ada di laporan.</div>
-          ) : (
-            <div style={{ display: "grid", gap: 8, marginBottom: 16 }}>
-              {available.map(mu => {
-                const isSelected = addMaintSelected.has(mu.id);
-                return (
-                  <div key={mu.id} style={{ display: "flex", gap: 10, alignItems: "center", background: cs.card, border: "1px solid " + (isSelected ? cs.green : cs.border), borderRadius: 10, padding: 12, cursor: "pointer" }} onClick={() => {
-                    const newSet = new Set(addMaintSelected);
-                    if (isSelected) newSet.delete(mu.id); else newSet.add(mu.id);
-                    setAddMaintSelected(newSet);
-                  }}>
-                    <input type="checkbox" checked={isSelected} onChange={() => { }} style={{ cursor: "pointer", width: 18, height: 18 }} />
-                    <div style={{ flex: 1, display: "grid", gap: 4 }}>
-                      <div style={{ fontWeight: 600, color: cs.text, fontSize: 12 }}>
-                        {mu.unit_code}{mu.location ? ` — ${mu.location}` : ""}
-                      </div>
-                      <div style={{ fontSize: 10, color: cs.muted }}>
-                        {mu.brand && <span>{mu.brand}</span>}
-                        {mu.capacity_pk && <span> · {mu.capacity_pk}PK</span>}
-                        {mu.ac_type && <span> · {mu.ac_type}</span>}
-                        {mu.refrigerant && <span> · {mu.refrigerant}</span>}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          <div style={{ display: "flex", gap: 10 }}>
-            <button onClick={() => setShowAddMaintUnitModal(false)} style={{ flex: 1, background: cs.border, color: cs.muted, border: "none", borderRadius: 8, padding: "10px 14px", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
-              Batal
-            </button>
-            <button onClick={handleAdd} disabled={addMaintSelected.size === 0} style={{ flex: 1, background: addMaintSelected.size === 0 ? cs.border : cs.green, color: addMaintSelected.size === 0 ? cs.muted : "#fff", border: "none", borderRadius: 8, padding: "10px 14px", cursor: addMaintSelected.size === 0 ? "default" : "pointer", fontWeight: 600, fontSize: 12 }}>
-              Tambah {addMaintSelected.size > 0 ? `${addMaintSelected.size} Unit` : ""}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
   // ── TAMBAH UNIT DARI REGISTRY (customer reguler — ac_units) ──
   const AddAcUnitModal = () => {
     if (!showAddAcUnitModal) return null;
@@ -401,7 +325,6 @@ export default function LaporanTeknisiModal({
   return (
     <>
       <UnitPresetModal />
-      <AddMaintUnitModal />
       <AddAcUnitModal />
       <div style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 600, display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={() => setLaporanModal(null)}>
         <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 560, maxHeight: "94vh", overflowY: "auto", padding: 24 }} onClick={e => e.stopPropagation()}>
@@ -500,8 +423,28 @@ export default function LaporanTeknisiModal({
           </div>
           <div style={{ fontSize: 11, color: cs.muted, marginBottom: 18, textAlign: "center" }}>Step {laporanStep}/4: {STEP_LABELS[laporanStep]}</div>
 
-          {/* ── STEP 1: Konfirmasi Unit ── */}
-          {laporanStep === 1 && (
+          {/* ── STEP 1 (customer MAINTENANCE): grid picker unit dari registry ──
+              Data unit klien B2B sudah terdaftar & bisa 40-50 unit — teknisi memilih
+              lewat search+card, bukan mengetik manual. Customer reguler TIDAK lewat
+              sini (tetap ke blok Step 1 lama di bawah, tanpa perubahan apa pun). */}
+          {laporanStep === 1 && laporanModal.maintenance_client_id && (
+            <MaintUnitPickerStep
+              laporanModal={laporanModal}
+              laporanUnits={laporanUnits} setLaporanUnits={setLaporanUnits}
+              setLaporanStep={setLaporanStep}
+              maintUnitPool={maintUnitPool} maintLogsPool={maintLogsPool}
+              setActiveUnitIdx={setActiveUnitIdx}
+              setLaporanFotos={setLaporanFotos}
+              setLaporanCleaningInRepair={setLaporanCleaningInRepair}
+              setLaporanJasaItems={setLaporanJasaItems}
+              setLaporanBarangItems={setLaporanBarangItems}
+              currentUser={currentUser} _apiFetch={_apiFetch}
+              showNotif={showNotif} onNewUnitProposed={onNewUnitProposed}
+            />
+          )}
+
+          {/* ── STEP 1: Konfirmasi Unit (customer REGULER) ── */}
+          {laporanStep === 1 && !laporanModal.maintenance_client_id && (
             <div style={{ display: "grid", gap: 14 }}>
 
               {/* ── History AC Customer (referensi teknisi) ── */}
@@ -675,17 +618,13 @@ export default function LaporanTeknisiModal({
                             const deletedNo = idx + 1;
                             const nu = laporanUnits.filter((_, i) => i !== idx).map((u2, i) => ({ ...u2, unit_no: i + 1 }));
                             setLaporanUnits(nu); setActiveUnitIdx(Math.max(0, idx - 1));
-                            setLaporanFotos(prev => prev.map(f => {
-                              if (f.unit_no == null) return f;
-                              if (f.unit_no === deletedNo) return { ...f, unit_no: null };
-                              if (f.unit_no > deletedNo) return { ...f, unit_no: f.unit_no - 1 };
-                              return f;
-                            }));
-                            // Cleaning-in-repair menyimpan unit_no → ikut remap saat unit dihapus,
-                            // agar centang cuci tak salah-unit / hilang senyap.
-                            setLaporanCleaningInRepair(prev => prev
-                              .filter(n => n !== deletedNo)
-                              .map(n => n > deletedNo ? n - 1 : n));
+                            // Semua penyimpan unit_no ikut digeser (foto, centang cuci, dan
+                            // baris jasa/barang) — kalau tidak, referensinya diam-diam
+                            // menunjuk unit yang salah. Helper bersama di laporanConstants.
+                            setLaporanFotos(prev => prev.map(f => ({ ...f, unit_no: remapUnitNo(f.unit_no, deletedNo) })));
+                            setLaporanCleaningInRepair(prev => remapUnitNoList(prev, deletedNo));
+                            setLaporanJasaItems(prev => (prev || []).map(j => ({ ...j, unit_no: remapUnitNo(j.unit_no, deletedNo) })));
+                            setLaporanBarangItems(prev => (prev || []).map(b => ({ ...b, unit_no: remapUnitNo(b.unit_no, deletedNo) })));
                           }}
                             style={{ background: "#ef444415", border: "1px solid #ef444430", color: "#ef4444", borderRadius: 6, padding: "8px 10px", cursor: "pointer", fontSize: 12, fontWeight: 700, lineHeight: 1, alignSelf: "flex-end" }}>×</button>
                         )}
@@ -731,17 +670,10 @@ export default function LaporanTeknisiModal({
                     + Tambah Unit AC
                   </button>
                 )}
-                {(() => {
-                  if (!laporanModal?.maintenance_client_id) return null;
-                  const available = maintUnitPool.filter(mu => !laporanUnits.some(u => u.maint_unit_id === mu.id));
-                  if (available.length === 0) return null;
-                  return (
-                    <button onClick={() => { setAddMaintSelected(new Set()); setShowAddMaintUnitModal(true); }}
-                      style={{ marginTop: 8, width: "100%", background: cs.green + "12", border: "1px dashed " + cs.green + "55", color: cs.green, borderRadius: 8, padding: "10px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
-                      🏢 Tambah dari Daftar Maintenance ({available.length} unit belum dipilih)
-                    </button>
-                  );
-                })()}
+                {/* Tombol "Tambah dari Daftar Maintenance" DIHAPUS: blok Step 1 ini
+                    kini hanya dirender untuk customer REGULER, sedangkan order
+                    maintenance memakai MaintUnitPickerStep (grid + search) yang sudah
+                    mencakup fungsi tersebut. */}
                 {(() => {
                   // Registry customer reguler — tombol pilih unit tersimpan
                   if (laporanModal?.maintenance_client_id) return null;
@@ -1230,15 +1162,32 @@ export default function LaporanTeknisiModal({
                               borderRadius: 8, padding: "8px 10px", color: cs.text, fontSize: 13, outline: "none"
                             }} />
                         )}
-                        <div>
-                          <div style={{ fontSize: 10, color: cs.muted, marginBottom: 3 }}>Jumlah Unit</div>
-                          <input type="number" min="1" step="1" value={item.jumlah || 1}
-                            onChange={e => setLaporanJasaItems(p => p.map(j => j.id === item.id
-                              ? { ...j, jumlah: parseFloat(e.target.value) || 1 } : j))}
-                            style={{
-                              width: "100%", background: cs.surface, border: "1px solid " + cs.border,
-                              borderRadius: 8, padding: "7px 10px", color: cs.text, fontSize: 13, outline: "none"
-                            }} />
+                        <div style={{ display: "grid", gridTemplateColumns: laporanUnits.length > 1 ? "1fr 1fr" : "1fr", gap: 8 }}>
+                          <div>
+                            <div style={{ fontSize: 10, color: cs.muted, marginBottom: 3 }}>Jumlah Unit</div>
+                            <input type="number" min="1" step="1" value={item.jumlah || 1}
+                              onChange={e => setLaporanJasaItems(p => p.map(j => j.id === item.id
+                                ? { ...j, jumlah: parseFloat(e.target.value) || 1 } : j))}
+                              style={{
+                                width: "100%", background: cs.surface, border: "1px solid " + cs.border,
+                                borderRadius: 8, padding: "7px 10px", color: cs.text, fontSize: 13, outline: "none"
+                              }} />
+                          </div>
+                          {/* Metadata opsional: jasa ini untuk unit yang mana. Tidak memengaruhi
+                              harga/invoice — murni supaya riwayat unit terlacak benar. */}
+                          {laporanUnits.length > 1 && (
+                            <div>
+                              <div style={{ fontSize: 10, color: cs.muted, marginBottom: 3 }}>Untuk unit? (opsional)</div>
+                              <select value={item.unit_no ?? ""}
+                                onChange={e => { const v = e.target.value; setLaporanJasaItems(p => p.map(j => j.id === item.id ? { ...j, unit_no: v === "" ? null : Number(v) } : j)); }}
+                                style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "7px 10px", color: item.unit_no ? cs.text : cs.muted, fontSize: 12, outline: "none" }}>
+                                <option value="">— Umum / semua unit —</option>
+                                {laporanUnits.map(u => (
+                                  <option key={u.unit_no} value={u.unit_no}>Unit {u.unit_no}{u.label ? ` — ${u.label}` : ""}</option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
@@ -1364,6 +1313,20 @@ export default function LaporanTeknisiModal({
                             </div>
                           </div>
                         </div>
+                        {/* Metadata opsional (tidak memengaruhi harga/invoice) — lihat catatan di section jasa */}
+                        {laporanUnits.length > 1 && (
+                          <div>
+                            <div style={{ fontSize: 10, color: cs.muted, marginBottom: 3 }}>Untuk unit? (opsional)</div>
+                            <select value={bItem.unit_no ?? ""}
+                              onChange={e => { const v = e.target.value; setLaporanBarangItems(p => p.map(b => b.id === bItem.id ? { ...b, unit_no: v === "" ? null : Number(v) } : b)); }}
+                              style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "7px 10px", color: bItem.unit_no ? cs.text : cs.muted, fontSize: 12, outline: "none" }}>
+                              <option value="">— Umum / semua unit —</option>
+                              {laporanUnits.map(u => (
+                                <option key={u.unit_no} value={u.unit_no}>Unit {u.unit_no}{u.label ? ` — ${u.label}` : ""}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
                       </div>
                     );
                   })}

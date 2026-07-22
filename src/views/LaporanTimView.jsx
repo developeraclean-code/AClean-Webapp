@@ -435,7 +435,11 @@ const buildVerifyInvoice = (r, ord, dealPricesOverride) => {
         else if (["repair", "perbaikan", "kapasitor", "kompresor", "sparepart", "pcb"].some(k => nama2.includes(k))) ket = "repair";
         else if (["cleaning", "maintenance", "cuci", "jasa", "service", "servis", "pemasangan", "bongkar", "instalasi", "vacum", "kuras"].some(k => nama2.includes(k))) ket = "jasa";
       }
-      return { nama: m.nama, jumlah: qty, satuan: m.satuan || "pcs", harga_satuan: hSat, subtotal: hSat * qty, keterangan: ket, category: categoryFromCatalog(m.nama, priceListData) };
+      // unit_no = metadata "baris ini untuk unit yang mana" (dari laporan teknisi).
+      // WAJIB diteruskan: objek ini dibangun field-by-field, tanpa baris ini atribusi
+      // unit hilang begitu Owner verify — padahal jalur submit sudah menyimpannya
+      // (2 builder invoice ini wajib paritas). Tidak memengaruhi angka apa pun.
+      return { nama: m.nama, jumlah: qty, satuan: m.satuan || "pcs", harga_satuan: hSat, subtotal: hSat * qty, keterangan: ket, unit_no: m.unit_no ?? null, category: categoryFromCatalog(m.nama, priceListData) };
     });
 
     const isRepairSvcV = r.service === "Repair";

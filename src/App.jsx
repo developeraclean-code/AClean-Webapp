@@ -959,8 +959,7 @@ export default function ACleanWebApp() {
   const [unitPresetSelected, setUnitPresetSelected] = useState(new Set()); // Set of unit indices from history to use
   // ── Tambah unit dari daftar Maintenance (untuk order B2B/maintenance) ──
   const [maintUnitPool, setMaintUnitPool] = useState([]);            // semua unit terdaftar klien
-  const [showAddMaintUnitModal, setShowAddMaintUnitModal] = useState(false);
-  const [addMaintSelected, setAddMaintSelected] = useState(new Set()); // Set of maintenance unit ids to add
+  const [maintLogsPool, setMaintLogsPool] = useState([]);            // riwayat servis ringkas → badge kesehatan grid picker
   // ── Registry unit AC permanen (customer reguler) — forward-only sejak cutoff ──
   // Picker open-state dikelola lokal di LaporanTeknisiModal (cermin maint). App pegang datanya.
   const [acUnitPool, setAcUnitPool] = useState([]);                 // ac_units aktif customer ini
@@ -2237,12 +2236,12 @@ export default function ACleanWebApp() {
     AC_REGISTRY_CUTOFF, _apiFetch, acUnitToHist, buildCustomerHistory, currentUser,
     customersData, fetchAcUnitsByCustomer, findCustomer, inventoryData, invoicesData,
     laporanReports, maintUnitToHist, mkUnit, ordersData, priceListData, setAcUnitPool,
-    setActiveUnitIdx, setAddMaintSelected, setJasaManualText, setJasaSearchQ,
+    setActiveUnitIdx, setJasaManualText, setJasaSearchQ,
     setLaporanBarangItems, setLaporanCatatan, setLaporanCleaningInRepair, setLaporanFotos,
     setLaporanInstallItems, setLaporanJasaItems, setLaporanMaterials, setLaporanModal,
     setLaporanRekomendasi, setLaporanRepairItems, setLaporanStep, setLaporanSubmitted,
-    setLaporanSurveyCatatan, setLaporanSurveyHasil, setLaporanUnits, setMaintUnitPool,
-    setMatSearchQ2, setRepairManualText, setRepairSearchQ, setShowAddMaintUnitModal,
+    setLaporanSurveyCatatan, setLaporanSurveyHasil, setLaporanUnits, setMaintLogsPool, setMaintUnitPool,
+    setMatSearchQ2, setRepairManualText, setRepairSearchQ,
     setShowJasaSearch, setShowMatPreset, setShowMatSearch, setShowRepairSearch,
     setShowUnitPresetModal, setUnitPresetHistory, setUnitPresetSelected, showNotif,
     submitLaporanLock, supabase,
@@ -4811,6 +4810,8 @@ export default function ACleanWebApp() {
             unitPresetHistory={unitPresetHistory} setUnitPresetHistory={setUnitPresetHistory}
             unitPresetSelected={unitPresetSelected} setUnitPresetSelected={setUnitPresetSelected}
             maintUnitPool={maintUnitPool}
+            maintLogsPool={maintLogsPool}
+            onNewUnitProposed={(row) => setMaintUnitPool(prev => prev.some(u => u.id === row.id) ? prev : [...prev, row])}
             acUnitPool={acUnitPool}
             fotoInputRef={fotoInputRef}
             fotoUnitInputRef={fotoUnitInputRef}

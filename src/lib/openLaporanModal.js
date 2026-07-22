@@ -6,12 +6,12 @@ export function openLaporanModal(order, {
   AC_REGISTRY_CUTOFF, _apiFetch, acUnitToHist, buildCustomerHistory, currentUser,
   customersData, fetchAcUnitsByCustomer, findCustomer, inventoryData, invoicesData,
   laporanReports, maintUnitToHist, mkUnit, ordersData, priceListData, setAcUnitPool,
-  setActiveUnitIdx, setAddMaintSelected, setJasaManualText, setJasaSearchQ,
+  setActiveUnitIdx, setJasaManualText, setJasaSearchQ,
   setLaporanBarangItems, setLaporanCatatan, setLaporanCleaningInRepair, setLaporanFotos,
   setLaporanInstallItems, setLaporanJasaItems, setLaporanMaterials, setLaporanModal,
   setLaporanRekomendasi, setLaporanRepairItems, setLaporanStep, setLaporanSubmitted,
-  setLaporanSurveyCatatan, setLaporanSurveyHasil, setLaporanUnits, setMaintUnitPool,
-  setMatSearchQ2, setRepairManualText, setRepairSearchQ, setShowAddMaintUnitModal,
+  setLaporanSurveyCatatan, setLaporanSurveyHasil, setLaporanUnits, setMaintLogsPool, setMaintUnitPool,
+  setMatSearchQ2, setRepairManualText, setRepairSearchQ,
   setShowJasaSearch, setShowMatPreset, setShowMatSearch, setShowRepairSearch,
   setShowUnitPresetModal, setUnitPresetHistory, setUnitPresetSelected, showNotif,
   submitLaporanLock, supabase,
@@ -35,7 +35,7 @@ export function openLaporanModal(order, {
     setLaporanUnits(Array.from({ length: count }, (_, i) => mkUnit(i + 1)));
 
     // Reset pool unit maintenance & registry AC — diisi ulang di bawah sesuai jenis order
-    setMaintUnitPool([]); setShowAddMaintUnitModal(false); setAddMaintSelected(new Set());
+    setMaintUnitPool([]); setMaintLogsPool?.([]);
     setAcUnitPool([]);
 
     // Pre-fill unit label/tipe/merk/PK dari maintenance preset (jika order corporate)
@@ -52,14 +52,35 @@ export function openLaporanModal(order, {
           // Simpan seluruh unit terdaftar klien → dipakai picker "Tambah dari Daftar Maintenance"
           setMaintUnitPool(allUnits);
           if (mUnitIds.length > 0) {
-            const filled = mUnitIds.map((uid, i) => {
+            // Cap 30 juga di jalur prefill — order B2B bisa menugaskan 40-50 unit
+            // sekaligus; tanpa slice, laporan langsung melebihi batas dan teknisi
+            // tak bisa menambah unit apa pun (pesan "maksimal 30" muncul terus).
+            const filled = mUnitIds.slice(0, 30).map((uid, i) => {
               const mu = allUnits.find(u => u.id === uid);
               if (!mu) return mkUnit(i + 1);
               return mkUnit(i + 1, maintUnitToHist(mu));
             });
             setLaporanUnits(filled);
+            if (mUnitIds.length > 30) {
+              showNotif(`⚠️ Order ini menugaskan ${mUnitIds.length} unit — dimuat ${filled.length} (batas 1 laporan). Sisanya buat laporan terpisah.`);
+            }
           }
         } catch (_) { /* non-blocking — default units tetap dipakai */ }
+      })();
+      // Riwayat servis ringkas → badge kesehatan di grid picker unit (Step 1).
+      // Fetch TERPISAH & non-blocking: gagal di sini tidak boleh menghalangi unit pool
+      // (badge cukup fallback "belum ada riwayat"). Pakai action sempit list-unit-health
+      // (tanpa kolom biaya) — list-logs di-gate Owner/Admin karena memuat data finansial.
+      (async () => {
+        try {
+          const r = await _apiFetch("/api/maintenance", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "list-unit-health", client_id: order.maintenance_client_id }),
+          });
+          if (!r.ok) return;
+          const { logs = [] } = await r.json().catch(() => ({}));
+          setMaintLogsPool?.(logs);
+        } catch (_) { /* non-blocking — badge kesehatan cukup kosong */ }
       })();
     } else {
       // Customer REGULER. Prioritas pre-fill: (1) registry unit AC permanen bila order

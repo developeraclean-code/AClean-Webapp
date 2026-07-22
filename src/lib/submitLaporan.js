@@ -116,10 +116,15 @@ export async function submitLaporan({
     // ── 4. Siapkan materials yang efektif ──
     // Install: pakai laporanInstallItems, lainnya: pakai laporanMaterials
     // Only jasa items here — barang items are now consolidated into laporanBarangItems
+    // unit_no = metadata OPSIONAL "jasa/barang ini untuk unit yang mana" (null = umum).
+    // Objek di bawah dibangun field-by-field, jadi field baru HARUS disebut eksplisit —
+    // kalau tidak, pilihan teknisi hilang diam-diam. TIDAK memengaruhi kalkulasi invoice:
+    // summarize() (lib/invoicing.js) hanya membaca keterangan/nama + harga_satuan/jumlah.
     const jasaAsMaterials = [
       ...laporanJasaItems.map(j => ({
         id: "jasa_" + j.id, nama: j.nama, jumlah: j.jumlah || 1,
-        satuan: j.satuan || "pcs", harga_satuan: j.harga_satuan || 0, keterangan: "jasa"
+        satuan: j.satuan || "pcs", harga_satuan: j.harga_satuan || 0, keterangan: "jasa",
+        unit_no: j.unit_no ?? null,
       })),
     ];
     // Mapping INSTALL_ITEMS key → inventory code untuk deduct stok spesifik
@@ -147,7 +152,8 @@ export async function submitLaporan({
         satuan: b.satuan || "pcs",
         harga_satuan: b.harga_satuan || 0,
         subtotal: (b.harga_satuan || 0) * (b.jumlah || 1),
-        keterangan: "barang" // marking barang dari price_list, bukan material stok
+        keterangan: "barang", // marking barang dari price_list, bukan material stok
+        unit_no: b.unit_no ?? null, // metadata opsional (lihat catatan di jasaAsMaterials)
       }));
 
     // ✨ Cleaning-in-Repair → baris jasa "[+Repair]" DIPERSIST ke materials laporan.

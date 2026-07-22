@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, lazy, Suspense } from "react";
 import { cs } from "../theme/cs.js";
 import { unitHealth, borosRanking, BOROS_LEVEL_GANTI, HEALTH_META } from "../lib/maintenanceHealth.js";
+import { daysUntil } from "../lib/dateTime.js";
 import UnitTrendModal from "./UnitTrendModal.jsx";
 
 // Pill styles — didefinisikan di atas karena dirujuk oleh const module-level
@@ -186,10 +187,8 @@ function statusPill(s) {
   return <span style={{ background: c + "22", color: c, padding: "2px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700 }}>{l}</span>;
 }
 
-function daysUntil(dateStr) {
-  if (!dateStr) return null;
-  return Math.ceil((new Date(dateStr) - new Date()) / 86400000);
-}
+// daysUntil dipindah ke src/lib/dateTime.js (dipakai bareng MaintUnitPickerStep) —
+// diimpor di atas, definisi lokal dihapus supaya tidak ada dua sumber kebenaran.
 
 export default function MaintenanceView({
   currentUser, apiFetch, showNotif, showConfirm,

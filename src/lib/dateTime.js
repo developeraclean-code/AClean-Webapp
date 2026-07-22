@@ -10,6 +10,15 @@ export const getLocalDateObj = () =>
 export const getLocalISOString = () =>
   new Date(Date.now() + OFFSET_MS).toISOString();
 
+// Sisa hari menuju `dateStr` (negatif = sudah lewat). null bila tanggal kosong.
+// Di lib bersama supaya MaintenanceView & modal laporan pakai definisi yang SAMA
+// tanpa saling impor (impor dari MaintenanceView akan menyeret view 3.9k baris itu
+// ke bundle modal laporan & merusak code-splitting).
+export const daysUntil = (dateStr) => {
+  if (!dateStr) return null;
+  return Math.ceil((new Date(dateStr) - new Date()) / 86400000);
+};
+
 export const isWorkingHours = () => {
   // Parse ISO string to extract local (UTC+7) date/time components
   const iso = new Date(Date.now() + OFFSET_MS).toISOString();
