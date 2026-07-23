@@ -236,3 +236,12 @@ export const remapUnitNo = (val, deletedNo) => {
 export const remapUnitNoList = (list, deletedNo) => (list || [])
   .filter(n => n !== deletedNo)
   .map(n => (n > deletedNo ? n - 1 : n));
+
+// ── Batas foto per laporan ──
+// Job maintenance B2B kerap punya banyak unit per lokasi & butuh dokumentasi lebih
+// lengkap → 50 foto. Customer reguler tetap 20. Satu sumber kebenaran dipakai oleh
+// enforcement (fotoUpload.js) DAN gerbang UI (LaporanTeknisiModal) agar tak drift.
+export const MAX_FOTO_REGULAR = 20;
+export const MAX_FOTO_MAINTENANCE = 50;
+export const maxFotoLaporan = (laporanModal) =>
+  laporanModal?.maintenance_client_id ? MAX_FOTO_MAINTENANCE : MAX_FOTO_REGULAR;

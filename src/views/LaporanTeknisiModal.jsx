@@ -5,7 +5,7 @@ import { categoryFromCatalog } from "../lib/invoicing.js";
 import {
   KONDISI_SBL, KONDISI_SDH, PEKERJAAN_OPT, MATERIAL_PRESET,
   INSTALL_ITEMS, TIPE_AC_OPT, mkUnit, isUnitDone, maintUnitToHist, acUnitToHist,
-  remapUnitNo, remapUnitNoList,
+  remapUnitNo, remapUnitNoList, maxFotoLaporan,
 } from "../lib/laporanConstants.js";
 import MaintUnitPickerStep from "./MaintUnitPickerStep.jsx";
 
@@ -105,6 +105,7 @@ export default function LaporanTeknisiModal({
   if (!open || !laporanModal || laporanModal.project_id) return null;
 
   // ── Computed (single source) ──
+  const maxFoto = maxFotoLaporan(laporanModal); // maintenance 50, reguler 20
   const incompleteUnits = laporanUnits.filter(u => !isUnitDone(u));
   const totalFreon = laporanUnits.reduce((s, u) => s + (parseFloat(u.freon_ditambah) || 0), 0);
   const presets = MATERIAL_PRESET[laporanModal?.service] || MATERIAL_PRESET.Cleaning;
@@ -368,7 +369,7 @@ export default function LaporanTeknisiModal({
                       </span>
                     )}
                   </div>
-                  {laporanFotos.length < 20 && (
+                  {laporanFotos.length < maxFoto && (
                     <button onClick={() => fotoInputRef.current?.click()}
                       style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "6px 12px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
                       + Tambah Foto
@@ -393,7 +394,7 @@ export default function LaporanTeknisiModal({
                           style={{ position: "absolute", top: 4, right: 4, background: "#000a", border: "none", color: "#fff", borderRadius: "50%", width: 22, height: 22, cursor: "pointer", fontSize: 12, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>×</button>
                       </div>
                     ))}
-                    {laporanFotos.length < 20 && (
+                    {laporanFotos.length < maxFoto && (
                       <div onClick={() => fotoInputRef.current?.click()}
                         style={{ aspectRatio: "1/1", border: "2px dashed " + cs.border, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: cs.muted, fontSize: 22 }}>+</div>
                     )}
@@ -811,8 +812,8 @@ export default function LaporanTeknisiModal({
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
                             <div style={{ fontSize: 11, fontWeight: 700, color: "#0ea5e9" }}>📸 Foto Unit Ini ({unitFotos.length})</div>
                             <button onClick={() => { fotoTargetUnitRef.current = u.unit_no; fotoUnitInputRef.current?.click(); }}
-                              disabled={laporanFotos.length >= 20}
-                              style={{ fontSize: 11, color: "#0ea5e9", background: "#0ea5e912", border: "1px solid #0ea5e944", borderRadius: 6, padding: "4px 10px", cursor: laporanFotos.length >= 20 ? "not-allowed" : "pointer", opacity: laporanFotos.length >= 20 ? 0.5 : 1, fontWeight: 600 }}>
+                              disabled={laporanFotos.length >= maxFoto}
+                              style={{ fontSize: 11, color: "#0ea5e9", background: "#0ea5e912", border: "1px solid #0ea5e944", borderRadius: 6, padding: "4px 10px", cursor: laporanFotos.length >= maxFoto ? "not-allowed" : "pointer", opacity: laporanFotos.length >= maxFoto ? 0.5 : 1, fontWeight: 600 }}>
                               + Tambah Foto Unit
                             </button>
                           </div>
@@ -1562,7 +1563,7 @@ export default function LaporanTeknisiModal({
               {/* ── Foto: tampil untuk semua service ── */}
               <div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted }}>📸 Foto Dokumentasi ({laporanFotos.length}/20)
+                  <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted }}>📸 Foto Dokumentasi ({laporanFotos.length}/{maxFoto})
                     {laporanFotos.length > 0 && (() => {
                       const uploadingN = laporanFotos.filter(f => f.uploading).length;
                       const savedN = laporanFotos.filter(f => f.url).length;
@@ -1582,7 +1583,7 @@ export default function LaporanTeknisiModal({
                       );
                     })()}
                   </div>
-                  {laporanFotos.length < 20 && (
+                  {laporanFotos.length < maxFoto && (
                     <button onClick={() => fotoInputRef.current?.click()}
                       style={{ fontSize: 11, background: cs.accent + "15", border: "1px solid " + cs.accent + "33", color: cs.accent, borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontWeight: 600 }}>+ Foto</button>
                   )}
@@ -1628,7 +1629,7 @@ export default function LaporanTeknisiModal({
                         )}
                       </div>
                     ))}
-                    {laporanFotos.length < 20 && (
+                    {laporanFotos.length < maxFoto && (
                       <div onClick={() => fotoInputRef.current?.click()}
                         style={{ aspectRatio: "1/1", border: "1px dashed " + cs.border, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 22, color: cs.muted }}>+</div>
                     )}

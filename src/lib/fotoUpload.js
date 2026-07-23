@@ -1,10 +1,13 @@
 // handleFotoUpload — validasi + kompres + upload foto laporan ke R2, tag per-unit.
 // Diekstrak dari App.jsx (Fase 3, pola ctx). `crypto` = global browser (bukan ctx).
+import { maxFotoLaporan } from "./laporanConstants.js";
+
 export async function handleFotoUpload(e, {
   _apiFetch, _apiHeaders, appSettings, compressImg, currentUser, fotoTargetUnitRef,
   fotoUnitInputRef, laporanFotos, laporanModal, setLaporanFotos, showNotif,
 } = {}) {
-    const MAX_PHOTOS = 20;
+    // Maintenance = 50 foto, reguler = 20 (sumber tunggal di laporanConstants).
+    const MAX_PHOTOS = maxFotoLaporan(laporanModal);
     // Foto baru di-tag ke unit hanya jika event berasal dari input per-unit (fotoUnitInputRef).
     // Upload dari uploader global (fotoInputRef) selalu unit_no=null (umum). Cara ini kebal
     // stale-ref: kalau picker per-unit dibatalkan, upload global berikutnya tidak salah tag.
