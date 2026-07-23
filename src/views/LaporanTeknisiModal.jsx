@@ -566,53 +566,48 @@ export default function LaporanTeknisiModal({
                   ⚠️ <strong>Wajib isi Tipe AC, Nama Ruangan & Merk</strong> — PK sudah termasuk dalam pilihan Tipe AC. Data ini langsung masuk invoice!
                 </div>
 
-                <div style={{ display: "grid", gap: 10 }}>
-                  {laporanUnits.map((u, idx) => (
-                    <div key={idx} style={{ background: cs.surface, borderRadius: 10, border: "1px solid " + (TIPE_AC_OPT.includes(u.tipe) && u.label && u.label.trim() && u.merk && u.merk.trim() ? cs.green + "33" : cs.border), overflow: "hidden" }}>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: cs.accent, padding: "8px 12px", background: cs.card + "33", borderBottom: "1px solid " + cs.border + "22", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                        <span>Unit {u.unit_no}</span>
+                <datalist id="ruangan-preset">
+                  <option value="Lantai 1 : Ruangan Depan" />
+                  <option value="Lantai 1 : Ruangan Tamu 1" />
+                  <option value="Lantai 1 : Ruangan Tamu 2" />
+                  <option value="Lantai 1 : Ruangan Kamar" />
+                  <option value="Lantai 1 : Ruang Makan" />
+                  <option value="Lantai 1 : Dapur" />
+                  <option value="Lantai 2 : Kamar Utama" />
+                  <option value="Lantai 2 : Ruangan Ganti Baju Utama" />
+                  <option value="Lantai 2 : Kamar Tidur 1" />
+                  <option value="Lantai 2 : Kamar Tidur 2" />
+                  <option value="Lantai 2 : Kamar Tidur 3" />
+                  <option value="Lantai 2 : Ruang Tamu" />
+                  <option value="Lantai 2 : Ruang Keluarga" />
+                  <option value="Lantai 2 : Ruangan Gym" />
+                  <option value="Lantai 2 : Ruangan Serbaguna" />
+                  <option value="Lantai 1 - Ruangan Depan" />
+                  <option value="Lantai 1 - Ruangan Belakang" />
+                  <option value="Lantai 2 - Ruangan Depan" />
+                  <option value="Lantai 2 - Ruangan Belakang" />
+                  <option value="Lantai 3 - Ruangan Depan" />
+                  <option value="Lantai 3 - Ruangan Belakang" />
+                  <option value="Ruang Kantor" />
+                  <option value="Ruang Rapat" />
+                  <option value="Lobby / Resepsionis" />
+                  <option value="Gudang" />
+                </datalist>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(255px,1fr))", gap: 10 }}>
+                  {laporanUnits.map((u, idx) => {
+                    const lengkap = TIPE_AC_OPT.includes(u.tipe) && u.label && u.label.trim() && u.merk && u.merk.trim();
+                    return (
+                    <div key={idx} style={{ background: lengkap ? cs.green + "0c" : cs.surface, borderRadius: 10, border: "2px solid " + (lengkap ? cs.green + "55" : cs.border), padding: 11, display: "grid", gap: 8, alignContent: "start" }}>
+                      {/* Header kartu: nomor unit, status lengkap, badge maintenance, tombol hapus */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                        <b style={{ color: cs.text, fontSize: 13 }}>Unit {u.unit_no}</b>
+                        {lengkap && <span style={{ fontSize: 12 }}>✅</span>}
                         {u.maint_unit_id && (
                           <span style={{ fontSize: 10, background: cs.green + "18", color: cs.green, padding: "1px 8px", borderRadius: 99, fontWeight: 700 }}>
                             🏢 {u.label || "Unit Maintenance"}
                           </span>
                         )}
-                      </div>
-
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center", padding: "10px 12px" }}>
-                        <div style={{ display: "grid", gap: 4 }}>
-                          <span style={{ fontSize: 10, color: cs.muted, fontWeight: 600 }}>Nama Ruangan *</span>
-                          <input value={u.label} onChange={e => updateUnit(idx, { ...u, label: e.target.value })} placeholder="Posisi: Kamar Utama / Ruang Tamu / Kantor"
-                            list="ruangan-preset"
-                            style={{ background: cs.card, border: "1px solid " + (u.label && u.label.trim() ? cs.green + "44" : "#ef444430"), borderRadius: 6, padding: "8px 10px", color: cs.text, fontSize: 11, outline: "none", boxSizing: "border-box" }} />
-                          <datalist id="ruangan-preset">
-                            <option value="Lantai 1 : Ruangan Depan" />
-                            <option value="Lantai 1 : Ruangan Tamu 1" />
-                            <option value="Lantai 1 : Ruangan Tamu 2" />
-                            <option value="Lantai 1 : Ruangan Kamar" />
-                            <option value="Lantai 1 : Ruang Makan" />
-                            <option value="Lantai 1 : Dapur" />
-                            <option value="Lantai 2 : Kamar Utama" />
-                            <option value="Lantai 2 : Ruangan Ganti Baju Utama" />
-                            <option value="Lantai 2 : Kamar Tidur 1" />
-                            <option value="Lantai 2 : Kamar Tidur 2" />
-                            <option value="Lantai 2 : Kamar Tidur 3" />
-                            <option value="Lantai 2 : Ruang Tamu" />
-                            <option value="Lantai 2 : Ruang Keluarga" />
-                            <option value="Lantai 2 : Ruangan Gym" />
-                            <option value="Lantai 2 : Ruangan Serbaguna" />
-                            <option value="Lantai 1 - Ruangan Depan" />
-                            <option value="Lantai 1 - Ruangan Belakang" />
-                            <option value="Lantai 2 - Ruangan Depan" />
-                            <option value="Lantai 2 - Ruangan Belakang" />
-                            <option value="Lantai 3 - Ruangan Depan" />
-                            <option value="Lantai 3 - Ruangan Belakang" />
-                            <option value="Ruang Kantor" />
-                            <option value="Ruang Rapat" />
-                            <option value="Lobby / Resepsionis" />
-                            <option value="Gudang" />
-                          </datalist>
-                        </div>
-
+                        <span style={{ flex: 1 }} />
                         {laporanUnits.length > 1 && (
                           <button onClick={() => {
                             const deletedNo = idx + 1;
@@ -626,43 +621,46 @@ export default function LaporanTeknisiModal({
                             setLaporanJasaItems(prev => (prev || []).map(j => ({ ...j, unit_no: remapUnitNo(j.unit_no, deletedNo) })));
                             setLaporanBarangItems(prev => (prev || []).map(b => ({ ...b, unit_no: remapUnitNo(b.unit_no, deletedNo) })));
                           }}
-                            style={{ background: "#ef444415", border: "1px solid #ef444430", color: "#ef4444", borderRadius: 6, padding: "8px 10px", cursor: "pointer", fontSize: 12, fontWeight: 700, lineHeight: 1, alignSelf: "flex-end" }}>×</button>
+                            title="Hapus unit ini"
+                            style={{ background: "#ef444415", border: "1px solid #ef444430", color: "#ef4444", borderRadius: 6, padding: "3px 9px", cursor: "pointer", fontSize: 13, fontWeight: 700, lineHeight: 1 }}>×</button>
                         )}
                       </div>
 
-                      <div style={{ padding: "0 12px 10px 12px", borderTop: "1px solid " + cs.border + "22" }}>
-                        <div style={{ display: "grid", gap: 4 }}>
-                          <span style={{ fontSize: 10, color: cs.muted, fontWeight: 600 }}>Tipe AC *</span>
-                          <select value={u.tipe} onChange={e => { const newTipe = e.target.value; const pkMatch = newTipe.match(/(\d[\d.,]*PK)/i); updateUnit(idx, { ...u, tipe: newTipe, pk: pkMatch ? pkMatch[1] : u.pk }); }}
-                            style={{ background: cs.card, border: "1px solid " + (TIPE_AC_OPT.includes(u.tipe) ? cs.green + "44" : "#ef444430"), borderRadius: 6, padding: "8px 10px", color: TIPE_AC_OPT.includes(u.tipe) ? cs.text : cs.muted, fontSize: 11, outline: "none", fontWeight: TIPE_AC_OPT.includes(u.tipe) ? 600 : 400, boxSizing: "border-box", width: "100%" }}>
-                            <option value="">-- Pilih Tipe AC --</option>
-                            {TIPE_AC_OPT.map(t => <option key={t}>{t}</option>)}
-                          </select>
-                        </div>
+                      <div style={{ display: "grid", gap: 3 }}>
+                        <span style={{ fontSize: 10, color: cs.muted, fontWeight: 600 }}>Nama Ruangan *</span>
+                        <input value={u.label} onChange={e => updateUnit(idx, { ...u, label: e.target.value })} placeholder="Posisi: Kamar Utama / Ruang Tamu / Kantor"
+                          list="ruangan-preset"
+                          style={{ background: cs.card, border: "1px solid " + (u.label && u.label.trim() ? cs.green + "44" : "#ef444430"), borderRadius: 6, padding: "8px 10px", color: cs.text, fontSize: 11, outline: "none", boxSizing: "border-box" }} />
                       </div>
 
-                      <div style={{ padding: "0 12px 10px 12px", borderTop: "1px solid " + cs.border + "22" }}>
-                        <div style={{ display: "grid", gap: 4, marginBottom: 6 }}>
-                          <span style={{ fontSize: 10, color: cs.muted, fontWeight: 600 }}>Merk AC *</span>
-                          <input value={u.merk || ""} onChange={e => updateUnit(idx, { ...u, merk: e.target.value })} placeholder="Contoh: Daikin, Panasonic, Mitsubishi"
-                            style={{ background: cs.card, border: "1px solid " + (u.merk && u.merk.trim() ? cs.green + "44" : "#ef444430"), borderRadius: 6, padding: "8px 10px", color: cs.text, fontSize: 11, outline: "none", fontWeight: u.merk && u.merk.trim() ? 600 : 400, boxSizing: "border-box" }} />
-                        </div>
+                      <div style={{ display: "grid", gap: 3 }}>
+                        <span style={{ fontSize: 10, color: cs.muted, fontWeight: 600 }}>Tipe AC *</span>
+                        <select value={u.tipe} onChange={e => { const newTipe = e.target.value; const pkMatch = newTipe.match(/(\d[\d.,]*PK)/i); updateUnit(idx, { ...u, tipe: newTipe, pk: pkMatch ? pkMatch[1] : u.pk }); }}
+                          style={{ background: cs.card, border: "1px solid " + (TIPE_AC_OPT.includes(u.tipe) ? cs.green + "44" : "#ef444430"), borderRadius: 6, padding: "8px 10px", color: TIPE_AC_OPT.includes(u.tipe) ? cs.text : cs.muted, fontSize: 11, outline: "none", fontWeight: TIPE_AC_OPT.includes(u.tipe) ? 600 : 400, boxSizing: "border-box", width: "100%" }}>
+                          <option value="">-- Pilih Tipe AC --</option>
+                          {TIPE_AC_OPT.map(t => <option key={t}>{t}</option>)}
+                        </select>
                       </div>
 
-                      <div style={{ padding: "0 12px 10px 12px", borderTop: "1px solid " + cs.border + "22" }}>
-                        <div style={{ display: "grid", gap: 4 }}>
-                          <span style={{ fontSize: 10, color: cs.muted, fontWeight: 600 }}>Model (opsional)</span>
-                          <input value={u.model || ""} onChange={e => updateUnit(idx, { ...u, model: e.target.value })} placeholder="Kode Unit Indoor / Outdoor"
-                            style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 6, padding: "8px 10px", color: cs.text, fontSize: 11, outline: "none", boxSizing: "border-box" }} />
-                        </div>
+                      <div style={{ display: "grid", gap: 3 }}>
+                        <span style={{ fontSize: 10, color: cs.muted, fontWeight: 600 }}>Merk AC *</span>
+                        <input value={u.merk || ""} onChange={e => updateUnit(idx, { ...u, merk: e.target.value })} placeholder="Contoh: Daikin, Panasonic, Mitsubishi"
+                          style={{ background: cs.card, border: "1px solid " + (u.merk && u.merk.trim() ? cs.green + "44" : "#ef444430"), borderRadius: 6, padding: "8px 10px", color: cs.text, fontSize: 11, outline: "none", fontWeight: u.merk && u.merk.trim() ? 600 : 400, boxSizing: "border-box" }} />
+                      </div>
+
+                      <div style={{ display: "grid", gap: 3 }}>
+                        <span style={{ fontSize: 10, color: cs.muted, fontWeight: 600 }}>Model (opsional)</span>
+                        <input value={u.model || ""} onChange={e => updateUnit(idx, { ...u, model: e.target.value })} placeholder="Kode Unit Indoor / Outdoor"
+                          style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 6, padding: "8px 10px", color: cs.text, fontSize: 11, outline: "none", boxSizing: "border-box" }} />
                         {u.from_history_job_id && (
-                          <div style={{ fontSize: 9, color: cs.muted, marginTop: 6, fontStyle: "italic" }}>
+                          <div style={{ fontSize: 9, color: cs.muted, marginTop: 4, fontStyle: "italic" }}>
                             ✓ Dari history: {u.from_history_job_id}
                           </div>
                         )}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 {laporanUnits.length < 30 && (
                   <button onClick={() => { setLaporanUnits(p => [...p, mkUnit(p.length + 1)]); setActiveUnitIdx(laporanUnits.length); }}
