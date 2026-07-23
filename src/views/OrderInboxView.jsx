@@ -5,6 +5,7 @@ import { statusColor, statusLabel } from "../constants/status.js";
 import { normalizePhone, samePhone } from "../lib/phone.js";
 import { getTechColor } from "../lib/techColor.js";
 import { detectContinuationCandidates, calcContinuationDayNum, multiDayProgress } from "../lib/orders.js";
+import { withMaintenanceLink } from "../lib/maintenanceLink.js";
 import QuickScheduleModal from "../components/QuickScheduleModal.jsx";
 import { useAppContext } from "../context/AppContext.js";
 
@@ -1008,7 +1009,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   // Fase 1 refactor: primitif global (currentUser/supabase/showNotif/showConfirm/
   // auditUserName/TODAY) dibaca dari AppContext, bukan prop-drilling. View ini
   // selalu dirender di dalam <App> (Provider), aman pakai useAppContext.
-  const { currentUser, supabase, showNotif, showConfirm, auditUserName, TODAY } = useAppContext();
+  const { currentUser, supabase, showNotif, showConfirm, auditUserName, TODAY, maintClients } = useAppContext();
   const laporanJobSet = useMemo(
     () => new Set((laporanReports || []).map(r => r.job_id).filter(Boolean)),
     [laporanReports]
@@ -1626,7 +1627,16 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
 
     try {
       if (editId) {
-        const { error } = await supabase.from("orders").update(payload).eq("id", editId);
+        // Edit juga auto-link: bila customer order diubah jadi klien kontrak, order
+        // ikut tertaut. Hormati tautan yang sudah ada (withMaintenanceLink tak
+        // menimpa). form.customer_id perlu ada di payload agar bisa di-resolve.
+        const _prevOrder = ordersData.find(o => o.id === editId);
+        const { payload: editPayload, linked } = withMaintenanceLink(
+          { ...payload, customer_id: form.customer_id, maintenance_client_id: _prevOrder?.maintenance_client_id || null },
+          maintClients,
+        );
+        const upd = linked ? { ...payload, maintenance_client_id: editPayload.maintenance_client_id } : payload;
+        const { error } = await supabase.from("orders").update(upd).eq("id", editId);
         if (error) throw error;
         // Update customer record if phone/address changed
         if (form.customer_id) {
@@ -1636,13 +1646,19 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
             address: payload.address || null,
           }).eq("id", form.customer_id);
         }
-        setOrdersData(prev => prev.map(o => o.id === editId ? { ...o, ...payload } : o));
-        showNotif("Order diperbarui");
+        setOrdersData(prev => prev.map(o => o.id === editId ? { ...o, ...upd } : o));
+        showNotif(linked ? `Order diperbarui · 🏢 ditautkan ke kontrak ${linked.name}` : "Order diperbarui");
         setEditId(null);
       } else {
         const id = "WA-" + Date.now();
-        const { error } = await supabase.from("orders").insert({ ...payload, id });
+        // Auto-link kontrak: order Planning Order untuk customer klien maintenance
+        // ikut membawa maintenance_client_id (kunci = customer_id, lihat
+        // lib/maintenanceLink.js). Tanpa ini order lahir "yatim" → laporan teknisi
+        // jatuh ke form manual & riwayat unit tidak terisi.
+        const { payload: linkedPayload, linked } = withMaintenanceLink(payload, maintClients);
+        const { error } = await supabase.from("orders").insert({ ...linkedPayload, id });
         if (error) throw error;
+        if (linked) showNotif(`🏢 Order ditautkan ke kontrak ${linked.name}`);
 
         // Jika ini order lanjutan: update parent jadi CONTINUED + tandai is_multi_day
         if (continuationFrom) {
@@ -1715,7 +1731,9 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
             });
           }
         }
-        setOrdersData(prev => [{ ...payload, id, created_at: new Date().toISOString() }, ...prev]);
+        // Pakai linkedPayload (bukan payload) — kalau tidak, state lokal kehilangan
+        // maintenance_client_id sampai refresh & badge/grid unit tidak muncul.
+        setOrdersData(prev => [{ ...linkedPayload, id, created_at: new Date().toISOString() }, ...prev]);
         showNotif(continuationFrom ? `✅ Order lanjutan Hari ${payload.day_number} dibuat` : "Order masuk disimpan");
       }
       setForm({ ...EMPTY_FORM, date: TODAY });

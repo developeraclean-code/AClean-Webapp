@@ -319,6 +319,7 @@ export default function MaintenanceView({
       <button onClick={() => { setSel(null); loadClients(); }} style={{ ...btnGhost, marginBottom: 12 }}>← Semua Perusahaan</button>
       <ClientHeader sel={sel} units={units} logs={logs} call={call} showNotif={showNotif} isOwner={isOwner}
         onEdit={() => setClientModal(sel)}
+        onLinked={(custId) => { setSel(s => s ? { ...s, customer_id: custId } : s); loadClients(); }}
         onDelete={() => deleteClient(sel).then(() => setSel(null)).catch(() => {})} />
       {clientModal !== null && (
         <ClientFormModal client={clientModal} onClose={() => setClientModal(null)} onSave={saveClient} busy={busy} />
@@ -500,7 +501,7 @@ function ClientListGrouped({ clients, overview, openClient, setClientModal, dele
 }
 
 // ─────────── CLIENT HEADER ───────────
-function ClientHeader({ sel, units, logs, call, showNotif, isOwner, onEdit, onDelete }) {
+function ClientHeader({ sel, units, logs, call, showNotif, isOwner, onEdit, onDelete, onLinked }) {
   const active = units.filter(u => u.status === "active").length;
   const rusak = units.filter(u => u.status === "rusak").length;
   const contractDays = daysUntil(sel.contract_end_date);
@@ -628,6 +629,93 @@ function ClientHeader({ sel, units, logs, call, showNotif, isOwner, onEdit, onDe
           </div>
         </div>
       </div>
+      <LinkCustomerBanner sel={sel} call={call} showNotif={showNotif} onLinked={onLinked} />
+    </div>
+  );
+}
+
+// ── Penaut klien kontrak ↔ baris customers ──
+// maintenance_clients.customer_id adalah SATU-SATUNYA kunci auto-link order.
+// Selama kosong, order dari Planning Order/WA tidak akan pernah tertaut ke kontrak
+// (teknisi dapat form manual, riwayat unit tak terisi). Banner ini hanya muncul
+// saat tautannya belum ada — jadi hilang sendiri begitu beres.
+function LinkCustomerBanner({ sel, call, showNotif, onLinked }) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [cands, setCands] = useState([]);
+  const [taken, setTaken] = useState({});
+  const [busyId, setBusyId] = useState(null);
+
+  if (sel?.customer_id) return null; // sudah tertaut → tidak perlu ditampilkan
+
+  const buka = async () => {
+    setOpen(true); setLoading(true);
+    try {
+      const j = await call("customer-candidates", { client_id: sel.id });
+      setCands(j.candidates || []); setTaken(j.taken || {});
+    } catch (e) { showNotif("❌ " + e.message); }
+    finally { setLoading(false); }
+  };
+
+  const tautkan = async (cust) => {
+    setBusyId(cust.id);
+    try {
+      await call("link-client-customer", { client_id: sel.id, customer_id: cust.id });
+      showNotif(`✅ ${sel.name} ditautkan ke customer ${cust.name} — order berikutnya otomatis terhubung ke kontrak`);
+      onLinked?.(cust.id);
+      setOpen(false);
+    } catch (e) { showNotif("❌ " + e.message); }
+    finally { setBusyId(null); }
+  };
+
+  return (
+    <div style={{ marginTop: 12, background: (cs.yellow || "#eab308") + "10", border: "1px solid " + (cs.yellow || "#eab308") + "44", borderRadius: 10, padding: "10px 14px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 220 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: cs.yellow || "#eab308" }}>⚠️ Belum tertaut ke data Customer</div>
+          <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>
+            Selama belum ditautkan, order untuk klien ini <b>tidak otomatis</b> terhubung ke kontrak —
+            teknisi akan dapat form isi manual, bukan daftar unit.
+          </div>
+        </div>
+        {!open && <button onClick={buka} style={{ ...btn, flexShrink: 0 }}>🔗 Tautkan Customer</button>}
+      </div>
+
+      {open && (
+        <div style={{ marginTop: 10 }}>
+          {loading ? <div style={{ fontSize: 12, color: cs.muted }}>Mencari kandidat…</div>
+            : cands.length === 0 ? (
+              <div style={{ fontSize: 12, color: cs.muted }}>
+                Tidak ada customer dengan nomor HP <b>{sel.pic_phone || "(kosong)"}</b>.
+                Pastikan nomor PIC klien ini sama dengan nomor di menu Customer, lalu coba lagi.
+              </div>
+            ) : (
+              <div style={{ display: "grid", gap: 6 }}>
+                <div style={{ fontSize: 11, color: cs.muted }}>
+                  Kandidat berdasarkan nomor PIC. <b>Pilih yang benar-benar site ini</b> — satu nomor HP bisa menaungi beberapa lokasi.
+                </div>
+                {cands.map(c => {
+                  const dipakai = taken[c.id];
+                  return (
+                    <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 10, background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 10px" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: cs.text }}>{c.name}</div>
+                        <div style={{ fontSize: 10, color: cs.muted }}>{c.id}{c.address ? ` · ${c.address}` : ""}</div>
+                      </div>
+                      {dipakai
+                        ? <span style={{ fontSize: 10, color: cs.muted, flexShrink: 0 }}>dipakai "{dipakai}"</span>
+                        : <button onClick={() => tautkan(c)} disabled={busyId === c.id}
+                            style={{ ...btn, padding: "5px 12px", fontSize: 11, flexShrink: 0, opacity: busyId === c.id ? 0.6 : 1 }}>
+                            {busyId === c.id ? "⏳" : "Tautkan"}
+                          </button>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          <button onClick={() => setOpen(false)} style={{ ...btnGhost, marginTop: 8, padding: "5px 12px", fontSize: 11 }}>Tutup</button>
+        </div>
+      )}
     </div>
   );
 }

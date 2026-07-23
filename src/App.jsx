@@ -1231,6 +1231,35 @@ export default function ACleanWebApp() {
     return r;
   };
 
+  // ── Indeks klien maintenance (ringan) — dipakai LINTAS menu, bukan hanya menu
+  // Maintenance: auto-link order (lib/maintenanceLink.js) & badge Maintenance/
+  // Regular di menu Customer. Sengaja TIDAK menyimpan "tipe customer" di DB —
+  // status diturunkan dari ada/tidaknya kontrak, jadi tak bisa basi.
+  // Action list-clients sudah ROLE_EXEMPT → aman dipanggil semua role.
+  const [maintClientsIndex, setMaintClientsIndex] = useState([]);
+  // Refresh saat login DAN saat masuk menu yang memakainya (Planning Order, Customer,
+  // Maintenance) — supaya tautan customer↔klien yang baru dibuat di menu Maintenance
+  // langsung akurat di auto-link & badge, tanpa polling.
+  const _maintIdxMenus = ["orders", "wa-inbox", "customers", "maintenance"];
+  const _maintIdxTrigger = _maintIdxMenus.includes(activeMenu) ? activeMenu : "";
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    let alive = true;
+    (async () => {
+      try {
+        const r = await _apiFetch("/api/maintenance", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "list-clients" }),
+        });
+        if (!r.ok) return;
+        const { clients = [] } = await r.json().catch(() => ({}));
+        if (alive) setMaintClientsIndex(clients.map(c => ({ id: c.id, name: c.name, customer_id: c.customer_id, contract_status: c.contract_status })));
+      } catch (_) { /* non-blocking — auto-link cukup tidak jalan, order tetap tersimpan */ }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoggedIn, _maintIdxTrigger]);
+
   // Server-side search Invoice — debounce 350ms; reset hasil saat search dibersihkan
   useEffect(() => {
     const q = (searchInvoice || "").trim();
@@ -2876,7 +2905,11 @@ export default function ACleanWebApp() {
   const appContextValue = useMemo(() => ({
     currentUser, supabase, showNotif, showConfirm, addAgentLog,
     fmt, TODAY, isMobile, auditUserName,
-  }), [currentUser, supabase, showNotif, showConfirm, addAgentLog, fmt, TODAY, isMobile, auditUserName]);
+    // Indeks klien kontrak — dipakai lintas view (auto-link order di Planning Order,
+    // badge Maintenance/Regular di menu Customer). Lewat context supaya tidak
+    // prop-drilling ke banyak view.
+    maintClients: maintClientsIndex,
+  }), [currentUser, supabase, showNotif, showConfirm, addAgentLog, fmt, TODAY, isMobile, auditUserName, maintClientsIndex]);
   // safeArr: handle Supabase returning JSON arrays as strings
   const safeArr = (v) => {
     if (Array.isArray(v)) return v;
@@ -3298,6 +3331,7 @@ export default function ACleanWebApp() {
   // dioper via ctx. Dipanggil langsung (createTeamSplit) & dioper ke view sbg prop.
   const createOrder = (form) => createOrderLib(form, {
     supabase, currentUser, showNotif, addAgentLog, auditUserName,
+    maintClients: maintClientsIndex,
     setOrdersData, setCustomersData, customersData,
     insertOrder, updateOrderStatus, invalidateCache,
     findCustomer, sameCustomer, lookupCustomersByPhone, normalizePhone,

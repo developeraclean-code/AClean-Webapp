@@ -2,8 +2,11 @@
 // Diekstrak dari App.jsx (Fase 2, pola ctx stateful). Semua dependency dioper lewat
 // objek ctx → fungsi lepas dari closure App.jsx. Body verbatim (behavior-preserving).
 // Return newId (atau null bila gagal).
+import { withMaintenanceLink } from "./maintenanceLink.js";
+
 export async function createOrder(form, {
   supabase, currentUser, showNotif, addAgentLog, auditUserName,
+  maintClients = [],
   setOrdersData, setCustomersData, customersData,
   insertOrder, updateOrderStatus, invalidateCache,
   findCustomer, sameCustomer, lookupCustomersByPhone, normalizePhone,
@@ -86,15 +89,29 @@ export async function createOrder(form, {
       maintenance_unit_ids: Array.isArray(form.maintenance_unit_ids) ? form.maintenance_unit_ids : [],
     };
 
+    // ── Auto-link kontrak: customer yang terdaftar sbg klien maintenance otomatis
+    // membawa maintenance_client_id, dari mana pun order dibuat. Tanpa ini, order
+    // dari Planning Order/WA tidak tertaut → laporan teknisi jatuh ke form manual
+    // & riwayat unit tak terisi. Kunci = customer_id (identitas per-site); pilihan
+    // eksplisit (order dari panel Maintenance) tidak ditimpa. Lihat lib/maintenanceLink.js.
+    // Set field-nya sekarang, tapi notif DITUNDA sampai order benar-benar tersimpan
+    // dgn field ini (Attempt 1). Fallback "kolom aman" tidak menyertakan
+    // maintenance_client_id → jangan bilang "ditautkan" kalau row akhirnya tak punya.
+    const _maintLink = withMaintenanceLink(newOrder, maintClients).linked;
+    if (_maintLink) newOrder.maintenance_client_id = _maintLink.id;
+
     // ── Fallback insert: coba full → minimal (BEFORE updating state) ──
     let orderSaved = false;
 
     // Attempt 1: full payload
+    let fullSaved = false;
     {
       const { error: e1 } = await insertOrder(supabase, newOrder);
-      if (!e1) { orderSaved = true; }
+      if (!e1) { orderSaved = true; fullSaved = true; }
       else console.warn("❌ A1 full:", e1.message, "| hint:", e1.hint, "| detail:", e1.details);
     }
+    // Notif tautan HANYA bila full payload (yg memuat maintenance_client_id) tersimpan.
+    if (fullSaved && _maintLink) showNotif(`🏢 Order ditautkan ke kontrak ${_maintLink.name}`);
 
     // Attempt 2: kolom aman saja
     if (!orderSaved) {

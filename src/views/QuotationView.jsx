@@ -117,6 +117,9 @@ export default function QuotationView({
         dispatch:   false,
         source:     "quotation",
         notes:      `Auto dari Quotation ${quo.id}${customNote ? " · " + customNote : ""}`,
+        // Penawaran B2B sudah membawa maintenance_client_id-nya sendiri → order hasil
+        // approve ikut tertaut ke kontrak (tanpa perlu resolve ulang lewat customer_id).
+        ...(quo.maintenance_client_id ? { maintenance_client_id: quo.maintenance_client_id } : {}),
       };
       const { error: orderErr } = await supabase.from("orders").insert(orderPayload);
       if (orderErr) throw new Error("Gagal buat order: " + orderErr.message);

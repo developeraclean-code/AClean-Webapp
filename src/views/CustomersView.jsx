@@ -24,7 +24,14 @@ const MEMBER_TIER_INFO = {
 
 function CustomersView({ selectedCustomer, setSelectedCustomer, ordersData, laporanReports, invoicesData, customersData, setCustomersData, searchCustomer, setSearchCustomer, customerPage, setCustomerPage, customerTab, setCustomerTab, setNewCustomerForm, setModalAddCustomer, setNewOrderForm, setModalOrder, setSelectedInvoice, setModalPDF, buildCustomerHistory, openWA, deleteCustomer, updateCustomer, fotoSrc, safeArr, CUST_PAGE_SIZE, downloadServiceReportPDF }) {
   // Fase 1: primitif global dari AppContext (view selalu di dalam Provider <App>).
-  const { currentUser, isMobile, showConfirm, showNotif, addAgentLog, fmt, supabase } = useAppContext();
+  const { currentUser, isMobile, showConfirm, showNotif, addAgentLog, fmt, supabase, maintClients } = useAppContext();
+// Set customer_id yang berstatus klien kontrak → badge "Maintenance" turunan
+// (bukan kolom tersimpan; ikut ada/tidaknya kontrak). Map ke nama klien utk tooltip.
+const maintByCustomer = React.useMemo(() => {
+  const m = {};
+  (maintClients || []).forEach(mc => { if (mc.customer_id) m[String(mc.customer_id)] = mc.name; });
+  return m;
+}, [maintClients]);
 const [tierFilter, setTierFilter] = React.useState("all");
 // Registry unit AC permanen (ac_units) untuk customer terpilih
 const [acUnits, setAcUnits] = React.useState([]);
@@ -175,6 +182,7 @@ return (
                           <span style={{ fontWeight: 700, color: cs.text, fontSize: 14 }}>{cu.name}</span>
                           {showTier && <span style={{ fontSize: 9, background: cuTier.bg, color: cuTier.color, padding: "2px 8px", borderRadius: 99, fontWeight: 800, border: "1px solid " + cuTier.border }}>{cuTier.badge} {cuTier.label}</span>}
                           {cu.is_vip && <span style={{ fontSize: 9, background: "#f59e0b22", color: "#f59e0b", padding: "2px 7px", borderRadius: 99, fontWeight: 800, border: "1px solid #f59e0b33" }}>VIP</span>}
+                          {maintByCustomer[String(cu.id)] && <span title={"Klien kontrak: " + maintByCustomer[String(cu.id)]} style={{ fontSize: 9, background: "#0ea5e922", color: "#38bdf8", padding: "2px 7px", borderRadius: 99, fontWeight: 800, border: "1px solid #0ea5e944" }}>🏢 Maintenance</span>}
                           {cHist.length > 0 && <span style={{ fontSize: 10, background: cs.accent + "15", color: cs.accent, padding: "1px 7px", borderRadius: 99, fontWeight: 600 }}>{cHist.length}x servis</span>}
                         </div>
                       );
@@ -245,6 +253,7 @@ return (
                           <span style={{ fontWeight: 700, color: cs.text, fontSize: 13 }}>{cu.name}</span>
                           {showTier && <span style={{ fontSize: 9, background: cuTier.bg, color: cuTier.color, padding: "2px 7px", borderRadius: 99, fontWeight: 800, border: "1px solid " + cuTier.border }}>{cuTier.badge} {cuTier.label}</span>}
                           {cu.is_vip && <span style={{ fontSize: 9, background: "#f59e0b22", color: "#f59e0b", padding: "2px 7px", borderRadius: 99, fontWeight: 800, border: "1px solid #f59e0b33" }}>VIP</span>}
+                          {maintByCustomer[String(cu.id)] && <span title={"Klien kontrak: " + maintByCustomer[String(cu.id)]} style={{ fontSize: 9, background: "#0ea5e922", color: "#38bdf8", padding: "2px 7px", borderRadius: 99, fontWeight: 800, border: "1px solid #0ea5e944" }}>🏢 Maintenance</span>}
                           {cHist.length > 0 && <span style={{ fontSize: 10, background: cs.accent + "15", color: cs.accent, padding: "1px 7px", borderRadius: 99, fontWeight: 600 }}>{cHist.length}x servis</span>}
                         </div>
                         <div style={{ fontSize: 11, color: cs.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cu.area || cu.address || "-"}</div>

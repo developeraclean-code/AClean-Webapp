@@ -255,6 +255,62 @@ export async function maintenance(req, res) {
         }
 
         // Tautkan order yang belum ter-link ke perusahaan maintenance (1 klik dari tab Cek Link).
+        // ── Tautkan KLIEN kontrak ke baris customers (fondasi auto-link order) ──
+        // maintenance_clients.customer_id adalah SATU-SATUNYA kunci penautan order
+        // (bukan nama/HP — 1 HP bisa menunjuk banyak site & bisa dipakai bersama
+        // customer perorangan). Selama kolom ini kosong, auto-link tak menemukan
+        // apa pun. Relasi dijaga 1:1: satu baris customers hanya boleh dimiliki
+        // satu klien kontrak, kalau tidak order jadi ambigu menuju site mana.
+        if (action === "link-client-customer") {
+          if (!body.client_id) return res.status(400).json({ error: "client_id wajib" });
+          const custId = body.customer_id == null ? null : String(body.customer_id).trim();
+          if (custId) {
+            // Customer harus ada
+            const uRes = await fetch(REST("customers?id=eq." + encodeURIComponent(custId) + "&select=id,name&limit=1"), { headers });
+            const uRow = uRes.ok ? (await uRes.json())[0] : null;
+            if (!uRow) return res.status(400).json({ error: "Customer tidak ditemukan" });
+            // Jaga 1:1 — tolak bila sudah dipakai klien LAIN
+            const dRes = await fetch(REST("maintenance_clients?customer_id=eq." + encodeURIComponent(custId) + "&select=id,name"), { headers });
+            const dRows = dRes.ok ? await dRes.json() : [];
+            const bentrok = (Array.isArray(dRows) ? dRows : []).find(x => x.id !== body.client_id);
+            if (bentrok) return res.status(400).json({ error: `Customer ini sudah ditautkan ke "${bentrok.name}". Lepas dulu dari sana.` });
+          }
+          const r = await fetch(REST("maintenance_clients?id=eq." + encodeURIComponent(body.client_id)), {
+            method: "PATCH", headers: { ...headers, Prefer: "return=representation" },
+            body: JSON.stringify({ customer_id: custId || null }),
+          });
+          if (!r.ok) return res.status(400).json({ error: "Gagal tautkan customer", detail: await r.text() });
+          const updated = (await r.json())[0];
+          if (!updated) return res.status(404).json({ error: "Perusahaan tidak ditemukan" });
+          return res.status(200).json({ ok: true, client: updated });
+        }
+
+        // Kandidat baris customers untuk ditautkan ke klien kontrak (dipakai UI
+        // penautan). Pencocokan by NOMOR HP PIC — sengaja hanya SARAN, keputusan
+        // tetap di tangan Owner, karena satu HP bisa menaungi beberapa site
+        // sekaligus customer perorangan.
+        if (action === "customer-candidates") {
+          if (!body.client_id) return res.status(400).json({ error: "client_id wajib" });
+          const cRes = await fetch(REST("maintenance_clients?id=eq." + encodeURIComponent(body.client_id) + "&select=id,name,pic_phone&limit=1"), { headers });
+          const klien = cRes.ok ? (await cRes.json())[0] : null;
+          if (!klien) return res.status(404).json({ error: "Perusahaan tidak ditemukan" });
+          const hp = String(klien.pic_phone || "").replace(/\D/g, "");
+          let rows = [];
+          if (hp) {
+            const q = await fetch(REST("customers?phone=eq." + encodeURIComponent(hp) + "&select=id,name,phone,address&order=name&limit=50"), { headers });
+            rows = q.ok ? await q.json() : [];
+          }
+          // Tandai customer yang SUDAH dipakai klien lain agar tak dipilih dua kali
+          let terpakai = {};
+          if (rows.length) {
+            const ids = rows.map(r2 => r2.id).map(encodeURIComponent).join(",");
+            const t = await fetch(REST("maintenance_clients?customer_id=in.(" + ids + ")&select=id,name,customer_id"), { headers });
+            const tr = t.ok ? await t.json() : [];
+            (Array.isArray(tr) ? tr : []).forEach(x => { if (x.id !== body.client_id) terpakai[x.customer_id] = x.name; });
+          }
+          return res.status(200).json({ client: klien, candidates: rows, taken: terpakai });
+        }
+
         if (action === "link-order") {
           if (!body.order_id || !body.client_id) return res.status(400).json({ error: "order_id & client_id wajib" });
           // Pastikan klien ada (hindari set FK sembarangan)
