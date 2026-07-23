@@ -32,7 +32,12 @@ export function openLaporanModal(order, {
       }
     }
     const count = Math.min(order.units || 1, 30);
-    setLaporanUnits(Array.from({ length: count }, (_, i) => mkUnit(i + 1)));
+    // Order maintenance memakai grid-picker unit → grid ADALAH sumber unit. Jangan
+    // pra-buat slot kosong dari order.units: untuk order dari Planning Order (tertaut
+    // otomatis, tanpa maintenance_unit_ids), slot itu tampil "Unit 1 (kosong) — belum
+    // terhubung registry" dan MEMBLOKIR submit sampai dihapus manual (temuan 23 Jul).
+    // Kalau ada prefill unit spesifik (order dari panel Maintenance), diisi di bawah.
+    setLaporanUnits(order.maintenance_client_id ? [] : Array.from({ length: count }, (_, i) => mkUnit(i + 1)));
 
     // Reset pool unit maintenance & registry AC — diisi ulang di bawah sesuai jenis order
     setMaintUnitPool([]); setMaintLogsPool?.([]);
