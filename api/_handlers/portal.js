@@ -961,7 +961,7 @@ export async function maintenance(req, res) {
           const _arr = (v) => { if (Array.isArray(v)) return v; if (typeof v === "string") { try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; } } return []; };
           let report = null;
           try {
-            const rpRes = await fetch(REST("service_reports?job_id=eq." + encodeURIComponent(order.id) + "&select=units_json,foto_urls,materials_json,total_freon&order=updated_at.desc&limit=1"), { headers });
+            const rpRes = await fetch(REST("service_reports?job_id=eq." + encodeURIComponent(order.id) + "&select=units_json,foto_urls,fotos,materials_json,total_freon&order=updated_at.desc&limit=1"), { headers });
             const rp = await rpRes.json();
             if (Array.isArray(rp) && rp.length) report = rp[0];
           } catch (_) {}
@@ -1038,6 +1038,29 @@ export async function maintenance(req, res) {
           // 1) Laporan teknisi (sudah di-fetch lebih awal di atas): foto + material level-laporan.
           // foto_urls = URL penuh R2; MaintenanceView & portal render via /api/foto?key=<R2 key> → strip domain.
           const repFotos = _arr(report?.foto_urls).map(u => String(u || "").replace(/^https?:\/\/[^/]+\//, "")).filter(Boolean);
+          // ── Foto PER-UNIT (numbering sesuai input teknisi) ──
+          // Kolom `fotos` menyimpan tiap foto ber-tag unit_no (posisi unit di laporan, 1-based),
+          // sedangkan `foto_urls` = daftar URL polos tanpa tag. Dulu autolog pakai repFotos (polos)
+          // → SEMUA foto nempel ke SETIAP unit. Sekarang: tiap unit hanya dapat foto miliknya.
+          // Foto tanpa unit_no (foto umum Step 3) = konteks bersama → ditempel ke semua unit.
+          // Fallback: laporan lama tanpa kolom `fotos` → pakai repFotos (perilaku lama, tak putus).
+          const stripFotoDom = (u) => String(u || "").replace(/^https?:\/\/[^/]+\//, "");
+          const repFotosTagged = _arr(report?.fotos);
+          const hasTaggedFotos = repFotosTagged.length > 0;
+          const fotosByUnitNo = {};
+          const fotosGlobal = [];
+          for (const f of repFotosTagged) {
+            const url = f && f.url ? stripFotoDom(f.url) : "";
+            if (!url) continue;
+            if (f.unit_no == null) fotosGlobal.push(url);
+            else (fotosByUnitNo[f.unit_no] = fotosByUnitNo[f.unit_no] || []).push(url);
+          }
+          // Foto untuk 1 unit laporan (lu) = foto ber-tag unit_no-nya + foto global.
+          const photosForUnit = (lu) => {
+            if (!hasTaggedFotos) return repFotos;               // laporan lama → semua (perilaku lama)
+            const own = (lu && lu.unit_no != null && fotosByUnitNo[lu.unit_no]) ? fotosByUnitNo[lu.unit_no] : [];
+            return [...own, ...fotosGlobal];
+          };
           const repMats = _arr(report?.materials_json);
           // Material level-laporan non-freon (barang/jasa) → ditaruh di log unit pertama saja
           const repMatsNonFreon = repMats.filter(m => String(m?.keterangan || "").toLowerCase() !== "freon");
@@ -1195,7 +1218,7 @@ export async function maintenance(req, res) {
               description: desc,
               materials: mats,
               measurements,
-              photos: repFotos,
+              photos: photosForUnit(lu),
               order_id: order.id,
               cost: null,
               created_by: body.created_by || "auto-verify",
