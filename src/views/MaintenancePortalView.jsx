@@ -6,6 +6,9 @@ import { useEffect, useState } from "react";
 const API = "/api";
 // Pengelompokan unit di portal (SMA/SMK/SMP/SD/Other). NULL/nilai lain → "Other".
 const UNIT_GROUPS = ["SMA", "SMK", "SMP", "SD", "Other"];
+// Warna aksen per grup — dipakai HANYA di garis kiri tipis + badge jumlah (bukan blok penuh),
+// supaya beda grup mudah terbaca tapi tampilan tetap kalem.
+const GROUP_COLOR = { SMA: "#2563eb", SMK: "#d97706", SMP: "#059669", SD: "#7c3aed", Other: "#64748b" };
 const groupUnits = (list) => UNIT_GROUPS
   .map(g => [g, list.filter(u => (UNIT_GROUPS.includes(u.unit_group) ? u.unit_group : "Other") === g)])
   .filter(([, arr]) => arr.length);
@@ -191,10 +194,17 @@ export default function MaintenancePortalView({ token }) {
           {shown.length === 0 ? <div style={{ textAlign: "center", color: "#94a3b8", padding: 30 }}>Tidak ada unit ditemukan.</div> :
             groupUnits(shown).map(([grp, arr]) => (
             <div key={grp}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "14px 2px 8px" }}>
-                <span style={{ fontWeight: 800, color: "#0f172a", fontSize: 13, textTransform: "uppercase", letterSpacing: ".3px" }}>{grp}</span>
-                <span style={{ color: "#94a3b8", fontSize: 12, fontWeight: 600 }}>{arr.length} unit</span>
-                <span style={{ flex: 1, height: 1, background: "#e2e8f0" }} />
+              <div style={{
+                position: "sticky", top: 0, zIndex: 5,
+                display: "flex", alignItems: "center", gap: 10,
+                padding: "10px 12px", margin: "18px 0 10px",
+                background: "#f8fafc",
+                borderLeft: "4px solid " + GROUP_COLOR[grp],
+                borderTop: "1px solid #e2e8f0", borderBottom: "1px solid #e2e8f0",
+                borderRadius: 8, boxShadow: "0 1px 2px rgba(15,23,42,.05)",
+              }}>
+                <span style={{ fontWeight: 800, color: "#0f172a", fontSize: 15, letterSpacing: ".2px" }}>{grp}</span>
+                <span style={{ marginLeft: "auto", color: GROUP_COLOR[grp], background: GROUP_COLOR[grp] + "16", fontSize: 12, fontWeight: 700, padding: "2px 10px", borderRadius: 999 }}>{arr.length} unit</span>
               </div>
               {arr.map(u => {
               const ul = logsOf(u.id);
