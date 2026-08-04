@@ -152,6 +152,11 @@ const AC_TYPES = ["split", "cassette", "standing", "floor"];
 const AC_TYPE_LABELS = { split: "Split Wall", cassette: "Cassette", standing: "Floor Standing", floor: "Split Duct" };
 const REFRIGERANTS = ["R32", "R410A", "R22"];
 const STATUSES = ["active", "baru", "perlu_perbaikan", "dalam_perbaikan", "nonaktif", "rusak", "retired"];
+// Pengelompokan unit di tampilan (SMA/SMK/SMP/SD/Other). NULL/nilai lain → "Other".
+const UNIT_GROUPS = ["SMA", "SMK", "SMP", "SD", "Other"];
+const groupOf = (u) => (UNIT_GROUPS.includes(u.unit_group) ? u.unit_group : "Other");
+// Pecah list unit jadi [ [grup, unitArr], ... ] mengikuti urutan UNIT_GROUPS; grup kosong dibuang.
+const groupUnits = (list) => UNIT_GROUPS.map(g => [g, list.filter(u => groupOf(u) === g)]).filter(([, arr]) => arr.length);
 const SERVICE_TYPES_LOG = ["Cuci Rutin", "Cuci Besar", "Perbaikan", "Isi Freon", "Ganti Sparepart", "Instalasi", "Cek & Check-Up", "Lainnya"];
 const SERVICE_CATEGORY_LABELS = { cuci_rutin: "Cuci Rutin", inspeksi: "Inspeksi", perbaikan: "Perbaikan", pengecekan: "Cek Saja" };
 const MATERIAL_UNITS = ["kg", "gram", "liter", "pcs", "meter", "set"];
@@ -946,8 +951,15 @@ function UnitsTab({ sel, units, setUnits, logs = [], call, showNotif, showConfir
       )}
 
       {filtered.length === 0 ? <div style={{ color: cs.muted }}>Belum ada unit.</div> :
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: 10 }}>
-          {filtered.map(u => {
+        <div style={{ display: "grid", gap: 18 }}>
+          {groupUnits(filtered).map(([grp, arr]) => (
+          <div key={grp}>
+            <div style={{ fontWeight: 800, color: cs.text, fontSize: 13, letterSpacing: ".3px", textTransform: "uppercase", margin: "2px 0 8px", display: "flex", alignItems: "center", gap: 8 }}>
+              <span>{grp}</span><span style={{ color: cs.muted, fontWeight: 600, fontSize: 12 }}>{arr.length} unit</span>
+              <span style={{ flex: 1, height: 1, background: cs.border }} />
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: 10 }}>
+          {arr.map(u => {
             const dueDays = daysUntil(u.next_service_date);
             const overdue = dueDays !== null && dueDays < 0;
             const dueSoon = dueDays !== null && dueDays >= 0 && dueDays <= 14;
@@ -999,6 +1011,9 @@ function UnitsTab({ sel, units, setUnits, logs = [], call, showNotif, showConfir
               </div>
             );
           })}
+            </div>
+          </div>
+          ))}
         </div>}
 
       {edit !== null && <UnitFormModal unit={edit} onClose={() => setEdit(null)} onSave={save} />}
@@ -1234,6 +1249,7 @@ function UnitFormModal({ unit, onClose, onSave }) {
     capacity_pk: unit.capacity_pk || "", refrigerant: unit.refrigerant || "R32",
     status: unit.status || "active", service_interval_months: unit.service_interval_months ?? 3,
     high_freq: unit.high_freq === true,
+    unit_group: UNIT_GROUPS.includes(unit.unit_group) ? unit.unit_group : "Other",
     id: unit.id,
   });
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
@@ -1250,6 +1266,7 @@ function UnitFormModal({ unit, onClose, onSave }) {
         <Field l="Kapasitas (PK)"><input type="number" value={f.capacity_pk || ""} onChange={e => set("capacity_pk", e.target.value)} style={inp} placeholder="1" step="0.5" /></Field>
         <Field l="Refrigerant"><select value={f.refrigerant} onChange={e => set("refrigerant", e.target.value)} style={inp}>{REFRIGERANTS.map(r => <option key={r}>{r}</option>)}</select></Field>
         <Field l="Status"><select value={f.status} onChange={e => set("status", e.target.value)} style={inp}>{STATUSES.map(s => <option key={s}>{s}</option>)}</select></Field>
+        <Field l="Grup (view)"><select value={f.unit_group} onChange={e => set("unit_group", e.target.value)} style={inp}>{UNIT_GROUPS.map(g => <option key={g}>{g}</option>)}</select></Field>
         <Field l="Interval PM (bulan)">
           <input type="number" min="0.5" max="24" step="0.5" value={f.service_interval_months} onChange={e => set("service_interval_months", e.target.value === "" ? "" : Number(e.target.value))} style={inp} />
         </Field>

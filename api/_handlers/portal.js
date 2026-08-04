@@ -568,6 +568,7 @@ export async function maintenance(req, res) {
             // (bug: unit baru langsung dianggap aktif & ikut ke-autolog). Temuan audit 18 Jul.
             status: ["active", "baru", "perlu_perbaikan", "dalam_perbaikan", "nonaktif", "rusak", "retired"].includes(u.status) ? u.status : "active",
             notes: u.notes || null,
+            unit_group: ["SMA", "SMK", "SMP", "SD", "Other"].includes(u.unit_group) ? u.unit_group : null,
             high_freq: u.high_freq === true || u.high_freq === "true",
             service_interval_months: u.service_interval_months != null && u.service_interval_months !== "" ? Number(u.service_interval_months) : 3,
             // last_service_date opsional (dipakai GantiUnitModal utk baseline unit pengganti;
@@ -1504,7 +1505,7 @@ export async function mPortal(req, res) {
 
       // Ambil unit + logs + followups (open only) + kontrak aktif
       const [uRes, lRes, fRes, ctrRes] = await Promise.all([
-        fetch(`${SU}/rest/v1/maintenance_units?client_id=eq.${client.id}&select=id,unit_code,location,brand,ac_type,capacity_pk,refrigerant,status,last_service_date,next_service_date,service_interval_months,notes&order=unit_code.asc`, { headers }),
+        fetch(`${SU}/rest/v1/maintenance_units?client_id=eq.${client.id}&select=id,unit_code,location,brand,ac_type,capacity_pk,refrigerant,status,last_service_date,next_service_date,service_interval_months,notes,unit_group&order=unit_code.asc`, { headers }),
         fetch(`${SU}/rest/v1/maintenance_logs?client_id=eq.${client.id}&select=id,unit_id,service_date,service_type,technician,description,cost,photos,materials&order=service_date.desc`, { headers }),
         fetch(`${SU}/rest/v1/maintenance_followups?client_id=eq.${client.id}&status=eq.open&select=id,unit_id,issue_type,priority,description,found_date,status`, { headers }),
         fetch(`${SU}/rest/v1/maintenance_contracts?client_id=eq.${client.id}&status=eq.active&select=id,contract_number,title,start_date,end_date,visits_per_year,services_included&order=end_date.desc&limit=1`, { headers }),

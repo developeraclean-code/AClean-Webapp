@@ -4,6 +4,11 @@ import { useEffect, useState } from "react";
 // Data dari /api/m-portal — gate akses & strip cost sudah di backend.
 
 const API = "/api";
+// Pengelompokan unit di portal (SMA/SMK/SMP/SD/Other). NULL/nilai lain → "Other".
+const UNIT_GROUPS = ["SMA", "SMK", "SMP", "SD", "Other"];
+const groupUnits = (list) => UNIT_GROUPS
+  .map(g => [g, list.filter(u => (UNIT_GROUPS.includes(u.unit_group) ? u.unit_group : "Other") === g)])
+  .filter(([, arr]) => arr.length);
 function fmtRp(n) { return n == null ? "" : "Rp " + Number(n).toLocaleString("id-ID"); }
 function fmtDate(d) { if (!d) return "—"; try { return new Date(d).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }); } catch { return d; } }
 
@@ -184,7 +189,14 @@ export default function MaintenancePortalView({ token }) {
             style={{ width: "100%", padding: "11px 14px", borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 14, marginBottom: 14, boxSizing: "border-box" }} />
 
           {shown.length === 0 ? <div style={{ textAlign: "center", color: "#94a3b8", padding: 30 }}>Tidak ada unit ditemukan.</div> :
-            shown.map(u => {
+            groupUnits(shown).map(([grp, arr]) => (
+            <div key={grp}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "14px 2px 8px" }}>
+                <span style={{ fontWeight: 800, color: "#0f172a", fontSize: 13, textTransform: "uppercase", letterSpacing: ".3px" }}>{grp}</span>
+                <span style={{ color: "#94a3b8", fontSize: 12, fontWeight: 600 }}>{arr.length} unit</span>
+                <span style={{ flex: 1, height: 1, background: "#e2e8f0" }} />
+              </div>
+              {arr.map(u => {
               const ul = logsOf(u.id);
               const isOpen = open === u.id;
               const [sc, sl] = STATUS[u.status] || ["#64748b", u.status];
@@ -267,7 +279,9 @@ export default function MaintenancePortalView({ token }) {
                   )}
                 </div>
               );
-            })}
+              })}
+            </div>
+            ))}
           <div style={{ textAlign: "center", color: "#94a3b8", fontSize: 12, padding: "10px 0 4px" }}>
             Data dikelola & diperbarui oleh tim Aclean
           </div>
