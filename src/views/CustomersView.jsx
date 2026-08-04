@@ -52,8 +52,37 @@ const deactivateAcUnit = async (id, lokasi) => {
   setAcUnits(prev => prev.filter(u => u.id !== id));
   showNotif("✅ Unit dinonaktifkan dari registry");
 };
+// ── Riwayat servis PENUH per-customer, live dari DB — bukan dari ordersData/invoicesData
+// global yang di-cap (500/300 baris terbaru saja). Customer yang order terakhirnya lebih
+// lama dari cap itu dulu tampil "Belum ada riwayat" walau unit AC-nya terdaftar (ac_units
+// di-query terpisah, tak kena cap). Mirror 3 tier match buildCustomerHistory: customer_id
+// permanen, lalu fallback phone/nama utk order legacy tanpa customer_id.
+const [custOrders, setCustOrders] = React.useState(null);
+const [custInvoices, setCustInvoices] = React.useState(null);
+React.useEffect(() => {
+  if (!selectedCustomer?.id) { setCustOrders(null); setCustInvoices(null); return; }
+  let cancelled = false;
+  (async () => {
+    const nameQ = (selectedCustomer.name || "").trim();
+    const phoneQ = normalizePhone(selectedCustomer.phone || "") || selectedCustomer.phone || "";
+    const [byId, byPhone, byName] = await Promise.all([
+      supabase.from("orders").select("*").eq("customer_id", selectedCustomer.id).order("date", { ascending: false }),
+      phoneQ ? supabase.from("orders").select("*").is("customer_id", null).eq("phone", phoneQ).order("date", { ascending: false }) : Promise.resolve({ data: [] }),
+      nameQ ? supabase.from("orders").select("*").is("customer_id", null).ilike("customer", nameQ).order("date", { ascending: false }) : Promise.resolve({ data: [] }),
+    ]);
+    if (cancelled) return;
+    const merged = new Map();
+    [...(byId.data || []), ...(byPhone.data || []), ...(byName.data || [])].forEach(o => merged.set(o.id, o));
+    const allOrders = [...merged.values()];
+    setCustOrders(allOrders);
+    if (allOrders.length === 0) { setCustInvoices([]); return; }
+    const { data: invRows } = await supabase.from("invoices").select("*").in("job_id", allOrders.map(o => o.id));
+    if (!cancelled) setCustInvoices(invRows || []);
+  })();
+  return () => { cancelled = true; };
+}, [selectedCustomer?.id, selectedCustomer?.name, selectedCustomer?.phone, supabase]);
 const history = selectedCustomer
-  ? buildCustomerHistory(selectedCustomer, ordersData, laporanReports, invoicesData, customersData)
+  ? buildCustomerHistory(selectedCustomer, custOrders ?? ordersData, laporanReports, custInvoices ?? invoicesData, customersData)
   : [];
 // Lokasi lain dengan nomor HP sama (multi-lokasi) — untuk strip tab di detail.
 const siblingLocations = selectedCustomer
@@ -94,6 +123,45 @@ filteredCusts.forEach(cu => {
 const totPgCust = Math.ceil(phoneGrouped.length / CUST_PAGE_SIZE) || 1;
 const curPgCust = Math.min(customerPage, totPgCust);
 const pageGroups = phoneGrouped.slice((curPgCust - 1) * CUST_PAGE_SIZE, curPgCust * CUST_PAGE_SIZE);
+
+// ── Badge "Nx servis" / "Terakhir Servis" / total spend di kartu list — batch-fetch history
+// PENUH hanya untuk customer yang tampil di halaman ini (CUST_PAGE_SIZE=20), bukan semua
+// customer sekaligus (tetap ringan) dan bukan array global yang di-cap (badge lama bisa
+// tampil "0x servis" utk customer lama walau riwayatnya sebenarnya ada — sama akar masalah
+// dgn tab Riwayat di atas). Fallback ke customer_id (utama) + phone (legacy) saja, TANPA
+// fallback nama — cukup utk badge preview; match presisi tetap di tab Riwayat saat diklik.
+const [pageHistoryMap, setPageHistoryMap] = React.useState({});
+const _pageCustIds = pageGroups.flat().map(cu => cu.id).sort().join(",");
+React.useEffect(() => {
+  const visible = pageGroups.flat();
+  if (visible.length === 0) { setPageHistoryMap({}); return; }
+  let cancelled = false;
+  (async () => {
+    const ids = visible.map(cu => cu.id);
+    const phones = [...new Set(visible.map(cu => normalizePhone(cu.phone || "") || cu.phone).filter(Boolean))];
+    const [byId, byPhone] = await Promise.all([
+      supabase.from("orders").select("*").in("customer_id", ids).order("date", { ascending: false }),
+      phones.length > 0
+        ? supabase.from("orders").select("*").is("customer_id", null).in("phone", phones).order("date", { ascending: false })
+        : Promise.resolve({ data: [] }),
+    ]);
+    if (cancelled) return;
+    const merged = new Map();
+    [...(byId.data || []), ...(byPhone.data || [])].forEach(o => merged.set(o.id, o));
+    const batchOrders = [...merged.values()];
+    let batchInvoices = [];
+    if (batchOrders.length > 0) {
+      const { data: invRows } = await supabase.from("invoices").select("*").in("job_id", batchOrders.map(o => o.id));
+      batchInvoices = invRows || [];
+    }
+    if (cancelled) return;
+    const map = {};
+    visible.forEach(cu => { map[cu.id] = buildCustomerHistory(cu, batchOrders, laporanReports, batchInvoices, customersData); });
+    setPageHistoryMap(map);
+  })();
+  return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [_pageCustIds, supabase]);
 const isOwnerAdmin = currentUser?.role === "Owner" || currentUser?.role === "Admin";
 const isTekHelper = currentUser?.role === "Teknisi" || currentUser?.role === "Helper";
 
@@ -165,7 +233,7 @@ return (
             // Single-location: render kartu seperti semula
             if (!isMulti) {
               const cu = group[0];
-              const cHist = buildCustomerHistory(cu, ordersData, laporanReports, invoicesData, customersData);
+              const cHist = pageHistoryMap[cu.id] ?? buildCustomerHistory(cu, ordersData, laporanReports, invoicesData, customersData);
               const lastSvc = cHist[0];
               const totalSpend = cHist.reduce((a, b) => a + (b.invoice_total || 0), 0);
               return (
@@ -240,7 +308,7 @@ return (
 
                 {/* Sub-kartu per lokasi */}
                 {group.map((cu, li) => {
-                  const cHist = buildCustomerHistory(cu, ordersData, laporanReports, invoicesData, customersData);
+                  const cHist = pageHistoryMap[cu.id] ?? buildCustomerHistory(cu, ordersData, laporanReports, invoicesData, customersData);
                   const lastSvc = cHist[0];
                   const totalSpend = cHist.reduce((a, b) => a + (b.invoice_total || 0), 0);
                   const cuTier = MEMBER_TIER_INFO[cu.membership_tier || "silver"];

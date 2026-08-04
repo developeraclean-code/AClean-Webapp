@@ -2,10 +2,31 @@ import { memo, useState, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { useAppContext } from "../context/AppContext.js";
 import { ORDER_DONE_STATUSES } from "../constants/status.js";
+import { fetchAllOrders, fetchAllInvoices } from "../data/reads.js";
 
-function ReportsView({ ordersData, invoicesData, laporanReports, customersData, teknisiData, inventoryData, statsPeriod, setStatsPeriod, statsMingguOff, setStatsMingguOff, statsDateFrom, setStatsDateFrom, statsDateTo, setStatsDateTo, bulanIni, invoiceReminderWA, getTechColor, expensesData }) {
+function ReportsView({ ordersData: ordersDataProp, invoicesData: invoicesDataProp, laporanReports, customersData, teknisiData, inventoryData, statsPeriod, setStatsPeriod, statsMingguOff, setStatsMingguOff, statsDateFrom, setStatsDateFrom, statsDateTo, setStatsDateTo, bulanIni, invoiceReminderWA, getTechColor, expensesData }) {
   // Fase 1: primitif global dari AppContext.
   const { isMobile, currentUser, fmt, TODAY, supabase } = useAppContext();
+
+// ── Data historis PENUH, bukan array global yang di-cap (ordersData 500 / invoicesData 300
+// baris terbaru saja — cukup untuk operasional harian tapi bikin Statistik bulan-bulan lama
+// tampak kosong/salah begitu volume order/invoice lewat cap itu). Fetch sekali saat buka
+// Statistik; sementara loading, fallback ke prop yang sudah ada agar tidak flash kosong. ──
+const [fullOrders, setFullOrders] = useState(null);
+const [fullInvoices, setFullInvoices] = useState(null);
+useEffect(() => {
+  let cancelled = false;
+  (async () => {
+    const [{ data: ord }, { data: inv }] = await Promise.all([
+      fetchAllOrders(supabase), fetchAllInvoices(supabase),
+    ]);
+    if (!cancelled) { setFullOrders(ord || []); setFullInvoices(inv || []); }
+  })();
+  return () => { cancelled = true; };
+}, [supabase]);
+const ordersData = fullOrders || ordersDataProp;
+const invoicesData = fullInvoices || invoicesDataProp;
+
 const techColors = Object.fromEntries([...new Set(ordersData.map(o => o.teknisi).filter(Boolean))].map(n => [n, getTechColor(n, teknisiData)]))
 
 // ── Rating Dashboard state ──

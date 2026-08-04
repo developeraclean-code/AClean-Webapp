@@ -21,6 +21,41 @@ export async function submitLaporan({
     if (submitLaporanLock.current) { showNotif("⏳ Sedang submit, harap tunggu..."); return; }
     submitLaporanLock.current = true;
     try {
+    // ── 0. Guard: job_id form harus match order asli di DB (live, bukan state lokal)
+    // — cegah laporan/invoice nyasar ke job lain kalau modal form stale (insiden
+    // Wilcent/DB Style 03 Agu 2026: job_id laporan tersubmit menunjuk order lain,
+    // 7 detik setelah order baru dibuat — indikasi form lama belum ke-refresh). ──
+    {
+      const { data: liveOrder, error: liveErr } = await supabase
+        .from("orders")
+        .select("id, customer, teknisi")
+        .eq("id", laporanModal.id)
+        .maybeSingle();
+      if (liveErr) {
+        reportError("laporan.submit.guardFetchFailed", liveErr, { jobId: laporanModal?.id });
+        showNotif("❌ Gagal verifikasi order sebelum submit: " + liveErr.message + ". Coba lagi.");
+        submitLaporanLock.current = false;
+        return;
+      }
+      if (!liveOrder) {
+        showNotif(`❌ Order ${laporanModal.id} tidak ditemukan di database. Tutup form ini, refresh halaman, lalu buka ulang job yang benar.`);
+        submitLaporanLock.current = false;
+        return;
+      }
+      if (liveOrder.customer !== laporanModal.customer || liveOrder.teknisi !== laporanModal.teknisi) {
+        reportError("laporan.submit.jobMismatch", new Error("job_id mismatch"), {
+          jobId: laporanModal.id, formCustomer: laporanModal.customer, formTeknisi: laporanModal.teknisi,
+          dbCustomer: liveOrder.customer, dbTeknisi: liveOrder.teknisi,
+        });
+        showNotif(
+          `❌ Data tidak sinkron: job ${laporanModal.id} di database milik "${liveOrder.customer}" / ${liveOrder.teknisi}, `
+          + `tapi form ini isinya untuk "${laporanModal.customer}" / ${laporanModal.teknisi}. Submit dibatalkan untuk mencegah laporan nyasar. `
+          + `Tutup form ini, refresh halaman, lalu buka ulang job yang benar.`
+        );
+        submitLaporanLock.current = false;
+        return;
+      }
+    }
     // ── 1. Definisikan isInstall PERTAMA sebelum digunakan ──
     const isInstall = laporanModal?.service === "Install";
     const isSurvey = laporanModal?.service === "Survey";

@@ -36,6 +36,39 @@ export const fetchInvoices = (supabase) =>
     .select(INVOICE_COLS)
     .order("created_at", { ascending: false }).limit(300);
 
+// Fetch SEMUA baris tanpa cap (paginated via .range(), PostgREST batas 1000/request) —
+// untuk fitur yang butuh akurasi historis penuh (Statistik, History Customer). Bukan
+// dipakai di bootstrap awal app (tetap pakai fetchOrders/fetchInvoices capped demi speed
+// login) — hanya di-panggil sekali per buka view yang butuhnya.
+const FULL_FETCH_PAGE = 1000;
+export const fetchAllOrders = async (supabase) => {
+  let all = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase.from("orders").select(ORDER_COLS)
+      .order("date", { ascending: false }).range(from, from + FULL_FETCH_PAGE - 1);
+    if (error) return { data: all, error };
+    all = all.concat(data || []);
+    if (!data || data.length < FULL_FETCH_PAGE) break;
+    from += FULL_FETCH_PAGE;
+  }
+  return { data: all, error: null };
+};
+
+export const fetchAllInvoices = async (supabase) => {
+  let all = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase.from("invoices").select(INVOICE_COLS)
+      .order("created_at", { ascending: false }).range(from, from + FULL_FETCH_PAGE - 1);
+    if (error) return { data: all, error };
+    all = all.concat(data || []);
+    if (!data || data.length < FULL_FETCH_PAGE) break;
+    from += FULL_FETCH_PAGE;
+  }
+  return { data: all, error: null };
+};
+
 // Satu baris segar by id — dipakai sebelum generate/download PDF agar tidak
 // memakai pdf_url/updated_at basi dari state lokal (cache PDF salah versi).
 export const fetchInvoiceById = (supabase, id) =>

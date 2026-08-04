@@ -20,6 +20,23 @@ export async function approveInvoiceCore(inv, {
       return null;
     }
 
+    // Guard: job_id invoice harus milik order dengan customer yang sama — cegah status
+    // order "nyasar" ke job lain kalau job_id invoice ternyata salah tunjuk (insiden
+    // Wilcent/DB Style 03 Agu 2026: job_id laporan/invoice keliru nunjuk order lain).
+    {
+      const targetOrder = (ordersData || []).find(o => o.id === inv.job_id);
+      if (targetOrder && targetOrder.customer !== inv.customer) {
+        reportError("invoice.approve.jobMismatch", new Error("invoice job_id mismatch"), {
+          invoiceId: inv.id, jobId: inv.job_id, invoiceCustomer: inv.customer, orderCustomer: targetOrder.customer,
+        });
+        showNotif(
+          `❌ Invoice ${inv.id} (customer: ${inv.customer}) menunjuk ke job ${inv.job_id} yang di database `
+          + `milik customer "${targetOrder.customer}". Approve dibatalkan untuk mencegah status order salah sasaran — cek job_id invoice ini dulu.`
+        );
+        return null;
+      }
+    }
+
     const today = getLocalDate();
     const due = new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const approvedAt = getLocalISOString(); // Indonesia timezone (UTC+7)

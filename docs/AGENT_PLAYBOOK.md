@@ -86,6 +86,12 @@ di satu jalur WAJIB dicerminkan di jalur satunya, lalu tes KEDUA jalur.
 - Item section "Barang" harus jadi line item (pernah drop dari total = kurang tagih).
 - Setelah `markInvoicePaid()` → `orders.status = 'PAID'` juga.
 - Guard pembatalan biaya cleaning harus name-based, bukan "ada baris jasa apa pun".
+- `job_id` di form laporan (`laporanModal.id`) JANGAN dipercaya begitu saja — verifikasi live ke
+  `orders` (customer+teknisi match) sebelum insert `service_reports`/`invoices`. Insiden nyata
+  (Wilcent/DB Style, 03 Agu 2026): laporan tersubmit 7 detik setelah order baru dibuat dengan
+  `job_id` menunjuk order LAIN (state modal stale) → status order asli tak pernah update, status
+  order lain malah ke-INVOICE_APPROVED. Guard ditambahkan di `submitLaporan.js` (awal fungsi) dan
+  `approveInvoiceCore.js` (cross-check `inv.customer` vs `order.customer` sebelum update status).
 
 ### E. Bugfix
 
@@ -111,6 +117,7 @@ di satu jalur WAJIB dicerminkan di jalur satunya, lalu tes KEDUA jalur.
 | URL R2 publik langsung | Bucket non-publik → wajib `fotoSrc()` / proxy `/api/foto` |
 | `.catch()` pada query builder Supabase | Builder bukan Promise penuh → pakai `try/catch` + cek `error` |
 | Query tanpa paginasi untuk data besar | PostgREST cap 1000 baris → `.range()` loop |
+| Pakai `ordersData`/`invoicesData` global (props dari App.jsx) untuk kalkulasi HISTORIS (statistik, riwayat customer) | `fetchOrders()`/`fetchInvoices()` di `reads.js` sengaja di-cap 500/300 baris TERBARU demi speed login — bukan seluruh data. Insiden nyata (04 Agu 2026): cutoff jatuh ~Jun/Jul 2026, Statistik bulan lebih lama & History customer lama tampil kosong/salah tanpa error apa pun. Butuh histori penuh (ReportsView, CustomersView detail) → pakai `fetchAllOrders()`/`fetchAllInvoices()` (paginated `.range()`, tanpa cap, di `reads.js`) sebagai live fetch terpisah, JANGAN andalkan array global begitu saja |
 | Validasi foto by MIME/ekstensi | Android salah-label JPEG→mp4 → validasi content-based (canvas decode) |
 | Toggle cron satu lapis | WA bocor saat OFF → AND-logic (lihat §B) |
 | Edit `jenis servis` order | SOP: hapus & buat ulang |
@@ -120,6 +127,7 @@ di satu jalur WAJIB dicerminkan di jalur satunya, lalu tes KEDUA jalur.
 | PDF dari state lokal | State basi → refetch baris segar sebelum generate/kirim PDF |
 | Delete user via Supabase client | Tidak ada RLS policy → `/api/manage-user` |
 | Anggap daftar migrasi = skema DB lengkap | Ada kolom dibuat di luar migrasi (contoh: `invoices.approved_at`, terverifikasi 2026-07-19) → sebelum pakai kolom "yang katanya ada", cek `information_schema.columns` di Supabase |
+| Update status order hanya by `job_id` tanpa cross-check | `job_id` dari state form/invoice bisa stale/salah → status order lain ikut salah sasaran (lihat §D, insiden 03 Agu 2026) |
 
 ## Fase Akhir — Destilasi Pelajaran (loop self-learning)
 
