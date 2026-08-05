@@ -38,7 +38,7 @@ const matRowData = (m) => {
 const s = StyleSheet.create({
   page:       { padding: 40, fontFamily: "Times-Roman", fontSize: 10, color: "#22252b", backgroundColor: "#fff" },
   headerRow:  { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", paddingBottom: 14, borderBottom: "2.5px solid #22252b", marginBottom: 16 },
-  brandRow:   { flexDirection: "row", alignItems: "center", gap: 10 },
+  brandRow:   { flexDirection: "row", alignItems: "center", gap: 14 },
   brandName:  { fontFamily: "Times-Bold", fontSize: 17, color: "#2f5ea3" },
   brandTag:   { fontSize: 8, color: "#5b5f66", marginTop: 2 },
   brandInfo:  { fontSize: 8, color: "#5b5f66", marginTop: 5, lineHeight: 1.5 },
@@ -269,7 +269,7 @@ function InvoicePage({ inv, logoUrl, appSettings = {}, invoiceItems = [], portal
       {/* Header */}
       <View style={s.headerRow}>
         <View style={s.brandRow}>
-          {logoUrl ? <Image src={logoUrl} style={{ width: 42, height: 42, objectFit: "contain" }} /> : null}
+          {logoUrl ? <Image src={logoUrl} style={{ width: 56, height: 56, objectFit: "contain" }} /> : null}
           <View>
             <Text style={s.brandName}>{companyName}</Text>
             <Text style={s.brandTag}>Jasa Servis & Perawatan AC Profesional</Text>
@@ -404,7 +404,7 @@ function MergedInvoicePage({ invList, logoUrl, appSettings = {}, portalLink = nu
       {/* Header */}
       <View style={s.headerRow}>
         <View style={s.brandRow}>
-          {logoUrl ? <Image src={logoUrl} style={{ width: 42, height: 42, objectFit: "contain" }} /> : null}
+          {logoUrl ? <Image src={logoUrl} style={{ width: 56, height: 56, objectFit: "contain" }} /> : null}
           <View>
             <Text style={s.brandName}>{companyName}</Text>
             <Text style={s.brandTag}>Jasa Servis & Perawatan AC Profesional</Text>
