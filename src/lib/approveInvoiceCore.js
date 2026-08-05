@@ -64,6 +64,11 @@ export async function approveInvoiceCore(inv, {
           addAgentLog("INVOICE_APPROVE_NAME_DIFF",
             `Invoice ${inv.id}: nama "${inv.customer}" beda tipis dari order "${targetOrder.customer}" (job ${inv.job_id}, similarity ${Math.round(similarity * 100)}%) — dilanjutkan, cek typo kalau perlu`,
             "WARNING");
+          // Tampilkan juga sebagai notif visible (bukan cuma tercatat di Monitoring) —
+          // supaya yang approve LANGSUNG sadar saat itu juga, bisa cek/benerin via
+          // "Edit Nilai" sebelum invoice terkirim ke customer. Insiden nyata: invoice
+          // ke-generate 0,6 detik sebelum order-nya dibetulkan typo-nya (05 Agu 2026).
+          showNotif(`⚠️ Invoice ${inv.id} tetap di-approve, tapi nama "${inv.customer}" beda tipis dari order "${targetOrder.customer}" — cek "Edit Nilai" kalau perlu dibetulkan.`);
         }
       }
     }
