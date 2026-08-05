@@ -63,8 +63,8 @@ const s = StyleSheet.create({
   totalLabel: { color: "#fff", fontFamily: "Times-Bold", fontSize: 12, letterSpacing: 0.5 },
   totalVal:   { color: "#fff", fontFamily: "Times-Bold", fontSize: 13 },
 
-  statusRow:  { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 12 },
-  statusPill: { fontFamily: "Times-Bold", fontSize: 9, padding: "3 10", borderRadius: 99 },
+  statusRow:  { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 12 },
+  statusPill: { fontFamily: "Times-Bold", fontSize: 13, padding: "5 14", borderRadius: 99 },
   statusMeta: { fontSize: 9, color: "#5b5f66" },
 
   garansiBox: { border: "1px solid #cfd2d6", borderRadius: 4, padding: "8 12", marginTop: 12 },
@@ -98,12 +98,17 @@ const STATUS_INFO = {
   OVERDUE:     { label: "JATUH TEMPO",         bg: "#fbe9e7", fg: "#b3402f" },
   UNPAID:      { label: "MENUNGGU PEMBAYARAN", bg: "#fff7ed", fg: "#c2410c" },
 };
-function StatusPill({ status, due }) {
+// Sudah LUNAS → tampilkan "Dibayar: tanggal" (bukan Jatuh Tempo, sudah tidak relevan).
+// Belum lunas → tetap tampilkan Jatuh Tempo seperti biasa.
+function StatusPill({ status, due, paidAt }) {
   const info = STATUS_INFO[status] || STATUS_INFO.UNPAID;
+  const isPaid = status === "PAID";
   return (
     <View style={s.statusRow}>
       <Text style={[s.statusPill, { backgroundColor: info.bg, color: info.fg }]}>{info.label}</Text>
-      {due ? <Text style={s.statusMeta}>Jatuh tempo: {due}</Text> : null}
+      {isPaid
+        ? (paidAt ? <Text style={s.statusMeta}>Dibayar: {paidAt}</Text> : null)
+        : (due ? <Text style={s.statusMeta}>Jatuh tempo: {due}</Text> : null)}
     </View>
   );
 }
@@ -334,8 +339,7 @@ function InvoicePage({ inv, logoUrl, appSettings = {}, invoiceItems = [], portal
         )}
       </View>
 
-      <StatusPill status={inv.status} due={inv.due} />
-      {inv.paid_at ? <Text style={[s.statusMeta, { marginTop: 3 }]}>Dibayar: {fmtDate(inv.paid_at)}</Text> : null}
+      <StatusPill status={inv.status} due={inv.due} paidAt={inv.paid_at ? fmtDate(inv.paid_at) : null} />
 
       <PaymentGaransiRow
         appSettings={appSettings}
@@ -392,6 +396,8 @@ function MergedInvoicePage({ invList, logoUrl, appSettings = {}, portalLink = nu
 
   const allPaid = invList.every(e => e.inv?.status === "PAID");
   const aggStatus = allPaid ? "PAID" : (paidAll > 0 ? "PARTIAL_PAID" : "UNPAID");
+  const paidDates = invList.map(e => e.inv?.paid_at).filter(Boolean);
+  const paidLatest = paidDates.length > 0 ? fmtDate(paidDates.sort((a, b) => new Date(b) - new Date(a))[0]) : null;
 
   const allIds = invList.map(e => e.inv?.id).filter(Boolean);
   const mergedId = allIds.length === 2 ? allIds.join(" + ") : `${allIds[0]} +${allIds.length - 1} lainnya`;
@@ -504,7 +510,7 @@ function MergedInvoicePage({ invList, logoUrl, appSettings = {}, portalLink = nu
         </View>
       </View>
 
-      <StatusPill status={aggStatus} due={dueLatest} />
+      <StatusPill status={aggStatus} due={dueLatest} paidAt={paidLatest} />
 
       <PaymentGaransiRow
         appSettings={appSettings}
