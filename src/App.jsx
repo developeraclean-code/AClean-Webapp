@@ -1786,15 +1786,21 @@ export default function ACleanWebApp() {
       }
     }
 
+    // PDF_TEMPLATE_VERSION: bump manual di InvoicePDF.jsx tiap desain berubah —
+    // cache R2 yang lebih tua dari versi ini otomatis dianggap basi & di-generate
+    // ulang, tanpa perlu hapus pdf_url manual per invoice tiap kali layout diubah.
+    const { default: InvoicePDF, PDF_TEMPLATE_VERSION } = await import("./components/InvoicePDF.jsx");
     const variant = portalLink ? "wpl" : "nopl";
-    const version = `${inv.updated_at || inv.created_at || "v0"}:${variant}`;
+    const version = `${inv.updated_at || inv.created_at || "v0"}:${variant}:${PDF_TEMPLATE_VERSION}`;
 
     // Layer 1: memory cache (fastest, <10ms)
     const memCached = getCachedPDF("invoice", inv.id, version);
     if (memCached) return memCached;
 
-    // Layer 2: DB cache (R2 fetch, ~200-500ms) — hanya untuk variant tanpa portalLink
-    if (!portalLink && inv.pdf_url) {
+    // Layer 2: DB cache (R2 fetch, ~200-500ms) — hanya untuk variant tanpa portalLink,
+    // dan hanya kalau di-generate SETELAH template terakhir berubah.
+    const cacheIsCurrentTemplate = inv.pdf_generated_at && new Date(inv.pdf_generated_at) >= new Date(PDF_TEMPLATE_VERSION);
+    if (!portalLink && inv.pdf_url && cacheIsCurrentTemplate) {
       try {
         const r = await fetch(inv.pdf_url);
         if (r.ok) {
@@ -1809,7 +1815,6 @@ export default function ACleanWebApp() {
 
     // Layer 3: generate fresh (~3-5s)
     const { pdf } = await import("@react-pdf/renderer");
-    const { default: InvoicePDF } = await import("./components/InvoicePDF.jsx");
     const logoUrl = await fetchInvoiceLogoUrl();
     const blob = await pdf(
       <InvoicePDF inv={inv} logoUrl={logoUrl} appSettings={appSettings} portalLink={portalLink} />
@@ -1863,8 +1868,11 @@ export default function ACleanWebApp() {
       // Refetch baris segar — fast path di bawah memakai inv.pdf_url; kalau dari state
       // basi (belum ter-poll pasca edit), PDF LAMA bisa terkirim ke customer via WA.
       const inv = await freshInvoiceRow(invStale);
-      // Fast path: kalau sudah ada pdf_url di DB & tidak butuh portalLink → langsung pakai
-      if (!portalLink && inv.pdf_url) return inv.pdf_url;
+      // Fast path: kalau sudah ada pdf_url di DB, tidak butuh portalLink, DAN cache-nya
+      // dari template PDF versi sekarang (bukan basi) → langsung pakai.
+      const { PDF_TEMPLATE_VERSION } = await import("./components/InvoicePDF.jsx");
+      const cacheIsCurrentTemplate = inv.pdf_generated_at && new Date(inv.pdf_generated_at) >= new Date(PDF_TEMPLATE_VERSION);
+      if (!portalLink && inv.pdf_url && cacheIsCurrentTemplate) return inv.pdf_url;
 
       const blob = await generateInvoicePDFBlob(inv, portalLink);
       if (!blob) return null;

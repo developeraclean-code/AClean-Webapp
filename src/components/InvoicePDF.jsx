@@ -4,6 +4,13 @@ import { Document, Page, Text, View, StyleSheet, Image, Font } from "@react-pdf/
 // ujung baris (mis. "Service" → "Ser-vice") walau bukan bahasa Inggris.
 Font.registerHyphenationCallback((word) => [word]);
 
+// PENTING — bump tanggal ini SETIAP kali layout/style PDF di file ini diubah.
+// generateInvoicePDFBlob() (App.jsx) membandingkan invoices.pdf_generated_at
+// terhadap nilai ini — kalau cache R2 lebih lama dari versi ini, PDF di-generate
+// ulang otomatis (bukan pakai cache lama), tanpa perlu hapus pdf_url manual per
+// invoice. Lupa bump ini = perubahan desain baru tidak kelihatan di invoice lama.
+export const PDF_TEMPLATE_VERSION = "2026-08-05T12:35:00Z";
+
 // ── Helpers ──
 const fmt = (n) => "Rp " + (Number(n) || 0).toLocaleString("id-ID");
 
