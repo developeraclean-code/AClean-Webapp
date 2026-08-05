@@ -66,6 +66,13 @@ const s = StyleSheet.create({
   garansiBox: { border: "1px solid #cfd2d6", borderRadius: 4, padding: "8 12", marginTop: 12 },
   garansiText:{ fontSize: 9, lineHeight: 1.5 },
 
+  payBox:     { border: "1px solid #cfd2d6", borderRadius: 4, padding: "9 12", marginTop: 12 },
+  payTitle:   { fontFamily: "Times-Bold", fontSize: 8, textTransform: "uppercase", letterSpacing: 0.5, color: "#5b5f66", marginBottom: 4 },
+  payBank:    { fontSize: 9, color: "#5b5f66" },
+  payNum:     { fontFamily: "Times-Bold", fontSize: 13, marginTop: 1, marginBottom: 1 },
+  payHolder:  { fontSize: 9, color: "#5b5f66" },
+  payHint:    { fontSize: 8, color: "#94a3b8", marginTop: 4 },
+
   footerRow:  { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginTop: 22 },
   footerNote: { fontSize: 9, color: "#5b5f66", lineHeight: 1.5, maxWidth: 280 },
   signBlock:  { alignItems: "center", minWidth: 150 },
@@ -93,6 +100,18 @@ function StatusPill({ status, due }) {
     <View style={s.statusRow}>
       <Text style={[s.statusPill, { backgroundColor: info.bg, color: info.fg }]}>{info.label}</Text>
       {due ? <Text style={s.statusMeta}>Jatuh tempo: {due}</Text> : null}
+    </View>
+  );
+}
+
+function PaymentInfoBox({ appSettings }) {
+  return (
+    <View style={s.payBox}>
+      <Text style={s.payTitle}>Informasi Pembayaran</Text>
+      <Text style={s.payBank}>Transfer Bank {appSettings.bank_name || "BCA"}</Text>
+      <Text style={s.payNum}>{appSettings.bank_number || "8830883011"}</Text>
+      <Text style={s.payHolder}>a.n. {appSettings.bank_holder || "Malda Retta"}</Text>
+      <Text style={s.payHint}>Kirim bukti transfer via WhatsApp ke nomor di atas</Text>
     </View>
   );
 }
@@ -190,9 +209,6 @@ function InvoicePage({ inv, logoUrl, appSettings = {}, invoiceItems = [], portal
 
   const companyName  = appSettings.company_name || "AClean Service";
   const companyPhone = String(appSettings.wa_number || "6281289898937").replace(/[^\d]/g, "") || "6281289898937";
-  const bankInfo      = (appSettings.bank_name || appSettings.bank_number)
-    ? `${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""}${appSettings.bank_holder ? " a.n " + appSettings.bank_holder : ""}`.trim()
-    : "BCA 8830883011 a.n Malda Retta";
 
   // ── Flat rows: AC-sale (unit+paket+addon) atau servis biasa (jasa+repair+material+freon) ──
   let rows = [];
@@ -238,7 +254,7 @@ function InvoicePage({ inv, logoUrl, appSettings = {}, invoiceItems = [], portal
           <View>
             <Text style={s.brandName}>{companyName}</Text>
             <Text style={s.brandTag}>Jasa Servis & Perawatan AC Profesional</Text>
-            <Text style={s.brandInfo}>{appSettings.company_addr || ""}{"\n"}+{companyPhone} · {bankInfo}</Text>
+            <Text style={s.brandInfo}>{appSettings.company_addr || ""}{"\n"}+{companyPhone}</Text>
           </View>
         </View>
         <View>
@@ -302,6 +318,8 @@ function InvoicePage({ inv, logoUrl, appSettings = {}, invoiceItems = [], portal
       <StatusPill status={inv.status} due={inv.due} />
       {inv.paid_at ? <Text style={[s.statusMeta, { marginTop: 3 }]}>Dibayar: {fmtDate(inv.paid_at)}</Text> : null}
 
+      <PaymentInfoBox appSettings={appSettings} />
+
       {/* Garansi */}
       {inv.garansi_expires ? (
         <View style={s.garansiBox}>
@@ -313,7 +331,7 @@ function InvoicePage({ inv, logoUrl, appSettings = {}, invoiceItems = [], portal
       <View wrap={false} style={s.footerRow}>
         <View style={{ maxWidth: 300 }}>
           <Text style={s.footerNote}>
-            Kirim bukti transfer via WhatsApp: +{companyPhone}{"\n"}
+            Pertanyaan? Hubungi kami via WhatsApp: +{companyPhone}{"\n"}
             Terima kasih telah mempercayakan perawatan AC Anda kepada {companyName}.
           </Text>
           {portalLink ? (
@@ -366,9 +384,6 @@ function MergedInvoicePage({ invList, logoUrl, appSettings = {}, portalLink = nu
 
   const companyName  = appSettings.company_name || "AClean Service";
   const companyPhone = String(appSettings.wa_number || "6281289898937").replace(/[^\d]/g, "") || "6281289898937";
-  const bankInfo      = (appSettings.bank_name || appSettings.bank_number)
-    ? `${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""}${appSettings.bank_holder ? " a.n " + appSettings.bank_holder : ""}`.trim()
-    : "BCA 8830883011 a.n Malda Retta";
 
   return (
     <Page size="A4" style={s.page}>
@@ -379,7 +394,7 @@ function MergedInvoicePage({ invList, logoUrl, appSettings = {}, portalLink = nu
           <View>
             <Text style={s.brandName}>{companyName}</Text>
             <Text style={s.brandTag}>Jasa Servis & Perawatan AC Profesional</Text>
-            <Text style={s.brandInfo}>{appSettings.company_addr || ""}{"\n"}+{companyPhone} · {bankInfo}</Text>
+            <Text style={s.brandInfo}>{appSettings.company_addr || ""}{"\n"}+{companyPhone}</Text>
           </View>
         </View>
         <View>
@@ -477,6 +492,8 @@ function MergedInvoicePage({ invList, logoUrl, appSettings = {}, portalLink = nu
 
       <StatusPill status={aggStatus} due={dueLatest} />
 
+      <PaymentInfoBox appSettings={appSettings} />
+
       {garansiLatest ? (
         <View style={s.garansiBox}>
           <Text style={s.garansiText}>Garansi servis — berlaku sampai {garansiLatest}. Jika AC bermasalah dalam masa garansi, hubungi kami tanpa biaya tambahan.</Text>
@@ -486,7 +503,7 @@ function MergedInvoicePage({ invList, logoUrl, appSettings = {}, portalLink = nu
       <View wrap={false} style={s.footerRow}>
         <View style={{ maxWidth: 300 }}>
           <Text style={s.footerNote}>
-            Kirim bukti transfer via WhatsApp: +{companyPhone}{"\n"}
+            Pertanyaan? Hubungi kami via WhatsApp: +{companyPhone}{"\n"}
             Terima kasih telah mempercayakan perawatan AC Anda kepada {companyName}.
           </Text>
           {portalLink ? (
