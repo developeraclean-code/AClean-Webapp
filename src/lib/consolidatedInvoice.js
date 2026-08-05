@@ -84,6 +84,7 @@ export async function createConsolidatedInvoice(invList, {
       await supabase.from("invoices").update({
         status: "CANCELLED",
         service: (inv.service || "Servis AC") + ` [Digabung ke ${created.id}]`,
+        pdf_url: null, pdf_generated_at: null,
       }).eq("id", inv.id);
     }
 

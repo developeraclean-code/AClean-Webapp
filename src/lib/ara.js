@@ -501,7 +501,7 @@ Mohon sesuaikan jadwal Anda. Terima kasih!`;
           } else if (act.type === "MARK_INVOICE_OVERDUE") {
             setInvoicesData(prev => prev.map(i => i.status === "UNPAID" && i.due && i.due < TODAY ? { ...i, status: "OVERDUE" } : i));
             const cnt = invoicesData.filter(i => i.status === "UNPAID" && i.due && i.due < TODAY).length;
-            await supabase.from("invoices").update({ status: "OVERDUE" }).eq("status", "UNPAID").lt("due", TODAY);
+            await supabase.from("invoices").update({ status: "OVERDUE", pdf_url: null, pdf_generated_at: null }).eq("status", "UNPAID").lt("due", TODAY);
             ar = `\n✅ *${cnt} invoice ditandai OVERDUE*`;
 
           } else if (act.type === "CREATE_EXPENSE") {

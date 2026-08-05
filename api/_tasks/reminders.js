@@ -34,7 +34,7 @@ export async function taskReminder() {
   for (const inv of invs||[]) {
     const daysOverdue = daysSince(inv.due || inv.sent);
     if (inv.status==="UNPAID" && inv.due && inv.due<today) {
-      await sb.from("invoices").update({status:"OVERDUE"}).eq("id",inv.id);
+      await sb.from("invoices").update({status:"OVERDUE",pdf_url:null,pdf_generated_at:null}).eq("id",inv.id);
     }
     if (!inv.phone) continue;
     // Tagihan efektif: jika ada DP/paid_amount, tagih sisa (bukan total)
@@ -61,12 +61,12 @@ export async function taskReminder() {
     const isZero = (inv.total || 0) === 0;
     if (isZero) {
       // Invoice Rp 0 (repair gratis/garansi) — auto-PAID tanpa tagih
-      await sb.from("invoices").update({status:"PAID",paid_at:new Date().toISOString(),approved_by:"CRON_AUTO",approved_at:new Date().toISOString()}).eq("id",inv.id);
+      await sb.from("invoices").update({status:"PAID",paid_at:new Date().toISOString(),approved_by:"CRON_AUTO",approved_at:new Date().toISOString(),pdf_url:null,pdf_generated_at:null}).eq("id",inv.id);
       res.autoapproved++;
       await sendWA(OWNER_PHONE,`ℹ️ Invoice *${inv.id}* (${inv.customer}) Rp 0 — auto-PAID (gratis/garansi).`);
     } else if (/(Cleaning|Install|Repair|Complain)/.test(inv.service||"")) {
       const due = new Date(Date.now()+7*86400000).toISOString().slice(0,10);
-      await sb.from("invoices").update({status:"UNPAID",sent:true,due,approved_by:"CRON_AUTO",approved_at:new Date().toISOString()}).eq("id",inv.id);
+      await sb.from("invoices").update({status:"UNPAID",sent:true,due,approved_by:"CRON_AUTO",approved_at:new Date().toISOString(),pdf_url:null,pdf_generated_at:null}).eq("id",inv.id);
       res.autoapproved++;
       await sendWA(OWNER_PHONE,`ℹ️ Invoice *${inv.id}* (${inv.customer}) auto-approved setelah ${Math.round(hrs)}j. Total: ${fmt(inv.total)} — kirim manual dari app.`);
     }
@@ -74,7 +74,7 @@ export async function taskReminder() {
 
   // Update UNPAID lewat due → OVERDUE (Indonesia timezone UTC+7)
   const nowStr = new Date(Date.now() + 7*60*60*1000).toISOString().slice(0,10);
-  await sb.from("invoices").update({status:"OVERDUE"}).eq("status","UNPAID").lt("due",nowStr);
+  await sb.from("invoices").update({status:"OVERDUE",pdf_url:null,pdf_generated_at:null}).eq("status","UNPAID").lt("due",nowStr);
   await log("CRON_REMINDER",`r1=${res.reminder1} r2=${res.reminder2} r3=${res.reminder3} esc=${res.escalated} auto=${res.autoapproved}`);
   return res;
 }

@@ -110,6 +110,8 @@ export async function handleGroupPayment(customerPhone, invoiceIds, totalReceive
         remaining_amount: (inv.total || 0) - inv._paid_amount,
         payment_proof_url: proofUrl || null,
         paid_method: method,
+        pdf_url: null,
+        pdf_generated_at: null,
       }).eq("id", inv.id).then(() => {});
     }
 

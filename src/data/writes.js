@@ -51,11 +51,17 @@ export const markInvoicePaid = async (supabase, id, paidAt, userName) => {
   }
 
   const total = Number(inv.total) || 0;
+  // BUG FIX: cache PDF (pdf_url) sebelumnya tidak di-invalidate saat status → PAID —
+  // fungsi ini menulis langsung ke DB, bypass mekanisme auto-invalidate di updateInvoice()
+  // (baris ~33). Akibatnya generateInvoicePDFBlob() Layer 2 (R2 fast-path) terus menyajikan
+  // PDF lama berlabel "MENUNGGU PEMBAYARAN" walau invoice sudah lunas di sistem.
   const { data, error } = await supabase.from("invoices").update({
     status: "PAID",
     paid_at: paidAt,
     paid_amount: total,
     remaining_amount: 0,
+    pdf_url: null,
+    pdf_generated_at: null,
     last_changed_by: userName,
   }).eq("id", id).in("status", PAYABLE_STATUSES).select("id");
 
@@ -88,6 +94,8 @@ export const revertInvoiceToUnpaid = async (supabase, id, userName) => {
     paid_amount: 0,
     remaining_amount: total,
     paid_method: null,
+    pdf_url: null,
+    pdf_generated_at: null,
     last_changed_by: `${userName}::REVERT_PAID`,
   }).eq("id", id).in("status", REVERTABLE).select("id");
 

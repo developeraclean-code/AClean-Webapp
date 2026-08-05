@@ -657,6 +657,7 @@ const recalcInvoiceFromItems = async (invoiceId) => {
   const { error } = await supabase.from("invoices").update({
     total: newTotal, material: newMaterial, labor: newLabor,
     remaining_amount: newRemaining, status: newStatus,
+    pdf_url: null, pdf_generated_at: null,
   }).eq("id", invoiceId);
   if (error) throw error;
   setInvoicesData(prev => prev.map(i => i.id === invoiceId
@@ -1771,7 +1772,8 @@ return (
                       const remaining = inv.total - amt;
                       const { error } = await supabase.from("invoices").update({
                         paid_amount: amt, remaining_amount: remaining, status: "PARTIAL_PAID",
-                        notes: (inv.notes ? inv.notes + " · " : "") + `DP ${fmt(amt)}`
+                        notes: (inv.notes ? inv.notes + " · " : "") + `DP ${fmt(amt)}`,
+                        pdf_url: null, pdf_generated_at: null,
                       }).eq("id", inv.id);
                       if (error) { showNotif("❌ Gagal catat DP: " + error.message); return; }
                       setInvoicesData(prev => prev.map(i => i.id === inv.id

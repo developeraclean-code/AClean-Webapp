@@ -732,6 +732,7 @@ const verifyLaporan = async (r) => {
             labor: newTotals.labor,
             material: newTotals.material,
             total: newTotals.total,
+            pdf_url: null, pdf_generated_at: null,
           }).eq("id", existing.id);
 
           if (mergeErr) {
