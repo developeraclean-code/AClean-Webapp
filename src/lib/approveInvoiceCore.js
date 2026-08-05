@@ -1,3 +1,21 @@
+// Levenshtein distance sederhana — dipakai guard job_id di bawah untuk membedakan
+// "typo kecil nama customer" (masih boleh lanjut) dari "job_id nyasar ke customer
+// lain sama sekali" (harus diblok). Hindari exact-match yang terlalu ketat — pernah
+// memblokir approve gara-gara "IBU OLIVA" vs "IBU OLIVIA" (beda 1 huruf, job sama).
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, (_, i) => { const row = [i]; row.length = n + 1; return row; });
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
 // approveInvoiceCore — approve invoice (core, tanpa kirim WA): set UNPAID + update
 // order + retro-match bayar. Diekstrak dari App.jsx (Fase 3, pola ctx).
 export async function approveInvoiceCore(inv, {
@@ -20,20 +38,33 @@ export async function approveInvoiceCore(inv, {
       return null;
     }
 
-    // Guard: job_id invoice harus milik order dengan customer yang sama — cegah status
+    // Guard: job_id invoice harus milik order dengan customer yang MIRIP — cegah status
     // order "nyasar" ke job lain kalau job_id invoice ternyata salah tunjuk (insiden
     // Wilcent/DB Style 03 Agu 2026: job_id laporan/invoice keliru nunjuk order lain).
+    // Toleransi typo kecil (mis. "IBU OLIVA" vs "IBU OLIVIA") via similarity Levenshtein
+    // — cuma blok kalau namanya BENAR-BENAR beda customer (di bawah 70% mirip).
     {
       const targetOrder = (ordersData || []).find(o => o.id === inv.job_id);
-      if (targetOrder && targetOrder.customer !== inv.customer) {
-        reportError("invoice.approve.jobMismatch", new Error("invoice job_id mismatch"), {
-          invoiceId: inv.id, jobId: inv.job_id, invoiceCustomer: inv.customer, orderCustomer: targetOrder.customer,
-        });
-        showNotif(
-          `❌ Invoice ${inv.id} (customer: ${inv.customer}) menunjuk ke job ${inv.job_id} yang di database `
-          + `milik customer "${targetOrder.customer}". Approve dibatalkan untuk mencegah status order salah sasaran — cek job_id invoice ini dulu.`
-        );
-        return null;
+      if (targetOrder) {
+        const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
+        const a = norm(targetOrder.customer), b = norm(inv.customer);
+        const maxLen = Math.max(a.length, b.length) || 1;
+        const similarity = 1 - levenshtein(a, b) / maxLen;
+        if (similarity < 0.7) {
+          reportError("invoice.approve.jobMismatch", new Error("invoice job_id mismatch"), {
+            invoiceId: inv.id, jobId: inv.job_id, invoiceCustomer: inv.customer, orderCustomer: targetOrder.customer, similarity,
+          });
+          showNotif(
+            `❌ Invoice ${inv.id} (customer: ${inv.customer}) menunjuk ke job ${inv.job_id} yang di database `
+            + `milik customer "${targetOrder.customer}". Approve dibatalkan untuk mencegah status order salah sasaran — cek job_id invoice ini dulu.`
+          );
+          return null;
+        }
+        if (a !== b) {
+          addAgentLog("INVOICE_APPROVE_NAME_DIFF",
+            `Invoice ${inv.id}: nama "${inv.customer}" beda tipis dari order "${targetOrder.customer}" (job ${inv.job_id}, similarity ${Math.round(similarity * 100)}%) — dilanjutkan, cek typo kalau perlu`,
+            "WARNING");
+        }
       }
     }
 

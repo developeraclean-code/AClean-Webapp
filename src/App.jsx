@@ -3184,6 +3184,9 @@ export default function ACleanWebApp() {
   // ── Approve + kirim WA ke customer (invoice + service report card sebagai PDF attachment) ──
   const approveAndSend = async (inv) => {
     const due = await approveInvoiceCore(inv);
+    // approveInvoiceCore return null = diblok guard/validasi (sudah showNotif sendiri
+    // dengan pesan error) — jangan lanjut kirim WA / tampilkan toast sukses palsu.
+    if (!due) { setModalApproveInv(false); setPendingApproveInv(null); return; }
 
     // Generate PDF invoice → upload → kirim sebagai attachment Fonnte
     const portalLink = await getPortalLink(inv.phone, inv.customer);
@@ -3202,9 +3205,13 @@ export default function ACleanWebApp() {
 
   // ── Approve saja tanpa kirim WA ──
   const approveSaveOnly = async (inv) => {
-    await approveInvoiceCore(inv);
-    showNotif(`✅ Invoice ${inv.id} diapprove — belum dikirim ke customer`);
+    const due = await approveInvoiceCore(inv);
+    // return null = diblok guard/validasi (sudah showNotif sendiri) — jangan timpa
+    // dengan toast "sukses" palsu. Return due (truthy) ke caller supaya handleApproveMerged
+    // (bulk approve) bisa hitung successCount yang akurat, bukan asal increment.
+    if (due) showNotif(`✅ Invoice ${inv.id} diapprove — belum dikirim ke customer`);
     setModalApproveInv(false); setPendingApproveInv(null);
+    return due;
   };
 
   // ── GAP 1.6: Mark Paid → simpan ke payments table ──

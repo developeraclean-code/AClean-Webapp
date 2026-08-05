@@ -440,14 +440,16 @@ const handleApproveMerged = async () => {
   let successCount = 0;
   for (const inv of toApprove) {
     try {
-      await approveSaveOnly(inv);
-      successCount++;
+      const ok = await approveSaveOnly(inv);
+      if (ok) successCount++;
     } catch (e) {
       console.warn("[handleApproveMerged] gagal approve", inv.id, e.message);
     }
   }
   setMergeApproving(false);
-  showNotif(`✅ ${successCount} invoice di-approve — belum dikirim ke customer`);
+  showNotif(successCount === toApprove.length
+    ? `✅ ${successCount} invoice di-approve — belum dikirim ke customer`
+    : `⚠️ ${successCount}/${toApprove.length} invoice di-approve — sisanya gagal (cek notif error di atas)`);
   exitMergeMode();
 };
 
