@@ -69,7 +69,7 @@ const s = StyleSheet.create({
   payBox:     { border: "1px solid #cfd2d6", borderRadius: 4, padding: "9 12", marginTop: 12 },
   payTitle:   { fontFamily: "Times-Bold", fontSize: 8, textTransform: "uppercase", letterSpacing: 0.5, color: "#5b5f66", marginBottom: 4 },
   payBank:    { fontSize: 9, color: "#5b5f66" },
-  payNum:     { fontFamily: "Times-Bold", fontSize: 13, marginTop: 1, marginBottom: 1 },
+  payNum:     { fontFamily: "Times-Bold", fontSize: 10.5, marginTop: 1, marginBottom: 1 },
   payHolder:  { fontSize: 9, color: "#5b5f66" },
   payHint:    { fontSize: 8, color: "#94a3b8", marginTop: 4 },
 
@@ -330,10 +330,6 @@ function InvoicePage({ inv, logoUrl, appSettings = {}, invoiceItems = [], portal
       {/* Footer */}
       <View wrap={false} style={s.footerRow}>
         <View style={{ maxWidth: 300 }}>
-          <Text style={s.footerNote}>
-            Pertanyaan? Hubungi kami via WhatsApp: +{companyPhone}{"\n"}
-            Terima kasih telah mempercayakan perawatan AC Anda kepada {companyName}.
-          </Text>
           {portalLink ? (
             <View style={{ marginTop: 8 }}>
               <Text style={{ fontSize: 8, color: "#2f5ea3", fontFamily: "Times-Bold" }}>Portal Servis Anda (riwayat, foto & invoice):</Text>
@@ -502,10 +498,6 @@ function MergedInvoicePage({ invList, logoUrl, appSettings = {}, portalLink = nu
 
       <View wrap={false} style={s.footerRow}>
         <View style={{ maxWidth: 300 }}>
-          <Text style={s.footerNote}>
-            Pertanyaan? Hubungi kami via WhatsApp: +{companyPhone}{"\n"}
-            Terima kasih telah mempercayakan perawatan AC Anda kepada {companyName}.
-          </Text>
           {portalLink ? (
             <View style={{ marginTop: 8 }}>
               <Text style={{ fontSize: 8, color: "#2f5ea3", fontFamily: "Times-Bold" }}>Portal Servis Anda (riwayat, foto & invoice):</Text>
