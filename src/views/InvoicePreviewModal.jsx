@@ -1,4 +1,5 @@
 import { cs } from "../theme/cs.js";
+import { summarize } from "../lib/invoicing.js";
 
 export default function InvoicePreviewModal({
   open, onClose, selectedInvoice, invoicesData, setInvoicesData,
@@ -11,7 +12,6 @@ export default function InvoicePreviewModal({
 
   const liveInv = invoicesData.find(i => i.id === selectedInvoice.id) || selectedInvoice;
   const rate = parseFloat(appSettings?.pph23_rate) || 0.025;
-  const pph = computePph23(liveInv.total, rate);
 
   const mArr = (() => {
     const md = liveInv.materials_detail;
@@ -21,6 +21,9 @@ export default function InvoicePreviewModal({
         : [];
     return Array.isArray(parsed) ? parsed : [];
   })();
+  // PPh 23 HANYA dari kategori Jasa (labor) — bukan liveInv.total (jasa+material).
+  const jasaSubtotal = summarize(mArr).labor;
+  const pph = computePph23(jasaSubtotal, rate);
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
@@ -172,7 +175,7 @@ export default function InvoicePreviewModal({
                 <>
                   <tr>
                     <td colSpan={3} style={{ padding: "8px 10px", color: "#475569" }}>Nilai Jasa (DPP)</td>
-                    <td style={{ padding: "8px 10px", color: "#1e293b", fontFamily: "monospace" }}>{((liveInv.total || 0) + (liveInv.pph23_amount || 0)).toLocaleString("id-ID")}</td>
+                    <td style={{ padding: "8px 10px", color: "#1e293b", fontFamily: "monospace" }}>{((liveInv.labor || 0) + (liveInv.pph23_amount || 0)).toLocaleString("id-ID")}</td>
                   </tr>
                   <tr>
                     <td colSpan={3} style={{ padding: "8px 10px", color: "#0369a1" }}>PPh 23 (2,5%) dipotong customer</td>

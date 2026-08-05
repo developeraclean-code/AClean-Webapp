@@ -24,67 +24,70 @@ const TERMS_PAYMENT = [
 const _norm = (t) => (t || "").replace(/\s+/g, " ").trim().toLowerCase();
 const _PRESET_SIGNATURE = _norm(TERMS_PEKERJAAN.join(" ") + TERMS_PAYMENT.join(" "));
 
-// Spacing dibuat dinamis: saat `compact` (≤5 item) semua margin/padding/font
-// dirapatkan agar muat 1 halaman; selain itu pakai spacing normal (boleh 2 hal).
-function buildStyles(compact) {
-  const PAD   = compact ? 26 : 36;   // page padding
-  const MB    = compact ? 7  : 12;   // jarak antar-block
-  const CELLV = compact ? 4  : 7;    // padding vertikal sel tabel
-  const BOXP  = compact ? "7 11" : "10 12"; // padding kotak info
-  const HTOP  = compact ? "10 20" : "16 20"; // padding header atas
-  return StyleSheet.create({
-    page:       { padding: PAD, fontFamily: "Helvetica", fontSize: 10, color: "#1e293b", backgroundColor: "#fff" },
-    header:     { borderRadius: 6, border: "2px solid #1E5BA8", marginBottom: compact ? 9 : 14, overflow: "hidden" },
-    headerTop:  { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: HTOP },
-    brand:      { fontSize: 18, fontFamily: "Helvetica-Bold", color: "#1E5BA8" },
-    brandSub:   { fontSize: 8, color: "#6b7280", marginTop: 2 },
-    quoLabel:   { fontSize: 7, color: "#1E5BA8", fontFamily: "Helvetica-Bold", textAlign: "right", marginBottom: 3, textTransform: "uppercase" },
-    quoBadge:   { backgroundColor: "#1E5BA8", color: "#fff", padding: "6 12", borderRadius: 4, fontSize: 11, fontFamily: "Helvetica-Bold" },
-    headerSub:  { backgroundColor: "#f0f4f8", padding: "8 20", flexDirection: "row", gap: 20, borderTop: "1px solid #e2e8f0" },
-    headerSubTxt: { fontSize: 8, color: "#1e293b" },
-    grid2:      { flexDirection: "row", gap: 10, marginBottom: MB },
-    box:        { flex: 1, borderRadius: 6, padding: BOXP },
-    boxBlue:    { backgroundColor: "#e3f2fd", border: "1px solid #90caf9" },
-    boxWhite:   { backgroundColor: "#fff", border: "1px solid #e2e8f0" },
-    boxTitle:   { fontSize: 8, fontFamily: "Helvetica-Bold", color: "#1E5BA8", textTransform: "uppercase", marginBottom: compact ? 5 : 8, letterSpacing: 0.5 },
-    rowInfo:    { flexDirection: "row", marginBottom: compact ? 2 : 3 },
-    rowLabel:   { color: "#64748b", width: 80, fontSize: 9 },
-    rowVal:     { color: "#1e293b", fontFamily: "Helvetica-Bold", fontSize: 9, flex: 1 },
-    table:      { marginBottom: MB },
-    thead:      { flexDirection: "row", backgroundColor: "#1E5BA8", borderRadius: "4 4 0 0" },
-    th:         { color: "#fff", fontFamily: "Helvetica-Bold", fontSize: 8, padding: "8 8", textTransform: "uppercase" },
-    tr:         { flexDirection: "row", borderBottom: "1px solid #f1f5f9" },
-    trEven:     { backgroundColor: "#f8fafc" },
-    td:         { fontSize: 9, padding: `${CELLV} 8`, color: "#1e293b" },
-    tdMuted:    { fontSize: 9, padding: `${CELLV} 8`, color: "#64748b" },
-    secTitle:   { fontSize: 8, fontFamily: "Helvetica-Bold", color: "#1E5BA8", textTransform: "uppercase", letterSpacing: 0.5, padding: "5 8", backgroundColor: "#e3f2fd" },
-    totalBox:   { backgroundColor: "#1E5BA8", borderRadius: 6, padding: "10 14", marginTop: 4, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-    totalLabel: { color: "#fff", fontFamily: "Helvetica-Bold", fontSize: 11 },
-    totalVal:   { color: "#fff", fontFamily: "Helvetica-Bold", fontSize: 14 },
-    subRow:     { flexDirection: "row", justifyContent: "space-between", padding: compact ? "3 14" : "4 14", borderBottom: "1px solid #f1f5f9" },
-    subLabel:   { fontSize: 9, color: "#64748b" },
-    subVal:     { fontSize: 9, color: "#1e293b", fontFamily: "Helvetica-Bold" },
-    rinCard:    { border: "1px solid #e2e8f0", borderRadius: 8, marginTop: 4, overflow: "hidden" },
-    rinCap:     { backgroundColor: "#e3f2fd", padding: compact ? "5 14" : "6 14", fontSize: 8, fontFamily: "Helvetica-Bold", color: "#1E5BA8", textTransform: "uppercase", letterSpacing: 0.6 },
-    rinRow:     { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: compact ? "7 14" : "9 14", borderBottom: "1px solid #f1f5f9" },
-    rinLeft:    { flexDirection: "row", alignItems: "center", flex: 1 },
-    rinDot:     { width: 6, height: 6, borderRadius: 3, marginRight: 8 },
-    rinLbl:     { fontSize: 9.5, color: "#1e293b" },
-    rinHint:    { fontSize: 7.5, color: "#94a3b8", marginTop: 1 },
-    rinVal:     { fontSize: 10, color: "#1e293b", fontFamily: "Helvetica-Bold" },
-    rinTotal:   { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#1E5BA8", padding: compact ? "11 14" : "13 14" },
-    noteBox:    { border: "1px solid #e2e8f0", borderRadius: 6, padding: BOXP, marginBottom: MB },
-    noteTitle:  { fontSize: 8, fontFamily: "Helvetica-Bold", color: "#64748b", marginBottom: 4, textTransform: "uppercase" },
-    noteText:   { fontSize: 9, color: "#1e293b", lineHeight: 1.5 },
-    termsBox:   { border: "1px solid #e2e8f0", borderRadius: 6, padding: BOXP, marginBottom: MB },
-    termsTitle: { fontSize: 8, fontFamily: "Helvetica-Bold", color: "#1E5BA8", marginBottom: compact ? 3 : 5, textTransform: "uppercase", letterSpacing: 0.5 },
-    termsItem:  { fontSize: 8.5, color: "#1e293b", lineHeight: compact ? 1.25 : 1.4, marginBottom: compact ? 1 : 2, flexDirection: "row" },
-    termsNum:   { width: 14, color: "#64748b", fontFamily: "Helvetica-Bold" },
-    validBox:   { backgroundColor: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 6, padding: compact ? "6 12" : "8 12", marginBottom: MB },
-    validText:  { fontSize: 9, color: "#c2410c" },
-    footer:     { borderTop: "1px solid #e2e8f0", paddingTop: compact ? 7 : 10, marginTop: compact ? 4 : 8 },
-    footerText: { fontSize: 8, color: "#94a3b8", textAlign: "center" },
-  });
+const s = StyleSheet.create({
+  page:       { padding: 40, fontFamily: "Times-Roman", fontSize: 10, color: "#22252b", backgroundColor: "#fff" },
+  // Header
+  headerRow:  { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", paddingBottom: 14, borderBottom: "2.5px solid #22252b", marginBottom: 16 },
+  brandRow:   { flexDirection: "row", alignItems: "center", gap: 10 },
+  brandName:  { fontFamily: "Times-Bold", fontSize: 17, color: "#2f5ea3" },
+  brandTag:   { fontSize: 8, color: "#5b5f66", marginTop: 2 },
+  brandInfo:  { fontSize: 8, color: "#5b5f66", marginTop: 5, lineHeight: 1.5 },
+  docKind:    { fontFamily: "Times-Bold", fontSize: 20, letterSpacing: 1, textAlign: "right" },
+  docNo:      { fontSize: 9, color: "#5b5f66", marginTop: 5, border: "1px solid #cfd2d6", borderRadius: 3, padding: "3 9", textAlign: "right" },
+  // Meta grid
+  metaRow:    { flexDirection: "row", justifyContent: "space-between", gap: 24, marginBottom: 14 },
+  metaK:      { fontFamily: "Times-Bold", fontSize: 8, textTransform: "uppercase", letterSpacing: 0.5, color: "#5b5f66", marginBottom: 3 },
+  metaV:      { fontFamily: "Times-Bold", fontSize: 11 },
+  metaAddr:   { fontSize: 9, color: "#22252b", marginTop: 2, maxWidth: 220 },
+  metaRight:  { alignItems: "flex-end" },
+  // Table
+  table:      { marginTop: 4 },
+  thead:      { flexDirection: "row", backgroundColor: "#2f5ea3" },
+  th:         { color: "#fff", fontFamily: "Times-Bold", fontSize: 8.5, padding: "6 8", textTransform: "uppercase" },
+  tr:         { flexDirection: "row", borderBottom: "1px solid #cfd2d6" },
+  td:         { fontSize: 9.5, padding: "6 8" },
+  incText:    { fontSize: 8, color: "#5b5f66", padding: "1 8 1 16" },
+  adjRow:     { flexDirection: "row", justifyContent: "space-between", padding: "4 9", fontSize: 9.5, color: "#5b5f66" },
+  totalBar:   { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#2f5ea3", padding: "9 14", marginTop: 4 },
+  totalLabel: { color: "#fff", fontFamily: "Times-Bold", fontSize: 12, letterSpacing: 0.5 },
+  totalVal:   { color: "#fff", fontFamily: "Times-Bold", fontSize: 13 },
+  // Boxes
+  validBox:   { backgroundColor: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 4, padding: "8 12", marginTop: 14 },
+  validText:  { fontSize: 9, color: "#c2410c" },
+  noteBox:    { border: "1px solid #cfd2d6", borderRadius: 4, padding: "9 12", marginTop: 12 },
+  noteTitle:  { fontFamily: "Times-Bold", fontSize: 8, color: "#5b5f66", marginBottom: 4, textTransform: "uppercase" },
+  noteText:   { fontSize: 9.5, lineHeight: 1.5 },
+  termsBox:   { marginTop: 14 },
+  termsTitle: { fontFamily: "Times-Bold", fontSize: 9, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 5 },
+  termsItem:  { fontSize: 9, lineHeight: 1.5, marginBottom: 2, flexDirection: "row" },
+  termsNum:   { width: 14, color: "#5b5f66" },
+  // Footer
+  footerRow:  { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginTop: 22 },
+  footerNote: { fontSize: 9, color: "#5b5f66", lineHeight: 1.5, maxWidth: 280 },
+  signBlock:  { alignItems: "center", minWidth: 150 },
+  signPlace:  { fontSize: 10, marginBottom: 46 },
+  signName:   { fontFamily: "Times-Bold", fontSize: 10, borderTop: "1px solid #22252b", paddingTop: 4 },
+  pageFooter: { borderTop: "1px solid #cfd2d6", paddingTop: 8, marginTop: 16, textAlign: "center" },
+  pageFooterText: { fontSize: 8, color: "#94a3b8" },
+});
+
+// Baris item flat (dipakai semua kategori — Unit AC, Paket/Jasa, Material)
+function ItemRow({ no, desc, qty, uom, price, subtotal, include }) {
+  return (
+    <View>
+      <View style={s.tr}>
+        <Text style={[s.td, { width: 26 }]}>{no}</Text>
+        <Text style={[s.td, { flex: 1 }]}>{desc}</Text>
+        <Text style={[s.td, { width: 34, textAlign: "right" }]}>{qty}</Text>
+        <Text style={[s.td, { width: 50 }]}>{uom || "Unit"}</Text>
+        <Text style={[s.td, { width: 76, textAlign: "right" }]}>{price > 0 ? price.toLocaleString("id-ID") : "—"}</Text>
+        <Text style={[s.td, { width: 86, textAlign: "right", fontFamily: "Times-Bold" }]}>{subtotal > 0 ? subtotal.toLocaleString("id-ID") : "—"}</Text>
+      </View>
+      {(include || []).map((inc, i) => (
+        <Text key={i} style={s.incText}>✓ {inc.nama} {inc.qty} {inc.satuan}</Text>
+      ))}
+    </View>
+  );
 }
 
 export default function QuotationPDF({ quo, appSettings, logoUrl }) {
@@ -92,231 +95,95 @@ export default function QuotationPDF({ quo, appSettings, logoUrl }) {
 
   const items      = quo.items || [];
   const unitItems  = items.filter(i => i.item_type === "unit_ac");
-  const paketItems = items.filter(i => i.item_type === "paket");
-  const jasaItems  = items.filter(i => i.item_type === "jasa");
-  const addonItems = items.filter(i => i.item_type === "addon");
-
-  // ≤5 baris item → mode compact agar muat 1 halaman (hindari halaman ke-2 nanggung).
-  // >5 baris → spacing normal, boleh mengalir ke 2 halaman.
-  const totalRows = unitItems.length + paketItems.length + jasaItems.length + addonItems.length;
-  const compact   = totalRows <= 5;
-  const s = buildStyles(compact);
+  const otherItems = items.filter(i => i.item_type !== "unit_ac");
+  const allRows    = [...unitItems, ...otherItems];
 
   const companyName  = appSettings?.company_name  || "AClean Service";
   const _rawPhone    = appSettings?.wa_number || appSettings?.company_phone || "6281289898937";
   const companyPhone = String(_rawPhone).replace(/[^\d]/g, "") || "6281289898937";
   const companyAddr  = appSettings?.company_addr || appSettings?.company_address || "Jakarta";
   const bankInfo     = (appSettings?.bank_name || appSettings?.bank_number)
-    ? `Transfer ${appSettings.bank_name || ""} ${appSettings.bank_number || ""}${appSettings.bank_holder ? " a.n " + appSettings.bank_holder : ""}`.trim()
-    : (appSettings?.bank_info || "Transfer Bank BCA 8330883011 a.n Malda Retta");
+    ? `${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""}${appSettings.bank_holder ? " a.n " + appSettings.bank_holder : ""}`.trim()
+    : (appSettings?.bank_info || "BCA 8830883011 a.n Malda Retta");
 
   const STATUS_LABEL = {
-    DRAFT:     "DRAFT",
-    SENT:      "PENAWARAN",
-    APPROVED:  "DISETUJUI",
-    EXPIRED:   "KADALUARSA",
-    CANCELLED: "DIBATALKAN",
+    DRAFT: "DRAFT", SENT: "PENAWARAN", APPROVED: "DISETUJUI",
+    EXPIRED: "KADALUARSA", CANCELLED: "DIBATALKAN",
   };
+
+  const hasPph = !!quo.pph23 && (quo.pph23_amount || 0) > 0;
+  // DPP = nilai JASA saja + PPh — bukan total (jasa+material+unit AC).
+  const dpp = hasPph ? (quo.labor || 0) + (quo.pph23_amount || 0) : 0;
 
   return (
     <Document>
       <Page size="A4" style={s.page}>
 
         {/* Header */}
-        <View style={s.header}>
-          <View style={s.headerTop}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-              {logoUrl ? (
-                <Image src={logoUrl} style={{ width: 46, height: 46, objectFit: "contain" }} />
-              ) : null}
-              <View>
-                <Text style={s.brand}>{companyName}</Text>
-                <Text style={s.brandSub}>AC Installation & Service Professional</Text>
-                <Text style={s.brandSub}>{companyAddr} · {companyPhone}</Text>
-              </View>
-            </View>
-            <View style={{ alignItems: "flex-end" }}>
-              <Text style={s.quoLabel}>SURAT PENAWARAN HARGA</Text>
-              <Text style={s.quoBadge}>{quo.id}</Text>
+        <View style={s.headerRow}>
+          <View style={s.brandRow}>
+            {logoUrl ? <Image src={logoUrl} style={{ width: 42, height: 42, objectFit: "contain" }} /> : null}
+            <View>
+              <Text style={s.brandName}>{companyName}</Text>
+              <Text style={s.brandTag}>AC Installation & Service Professional</Text>
+              <Text style={s.brandInfo}>{companyAddr}{"\n"}+{companyPhone} · {bankInfo}</Text>
             </View>
           </View>
-          <View style={s.headerSub}>
-            <Text style={s.headerSubTxt}>Tgl Buat: {fmtDate(quo.created_at)}</Text>
-            <Text style={s.headerSubTxt}>Valid s.d: {fmtDate(quo.valid_until)}</Text>
-            <Text style={s.headerSubTxt}>Status: {STATUS_LABEL[quo.status] || quo.status}</Text>
+          <View>
+            <Text style={s.docKind}>QUOTATION</Text>
+            <Text style={s.docNo}>No. {quo.id}</Text>
           </View>
         </View>
 
-        {/* Customer & Detail */}
-        <View style={s.grid2}>
-          <View style={[s.box, s.boxBlue]}>
-            <Text style={s.boxTitle}>Ditujukan Kepada</Text>
-            <View style={s.rowInfo}>
-              <Text style={s.rowLabel}>Nama</Text>
-              <Text style={s.rowVal}>{quo.customer || "—"}</Text>
-            </View>
-            <View style={s.rowInfo}>
-              <Text style={s.rowLabel}>No. HP</Text>
-              <Text style={s.rowVal}>{quo.phone || "—"}</Text>
-            </View>
-            <View style={s.rowInfo}>
-              <Text style={s.rowLabel}>Area</Text>
-              <Text style={s.rowVal}>{quo.area || "—"}</Text>
-            </View>
-            {quo.address && (
-              <View style={s.rowInfo}>
-                <Text style={s.rowLabel}>Alamat</Text>
-                <Text style={s.rowVal}>{quo.address}</Text>
-              </View>
-            )}
+        {/* Meta: Kepada / Info */}
+        <View style={s.metaRow}>
+          <View>
+            <Text style={s.metaK}>Kepada</Text>
+            <Text style={s.metaV}>{quo.customer || "—"}</Text>
+            {quo.address ? <Text style={s.metaAddr}>{quo.address}</Text> : null}
+            <Text style={s.metaAddr}>{quo.phone || "—"}{quo.area ? " · " + quo.area : ""}</Text>
           </View>
-          <View style={[s.box, s.boxWhite]}>
-            <Text style={s.boxTitle}>Informasi Penawaran</Text>
-            <View style={s.rowInfo}>
-              <Text style={s.rowLabel}>No. Quotation</Text>
-              <Text style={s.rowVal}>{quo.id}</Text>
-            </View>
-            <View style={s.rowInfo}>
-              <Text style={s.rowLabel}>Tanggal</Text>
-              <Text style={s.rowVal}>{fmtDate(quo.created_at)}</Text>
-            </View>
-            <View style={s.rowInfo}>
-              <Text style={s.rowLabel}>Berlaku s.d</Text>
-              <Text style={s.rowVal}>{fmtDate(quo.valid_until)}</Text>
-            </View>
-            <View style={s.rowInfo}>
-              <Text style={s.rowLabel}>Pembayaran</Text>
-              <Text style={s.rowVal}>{bankInfo}</Text>
-            </View>
+          <View style={s.metaRight}>
+            <Text style={s.metaK}>Tanggal</Text>
+            <Text style={s.metaV}>{fmtDate(quo.created_at)}</Text>
+            <Text style={[s.metaAddr, { marginTop: 8 }]}>Berlaku s.d {fmtDate(quo.valid_until)}</Text>
+            <Text style={s.metaAddr}>Status: {STATUS_LABEL[quo.status] || quo.status}</Text>
           </View>
         </View>
 
-        {/* Unit AC section */}
-        {unitItems.length > 0 && (
-          <View style={s.table}>
-            <Text style={s.secTitle}>Unit AC (Harga Satuan — Informasi)</Text>
-            <View style={s.thead}>
-              <Text style={[s.th, { flex: 4 }]}>Deskripsi</Text>
-              <Text style={[s.th, { flex: 1, textAlign: "center" }]}>Qty</Text>
-              <Text style={[s.th, { flex: 2, textAlign: "right" }]}>Harga</Text>
-              <Text style={[s.th, { flex: 2, textAlign: "right" }]}>Subtotal</Text>
-            </View>
-            {unitItems.map((item, i) => (
-              <View key={i} style={[s.tr, i % 2 === 1 ? s.trEven : {}]}>
-                <Text style={[s.tdMuted, { flex: 4 }]}>{item.description?.trim() || "Unit AC"}</Text>
-                <Text style={[s.tdMuted, { flex: 1, textAlign: "center" }]}>{item.qty}</Text>
-                <Text style={[s.tdMuted, { flex: 2, textAlign: "right" }]}>{fmt(item.unit_price)}</Text>
-                <Text style={[s.tdMuted, { flex: 2, textAlign: "right" }]}>{fmt(item.subtotal)}</Text>
-              </View>
-            ))}
+        {/* Tabel item — flat, 1 tabel gabungan */}
+        <View style={s.table}>
+          <View style={s.thead}>
+            <Text style={[s.th, { width: 26 }]}>No</Text>
+            <Text style={[s.th, { flex: 1 }]}>Detail Item</Text>
+            <Text style={[s.th, { width: 34, textAlign: "right" }]}>Qty</Text>
+            <Text style={[s.th, { width: 50 }]}>Uom</Text>
+            <Text style={[s.th, { width: 76, textAlign: "right" }]}>Value</Text>
+            <Text style={[s.th, { width: 86, textAlign: "right" }]}>Amount</Text>
           </View>
-        )}
+          {allRows.length === 0 ? (
+            <View style={s.tr}><Text style={[s.td, { flex: 1, textAlign: "center", color: "#94a3b8", fontStyle: "italic" }]}>Belum ada item</Text></View>
+          ) : allRows.map((item, i) => (
+            <ItemRow key={i} no={i + 1}
+              desc={item.description?.trim() || (item.item_type === "unit_ac" ? "Unit AC" : "")}
+              qty={item.qty} uom={item.satuan} price={item.unit_price} subtotal={item.subtotal}
+              include={item.include} />
+          ))}
 
-        {/* Paket & Jasa */}
-        {(paketItems.length > 0 || jasaItems.length > 0) && (
-          <View style={s.table}>
-            <Text style={s.secTitle}>Paket Pemasangan & Jasa</Text>
-            <View style={s.thead}>
-              <Text style={[s.th, { flex: 4 }]}>Deskripsi</Text>
-              <Text style={[s.th, { flex: 1, textAlign: "center" }]}>Qty</Text>
-              <Text style={[s.th, { flex: 2, textAlign: "right" }]}>Harga</Text>
-              <Text style={[s.th, { flex: 2, textAlign: "right" }]}>Subtotal</Text>
-            </View>
-            {[...paketItems, ...jasaItems].map((item, i) => (
-              <View key={i} style={[s.tr, i % 2 === 1 ? s.trEven : {}]}>
-                <View style={[{ flex: 4 }]}>
-                  <Text style={s.td}>{item.description}</Text>
-                  {(item.include || []).map((inc, j) => (
-                    <Text key={j} style={{ fontSize: 8, color: "#64748b", padding: "1 8 1 16" }}>✓ {inc.nama} {inc.qty} {inc.satuan}</Text>
-                  ))}
-                </View>
-                <Text style={[s.td, { flex: 1, textAlign: "center" }]}>{item.qty}</Text>
-                <Text style={[s.td, { flex: 2, textAlign: "right" }]}>{fmt(item.unit_price)}</Text>
-                <Text style={[s.td, { flex: 2, textAlign: "right", fontFamily: "Helvetica-Bold" }]}>{fmt(item.subtotal)}</Text>
-              </View>
-            ))}
-          </View>
-        )}
+          {(quo.discount || 0) > 0 && (
+            <View style={s.adjRow}><Text>Diskon</Text><Text>- {fmt(quo.discount)}</Text></View>
+          )}
+          {(quo.trade_in_amount || 0) > 0 && (
+            <View style={s.adjRow}><Text>Trade-in AC Lama</Text><Text>- {fmt(quo.trade_in_amount)}</Text></View>
+          )}
+          {hasPph && (
+            <>
+              <View style={s.adjRow}><Text>Nilai Jasa (DPP)</Text><Text>{fmt(dpp)}</Text></View>
+              <View style={[s.adjRow, { color: "#2f5ea3" }]}><Text>PPh 23 (2,5%) dipotong customer</Text><Text>- {fmt(quo.pph23_amount)}</Text></View>
+            </>
+          )}
 
-        {/* Material */}
-        {addonItems.length > 0 && (
-          <View style={s.table}>
-            <Text style={s.secTitle}>Material Tambahan</Text>
-            <View style={s.thead}>
-              <Text style={[s.th, { flex: 4 }]}>Material</Text>
-              <Text style={[s.th, { flex: 1, textAlign: "center" }]}>Qty</Text>
-              <Text style={[s.th, { flex: 2, textAlign: "right" }]}>Harga</Text>
-              <Text style={[s.th, { flex: 2, textAlign: "right" }]}>Subtotal</Text>
-            </View>
-            {addonItems.map((item, i) => (
-              <View key={i} style={[s.tr, i % 2 === 1 ? s.trEven : {}]}>
-                <Text style={[s.td, { flex: 4 }]}>{item.description}</Text>
-                <Text style={[s.td, { flex: 1, textAlign: "center" }]}>{item.qty}</Text>
-                <Text style={[s.td, { flex: 2, textAlign: "right" }]}>{fmt(item.unit_price)}</Text>
-                <Text style={[s.td, { flex: 2, textAlign: "right", fontFamily: "Helvetica-Bold" }]}>{fmt(item.subtotal)}</Text>
-              </View>
-            ))}
-          </View>
-        )}
-
-        {/* Total box — kartu Rincian Total */}
-        <View wrap={false} style={[s.rinCard, { marginBottom: 12 }]}>
-          <Text style={s.rinCap}>Rincian Total</Text>
-          {(quo.unit_ac_amount > 0) && (
-            <View style={s.rinRow}>
-              <View style={s.rinLeft}>
-                <View style={[s.rinDot, { backgroundColor: "#1E5BA8" }]} />
-                <View>
-                  <Text style={s.rinLbl}>Unit AC</Text>
-                  <Text style={s.rinHint}>harga unit (informasi)</Text>
-                </View>
-              </View>
-              <Text style={s.rinVal}>{fmt(quo.unit_ac_amount)}</Text>
-            </View>
-          )}
-          {(quo.labor > 0) && (
-            <View style={s.rinRow}>
-              <View style={s.rinLeft}>
-                <View style={[s.rinDot, { backgroundColor: "#60a5fa" }]} />
-                <View>
-                  <Text style={s.rinLbl}>Paket & Jasa</Text>
-                  <Text style={s.rinHint}>paket pemasangan</Text>
-                </View>
-              </View>
-              <Text style={s.rinVal}>{fmt(quo.labor)}</Text>
-            </View>
-          )}
-          {(quo.material > 0) && (
-            <View style={s.rinRow}>
-              <View style={s.rinLeft}>
-                <View style={[s.rinDot, { backgroundColor: "#60a5fa" }]} />
-                <View>
-                  <Text style={s.rinLbl}>Material & Jasa Pemasangan</Text>
-                  <Text style={s.rinHint}>pipa, kabel, jasa, dll</Text>
-                </View>
-              </View>
-              <Text style={s.rinVal}>{fmt(quo.material)}</Text>
-            </View>
-          )}
-          {(quo.discount > 0) && (
-            <View style={s.rinRow}>
-              <View style={s.rinLeft}>
-                <View style={[s.rinDot, { backgroundColor: "#f59e0b" }]} />
-                <Text style={[s.rinLbl, { color: "#f59e0b" }]}>Diskon</Text>
-              </View>
-              <Text style={[s.rinVal, { color: "#f59e0b" }]}>-{fmt(quo.discount)}</Text>
-            </View>
-          )}
-          {(quo.trade_in_amount > 0) && (
-            <View style={s.rinRow}>
-              <View style={s.rinLeft}>
-                <View style={[s.rinDot, { backgroundColor: "#f59e0b" }]} />
-                <Text style={[s.rinLbl, { color: "#f59e0b" }]}>Trade-in AC lama</Text>
-              </View>
-              <Text style={[s.rinVal, { color: "#f59e0b" }]}>-{fmt(quo.trade_in_amount)}</Text>
-            </View>
-          )}
-          <View style={s.rinTotal}>
+          <View style={s.totalBar}>
             <Text style={s.totalLabel}>TOTAL PENAWARAN</Text>
             <Text style={s.totalVal}>{fmt(quo.total)}</Text>
           </View>
@@ -325,8 +192,7 @@ export default function QuotationPDF({ quo, appSettings, logoUrl }) {
         {/* Valid until warning */}
         <View wrap={false} style={s.validBox}>
           <Text style={s.validText}>
-            ⏰ Penawaran ini berlaku hingga {fmtDate(quo.valid_until)}.
-            Harga dapat berubah setelah masa berlaku habis.
+            ⏰ Penawaran ini berlaku hingga {fmtDate(quo.valid_until)}. Harga dapat berubah setelah masa berlaku habis.
           </Text>
         </View>
 
@@ -338,7 +204,7 @@ export default function QuotationPDF({ quo, appSettings, logoUrl }) {
           </View>
         )}
 
-        {/* Syarat & Ketentuan — selalu embed di PDF (tidak perlu klik preset) */}
+        {/* Syarat & Ketentuan */}
         <View wrap={false} style={s.termsBox}>
           <Text style={s.termsTitle}>Catatan Pekerjaan</Text>
           {TERMS_PEKERJAAN.map((t, i) => (
@@ -356,14 +222,20 @@ export default function QuotationPDF({ quo, appSettings, logoUrl }) {
           ))}
         </View>
 
-        {/* Footer */}
-        <View style={s.footer}>
-          <Text style={s.footerText}>
-            Pertanyaan? Hubungi kami via WA: +{companyPhone}
+        {/* Footer: catatan kontak + tanda tangan sejajar */}
+        <View wrap={false} style={s.footerRow}>
+          <Text style={s.footerNote}>
+            Pertanyaan? Hubungi kami via WA: +{companyPhone}{"\n"}
+            Terima kasih telah mempercayakan kebutuhan AC Anda kepada {companyName}.
           </Text>
-          <Text style={[s.footerText, { marginTop: 4 }]}>
-            Terima kasih telah mempercayakan kebutuhan AC Anda kepada {companyName}
-          </Text>
+          <View style={s.signBlock}>
+            <Text style={s.signPlace}>{fmtDate(quo.created_at)}</Text>
+            <Text style={s.signName}>{companyName}</Text>
+          </View>
+        </View>
+
+        <View style={s.pageFooter}>
+          <Text style={s.pageFooterText}>Dokumen ini dibuat otomatis oleh sistem — {companyName}</Text>
         </View>
 
       </Page>

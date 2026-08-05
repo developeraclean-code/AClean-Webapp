@@ -85,8 +85,10 @@ export default function EditInvoiceModal({
     const material = _s.material;
     const newTotalFinal = _s.total;
     if (newTotalFinal <= 0 && !tradeInFinal && discountFinal === 0) { showNotif("⚠️ Total tidak boleh 0"); return; }
+    // PPh 23 HANYA dari kategori Jasa (labor), BUKAN dari total (jasa+material) — fix:
+    // sebelumnya computePph23(newTotalFinal) ikut hitung material, salah basis DPP.
     const pph23On = !!editInvoiceForm.pph23;
-    const pph23Amt = pph23On ? computePph23(newTotalFinal, parseFloat(appSettings?.pph23_rate) || 0.025).amount : 0;
+    const pph23Amt = pph23On ? computePph23(labor, parseFloat(appSettings?.pph23_rate) || 0.025).amount : 0;
     const billingName = (editInvoiceForm.billing_name ?? editInvoiceData.customer) || editInvoiceData.customer;
     const billingAddress = editInvoiceForm.billing_address ?? (editInvoiceData.address || "");
     // pdf_url/updated_at ikut di-reset di state lokal — mirror invalidasi updateInvoice()
@@ -375,23 +377,23 @@ export default function EditInvoiceModal({
               )}
             </div>
 
-            {/* PPh 23 */}
+            {/* PPh 23 — HANYA dari kategori Jasa (jasaTotal), bukan newTotal (jasa+material) */}
             {(() => {
               const rate = parseFloat(appSettings?.pph23_rate) || 0.025;
-              const pph = computePph23(newTotal, rate);
+              const pph = computePph23(jasaTotal, rate);
               return (
                 <div style={{ background: editInvoiceForm.pph23 ? "#0ea5e912" : cs.surface, border: "1px solid " + (editInvoiceForm.pph23 ? "#0ea5e944" : cs.border), borderRadius: 8, padding: "8px 10px" }}>
                   <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12, color: cs.text }}>
                     <input type="checkbox" checked={!!editInvoiceForm.pph23}
                       onChange={e => setEditInvoiceForm(f => ({ ...f, pph23: e.target.checked }))}
                       style={{ width: 16, height: 16, accentColor: "#0ea5e9" }} />
-                    <div style={{ fontWeight: 700 }}>Customer potong PPh 23 ({(rate * 100).toLocaleString("id-ID")}%)</div>
+                    <div style={{ fontWeight: 700 }}>Customer potong PPh 23 ({(rate * 100).toLocaleString("id-ID")}%) — dari Jasa saja</div>
                   </label>
                   {editInvoiceForm.pph23 && (
                     <div style={{ marginTop: 8, fontSize: 12, color: cs.muted, display: "grid", gap: 3 }}>
                       <div style={{ display: "flex", justifyContent: "space-between" }}><span>Nilai Jasa (DPP)</span><b style={{ color: cs.text, fontFamily: "monospace" }}>{fmt(pph.dpp)}</b></div>
                       <div style={{ display: "flex", justifyContent: "space-between" }}><span>PPh 23 dipotong</span><b style={{ color: "#0ea5e9", fontFamily: "monospace" }}>- {fmt(pph.amount)}</b></div>
-                      <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid " + cs.border, paddingTop: 3 }}><span>Diterima AClean</span><b style={{ color: cs.green, fontFamily: "monospace" }}>{fmt(newTotal)}</b></div>
+                      <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid " + cs.border, paddingTop: 3 }}><span>Diterima AClean (Total tidak berubah)</span><b style={{ color: cs.green, fontFamily: "monospace" }}>{fmt(newTotal)}</b></div>
                     </div>
                   )}
                 </div>

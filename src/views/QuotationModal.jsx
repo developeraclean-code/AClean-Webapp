@@ -1,13 +1,14 @@
 import { useState, useMemo, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { normalizePhone } from "../lib/phone.js";
+import { categoryFromCatalog, computePph23 } from "../lib/invoicing.js";
 
 const fmt = (n) => "Rp " + (Number(n) || 0).toLocaleString("id-ID");
 
 const BRAND_SHORTCUTS = ["Daikin", "Panasonic", "Sharp", "Samsung", "LG", "Mitsubishi", "Gree", "Haier", "Midea", "Hisense"];
 const KAPASITAS_OPT   = ["0.5 PK", "0.75 PK", "1 PK", "1.5 PK", "2 PK", "2.5 PK", "3 PK", "3.5 PK", "4 PK", "5 PK", "6 PK"];
 const TIPE_UNIT       = ["Split Standard", "Split Inverter", "Cassette", "Split Duct", "Floor Standing"];
-const TRADE_IN_AMOUNT = 250000;
+const TRADE_IN_PRESETS = [250000, 300000];
 
 const DEFAULT_PAKET = [
   { key: "paket_05_1pk", label: "Paket Pemasangan 0,5PK – 1PK", harga: 1400000,
@@ -53,8 +54,11 @@ const emptyUnit = () => ({
 });
 
 const SATUAN_OPT = ["Unit", "Meter", "Roll", "Set", "Pcs", "Lot", "Hari", "Jam"];
-const emptyJasa = () => ({ _id: Date.now() + Math.random(), nama: "", qty: 1, harga: 0, satuan: "Unit" });
-const emptyMat  = () => ({ _id: Date.now() + Math.random(), nama: "", qty: 1, harga: 0, satuan: "Unit" });
+// Baris grid bebas ala-Excel (gabungan bekas "Paket & Jasa" + "Material Tambahan").
+// category "jasa"/"material" menentukan default kena-PPh & bucket labor/material —
+// auto-terisi via categoryFromCatalog() saat nama cocok price_list, tetap bisa
+// dioverride manual per baris (checkbox pph).
+const emptyGridRow = () => ({ _id: Date.now() + Math.random(), nama: "", qty: 1, satuan: "Unit", harga: 0, category: "material", pph: false });
 
 export default function QuotationModal({
   onClose, supabase, customersData, showNotif, setQuotationsData,
@@ -83,46 +87,30 @@ export default function QuotationModal({
     return [emptyUnit()];
   });
 
-  // ── Items: Paket Pemasangan ──
-  const [paketList, setPaketList]         = useState(DEFAULT_PAKET);
-  const [selectedPaket, setSelectedPaket] = useState(() => {
-    if (isEdit) {
-      const paketItem = (editData.items || []).find(i => i.item_type === "paket");
-      return paketItem ? { label: paketItem.description, harga: paketItem.unit_price, include: [] } : null;
-    }
-    return null;
-  });
-  const [useTanpaPaket, setUseTanpaPaket] = useState(() => {
-    if (isEdit) return !(editData.items || []).some(i => i.item_type === "paket");
-    return false;
-  });
+  // ── Paket preset (data harga) — dipakai sbg salah satu opsi auto-detect di grid,
+  // bukan lagi kartu pilihan terpisah. Tetap di-load dari app_settings (bisa dikustom).
+  const [paketList, setPaketList] = useState(DEFAULT_PAKET);
 
-  // ── Items: Jasa manual (jika tanpa paket) ──
-  const [jasaItems, setJasaItems] = useState(() => {
+  // ── Items: grid bebas ala-Excel (gabungan bekas "Paket & Jasa" + "Material
+  // Tambahan"). Data lama (item_type paket/jasa/addon) tetap ke-load saat edit. ──
+  const [gridItems, setGridItems] = useState(() => {
     if (isEdit) {
-      const items = (editData.items || []).filter(i => i.item_type === "jasa");
-      return items.length > 0 ? items.map(j => ({ _id: Math.random(), nama: j.description, qty: j.qty, harga: j.unit_price, satuan: j.satuan || "Unit" })) : [];
+      return (editData.items || []).filter(i => i.item_type !== "unit_ac").map(i => ({
+        _id: Math.random(), nama: i.description || "", qty: i.qty || 1,
+        satuan: i.satuan || "Unit", harga: i.unit_price || 0,
+        category: (i.item_type === "material" || i.item_type === "addon") ? "material" : "jasa",
+        pph: !!i.pph,
+      }));
     }
     return [];
   });
 
-  // ── Items: Material/Addon ──
-  const [addonItems, setAddonItems]       = useState(() => {
-    if (isEdit) {
-      const items = (editData.items || []).filter(i => i.item_type === "addon");
-      return items.length > 0 ? items.map(a => ({ _id: Math.random(), nama: a.description, qty: a.qty, harga: a.unit_price, satuan: a.satuan || "Unit" })) : [];
-    }
-    return [];
-  });
-  const [addonSearch, setAddonSearch]       = useState("");
-  const [showAddonPicker, setShowAddonPicker] = useState(false);
-  const [jasaSearch, setJasaSearch]         = useState("");
-  const [showJasaPicker, setShowJasaPicker] = useState(false);
-
-  // ── Diskon & Trade-In ──
+  // ── Diskon, Trade-In (preset + manual), PPh 23 ──
   const [diskon, setDiskon]       = useState(isEdit ? (editData.discount || 0) : 0);
   const [diskonPct, setDiskonPct] = useState(false);
   const [tradeIn, setTradeIn]     = useState(isEdit ? (editData.trade_in_amount > 0) : false);
+  const [tradeInAmt, setTradeInAmt] = useState(isEdit && editData.trade_in_amount > 0 ? editData.trade_in_amount : TRADE_IN_PRESETS[0]);
+  const [pph23On, setPph23On]     = useState(isEdit ? !!editData.pph23 : false);
 
   // ── Notes ──
   const [notes, setNotes] = useState(isEdit ? (editData.notes || "") : "");
@@ -180,18 +168,19 @@ export default function QuotationModal({
   // ── Kalkulasi ──
   const totalUnitsCount = useMemo(() => acUnits.reduce((s, u) => s + (Number(u.qty) || 1), 0), [acUnits]);
   const totalUnitAC     = useMemo(() => withUnitAC ? acUnits.reduce((s, u) => s + (u.subtotal || 0), 0) : 0, [acUnits, withUnitAC]);
-  const totalPaket      = useMemo(() => {
-    if (useTanpaPaket) return jasaItems.reduce((s, j) => s + (j.qty * j.harga), 0);
-    return (selectedPaket?.harga || 0) * (withUnitAC ? totalUnitsCount : 1);
-  }, [useTanpaPaket, jasaItems, selectedPaket, withUnitAC, totalUnitsCount]);
-  const totalAddon      = useMemo(() => addonItems.reduce((s, a) => s + (a.qty * a.harga), 0), [addonItems]);
+  // ── Grid bebas: total gabungan + subtotal jasa-saja (basis PPh 23) ──
+  const totalItems      = useMemo(() => gridItems.reduce((s, r) => s + ((Number(r.qty) || 0) * (Number(r.harga) || 0)), 0), [gridItems]);
+  const jasaSubtotal     = useMemo(() => gridItems.filter(r => r.pph).reduce((s, r) => s + ((Number(r.qty) || 0) * (Number(r.harga) || 0)), 0), [gridItems]);
 
   const diskonNominal   = diskonPct
-    ? Math.round((totalUnitAC + totalPaket + totalAddon) * (parseFloat(diskon) / 100))
+    ? Math.round((totalUnitAC + totalItems) * (parseFloat(diskon) / 100))
     : (parseFloat(diskon) || 0);
-  const tradeInNominal  = tradeIn ? TRADE_IN_AMOUNT : 0;
-  const grandTotal      = Math.max(0, totalUnitAC + totalPaket + totalAddon - diskonNominal - tradeInNominal);
-  const omsetAClean     = totalPaket + totalAddon - diskonNominal - tradeInNominal;
+  const tradeInNominal  = tradeIn ? (Number(tradeInAmt) || 0) : 0;
+  // grandTotal = nilai yang DITERIMA AClean (receivable) — PPh 23 TIDAK mengubah ini,
+  // hanya informasi DPP+potongan yang tampil di PDF (mirror invoices.pph23_amount).
+  const grandTotal      = Math.max(0, totalUnitAC + totalItems - diskonNominal - tradeInNominal);
+  const omsetAClean     = totalItems - diskonNominal - tradeInNominal;
+  const pph23Info       = pph23On ? computePph23(jasaSubtotal) : { amount: 0, dpp: 0 };
 
   // ── Customer display ──
   const custDisplay = custMode === "existing"
@@ -204,23 +193,34 @@ export default function QuotationModal({
     (c.phone || "").includes(custSearch)
   );
 
-  // ── Price list options (harga deal klien diprioritaskan di atas) ──
+  // ── Price list options utk grid (harga deal klien + paket preset + katalog global) ──
   const priceOptions = useMemo(() => {
     const clientOpts = (extraPriceOptions || []).map(p => ({ nama: p.nama, satuan: p.satuan || "Unit", harga: Number(p.harga) || 0, _client: true }));
+    const paketOpts = (paketList || []).map(p => ({ nama: p.label, satuan: "Paket", harga: Number(p.harga) || 0, _forceCategory: "jasa", _include: p.include }));
     const globalOpts = (priceListData || [])
       .filter(p => p.is_active !== false)
       .map(p => ({ nama: p.type, satuan: p.unit || "Unit", harga: Number(p.price) || 0 }))
       .sort((a, b) => a.nama.localeCompare(b.nama));
-    return [...clientOpts, ...globalOpts];
-  }, [priceListData, extraPriceOptions]);
+    return [...clientOpts, ...paketOpts, ...globalOpts];
+  }, [priceListData, extraPriceOptions, paketList]);
 
-  const filteredAddon = addonSearch
-    ? priceOptions.filter(p => p.nama.toLowerCase().includes(addonSearch.toLowerCase()))
-    : priceOptions;
-
-  const filteredJasa = jasaSearch
-    ? priceOptions.filter(p => p.nama.toLowerCase().includes(jasaSearch.toLowerCase()))
-    : priceOptions;
+  // ── Grid row helpers: auto-detect kategori (jasa/material) + auto-fill harga/satuan ──
+  const updateGridRow = (idx, field, val) => {
+    setGridItems(prev => prev.map((r, i) => {
+      if (i !== idx) return r;
+      const up = { ...r, [field]: val };
+      if (field === "nama") {
+        const hit = priceOptions.find(p => p.nama.toLowerCase() === String(val).trim().toLowerCase());
+        const isJasa = hit?._forceCategory
+          ? hit._forceCategory === "jasa"
+          : ["LABOR", "FEE"].includes(categoryFromCatalog(val, priceListData));
+        up.category = isJasa ? "jasa" : "material";
+        up.pph = isJasa;
+        if (hit) { up.harga = hit.harga; up.satuan = hit.satuan; }
+      }
+      return up;
+    }));
+  };
 
   // ── Unit helpers ──
   const updateUnit = (idx, field, val) => {
@@ -269,36 +269,20 @@ export default function QuotationModal({
         });
       });
     }
-    if (!useTanpaPaket && selectedPaket) {
-      const paketQty = withUnitAC ? totalUnitsCount : 1;
-      items.push({
-        item_type: "paket",
-        description: selectedPaket.label,
-        qty: paketQty,
-        unit_price: selectedPaket.harga,
-        subtotal: selectedPaket.harga * paketQty,
-        include: selectedPaket.include || [],
-      });
-    }
-    jasaItems.forEach(j => {
-      if (j.nama && j.harga > 0) items.push({
-        item_type: "jasa",
-        description: j.nama,
-        qty: Number(j.qty) || 1,
-        unit_price: Number(j.harga) || 0,
-        subtotal: (Number(j.qty) || 1) * (Number(j.harga) || 0),
-        satuan: j.satuan || "Unit",
-      });
-    });
-    addonItems.forEach(a => {
-      if (a.nama && a.harga > 0) items.push({
-        item_type: "addon",
-        description: a.nama,
-        qty: Number(a.qty) || 1,
-        unit_price: Number(a.harga) || 0,
-        subtotal: (Number(a.qty) || 1) * (Number(a.harga) || 0),
-        satuan: a.satuan || "Unit",
-      });
+    gridItems.forEach(r => {
+      if (r.nama && r.harga > 0) {
+        const paketHit = paketList.find(p => p.label === r.nama);
+        items.push({
+          item_type: r.category === "jasa" ? "jasa" : "material",
+          description: r.nama,
+          qty: Number(r.qty) || 1,
+          unit_price: Number(r.harga) || 0,
+          subtotal: (Number(r.qty) || 1) * (Number(r.harga) || 0),
+          satuan: r.satuan || "Unit",
+          pph: !!r.pph,
+          ...(paketHit?.include ? { include: paketHit.include } : {}),
+        });
+      }
     });
     return items;
   };
@@ -341,10 +325,12 @@ export default function QuotationModal({
         items:           items,
         total:           grandTotal,
         unit_ac_amount:  totalUnitAC,
-        labor:           totalPaket,
-        material:        totalAddon,
+        labor:           jasaSubtotal,
+        material:        Math.max(0, totalItems - jasaSubtotal),
         discount:        diskonNominal,
         trade_in_amount: tradeInNominal,
+        pph23:           pph23On,
+        pph23_amount:    pph23Info.amount,
         valid_until:     validUntil,
         notes:           notes || null,
         updated_at:      new Date().toISOString(),
@@ -604,137 +590,52 @@ export default function QuotationModal({
                 })()}
               </div>
 
-              {/* Paket Pemasangan */}
+              {/* Item & Jasa — grid bebas ala-Excel (gabungan bekas Paket & Jasa + Material Tambahan) */}
               <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: 14 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                  <div style={{ fontWeight: 700, fontSize: 13, color: cs.text }}>🔧 Paket & Jasa</div>
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: cs.muted, cursor: "pointer" }}>
-                    <input type="checkbox" checked={useTanpaPaket} onChange={e => { setUseTanpaPaket(e.target.checked); setSelectedPaket(null); }} />
-                    Input manual
-                  </label>
+                <div style={{ fontWeight: 700, fontSize: 13, color: cs.text, marginBottom: 2 }}>🔧 Item & Jasa</div>
+                <div style={{ fontSize: 11, color: cs.muted, marginBottom: 10 }}>
+                  Ketik nama → auto-detect dari Price List (jasa/material/paket pemasangan). Manual tetap bisa.
                 </div>
-                {!useTanpaPaket ? (
-                  <div style={{ display: "grid", gap: 8 }}>
-                    {paketList.map(p => (
-                      <div key={p.key} onClick={() => setSelectedPaket(p)}
-                        style={{ padding: "10px 14px", borderRadius: 10, cursor: "pointer",
-                          background: selectedPaket?.key === p.key ? cs.accent + "22" : cs.surface,
-                          border: "1px solid " + (selectedPaket?.key === p.key ? cs.accent : cs.border) }}>
-                        <div style={{ display: "flex", justifyContent: "space-between" }}>
-                          <span style={{ fontSize: 13, fontWeight: 700, color: cs.text }}>{p.label}</span>
-                          <span style={{ fontSize: 13, fontWeight: 700, color: cs.accent }}>{fmt(p.harga)}</span>
-                        </div>
-                        {selectedPaket?.key === p.key && p.include?.length > 0 && (
-                          <div style={{ marginTop: 6, display: "grid", gap: 2 }}>
-                            {p.include.map((inc, i) => (
-                              <div key={i} style={{ fontSize: 11, color: cs.muted }}>✓ {inc.nama} {inc.qty} {inc.satuan}</div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                    {withUnitAC && selectedPaket && totalUnitsCount > 1 && (
-                      <div style={{ fontSize: 12, color: cs.muted, padding: "4px 8px", background: cs.accent + "11", borderRadius: 6 }}>
-                        {totalUnitsCount} unit × {fmt(selectedPaket.harga)} = {fmt(selectedPaket.harga * totalUnitsCount)}
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div style={{ display: "grid", gap: 8 }}>
-                    {/* Price list lookup untuk jasa */}
-                    <div>
-                      <input value={jasaSearch} onChange={e => { setJasaSearch(e.target.value); setShowJasaPicker(true); }}
-                        onFocus={() => setShowJasaPicker(true)}
-                        placeholder="Cari jasa dari price list..." style={{ ...inp, marginBottom: 6 }} />
-                      {showJasaPicker && (
-                        <div style={{ maxHeight: 160, overflowY: "auto", border: "1px solid " + cs.border, borderRadius: 8, background: cs.surface, marginBottom: 6 }}>
-                          {filteredJasa.slice(0, 20).map((p, i) => (
-                            <div key={i} onClick={() => {
-                              setJasaItems(prev => [...prev, { _id: Math.random(), nama: p.nama, qty: 1, harga: p.harga, satuan: p.satuan || "Unit" }]);
-                              setJasaSearch(""); setShowJasaPicker(false);
-                            }} style={{ padding: "8px 12px", cursor: "pointer", fontSize: 12, color: cs.text, borderBottom: "1px solid " + cs.border + "33" }}>
-                              {p.nama} — {fmt(p.harga)}/{p.satuan}
-                            </div>
-                          ))}
-                          {filteredJasa.length === 0 && (
-                            <div style={{ padding: 10, color: cs.muted, fontSize: 12 }}>Tidak ditemukan di price list</div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    {jasaItems.map((j, idx) => (
-                      <div key={j._id} style={{ display: "grid", gridTemplateColumns: "1fr 56px 78px 110px auto", gap: 6, alignItems: "center" }}>
-                        <input value={j.nama} onChange={e => setJasaItems(p => p.map((x, i) => i === idx ? { ...x, nama: e.target.value } : x))}
-                          style={inp} placeholder="Nama jasa..." />
-                        <input type="number" min="1" value={j.qty} onChange={e => setJasaItems(p => p.map((x, i) => i === idx ? { ...x, qty: Number(e.target.value) } : x))}
-                          style={inp} />
-                        <select value={j.satuan || "Unit"} onChange={e => setJasaItems(p => p.map((x, i) => i === idx ? { ...x, satuan: e.target.value } : x))}
-                          style={inp}>
-                          {SATUAN_OPT.map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
-                        <input type="number" min="0" value={j.harga || ""} onChange={e => setJasaItems(p => p.map((x, i) => i === idx ? { ...x, harga: Number(e.target.value) } : x))}
-                          style={inp} placeholder="Harga" />
-                        <button onClick={() => setJasaItems(p => p.filter((_, i) => i !== idx))}
-                          style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer", fontSize: 16 }}>×</button>
-                      </div>
-                    ))}
-                    <button onClick={() => setJasaItems(p => [...p, emptyJasa()])} style={btn(cs.accent)}>+ Manual</button>
-                  </div>
-                )}
-              </div>
-
-              {/* Material Tambahan */}
-              <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: 14 }}>
-                <div style={{ fontWeight: 700, fontSize: 13, color: cs.text, marginBottom: 10 }}>📦 Material Tambahan</div>
-
-                {/* Price list picker */}
-                <div style={{ marginBottom: 10 }}>
-                  <input value={addonSearch} onChange={e => { setAddonSearch(e.target.value); setShowAddonPicker(true); }}
-                    onFocus={() => setShowAddonPicker(true)}
-                    placeholder="Cari dari price list..." style={{ ...inp, marginBottom: 6 }} />
-                  {showAddonPicker && (
-                    <div style={{ maxHeight: 160, overflowY: "auto", border: "1px solid " + cs.border, borderRadius: 8, background: cs.surface }}>
-                      {filteredAddon.slice(0, 20).map((p, i) => (
-                        <div key={i} onClick={() => {
-                          setAddonItems(prev => [...prev, { _id: Math.random(), nama: p.nama, qty: 1, harga: p.harga, satuan: p.satuan }]);
-                          setAddonSearch(""); setShowAddonPicker(false);
-                        }} style={{ padding: "8px 12px", cursor: "pointer", fontSize: 12, color: cs.text, borderBottom: "1px solid " + cs.border + "33" }}>
-                          {p.nama} — {fmt(p.harga)}/{p.satuan}
-                        </div>
-                      ))}
-                      {filteredAddon.length === 0 && (
-                        <div style={{ padding: 10, color: cs.muted, fontSize: 12 }}>Tidak ditemukan di price list</div>
-                      )}
+                <datalist id="quo-item-catalog">
+                  {priceOptions.map((p, i) => <option key={i} value={p.nama} />)}
+                </datalist>
+                <div style={{ display: "grid", gap: 6 }}>
+                  {gridItems.length > 0 && (
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 46px 72px 92px 92px 32px auto", gap: 6, fontSize: 10, fontWeight: 700, color: cs.muted, padding: "0 2px" }}>
+                      <span>Nama Item</span><span>Qty</span><span>Satuan</span><span>Harga</span><span>Subtotal</span>
+                      <span title="Kena PPh 23? (kategori Jasa)">PPh?</span><span />
                     </div>
                   )}
-                </div>
-
-                {/* Item rows */}
-                <div style={{ display: "grid", gap: 6 }}>
-                  {addonItems.map((a, idx) => (
-                    <div key={a._id} style={{ display: "grid", gridTemplateColumns: "1fr 56px 78px 110px auto", gap: 6, alignItems: "center" }}>
-                      <input value={a.nama} onChange={e => setAddonItems(p => p.map((x, i) => i === idx ? { ...x, nama: e.target.value } : x))}
-                        style={inp} placeholder="Material..." />
-                      <input type="number" min="1" value={a.qty} onChange={e => setAddonItems(p => p.map((x, i) => i === idx ? { ...x, qty: Number(e.target.value) } : x))}
-                        style={inp} />
-                      <select value={a.satuan || "Unit"} onChange={e => setAddonItems(p => p.map((x, i) => i === idx ? { ...x, satuan: e.target.value } : x))}
-                        style={inp}>
-                        {SATUAN_OPT.map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                      <input type="number" min="0" value={a.harga || ""} onChange={e => setAddonItems(p => p.map((x, i) => i === idx ? { ...x, harga: Number(e.target.value) } : x))}
-                        style={inp} placeholder="Harga" />
-                      <button onClick={() => setAddonItems(p => p.filter((_, i) => i !== idx))}
-                        style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer", fontSize: 16 }}>×</button>
-                    </div>
-                  ))}
-                  <button onClick={() => setAddonItems(p => [...p, emptyMat()])} style={btn(cs.muted)}>+ Manual</button>
+                  {gridItems.map((r, idx) => {
+                    const subtotal = (Number(r.qty) || 0) * (Number(r.harga) || 0);
+                    return (
+                      <div key={r._id} style={{ display: "grid", gridTemplateColumns: "1fr 46px 72px 92px 92px 32px auto", gap: 6, alignItems: "center" }}>
+                        <input list="quo-item-catalog" value={r.nama} onChange={e => updateGridRow(idx, "nama", e.target.value)}
+                          style={inp} placeholder="Nama item... (auto-detect atau manual)" />
+                        <input type="number" min="1" value={r.qty} onChange={e => setGridItems(p => p.map((x, i) => i === idx ? { ...x, qty: Number(e.target.value) } : x))} style={inp} />
+                        <select value={r.satuan || "Unit"} onChange={e => setGridItems(p => p.map((x, i) => i === idx ? { ...x, satuan: e.target.value } : x))} style={inp}>
+                          {SATUAN_OPT.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                        <input type="number" min="0" value={r.harga || ""} onChange={e => setGridItems(p => p.map((x, i) => i === idx ? { ...x, harga: Number(e.target.value) } : x))} style={inp} placeholder="Harga" />
+                        <div style={{ fontSize: 11.5, fontWeight: 700, color: cs.text, textAlign: "right", paddingRight: 4 }}>{subtotal > 0 ? fmt(subtotal) : "—"}</div>
+                        <label style={{ display: "flex", justifyContent: "center", cursor: "pointer" }}
+                          title={r.category === "jasa" ? "Jasa — kena PPh 23 kalau diaktifkan" : "Material — biasanya tidak kena PPh 23"}>
+                          <input type="checkbox" checked={!!r.pph} onChange={e => setGridItems(p => p.map((x, i) => i === idx ? { ...x, pph: e.target.checked } : x))} />
+                        </label>
+                        <button onClick={() => setGridItems(p => p.filter((_, i) => i !== idx))}
+                          style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer", fontSize: 16 }}>×</button>
+                      </div>
+                    );
+                  })}
+                  <button onClick={() => setGridItems(p => [...p, emptyGridRow()])} style={btn(cs.accent)}>+ Tambah Baris</button>
                 </div>
               </div>
 
-              {/* Diskon & Trade-in */}
-              <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: 14 }}>
-                <div style={{ fontWeight: 700, fontSize: 13, color: cs.text, marginBottom: 10 }}>🏷️ Diskon & Potongan</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 10, alignItems: "center" }}>
+              {/* Diskon, Trade-in, PPh 23 */}
+              <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: 14, display: "grid", gap: 14 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, color: cs.text }}>🏷️ Diskon & Potongan</div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "end" }}>
                   <div>
                     <div style={{ fontSize: 11, color: cs.muted, marginBottom: 3 }}>Diskon {diskonPct ? "(%)" : "(Rp)"}</div>
                     <input type="number" min="0" value={diskon || ""} onChange={e => setDiskon(e.target.value)} style={inp} placeholder="0" />
@@ -743,10 +644,44 @@ export default function QuotationModal({
                     <input type="checkbox" checked={diskonPct} onChange={e => setDiskonPct(e.target.checked)} />
                     <span>%</span>
                   </label>
+                </div>
+
+                <div>
                   <label style={{ fontSize: 12, color: cs.muted, cursor: "pointer", display: "flex", gap: 8, alignItems: "center" }}>
                     <input type="checkbox" checked={tradeIn} onChange={e => setTradeIn(e.target.checked)} />
-                    Trade-in AC lama ({fmt(TRADE_IN_AMOUNT)})
+                    Trade-in AC lama
                   </label>
+                  {tradeIn && (
+                    <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      {TRADE_IN_PRESETS.map(v => (
+                        <button key={v} onClick={() => setTradeInAmt(v)}
+                          style={{ fontSize: 11, fontWeight: 700, padding: "6px 12px", borderRadius: 7, cursor: "pointer",
+                            background: tradeInAmt === v ? cs.accent : cs.surface,
+                            border: "1px solid " + (tradeInAmt === v ? cs.accent : cs.border),
+                            color: tradeInAmt === v ? "#fff" : cs.muted }}>
+                          {fmt(v)}
+                        </button>
+                      ))}
+                      <input type="number" min="0" value={tradeInAmt || ""} onChange={e => setTradeInAmt(Number(e.target.value))} style={{ ...inp, maxWidth: 140 }} />
+                      <span style={{ fontSize: 10, color: cs.muted }}>bisa diketik manual sesuai kesepakatan customer</span>
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <label style={{ fontSize: 12, color: cs.muted, cursor: "pointer", display: "flex", gap: 8, alignItems: "center" }}>
+                    <input type="checkbox" checked={pph23On} onChange={e => setPph23On(e.target.checked)} />
+                    PPh 23 (2,5%) — dari baris Jasa saja, ditambah ke DPP
+                  </label>
+                  <div style={{ fontSize: 10, color: cs.muted, marginTop: 4, maxWidth: "48ch", lineHeight: 1.5 }}>
+                    Dihitung dari baris ber-centang "PPh?" di grid atas (kategori Jasa, termasuk Cleaning semua tipe/PK) — Material &amp; Unit AC tidak kena.
+                    Gross-up (Total = Jasa ÷ 0,975): tidak mengurangi omset kita — cuma info DPP di PDF supaya customer transfer sesuai harga normal setelah mereka potong PPh.
+                  </div>
+                  {pph23On && jasaSubtotal > 0 && (
+                    <div style={{ marginTop: 6, fontSize: 12, color: cs.accent, fontWeight: 700 }}>
+                      PPh 23: {fmt(pph23Info.amount)} (dari jasa {fmt(jasaSubtotal)})
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -779,16 +714,10 @@ export default function QuotationModal({
                     <span style={{ fontSize: 13, color: "#94a3b8" }}>{fmt(totalUnitAC)}</span>
                   </div>
                 )}
-                {totalPaket > 0 && (
+                {totalItems > 0 && (
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                    <span style={{ fontSize: 13, color: cs.text }}>Paket & Jasa</span>
-                    <span style={{ fontSize: 13, color: cs.text }}>{fmt(totalPaket)}</span>
-                  </div>
-                )}
-                {totalAddon > 0 && (
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                    <span style={{ fontSize: 13, color: cs.text }}>Material Tambahan</span>
-                    <span style={{ fontSize: 13, color: cs.text }}>{fmt(totalAddon)}</span>
+                    <span style={{ fontSize: 13, color: cs.text }}>Item & Jasa</span>
+                    <span style={{ fontSize: 13, color: cs.text }}>{fmt(totalItems)}</span>
                   </div>
                 )}
                 {diskonNominal > 0 && (
@@ -808,6 +737,12 @@ export default function QuotationModal({
                   <span style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>TOTAL PENAWARAN</span>
                   <span style={{ fontWeight: 800, fontSize: 15, color: cs.accent }}>{fmt(grandTotal)}</span>
                 </div>
+                {pph23On && pph23Info.amount > 0 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
+                    <span style={{ fontSize: 11.5, color: "#94a3b8" }}>PPh 23 (info DPP di PDF, tidak ubah total ini)</span>
+                    <span style={{ fontSize: 11.5, color: "#94a3b8" }}>{fmt(pph23Info.amount)}</span>
+                  </div>
+                )}
                 <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
                   <span style={{ fontSize: 12, color: cs.muted }}>Omset AClean</span>
                   <span style={{ fontSize: 12, color: cs.green || "#4ade80" }}>{fmt(Math.max(0, omsetAClean))}</span>
