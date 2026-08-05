@@ -36,6 +36,16 @@ export const fetchInvoices = (supabase) =>
     .select(INVOICE_COLS)
     .order("created_at", { ascending: false }).limit(300);
 
+// Invoice outstanding (UNPAID/OVERDUE/PARTIAL_PAID) TANPA cap tanggal — dipakai untuk
+// merge ke invoicesData di App.jsx supaya tab Overdue/Unpaid & badge hitung tidak
+// kehilangan invoice lama yang jatuh di luar limit 300 baris terbaru fetchInvoices()
+// (invoice overdue justru cenderung LAMA — paling rawan kepotong limit itu).
+export const fetchOutstandingInvoices = (supabase) =>
+  supabase.from("invoices")
+    .select(INVOICE_COLS)
+    .in("status", ["UNPAID", "OVERDUE", "PARTIAL_PAID"])
+    .order("due", { ascending: true });
+
 // Fetch SEMUA baris tanpa cap (paginated via .range(), PostgREST batas 1000/request) —
 // untuk fitur yang butuh akurasi historis penuh (Statistik, History Customer). Bukan
 // dipakai di bootstrap awal app (tetap pakai fetchOrders/fetchInvoices capped demi speed

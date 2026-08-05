@@ -4,7 +4,7 @@ import { useAppContext } from "../context/AppContext.js";
 import { ORDER_DONE_STATUSES } from "../constants/status.js";
 import { fetchAllOrders, fetchAllInvoices } from "../data/reads.js";
 
-function ReportsView({ ordersData: ordersDataProp, invoicesData: invoicesDataProp, laporanReports, customersData, teknisiData, inventoryData, statsPeriod, setStatsPeriod, statsMingguOff, setStatsMingguOff, statsDateFrom, setStatsDateFrom, statsDateTo, setStatsDateTo, bulanIni, invoiceReminderWA, getTechColor, expensesData }) {
+function ReportsView({ ordersData: ordersDataProp, invoicesData: invoicesDataProp, laporanReports, customersData, teknisiData, inventoryData, statsPeriod, setStatsPeriod, statsMingguOff, setStatsMingguOff, statsBulanOff, setStatsBulanOff, statsDateFrom, setStatsDateFrom, statsDateTo, setStatsDateTo, bulanIni, invoiceReminderWA, getTechColor, expensesData }) {
   // Fase 1: primitif global dari AppContext.
   const { isMobile, currentUser, fmt, TODAY, supabase } = useAppContext();
 
@@ -77,13 +77,27 @@ const getMingguRange = (offset) => {
 };
 const mingguRange = getMingguRange(statsMingguOff);
 
+// Hitung "YYYY-MM" bulan sesuai statsBulanOff, geser dari bulanIni (bulan berjalan) —
+// dipakai persis pola getMingguRange, supaya bisa lihat growth bulan-ke-bulan (MoM).
+const getBulanStr = (offset) => {
+  const [y, m] = bulanIni.split("-").map(Number);
+  const d = new Date(y, m - 1 + offset, 1);
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+};
+const bulanStr = getBulanStr(statsBulanOff);
+const bulanNamaId = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
+const bulanDisplay = (() => { const [y, m] = bulanStr.split("-").map(Number); return bulanNamaId[m - 1] + " " + y; })();
+
 // Label periode
 const mingguLabel = statsMingguOff === 0 ? "Minggu Ini"
   : statsMingguOff === -1 ? "Minggu Lalu"
     : "Minggu " + (statsMingguOff < 0 ? Math.abs(statsMingguOff) + " lalu" : statsMingguOff + " ke depan");
+const bulanLabel = statsBulanOff === 0 ? "Bulan Ini"
+  : statsBulanOff === -1 ? "Bulan Lalu"
+    : Math.abs(statsBulanOff) + " bulan " + (statsBulanOff < 0 ? "lalu" : "ke depan");
 const periodLabel = statsPeriod === "hari" ? "Hari Ini (" + TODAY + ")"
   : statsPeriod === "minggu" ? mingguLabel + " (" + mingguRange.from + " – " + mingguRange.to + ")"
-    : statsPeriod === "bulan" ? "Bulan Ini (" + bulanIni + ")"
+    : statsPeriod === "bulan" ? bulanLabel + " (" + bulanDisplay + ")"
       : statsPeriod === "tahun" ? "Tahun " + tahunIni
         : statsPeriod === "custom" && statsDateFrom && statsDateTo
           ? statsDateFrom + " s/d " + statsDateTo
@@ -95,7 +109,7 @@ const inRange = (tgl) => {
   const d = tgl.slice(0, 10);
   if (statsPeriod === "hari") return d === TODAY;
   if (statsPeriod === "minggu") return d >= mingguRange.from && d <= mingguRange.to;
-  if (statsPeriod === "bulan") return d.startsWith(bulanIni);
+  if (statsPeriod === "bulan") return d.startsWith(bulanStr);
   if (statsPeriod === "tahun") return d.startsWith(tahunIni);
   if (statsPeriod === "custom") {
     if (statsDateFrom && statsDateTo) return d >= statsDateFrom && d <= statsDateTo;
@@ -208,7 +222,7 @@ return (
       </div>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
         {[["hari", "Hari Ini"], ["minggu", "Minggu"], ["bulan", "Bulan Ini"], ["tahun", "Tahun Ini"], ["custom", "Custom"]].map(([v, l]) => (
-          <button key={v} onClick={() => { setStatsPeriod(v); if (v !== "minggu") setStatsMingguOff(0); }}
+          <button key={v} onClick={() => { setStatsPeriod(v); if (v !== "minggu") setStatsMingguOff(0); if (v !== "bulan") setStatsBulanOff(0); }}
             style={{
               padding: "7px 14px", borderRadius: 99, fontSize: 12, cursor: "pointer", fontWeight: 600,
               border: "1px solid " + (statsPeriod === v ? cs.accent : cs.border),
@@ -233,6 +247,25 @@ return (
                 background: "none", border: "none",
                 color: statsMingguOff === 0 ? cs.border : cs.muted,
                 cursor: statsMingguOff === 0 ? "default" : "pointer", fontSize: 14, padding: "0 6px"
+              }}>→</button>
+          </div>
+        )}
+        {statsPeriod === "bulan" && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 4, background: cs.card,
+            border: "1px solid " + cs.border, borderRadius: 99, padding: "3px 6px"
+          }}>
+            <button onClick={() => setStatsBulanOff(b => b - 1)}
+              title="Bulan sebelumnya — bandingkan growth month-over-month"
+              style={{ background: "none", border: "none", color: cs.muted, cursor: "pointer", fontSize: 14, padding: "0 6px" }}>←</button>
+            <span style={{ fontSize: 11, color: cs.muted, minWidth: 110, textAlign: "center" }}>
+              {statsBulanOff === 0 ? "Bulan Ini" : statsBulanOff === -1 ? "Bulan Lalu" : bulanDisplay}
+            </span>
+            <button onClick={() => setStatsBulanOff(b => Math.min(0, b + 1))}
+              style={{
+                background: "none", border: "none",
+                color: statsBulanOff === 0 ? cs.border : cs.muted,
+                cursor: statsBulanOff === 0 ? "default" : "pointer", fontSize: 14, padding: "0 6px"
               }}>→</button>
           </div>
         )}

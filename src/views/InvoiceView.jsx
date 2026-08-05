@@ -239,7 +239,7 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
   );
 }
 
-function InvoiceView({ invoiceFilterMemo, invoicesData, setInvoicesData, invoicePage, setInvoicePage, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, mergedInvoiceWA, createConsolidatedInvoice, previewMergedInvoicePDF, approveInvoice, approveSaveOnly, markPaid, markInvoicePaid, revertInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, parseMD, jasaSvcNames, downloadRekapHarian, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders, setGroupPaymentCtx, paymentSuggestions, setPaymentSuggestions, fotoSrc, customersData, priceListData, quotationsData, setQuotationsData, uploadQuotationPDFFn, appSettings, searchLoading }) {
+function InvoiceView({ invoiceFilterMemo, invoicesData, invoicesDataMerged, setInvoicesData, invoicePage, setInvoicePage, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, mergedInvoiceWA, createConsolidatedInvoice, previewMergedInvoicePDF, approveInvoice, approveSaveOnly, markPaid, markInvoicePaid, revertInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, parseMD, jasaSvcNames, downloadRekapHarian, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders, setGroupPaymentCtx, paymentSuggestions, setPaymentSuggestions, fotoSrc, customersData, priceListData, quotationsData, setQuotationsData, uploadQuotationPDFFn, appSettings, searchLoading }) {
   // Fase 1: primitif global dari AppContext.
   const { currentUser, isMobile, showConfirm, showNotif, addAgentLog, auditUserName, fmt, supabase, TODAY } = useAppContext();
 const { filteredInv, garansiAktif, garansiKritis, unpaidCnt } = invoiceFilterMemo;
@@ -1001,7 +1001,7 @@ return (
         }}>🛒 Jual Unit AC</button>
       )}
       <button onClick={() => {
-        const unpaid = invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE");
+        const unpaid = (invoicesDataMerged || invoicesData).filter(i => i.status === "UNPAID" || i.status === "OVERDUE");
         if (unpaid.length === 0) { showNotif("Tidak ada invoice UNPAID/OVERDUE."); return; }
         const ok = window.confirm(`Kirim reminder WhatsApp ke ${unpaid.length} customer dengan invoice belum lunas?\n\nYakin ingin melanjutkan?`);
         if (!ok) return;
@@ -1262,12 +1262,16 @@ return (
         ["Tanpa Bukti", "#f43f5e"],
       ].map(([s, col]) => {
         const todayStr = getLocalDate();
-        const tanpaBuktiCnt = invoicesData.filter(i => i.status === "PAID" && i.total > 0 && !i.payment_proof_url && i.payment_proof_url !== "verified-no-proof").length;
-        const cnt = s === "Semua" ? invoicesData.length
-          : s === "Hari Ini" ? invoicesData.filter(inv => (inv.created_at || "").slice(0, 10) === todayStr).length
+        // Badge pakai invoicesDataMerged (bukan invoicesData mentah) — sudah termasuk
+        // invoice outstanding lama yang kepotong limit 300-baris-terbaru, supaya angka
+        // di tombol tab konsisten dgn isi list yang muncul saat tab itu diklik.
+        const cntSource = invoicesDataMerged || invoicesData;
+        const tanpaBuktiCnt = cntSource.filter(i => i.status === "PAID" && i.total > 0 && !i.payment_proof_url && i.payment_proof_url !== "verified-no-proof").length;
+        const cnt = s === "Semua" ? cntSource.length
+          : s === "Hari Ini" ? cntSource.filter(inv => (inv.created_at || "").slice(0, 10) === todayStr).length
             : s === "Garansi" ? garansiAktif.length
               : s === "Tanpa Bukti" ? tanpaBuktiCnt
-                : invoicesData.filter(i => i.status === s).length;
+                : cntSource.filter(i => i.status === s).length;
         const showBadge = s === "Garansi" && garansiKritis.length > 0;
         const showTanpaBuktiBadge = s === "Tanpa Bukti" && tanpaBuktiCnt > 0;
         return (

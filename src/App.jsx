@@ -34,7 +34,7 @@ import { statusColor, statusLabel } from "./constants/status.js";
 import { SERVICE_TYPES } from "./constants/services.js";
 import { DEFAULT_BONUS_CATEGORIES } from "./constants/bonus.js";
 import {
-  fetchOrders, fetchInvoices, fetchCustomers, fetchInventory,
+  fetchOrders, fetchInvoices, fetchOutstandingInvoices, fetchCustomers, fetchInventory,
   fetchServiceReports, fetchInventoryTransactions,
   fetchInvoicesSince, fetchServiceReportsSince, fetchOrdersSince,
   searchInvoicesServer, searchOrdersServer, searchServiceReportsServer,
@@ -1323,13 +1323,28 @@ export default function ACleanWebApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchLaporan]);
 
-  // Merge local + server (dedup by id) — hanya untuk filter & display, bukan state global
+  // Invoice outstanding (UNPAID/OVERDUE/PARTIAL_PAID) live-fetch TANPA cap — invoicesData
+  // global cuma 300 baris TERBARU (reads.js), tapi invoice overdue justru cenderung LAMA
+  // → dulu ketahuan hilang total dari tab Overdue/badge unpaidCnt begitu bisnis lewat
+  // 300 invoice. Fetch sekali saat login, gabung ke invoicesDataMerged di bawah.
+  const [outstandingInvExtra, setOutstandingInvExtra] = useState([]);
+  useEffect(() => {
+    if (!isLoggedIn || !supabase) return;
+    fetchOutstandingInvoices(supabase).then(({ data, error }) => {
+      if (!error) setOutstandingInvExtra(data || []);
+    });
+  }, [isLoggedIn, supabase]);
+
+  // Merge local + server search + outstanding lama (dedup by id) — hanya untuk filter &
+  // display, bukan state global (mutasi/approve/paid tetap lewat invoicesData asli).
   const invoicesDataMerged = useMemo(() => {
-    if (!searchInvExt.length) return invoicesData;
+    if (!searchInvExt.length && !outstandingInvExtra.length) return invoicesData;
     const ids = new Set(invoicesData.map(i => i.id));
-    const extras = searchInvExt.filter(i => !ids.has(i.id));
-    return extras.length ? [...invoicesData, ...extras] : invoicesData;
-  }, [invoicesData, searchInvExt]);
+    const extras = [...searchInvExt, ...outstandingInvExtra].filter(i => !ids.has(i.id));
+    const seen = new Set();
+    const dedupedExtras = extras.filter(i => (seen.has(i.id) ? false : (seen.add(i.id), true)));
+    return dedupedExtras.length ? [...invoicesData, ...dedupedExtras] : invoicesData;
+  }, [invoicesData, searchInvExt, outstandingInvExtra]);
 
   const ordersDataMerged = useMemo(() => {
     if (!searchOrdExt.length) return ordersData;
@@ -1474,6 +1489,7 @@ export default function ACleanWebApp() {
   const [statsDateFrom, setStatsDateFrom] = useState(""); // untuk custom range
   const [statsDateTo, setStatsDateTo] = useState(""); // untuk custom range
   const [statsMingguOff, setStatsMingguOff] = useState(0);  // 0=minggu ini, -1=minggu lalu, dst
+  const [statsBulanOff, setStatsBulanOff] = useState(0);    // 0=bulan ini, -1=bulan lalu, dst
 
   // ── Mobile detection (MUST be before any conditional returns) ──
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < 768);
@@ -3584,7 +3600,9 @@ export default function ACleanWebApp() {
 
     // Saat search aktif, gunakan invoicesDataMerged (sudah include hasil server search).
     // Saat tidak search, pakai invoicesData biasa supaya perilaku non-search tidak berubah.
-    const sourceInv = searchInvoice.trim() ? invoicesDataMerged : invoicesData;
+    // Selalu pakai invoicesDataMerged (bukan cuma saat search) — sudah termasuk invoice
+    // outstanding lama yang kepotong limit 300-baris-terbaru invoicesData asli.
+    const sourceInv = invoicesDataMerged;
     let filteredInv = [...sourceInv];
     const todayDateStr = getLocalDate();
     if (invoiceFilter === "Garansi") {
@@ -3611,13 +3629,13 @@ export default function ACleanWebApp() {
       );
     }
     filteredInv.sort((a, b) => (b.created_at || b.sent || "").localeCompare(a.created_at || a.sent || ""));
-    const unpaidCnt = invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE" || i.status === "PARTIAL_PAID").length;
+    const unpaidCnt = invoicesDataMerged.filter(i => i.status === "UNPAID" || i.status === "OVERDUE" || i.status === "PARTIAL_PAID").length;
 
     return { filteredInv, garansiAktif, garansiKritis, unpaidCnt };
   }, [invoicesData, invoicesDataMerged, invoiceFilter, invoiceDateFrom, invoiceDateTo, searchInvoice]);
 
   const renderInvoice = () => (
-    <InvoiceView invoiceFilterMemo={invoiceFilterMemo} invoicesData={invoicesData} setInvoicesData={setInvoicesData} searchLoading={searchInvLoading}
+    <InvoiceView invoiceFilterMemo={invoiceFilterMemo} invoicesData={invoicesData} invoicesDataMerged={invoicesDataMerged} setInvoicesData={setInvoicesData} searchLoading={searchInvLoading}
       invoicePage={invoicePage} setInvoicePage={setInvoicePage}
       invoiceFilter={invoiceFilter} setInvoiceFilter={setInvoiceFilter} searchInvoice={searchInvoice} invoiceDateFrom={invoiceDateFrom} setInvoiceDateFrom={setInvoiceDateFrom} invoiceDateTo={invoiceDateTo} setInvoiceDateTo={setInvoiceDateTo}
       setSearchInvoice={setSearchInvoice} setSelectedInvoice={setSelectedInvoice} setModalPDF={setModalPDF}
@@ -3897,6 +3915,7 @@ export default function ACleanWebApp() {
     <ReportsView ordersData={ordersData} invoicesData={invoicesData} laporanReports={laporanReports} customersData={customersData}
       teknisiData={teknisiData} inventoryData={inventoryData}
       statsPeriod={statsPeriod} setStatsPeriod={setStatsPeriod} statsMingguOff={statsMingguOff} setStatsMingguOff={setStatsMingguOff}
+      statsBulanOff={statsBulanOff} setStatsBulanOff={setStatsBulanOff}
       statsDateFrom={statsDateFrom} setStatsDateFrom={setStatsDateFrom} statsDateTo={statsDateTo} setStatsDateTo={setStatsDateTo}
       bulanIni={bulanIni} invoiceReminderWA={invoiceReminderWA} getTechColor={getTechColor}
       expensesData={expensesData} />
