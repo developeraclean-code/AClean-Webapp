@@ -1,4 +1,8 @@
-import { Document, Page, Text, View, StyleSheet, Image } from "@react-pdf/renderer";
+import { Document, Page, Text, View, StyleSheet, Image, Font } from "@react-pdf/renderer";
+
+// Matikan hyphenation otomatis react-pdf — defaultnya suka motong kata di
+// ujung baris (mis. "Service" → "Ser-vice") walau bukan bahasa Inggris.
+Font.registerHyphenationCallback((word) => [word]);
 
 // ── Helpers ──
 const fmt = (n) => "Rp " + (Number(n) || 0).toLocaleString("id-ID");
@@ -104,14 +108,29 @@ function StatusPill({ status, due }) {
   );
 }
 
-function PaymentInfoBox({ appSettings }) {
+function PaymentInfoBox({ appSettings, style }) {
   return (
-    <View style={s.payBox}>
+    <View style={[s.payBox, style]}>
       <Text style={s.payTitle}>Informasi Pembayaran</Text>
       <Text style={s.payBank}>Transfer Bank {appSettings.bank_name || "BCA"}</Text>
       <Text style={s.payNum}>{appSettings.bank_number || "8830883011"}</Text>
       <Text style={s.payHolder}>a.n. {appSettings.bank_holder || "Malda Retta"}</Text>
       <Text style={s.payHint}>Kirim bukti transfer via WhatsApp ke nomor di atas</Text>
+    </View>
+  );
+}
+
+// Informasi Pembayaran + Garansi berdampingan (2 kolom) — kalau tidak ada garansi,
+// Informasi Pembayaran tetap tampil sendirian selebar penuh.
+function PaymentGaransiRow({ appSettings, garansiText }) {
+  return (
+    <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
+      <PaymentInfoBox appSettings={appSettings} style={{ flex: 1, marginTop: 0 }} />
+      {garansiText ? (
+        <View style={[s.garansiBox, { flex: 1, marginTop: 0 }]}>
+          <Text style={s.garansiText}>{garansiText}</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -318,18 +337,17 @@ function InvoicePage({ inv, logoUrl, appSettings = {}, invoiceItems = [], portal
       <StatusPill status={inv.status} due={inv.due} />
       {inv.paid_at ? <Text style={[s.statusMeta, { marginTop: 3 }]}>Dibayar: {fmtDate(inv.paid_at)}</Text> : null}
 
-      <PaymentInfoBox appSettings={appSettings} />
-
-      {/* Garansi */}
-      {inv.garansi_expires ? (
-        <View style={s.garansiBox}>
-          <Text style={s.garansiText}>Garansi Servis {inv.garansi_days || 30} Hari — berlaku sampai {inv.garansi_expires}. Jika AC bermasalah dalam masa garansi, hubungi kami tanpa biaya tambahan.</Text>
-        </View>
-      ) : null}
+      <PaymentGaransiRow
+        appSettings={appSettings}
+        garansiText={inv.garansi_expires
+          ? `Garansi Servis ${inv.garansi_days || 30} Hari — berlaku sampai ${inv.garansi_expires}. Jika AC bermasalah dalam masa garansi, hubungi kami tanpa biaya tambahan.`
+          : null}
+      />
 
       {/* Footer */}
       <View wrap={false} style={s.footerRow}>
-        <View style={{ maxWidth: 300 }}>
+        <View style={{ maxWidth: 340 }}>
+          <Text style={s.footerNote}>Terima kasih telah mempercayakan perawatan AC Anda kepada {companyName}.</Text>
           {portalLink ? (
             <View style={{ marginTop: 8 }}>
               <Text style={{ fontSize: 8, color: "#2f5ea3", fontFamily: "Times-Bold" }}>Portal Servis Anda (riwayat, foto & invoice):</Text>
@@ -488,16 +506,14 @@ function MergedInvoicePage({ invList, logoUrl, appSettings = {}, portalLink = nu
 
       <StatusPill status={aggStatus} due={dueLatest} />
 
-      <PaymentInfoBox appSettings={appSettings} />
-
-      {garansiLatest ? (
-        <View style={s.garansiBox}>
-          <Text style={s.garansiText}>Garansi servis — berlaku sampai {garansiLatest}. Jika AC bermasalah dalam masa garansi, hubungi kami tanpa biaya tambahan.</Text>
-        </View>
-      ) : null}
+      <PaymentGaransiRow
+        appSettings={appSettings}
+        garansiText={garansiLatest ? `Garansi servis — berlaku sampai ${garansiLatest}. Jika AC bermasalah dalam masa garansi, hubungi kami tanpa biaya tambahan.` : null}
+      />
 
       <View wrap={false} style={s.footerRow}>
-        <View style={{ maxWidth: 300 }}>
+        <View style={{ maxWidth: 340 }}>
+          <Text style={s.footerNote}>Terima kasih telah mempercayakan perawatan AC Anda kepada {companyName}.</Text>
           {portalLink ? (
             <View style={{ marginTop: 8 }}>
               <Text style={{ fontSize: 8, color: "#2f5ea3", fontFamily: "Times-Bold" }}>Portal Servis Anda (riwayat, foto & invoice):</Text>

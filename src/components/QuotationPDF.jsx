@@ -1,4 +1,8 @@
-import { Document, Page, Text, View, StyleSheet, Image } from "@react-pdf/renderer";
+import { Document, Page, Text, View, StyleSheet, Image, Font } from "@react-pdf/renderer";
+
+// Matikan hyphenation otomatis react-pdf — defaultnya suka motong kata di
+// ujung baris (mis. "Service" → "Ser-vice") walau bukan bahasa Inggris.
+Font.registerHyphenationCallback((word) => [word]);
 
 const fmt = (n) => "Rp " + (Number(n) || 0).toLocaleString("id-ID");
 const fmtDate = (d) => {
