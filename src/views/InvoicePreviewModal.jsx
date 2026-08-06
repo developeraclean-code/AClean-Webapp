@@ -1,4 +1,4 @@
-import { cs } from "../theme/cs.js";
+import { useEffect, useState } from "react";
 import { summarize } from "../lib/invoicing.js";
 
 export default function InvoicePreviewModal({
@@ -6,14 +6,15 @@ export default function InvoicePreviewModal({
   appSettings, currentUser, supabase, showNotif,
   approveInvoice, downloadInvoicePDF, invoiceReminderWA,
   computePph23, updateInvoice, parseMD, fmt, auditUserName,
-  onOpenEditInvoice,
+  onOpenEditInvoice, generateInvoicePDFBlob,
 }) {
-  if (!open || !selectedInvoice) return null;
-
-  const liveInv = invoicesData.find(i => i.id === selectedInvoice.id) || selectedInvoice;
+  const liveInv = (open && selectedInvoice)
+    ? (invoicesData.find(i => i.id === selectedInvoice.id) || selectedInvoice)
+    : null;
   const rate = parseFloat(appSettings?.pph23_rate) || 0.025;
 
   const mArr = (() => {
+    if (!liveInv) return [];
     const md = liveInv.materials_detail;
     const parsed = Array.isArray(md) ? md
       : (typeof md === "string" && md)
@@ -22,12 +23,41 @@ export default function InvoicePreviewModal({
     return Array.isArray(parsed) ? parsed : [];
   })();
   // PPh 23 HANYA dari kategori Jasa (labor) — bukan liveInv.total (jasa+material).
-  const jasaSubtotal = summarize(mArr).labor;
+  const jasaSubtotal = liveInv ? summarize(mArr).labor : 0;
   const pph = computePph23(jasaSubtotal, rate);
+
+  // Preview = hasil generate PDF ASLI (InvoicePDF.jsx via generateInvoicePDFBlob),
+  // BUKAN markup HTML terpisah — dulu preview ini re-implementasi manual yang gampang
+  // ketinggalan zaman dari desain PDF sebenarnya (user komplain preview masih model
+  // lama padahal PDF yang di-download sudah desain baru). Sekarang dijamin identik
+  // karena sumbernya sama persis.
+  const [pdfUrl, setPdfUrl] = useState(null);
+  const [pdfError, setPdfError] = useState(null);
+  useEffect(() => {
+    if (!liveInv) { setPdfUrl(null); setPdfError(null); return; }
+    let cancelled = false;
+    let objectUrl = null;
+    setPdfUrl(null);
+    setPdfError(null);
+    generateInvoicePDFBlob(liveInv).then(blob => {
+      if (cancelled) return;
+      objectUrl = URL.createObjectURL(blob);
+      setPdfUrl(objectUrl);
+    }).catch(err => {
+      if (!cancelled) setPdfError(err.message || "Gagal generate PDF");
+    });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveInv?.id, liveInv?.pph23, liveInv?.pph23_amount, liveInv?.updated_at, liveInv?.status]);
+
+  if (!open || !selectedInvoice || !liveInv) return null;
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
-      <div style={{ background: "#f8fafc", borderRadius: 20, width: "100%", maxWidth: 680, maxHeight: "92vh", overflowY: "auto", display: "flex", flexDirection: "column" }} onClick={e => e.stopPropagation()}>
+      <div style={{ background: "#f8fafc", borderRadius: 20, width: "100%", maxWidth: 860, maxHeight: "92vh", overflowY: "auto", display: "flex", flexDirection: "column" }} onClick={e => e.stopPropagation()}>
 
         {/* Toolbar */}
         <div style={{ background: "#1E3A5F", padding: "12px 20px", borderRadius: "20px 20px 0 0", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
@@ -62,153 +92,16 @@ export default function InvoicePreviewModal({
           {liveInv.pph23 && <span style={{ fontSize: 11, color: "#0e7490", fontFamily: "monospace" }}>DPP {fmt(pph.dpp)} · PPh −{fmt(pph.amount)} · diterima {fmt(liveInv.total)}</span>}
         </div>
 
-        {/* Invoice body */}
+        {/* PDF preview — render langsung dari InvoicePDF.jsx (sama persis dgn hasil download/WA) */}
         <div style={{ padding: 20, background: "#f8fafc" }}>
-          {/* Header */}
-          <div style={{ background: "#1E3A5F", borderRadius: 10, overflow: "hidden", marginBottom: 16 }}>
-            <div style={{ height: 4, background: "#2563EB" }} />
-            <div style={{ padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div>
-                <div style={{ fontWeight: 800, color: "#fff", fontSize: 18 }}>
-                  <span style={{ color: "#60a5fa" }}>AC</span>lean Service
-                </div>
-                <div style={{ fontSize: 11, color: "#93c5fd", marginTop: 3 }}>Jasa Servis &amp; Perawatan AC Profesional</div>
-              </div>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 10, color: "#93c5fd", fontWeight: 600 }}>INVOICE</div>
-                <div style={{ background: "#2563EB", color: "#fff", padding: "4px 10px", borderRadius: 6, fontFamily: "monospace", fontWeight: 800, fontSize: 13 }}>{liveInv.id}</div>
-              </div>
-            </div>
-            <div style={{ background: "#0f2744", padding: "8px 20px", display: "flex", gap: 20, fontSize: 10, color: "#94a3b8" }}>
-              <span>📍 {appSettings.company_addr}</span>
-              <span>🏦 {appSettings.bank_name} {appSettings.bank_number} a.n. {appSettings.bank_holder}</span>
-            </div>
-          </div>
-
-          {/* Detail Grid */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
-            <div style={{ background: "#EFF6FF", borderRadius: 8, padding: "12px 14px" }}>
-              <div style={{ fontSize: 10, fontWeight: 800, color: "#1e40af", marginBottom: 8, textTransform: "uppercase" }}>Detail Invoice</div>
-              {[
-                ["Tgl Invoice", liveInv.created_at ? new Date(liveInv.created_at).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" }) : (liveInv.sent_at ? new Date(liveInv.sent_at).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" }) : "—")],
-                ["Issued", new Date().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })],
-                ["No. Invoice", liveInv.id],
-                ["No. Order", liveInv.job_id || "—"],
-              ].map(([k, v]) => (
-                <div key={k} style={{ display: "flex", gap: 8, marginBottom: 4, fontSize: 11 }}>
-                  <span style={{ color: "#64748b", minWidth: 80 }}>{k}</span>
-                  <span style={{ color: "#1e293b", fontWeight: 600 }}>{v}</span>
-                </div>
-              ))}
-            </div>
-            <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "12px 14px" }}>
-              <div style={{ fontSize: 10, fontWeight: 800, color: "#1e40af", marginBottom: 8, textTransform: "uppercase" }}>Tagihan Kepada</div>
-              <div style={{ fontWeight: 700, color: "#1e293b", fontSize: 13, marginBottom: 4 }}>{liveInv.customer}</div>
-              <div style={{ fontSize: 11, color: "#64748b" }}>📱 {liveInv.phone}</div>
-            </div>
-          </div>
-
-          {/* Service Table */}
-          <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 14, fontSize: 12 }}>
-            <thead>
-              <tr style={{ background: "#1E3A5F" }}>
-                {[["Deskripsi", "auto"], ["Jml Unit", "72px"], ["Harga Satuan", "100px"], ["Subtotal", "100px"]].map(([h, w]) => (
-                  <th key={h} style={{ padding: "8px 10px", textAlign: h === "Deskripsi" ? "left" : "right", color: "#fff", fontWeight: 700, width: w, fontSize: 10 }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {liveInv.labor > 0 && mArr.length === 0 && (
-                <tr style={{ background: "#fff" }}>
-                  <td style={{ padding: "8px 10px", color: "#1e293b" }}>{liveInv.service}</td>
-                  <td style={{ padding: "8px 10px", color: "#475569", textAlign: "center" }}>{liveInv.units}</td>
-                  <td style={{ padding: "8px 10px", color: "#475569", fontFamily: "monospace" }}>{((liveInv.labor || 0) / (liveInv.units || 1)).toLocaleString("id-ID")}</td>
-                  <td style={{ padding: "8px 10px", color: "#1e293b", fontFamily: "monospace", fontWeight: 600 }}>{liveInv.labor.toLocaleString("id-ID")}</td>
-                </tr>
-              )}
-              {mArr.length > 0 && mArr.map((m, mi) => (
-                <tr key={mi} style={{ background: mi % 2 === 0 ? "#f0f9ff" : "#fff" }}>
-                  <td style={{ padding: "8px 10px", color: "#1e293b" }}>
-                    {m.nama}
-                    {m.keterangan && <span style={{ fontSize: 10, color: "#64748b", marginLeft: 4 }}>({m.keterangan})</span>}
-                  </td>
-                  <td style={{ padding: "8px 10px", textAlign: "right", color: "#475569", width: "72px" }}>{m.jumlah} {m.satuan}</td>
-                  <td style={{ padding: "8px 10px", fontFamily: "monospace", color: "#475569", textAlign: "right" }}>
-                    {(() => {
-                      const hF = m.harga_satuan > 0 ? m.harga_satuan
-                        : (m.subtotal > 0 && m.jumlah > 0 ? Math.round(m.subtotal / m.jumlah) : 0);
-                      return hF > 0 ? hF.toLocaleString("id-ID") : "—";
-                    })()}
-                  </td>
-                  <td style={{ padding: "8px 10px", fontFamily: "monospace", fontWeight: 600, color: "#1e293b", textAlign: "right" }}>
-                    {m.subtotal > 0 ? m.subtotal.toLocaleString("id-ID") : "—"}
-                  </td>
-                </tr>
-              ))}
-              {mArr.length === 0 && (liveInv.material || 0) > 0 && (
-                <tr style={{ background: "#f0f9ff" }}>
-                  <td style={{ padding: "8px 10px", color: "#64748b", fontStyle: "italic" }}>Material &amp; Spare Part</td>
-                  <td style={{ padding: "8px 10px", textAlign: "center" }}>—</td>
-                  <td style={{ padding: "8px 10px" }}>—</td>
-                  <td style={{ padding: "8px 10px", fontFamily: "monospace", fontWeight: 600, color: "#1e293b", textAlign: "right" }}>
-                    {(liveInv.material || 0).toLocaleString("id-ID")}
-                  </td>
-                </tr>
-              )}
-              {(liveInv.discount || 0) > 0 && (
-                <tr style={{ background: "#fff1f2" }}>
-                  <td style={{ padding: "8px 10px", color: "#be123c", fontStyle: "italic" }}>Discount</td>
-                  <td style={{ padding: "8px 10px", textAlign: "center", color: "#be123c" }}>—</td>
-                  <td style={{ padding: "8px 10px", color: "#be123c" }}>—</td>
-                  <td style={{ padding: "8px 10px", color: "#be123c", fontFamily: "monospace", fontWeight: 600 }}>-{liveInv.discount.toLocaleString("id-ID")}</td>
-                </tr>
-              )}
-              {liveInv.trade_in && (liveInv.trade_in_amount || 0) > 0 && (
-                <tr style={{ background: "#fff1f2" }}>
-                  <td style={{ padding: "8px 10px", color: "#be123c", fontStyle: "italic" }}>Trade-In AC Lama</td>
-                  <td style={{ padding: "8px 10px", textAlign: "center", color: "#be123c" }}>—</td>
-                  <td style={{ padding: "8px 10px", color: "#be123c" }}>—</td>
-                  <td style={{ padding: "8px 10px", color: "#be123c", fontFamily: "monospace", fontWeight: 600 }}>-{(liveInv.trade_in_amount || 0).toLocaleString("id-ID")}</td>
-                </tr>
-              )}
-              {liveInv.pph23 && (liveInv.pph23_amount || 0) > 0 && (
-                <>
-                  <tr>
-                    <td colSpan={3} style={{ padding: "8px 10px", color: "#475569" }}>Nilai Jasa (DPP)</td>
-                    <td style={{ padding: "8px 10px", color: "#1e293b", fontFamily: "monospace" }}>{((liveInv.labor || 0) + (liveInv.pph23_amount || 0)).toLocaleString("id-ID")}</td>
-                  </tr>
-                  <tr>
-                    <td colSpan={3} style={{ padding: "8px 10px", color: "#0369a1" }}>PPh 23 (2,5%) dipotong customer</td>
-                    <td style={{ padding: "8px 10px", color: "#0369a1", fontFamily: "monospace", fontWeight: 600 }}>-{(liveInv.pph23_amount || 0).toLocaleString("id-ID")}</td>
-                  </tr>
-                </>
-              )}
-              <tr style={{ background: "#1E3A5F" }}>
-                <td colSpan={3} style={{ padding: "8px 10px", color: "#fff", fontWeight: 700 }}>{liveInv.pph23 && (liveInv.pph23_amount || 0) > 0 ? "DIBAYAR KE ACLEAN" : "TOTAL TAGIHAN"}</td>
-                <td style={{ padding: "8px 10px", color: "#fff", fontFamily: "monospace", fontWeight: 800, fontSize: 14 }}>Rp {liveInv.total.toLocaleString("id-ID")}</td>
-              </tr>
-            </tbody>
-          </table>
-
-          {/* Footer */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
-            <div style={{ background: "#EFF6FF", borderRadius: 8, padding: "12px 14px" }}>
-              <div style={{ fontSize: 10, fontWeight: 800, color: "#1e40af", marginBottom: 6 }}>Informasi Pembayaran</div>
-              <div style={{ fontSize: 11, color: "#475569" }}>Transfer Bank BCA</div>
-              <div style={{ fontWeight: 800, color: "#1e293b", fontSize: 13, marginTop: 4 }}>{appSettings.bank_number}</div>
-              <div style={{ fontSize: 11, color: "#475569" }}>a.n. {appSettings.bank_holder}</div>
-            </div>
-            <div style={{ background: liveInv.status === "OVERDUE" ? "#FEF2F2" : liveInv.status === "PAID" ? "#F0FDF4" : "#FFFBEB", borderRadius: 8, padding: "12px 14px", border: "1px solid " + (liveInv.status === "OVERDUE" ? "#fca5a5" : liveInv.status === "PAID" ? "#86efac" : "#fde68a") }}>
-              <div style={{ fontSize: 10, fontWeight: 800, color: "#64748b", marginBottom: 6 }}>Jatuh Tempo</div>
-              <div style={{ fontWeight: 700, color: "#1e293b" }}>{liveInv.due || "Menunggu Approval"}</div>
-              {liveInv.status === "OVERDUE" && <div style={{ fontSize: 11, color: "#dc2626", fontWeight: 700, marginTop: 4 }}>⚠️ SUDAH JATUH TEMPO</div>}
-              {liveInv.status === "PAID" && <div style={{ fontSize: 11, color: "#16a34a", fontWeight: 700, marginTop: 4 }}>✅ LUNAS</div>}
-            </div>
-          </div>
-          <div style={{ textAlign: "center", padding: "10px 0", borderTop: "1px solid #e2e8f0" }}>
-            <div style={{ fontSize: 11, color: "#64748b" }}>Pertanyaan? Hubungi kami via WA: {appSettings.wa_number}</div>
-            <div style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic", marginTop: 4 }}>Terima kasih telah mempercayakan perawatan AC Anda kepada {appSettings.company_name}</div>
-          </div>
+          {pdfError ? (
+            <div style={{ padding: 50, textAlign: "center", color: "#dc2626", fontSize: 13 }}>⚠️ Gagal memuat preview: {pdfError}</div>
+          ) : pdfUrl ? (
+            <iframe title={`Invoice ${liveInv.id}`} src={pdfUrl}
+              style={{ width: "100%", height: "72vh", border: "1px solid #e2e8f0", borderRadius: 8, background: "#fff" }} />
+          ) : (
+            <div style={{ padding: 60, textAlign: "center", color: "#64748b", fontSize: 13 }}>⏳ Menyiapkan preview…</div>
+          )}
         </div>
 
         {/* Action bar */}

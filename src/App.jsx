@@ -4704,6 +4704,7 @@ export default function ACleanWebApp() {
           showNotif={showNotif}
           approveInvoice={approveInvoice}
           downloadInvoicePDF={downloadInvoicePDF}
+          generateInvoicePDFBlob={generateInvoicePDFBlob}
           invoiceReminderWA={invoiceReminderWA}
           computePph23={computePph23}
           updateInvoice={updateInvoice}
