@@ -31,10 +31,17 @@ const COLS_GARANSI = [
   { key: "qty", label: "Masa Garansi", w: 24 },
   { key: "ket", label: "Keterangan", w: 22 },
 ];
+const COLS_BERITA_PENGERJAAN = [
+  { key: "nama", label: "Detail", w: 38 },
+  { key: "qty", label: "Qty", w: 10 },
+  { key: "ket", label: "Keterangan", w: 30 },
+  { key: "total", label: "Total", w: 20, align: "right", sum: true },
+];
 export const docColumns = (jenis = "") =>
   jenis.includes("Commissioning") || jenis.includes("Uji") ? COLS_COMMISSIONING
     : jenis.includes("Garansi") ? COLS_GARANSI
-      : COLS_DEFAULT;
+      : jenis.includes("Pengerjaan") ? COLS_BERITA_PENGERJAAN
+        : COLS_DEFAULT;
 
 // Prefix nomor dokumen per jenis.
 export const docPrefix = (j = "") =>

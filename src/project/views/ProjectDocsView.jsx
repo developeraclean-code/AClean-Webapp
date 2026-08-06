@@ -214,7 +214,7 @@ function DocEditor({ docId }) {
       <table style={S.tableStyles.table}>
         <thead><tr>
           <th style={{ ...S.tableStyles.th, width: 26 }}>No</th>
-          {cols.map((c) => <th key={c.key} style={S.tableStyles.th}>{c.label}</th>)}
+          {cols.map((c) => <th key={c.key} style={{ ...S.tableStyles.th, width: `${c.w}%` }}>{c.label}</th>)}
           <th style={{ ...S.tableStyles.th, width: 28 }}></th>
         </tr></thead>
         <tbody>
@@ -222,7 +222,7 @@ function DocEditor({ docId }) {
             <tr key={i}>
               <td style={{ ...S.tableStyles.td, color: cs.muted, fontSize: 11, textAlign: "center" }}>{i + 1}</td>
               {cols.map((c) => (
-                <td key={c.key} style={{ ...S.tableStyles.td, padding: "3px 4px" }}>
+                <td key={c.key} style={{ ...S.tableStyles.td, padding: "3px 4px", width: `${c.w}%` }}>
                   <input style={cellInput} value={r[c.key] ?? ""} onChange={(e) => setItems(items.map((x, j) => j === i ? { ...x, [c.key]: e.target.value } : x))} />
                 </td>
               ))}
