@@ -1019,7 +1019,7 @@ export default function ACleanWebApp() {
   const [editOrderForm, setEditOrderForm] = useState({});
 
   // GAP 5 — Reactive state untuk invoice & inventory (tidak lagi konstan)
-  const [invoicesData, setInvoicesData] = useState(INVOICES_DATA);
+  const [invoicesData, _setInvoicesDataRaw] = useState(INVOICES_DATA);
   const [inventoryData, setInventoryData] = useState(INVENTORY_DATA);
 
   // Quotation state
@@ -1335,8 +1335,21 @@ export default function ACleanWebApp() {
     });
   }, [isLoggedIn, supabase]);
 
-  // Merge local + server search + outstanding lama (dedup by id) — hanya untuk filter &
-  // display, bukan state global (mutasi/approve/paid tetap lewat invoicesData asli).
+  // BUG FIX (05 Agu 2026): invoice OVERDUE lama hidup di outstandingInvExtra (di luar
+  // cap 300 invoicesData), tapi semua aksi (Tandai Lunas/Approve/Edit/Delete) cuma
+  // nge-update invoicesData via setInvoicesData(prev => prev.map(...)) — .map() gak
+  // nemu id-nya di invoicesData (karena invoice-nya cuma ada di outstandingInvExtra),
+  // jadi mutasi NO-OP dan UI keliatan "stuck"/tidak berhasil walau DB-nya berhasil
+  // ke-update. Fix: setInvoicesData jadi wrapper yang broadcast updater yang sama ke
+  // KEDUA state, supaya invoice manapun sumbernya selalu ke-refresh di UI.
+  const setInvoicesData = (updater) => {
+    _setInvoicesDataRaw(updater);
+    setOutstandingInvExtra(prev => (typeof updater === "function" ? updater(prev) : prev));
+  };
+
+  // Merge local + server search + outstanding lama (dedup by id) untuk filter & display.
+  // Mutasi (approve/paid/edit/delete) lewat setInvoicesData di atas — wrapper-nya sudah
+  // broadcast ke invoicesData DAN outstandingInvExtra, jadi tetap sinkron manapun sumbernya.
   const invoicesDataMerged = useMemo(() => {
     if (!searchInvExt.length && !outstandingInvExtra.length) return invoicesData;
     const ids = new Set(invoicesData.map(i => i.id));
@@ -2315,6 +2328,7 @@ export default function ACleanWebApp() {
     setActiveMenu("dashboard");
     setOrdersData([]);
     setInvoicesData([]);
+    setOutstandingInvExtra([]);
     setCustomersData([]);
     setInventoryData([]);
     setLaporanReports([]);
