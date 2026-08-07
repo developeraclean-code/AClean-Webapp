@@ -185,7 +185,7 @@ ${units.length > 0 ? `
     <thead>
       <tr>
         <th style="width:24px">No</th>
-        <th>Tipe / Merk</th>
+        <th>Tipe / Merk / Ruangan</th>
         <th>Kondisi Sebelum</th>
         <th>Pekerjaan Dilakukan</th>
         <th>Kondisi Sesudah</th>
@@ -199,6 +199,7 @@ ${units.length > 0 ? `
           <td>
             <div style="font-weight:700">${escH(u.tipe || "-")}</div>
             ${u.merk ? `<div style="color:#64748b;font-size:8.5px">${escH(u.merk)}${u.model ? " · " + escH(u.model) : ""}</div>` : ""}
+            ${u.label ? `<div style="color:#1e3a5f;font-size:8.5px;font-weight:600;margin-top:1px">📍 ${escH(u.label)}</div>` : ""}
           </td>
           <td>${(u.kondisi_sebelum || []).map(k => `<span class="badge yellow">${escH(k)}</span>`).join("") || "-"}</td>
           <td>${(u.pekerjaan || []).map(p => `<span class="badge">${escH(p)}</span>`).join("") || "-"}</td>

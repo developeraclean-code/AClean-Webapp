@@ -84,7 +84,7 @@ function UnitTable({ units }) {
       <Text style={s.secTitle}>Detail Unit AC</Text>
       <View style={s.thead}>
         <Text style={[s.th, { width: 18, textAlign: "center" }]}>No</Text>
-        <Text style={[s.th, { flex: 1.2 }]}>Tipe / Merk</Text>
+        <Text style={[s.th, { flex: 1.2 }]}>Tipe / Merk / Ruangan</Text>
         <Text style={[s.th, { flex: 1 }]}>Kondisi Sebelum</Text>
         <Text style={[s.th, { flex: 1 }]}>Pekerjaan</Text>
         <Text style={[s.th, { flex: 1 }]}>Kondisi Sesudah</Text>
@@ -97,6 +97,7 @@ function UnitTable({ units }) {
             <View style={{ flex: 1.2, padding: "4 5" }}>
               <Text style={{ fontFamily: "Helvetica-Bold", fontSize: 8 }}>{u.tipe || "—"}</Text>
               {u.merk ? <Text style={{ color: "#64748b", fontSize: 7 }}>{u.merk}{u.model ? " · " + u.model : ""}</Text> : null}
+              {u.label ? <Text style={{ color: "#1e3a5f", fontSize: 7, fontFamily: "Helvetica-Bold" }}>Ruang: {u.label}</Text> : null}
             </View>
             <BadgeList items={u.kondisi_sebelum} style={s.badgeYellow} />
             <BadgeList items={u.pekerjaan} style={s.badge} />
