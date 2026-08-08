@@ -87,7 +87,8 @@ const s = StyleSheet.create({
   footerRow:  { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginTop: 22 },
   footerNote: { fontSize: 9, color: "#5b5f66", lineHeight: 1.5, maxWidth: 280 },
   signBlock:  { alignItems: "center", minWidth: 150 },
-  signPlace:  { fontSize: 10, marginBottom: 46 },
+  signPlace:  { fontSize: 10, marginBottom: 4 },
+  signLogo:   { width: 60, height: 38, objectFit: "contain", marginBottom: 4 },
   signName:   { fontFamily: "Times-Bold", fontSize: 10, borderTop: "1px solid #22252b", paddingTop: 4 },
   pageFooter: { borderTop: "1px solid #cfd2d6", paddingTop: 8, marginTop: 16, textAlign: "center" },
   pageFooterText: { fontSize: 8, color: "#94a3b8" },
@@ -368,6 +369,7 @@ function InvoicePage({ inv, logoUrl, appSettings = {}, invoiceItems = [], portal
         </View>
         <View style={s.signBlock}>
           <Text style={s.signPlace}>{fmtDate(inv.created_at)}</Text>
+          {logoUrl ? <Image src={logoUrl} style={s.signLogo} /> : <View style={{ height: 42 }} />}
           <Text style={s.signName}>{companyName}</Text>
         </View>
       </View>
@@ -536,6 +538,7 @@ function MergedInvoicePage({ invList, logoUrl, appSettings = {}, portalLink = nu
         </View>
         <View style={s.signBlock}>
           <Text style={s.signPlace}>{fmtDate(new Date())}</Text>
+          {logoUrl ? <Image src={logoUrl} style={s.signLogo} /> : <View style={{ height: 42 }} />}
           <Text style={s.signName}>{companyName}</Text>
         </View>
       </View>
