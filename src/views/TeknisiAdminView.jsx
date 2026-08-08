@@ -11,7 +11,7 @@ import {
 import {
   fetchWeeklyPayroll, fetchDaysWorkedFromOrders, fetchKasbonByPeriod, fetchAllKasbonByPeriod,
   fetchOrderBonusesByPeriod, fetchOrdersWithoutBonus, fetchAvailabilityByUserPeriod,
-  fetchAssignedDaysFromSlots,
+  fetchAssignedDaysFromSlots, fetchWeekAbsences,
 } from "../data/reads.js";
 import {
   updateUserDailyRate, upsertWeeklyPayroll, updateWeeklyPayroll,
@@ -524,6 +524,7 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
   // Rekening tujuan transfer per user — di-fetch scoped di panel gaji (hanya Owner/Admin/Finance
   // yang bisa buka GajiTab), bukan ditaruh di teknisiData global. { userId: {bank_name, bank_account_no, bank_holder} }
   const [bankMap, setBankMap]         = useState({});
+  const [weekAbsences, setWeekAbsences] = useState([]); // [{teknisi, date, status, reason}]
   useEffect(() => {
     let alive = true;
     supabase.from("user_profiles").select("id,bank_name,bank_account_no,bank_holder")
@@ -550,11 +551,13 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
   const loadPayroll = useCallback(async () => {
     setLoadingPayroll(true);
     // Paralel: snapshot payroll + live kasbon dari expenses (untuk deteksi staleness)
-    const [{ data }, kasbonRes] = await Promise.all([
+    const [{ data }, kasbonRes, absRes] = await Promise.all([
       fetchWeeklyPayroll(supabase, periodStart),
       fetchAllKasbonByPeriod(supabase, periodStart, periodEnd),
+      fetchWeekAbsences(supabase, periodStart, periodEnd),
     ]);
     setPayrollRows(data || []);
+    setWeekAbsences(absRes.data || []);
     // Group live kasbon per nama (case/space-insensitive, mirror fetchKasbonByPeriod)
     const map = {};
     for (const e of (kasbonRes.data || [])) {
@@ -1054,6 +1057,62 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                 })}
               </div>
             </div>
+
+            {/* ── Kehadiran minggu ini (ijin/sakit/alpa via apps) ── */}
+            {(() => {
+              const HARI = ["Min","Sen","Sel","Rab","Kam","Jum","Sab"];
+              const statusCfg = {
+                IJIN:  { label: "Ijin",  bg: "#b45309", color: "#fef3c7" },
+                SAKIT: { label: "Sakit", bg: "#1d4ed8", color: "#dbeafe" },
+                ALPA:  { label: "Alpa",  bg: "#991b1b", color: "#fee2e2" },
+              };
+              // Group by nama
+              const byName = {};
+              for (const a of weekAbsences) {
+                if (!byName[a.teknisi]) byName[a.teknisi] = [];
+                byName[a.teknisi].push(a);
+              }
+              const names = Object.keys(byName).sort();
+              return (
+                <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 10, padding: 14 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: cs.muted, marginBottom: 4 }}>
+                    📋 Kehadiran Minggu Ini
+                    <span style={{ fontWeight: 400, fontSize: 11, marginLeft: 8 }}>— Ijin / Sakit / Alpa yang diinput via Apps</span>
+                  </div>
+                  {names.length === 0 ? (
+                    <div style={{ fontSize: 12, color: cs.muted, fontStyle: "italic" }}>Tidak ada ketidakhadiran yang tercatat minggu ini ✅</div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+                      {names.map(nama => {
+                        const entries = byName[nama];
+                        const payRow = payrollRows.find(r => r.user_name === nama);
+                        return (
+                          <div key={nama} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "7px 10px", background: cs.card, borderRadius: 7, border: "1px solid " + cs.border }}>
+                            <div style={{ fontWeight: 700, fontSize: 12, color: cs.text, minWidth: 90 }}>
+                              {nama}
+                              {payRow && <span style={{ fontWeight: 400, fontSize: 10, color: cs.muted, marginLeft: 5 }}>({payRow.days_worked} hari)</span>}
+                            </div>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 5, flex: 1 }}>
+                              {entries.map((e, i) => {
+                                const d = new Date(e.date + "T00:00:00");
+                                const cfg = statusCfg[e.status] || { label: e.status, bg: "#444", color: "#fff" };
+                                return (
+                                  <span key={i} title={e.reason || ""} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, padding: "2px 7px", borderRadius: 12, background: cfg.bg + "33", border: "1px solid " + cfg.bg + "88", color: cs.text }}>
+                                    <span style={{ color: cfg.color, fontWeight: 700, fontSize: 10 }}>{cfg.label}</span>
+                                    <span>{HARI[d.getDay()]} {d.getDate()}</span>
+                                    {e.reason && <span style={{ color: cs.muted, fontSize: 10 }}>— {e.reason}</span>}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* ── Ringkasan total payroll minggu ini ── */}
             {payrollRows.length > 0 && (() => {

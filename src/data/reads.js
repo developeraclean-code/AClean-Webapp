@@ -301,6 +301,15 @@ export const fetchAvailabilityByUserPeriod = (supabase, userName, periodStart, p
     .lte("date", periodEnd)
     .not("status", "is", null);
 
+// Semua ketidakhadiran (IJIN/SAKIT/ALPA) seluruh tim untuk satu periode payroll
+export const fetchWeekAbsences = (supabase, periodStart, periodEnd) =>
+  supabase.from("technician_availability")
+    .select("teknisi,date,status,reason")
+    .gte("date", periodStart)
+    .lte("date", periodEnd)
+    .in("status", ["IJIN", "SAKIT", "ALPA"])
+    .order("date").order("teknisi");
+
 // ───── PAYROLL ─────
 export const fetchWeeklyPayroll = (supabase, periodStart) =>
   supabase.from("weekly_payroll")
