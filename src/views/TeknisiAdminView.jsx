@@ -810,6 +810,15 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
     if (error) { showNotif?.("❌ Gagal simpan: " + error.message); return; }
     setLocalRates(prev => ({ ...prev, [t.id]: newRate }));
     setEditingRate(prev => { const p = { ...prev }; delete p[t.id]; return p; });
+    // Sync ke baris payroll minggu berjalan yang BELUM dibayar (snapshot slip terbayar tak disentuh)
+    const openRow = payrollRows.find(r => r.user_id === t.id && !r.is_paid);
+    if (openRow && Number(openRow.daily_rate) !== newRate) {
+      const { error: pErr } = await updateWeeklyPayroll(supabase, openRow.id, { daily_rate: newRate });
+      if (pErr) { showNotif?.("⚠️ Rate tersimpan, slip minggu ini gagal sync: " + pErr.message); return; }
+      setPayrollRows(prev => prev.map(r => r.id === openRow.id ? { ...r, daily_rate: newRate } : r));
+      showNotif?.("✅ Gaji harian " + t.name + " disimpan: " + fmtRp(newRate) + " (slip minggu ini ikut ter-update)");
+      return;
+    }
     showNotif?.("✅ Gaji harian " + t.name + " disimpan: " + fmtRp(newRate));
   };
 
