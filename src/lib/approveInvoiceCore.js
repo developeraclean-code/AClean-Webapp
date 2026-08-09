@@ -1,20 +1,4 @@
-// Levenshtein distance sederhana — dipakai guard job_id di bawah untuk membedakan
-// "typo kecil nama customer" (masih boleh lanjut) dari "job_id nyasar ke customer
-// lain sama sekali" (harus diblok). Hindari exact-match yang terlalu ketat — pernah
-// memblokir approve gara-gara "IBU OLIVA" vs "IBU OLIVIA" (beda 1 huruf, job sama).
-function levenshtein(a, b) {
-  const m = a.length, n = b.length;
-  const dp = Array.from({ length: m + 1 }, (_, i) => { const row = [i]; row.length = n + 1; return row; });
-  for (let j = 0; j <= n; j++) dp[0][j] = j;
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      dp[i][j] = a[i - 1] === b[j - 1]
-        ? dp[i - 1][j - 1]
-        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
-    }
-  }
-  return dp[m][n];
-}
+import { levenshtein } from "./stringSimilarity.js";
 
 // approveInvoiceCore — approve invoice (core, tanpa kirim WA): set UNPAID + update
 // order + retro-match bayar. Diekstrak dari App.jsx (Fase 3, pola ctx).

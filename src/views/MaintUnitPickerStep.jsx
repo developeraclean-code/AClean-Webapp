@@ -13,6 +13,7 @@ import { cs } from "../theme/cs.js";
 import { mkUnit, maintUnitToHist, TIPE_AC_OPT, remapUnitNo, remapUnitNoList } from "../lib/laporanConstants.js";
 import { unitHealth } from "../lib/maintenanceHealth.js";
 import { daysUntil } from "../lib/dateTime.js";
+import { similarity } from "../lib/stringSimilarity.js";
 
 const MAX_UNITS = 30; // selaras cap existing (openLaporanModal & tombol tambah reguler)
 
@@ -66,6 +67,27 @@ export default function MaintUnitPickerStep({
     maintUnitPool.forEach(mu => { m[mu.id] = unitHealth(mu, maintLogsPool); });
     return m;
   }, [maintUnitPool, maintLogsPool]);
+
+  // Deteksi ruangan mirip yang SUDAH terdaftar — supaya "+ Tambah Unit Baru" tidak
+  // diam-diam bikin unit duplikat gara-gara teknisi tidak sadar ruangan itu sudah ada
+  // (mis. ketik "Ruang Server" padahal sudah terdaftar "R. Server" untuk client ini).
+  // Non-blocking — tetap bisa submit (kadang memang 2 AC beda di ruangan sama).
+  const similarExisting = useMemo(() => {
+    const loc = nf.location.trim();
+    if (loc.length < 3 || !maintUnitPool.length) return null;
+    const normLoc = loc.toLowerCase();
+    let best = null, bestScore = 0;
+    maintUnitPool.forEach(mu => {
+      const muLoc = (mu.location || "").trim().toLowerCase();
+      if (!muLoc) return;
+      const score = normLoc === muLoc ? 1 : Math.max(
+        similarity(normLoc, muLoc),
+        muLoc.includes(normLoc) || normLoc.includes(muLoc) ? 0.85 : 0
+      );
+      if (score > bestScore) { bestScore = score; best = mu; }
+    });
+    return bestScore >= 0.72 ? best : null;
+  }, [nf.location, maintUnitPool]);
 
   // Unit yang SUDAH DIPILIH selalu ikut tampil walau tidak cocok pencarian — kalau
   // tersembunyi, teknisi mengira belum memilih lalu memilih ulang unit lain, dan unit
@@ -319,6 +341,17 @@ export default function MaintUnitPickerStep({
           </div>
           <input value={nf.location} onChange={e => setNf(p => ({ ...p, location: e.target.value }))}
             placeholder="Lokasi / Nama Ruangan *" style={inp} />
+          {similarExisting && (
+            <div style={{ background: (cs.yellow || "#eab308") + "15", border: "1px solid " + (cs.yellow || "#eab308") + "44", borderRadius: 8, padding: "8px 10px", fontSize: 11, color: cs.yellow || "#eab308" }}>
+              ⚠️ Mirip unit yang sudah terdaftar: <b>{similarExisting.unit_code}</b> — {similarExisting.location}
+              {similarExisting.brand ? ` (${similarExisting.brand}${similarExisting.capacity_pk ? " " + similarExisting.capacity_pk + "PK" : ""})` : ""}.
+              Yakin ini unit lain, bukan unit itu?
+              <button onClick={() => { toggleUnit(similarExisting); setShowAddForm(false); setNf({ location: "", brand: "", ac_type: "split", capacity_pk: "", unit_code: "" }); }}
+                style={{ display: "block", marginTop: 6, background: "transparent", border: "1px solid " + (cs.yellow || "#eab308") + "66", color: cs.yellow || "#eab308", borderRadius: 6, padding: "4px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>
+                ✅ Pilih unit yang sudah ada ini saja
+              </button>
+            </div>
+          )}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
             <input value={nf.brand} onChange={e => setNf(p => ({ ...p, brand: e.target.value }))}
               placeholder="Merk (mis. Daikin)" style={inp} />
