@@ -119,10 +119,28 @@ export const searchInvoicesServer = (supabase, query) => {
     .limit(100);
 };
 
+const CUSTOMER_COLS = "id,name,phone,address,area,email,is_vip,notes,joined_date,total_orders,last_service,membership_tier,total_units_serviced";
+// Bootstrap capped (hemat egress) — PostgREST batas keras 1000 baris/request. Customer di
+// atas 1000 (urut nama) TIDAK ter-load; pencarian ke sana ditembus server-side via
+// searchCustomersServer (pola sama order/invoice/laporan). Lookup presisi per-phone tetap
+// pakai lookupCustomersByPhone (dipakai saat buat/enrich order).
 export const fetchCustomers = (supabase) =>
   supabase.from("customers")
-    .select("id,name,phone,address,area,email,is_vip,notes,joined_date,total_orders,last_service,membership_tier,total_units_serviced")
-    .order("name").limit(5000);
+    .select(CUSTOMER_COLS)
+    .order("name").limit(1000);
+
+// Server-side search customer — ilike kolom relevan, batas 100 hasil. Menjangkau customer
+// di luar window bootstrap (1000). Query di-normalisasi ringan (buang kurung/koma).
+export const searchCustomersServer = (supabase, query) => {
+  const term = (query || "").trim().replace(/[(),]/g, " ").trim();
+  if (term.length < 2) return Promise.resolve({ data: [], error: null });
+  const p = `%${term}%`;
+  return supabase.from("customers")
+    .select(CUSTOMER_COLS)
+    .or(`name.ilike.${p},phone.ilike.${p},address.ilike.${p},area.ilike.${p},notes.ilike.${p}`)
+    .order("name")
+    .limit(100);
+};
 
 // Server-side lookup by phone (anti race condition & tidak terbatas limit fetchCustomers).
 // Phone ter-index (unique constraint phone+name) → query cepat walau ribuan customer.

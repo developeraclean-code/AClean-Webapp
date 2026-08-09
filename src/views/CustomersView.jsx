@@ -22,7 +22,7 @@ const MEMBER_TIER_INFO = {
   platinum: { label: "Platinum", badge: "💎", color: "#6d28d9", bg: "#f5f3ff", border: "#a78bfa", benefit: "Diskon Jasa 5% + Material 5%" },
 };
 
-function CustomersView({ selectedCustomer, setSelectedCustomer, ordersData, laporanReports, invoicesData, customersData, setCustomersData, searchCustomer, setSearchCustomer, customerPage, setCustomerPage, customerTab, setCustomerTab, setNewCustomerForm, setModalAddCustomer, setNewOrderForm, setModalOrder, setSelectedInvoice, setModalPDF, buildCustomerHistory, openWA, deleteCustomer, updateCustomer, fotoSrc, safeArr, CUST_PAGE_SIZE, downloadServiceReportPDF }) {
+function CustomersView({ selectedCustomer, setSelectedCustomer, ordersData, laporanReports, invoicesData, customersData, setCustomersData, searchCustomer, setSearchCustomer, customerPage, setCustomerPage, customerTab, setCustomerTab, setNewCustomerForm, setModalAddCustomer, setNewOrderForm, setModalOrder, setSelectedInvoice, setModalPDF, buildCustomerHistory, openWA, deleteCustomer, updateCustomer, fotoSrc, safeArr, CUST_PAGE_SIZE, downloadServiceReportPDF, searchCustExt = [], searchCustLoading = false }) {
   // Fase 1: primitif global dari AppContext (view selalu di dalam Provider <App>).
   const { currentUser, isMobile, showConfirm, showNotif, addAgentLog, fmt, supabase, maintClients } = useAppContext();
 // Set customer_id yang berstatus klien kontrak → badge "Maintenance" turunan
@@ -101,7 +101,15 @@ const unmappedOrders = (selectedCustomer && siblingLocations.length > 1)
       .sort((a, b) => (b.date || "").localeCompare(a.date || ""))
   : [];
 const _scq = searchCustomer.trim().toLowerCase();
-const filteredCusts = customersData.filter(cu => {
+// Saat mencari, gabung hasil server-side (searchCustExt) yang menjangkau customer di luar
+// window bootstrap 1000 — dedup by id agar tidak dobel dengan yang sudah ada di customersData.
+const _searchBase = _scq
+  ? (() => {
+      const seen = new Set(customersData.map(c => c.id));
+      return customersData.concat(searchCustExt.filter(c => !seen.has(c.id)));
+    })()
+  : customersData;
+const filteredCusts = _searchBase.filter(cu => {
   if (tierFilter !== "all" && (cu.membership_tier || "silver") !== tierFilter) return false;
   if (!_scq) return true;
   return (
@@ -207,7 +215,10 @@ return (
           )}
         </div>
         {searchCustomer && (
-          <div style={{ fontSize: 12, color: cs.muted }}>Ditemukan <b style={{ color: cs.accent }}>{filteredCusts.length}</b> dari {customersData.length} customer</div>
+          <div style={{ fontSize: 12, color: cs.muted }}>
+            Ditemukan <b style={{ color: cs.accent }}>{filteredCusts.length}</b> customer
+            {searchCustLoading && <span style={{ color: cs.accent }}> · mencari di database…</span>}
+          </div>
         )}
 
         {/* ── Filter Tier Member ── */}

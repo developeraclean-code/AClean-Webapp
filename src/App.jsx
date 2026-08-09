@@ -37,7 +37,7 @@ import {
   fetchOrders, fetchInvoices, fetchOutstandingInvoices, fetchCustomers, fetchInventory,
   fetchServiceReports, fetchInventoryTransactions,
   fetchInvoicesSince, fetchServiceReportsSince, fetchOrdersSince,
-  searchInvoicesServer, searchOrdersServer, searchServiceReportsServer,
+  searchInvoicesServer, searchOrdersServer, searchServiceReportsServer, searchCustomersServer,
   fetchInventoryUnits, fetchExpenses, fetchPayments, fetchDispatchLogs,
   fetchAppSettings, fetchUserProfiles, fetchUserAccounts,
   fetchWaConversations, fetchPriceList, fetchAraBrain,
@@ -1069,6 +1069,8 @@ export default function ACleanWebApp() {
   const [searchOrdLoading, setSearchOrdLoading] = useState(false);
   const [searchLapExt, setSearchLapExt] = useState([]);
   const [searchLapLoading, setSearchLapLoading] = useState(false);
+  const [searchCustExt, setSearchCustExt] = useState([]);
+  const [searchCustLoading, setSearchCustLoading] = useState(false);
 
   // GAP 3 — State untuk edit invoice
   const [modalEditInvoice, setModalEditInvoice] = useState(false);
@@ -1322,6 +1324,23 @@ export default function ACleanWebApp() {
     return () => { cancelled = true; clearTimeout(t); setSearchLapLoading(false); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchLaporan]);
+
+  // Server-side search Customer — jangkau customer di luar window bootstrap (1000). Pola sama order/invoice/laporan.
+  useEffect(() => {
+    const q = (searchCustomer || "").trim();
+    if (q.length < 2) { setSearchCustExt([]); setSearchCustLoading(false); return; }
+    let cancelled = false;
+    setSearchCustLoading(true);
+    const t = setTimeout(async () => {
+      try {
+        const { data } = await searchCustomersServer(supabase, q);
+        if (!cancelled) setSearchCustExt(data || []);
+      } catch (_) { if (!cancelled) setSearchCustExt([]); }
+      finally { if (!cancelled) setSearchCustLoading(false); }
+    }, 350);
+    return () => { cancelled = true; clearTimeout(t); setSearchCustLoading(false); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchCustomer]);
 
   // Invoice outstanding (UNPAID/OVERDUE/PARTIAL_PAID) live-fetch TANPA cap — invoicesData
   // global cuma 300 baris TERBARU (reads.js), tapi invoice overdue justru cenderung LAMA
@@ -3562,6 +3581,7 @@ export default function ACleanWebApp() {
     <CustomersView selectedCustomer={selectedCustomer} setSelectedCustomer={setSelectedCustomer} ordersData={ordersData}
       laporanReports={laporanReports} invoicesData={invoicesData} customersData={customersData} setCustomersData={setCustomersData}
       searchCustomer={searchCustomer} setSearchCustomer={setSearchCustomer} customerPage={customerPage} setCustomerPage={setCustomerPage}
+      searchCustExt={searchCustExt} searchCustLoading={searchCustLoading}
       customerTab={customerTab} setCustomerTab={setCustomerTab}
       setNewCustomerForm={setNewCustomerForm} setModalAddCustomer={setModalAddCustomer} setNewOrderForm={setNewOrderForm} setModalOrder={setModalOrder}
       setSelectedInvoice={setSelectedInvoice} setModalPDF={setModalPDF}
