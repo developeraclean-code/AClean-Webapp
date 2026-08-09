@@ -603,7 +603,7 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, o
               <div style={{ display: "grid", gap: 10 }}>
                 {[
                   { key: "name", label: "Nama Lengkap *", ph: "Budi Santoso / PT Maju Jaya" },
-                  { key: "phone", label: "No HP / WhatsApp * (auto-format 628xxx)", ph: "0812-3456-7890" },
+                  { key: "phone", label: "No HP / WhatsApp * (ID 0812xxx / luar negeri +49xxx)", ph: "0812-3456-7890" },
                   { key: "area", label: "Area / Wilayah", ph: "Kelapa Gading, Sunter..." },
                   { key: "alamat", label: "Alamat Lengkap", ph: "Jl. ... No. ..." },
                 ].map(f => (

@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { SERVICE_TYPES } from "../constants/services.js";
 import { statusColor, statusLabel } from "../constants/status.js";
-import { normalizePhone, samePhone } from "../lib/phone.js";
+import { normalizePhone, samePhone, cleanPhoneInput } from "../lib/phone.js";
 import { getTechColor } from "../lib/techColor.js";
 import { detectContinuationCandidates, calcContinuationDayNum, multiDayProgress } from "../lib/orders.js";
 import { withMaintenanceLink } from "../lib/maintenanceLink.js";
@@ -2124,11 +2124,10 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
               style={{ ...inputStyle, borderColor: form.customer_id ? cs.green + "88" : cs.border, fontFamily: "monospace" }}
               value={form.phone}
               onChange={e => {
-                const norm = normalizePhone(e.target.value) || e.target.value;
-                setField("phone", norm);
+                setField("phone", cleanPhoneInput(e.target.value));
                 if (form.customer_id) setField("customer_id", null);
               }}
-              placeholder="08xx (auto-format ke 628xxx)" />
+              placeholder="0812xxx atau +49xxx (luar negeri)" />
             {phoneSuggest.length > 0 && !form.customer_id && (
               <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, zIndex: 100, overflow: "hidden", boxShadow: "0 4px 16px #00000066" }}>
                 <div style={{ padding: "5px 12px", fontSize: 10, color: cs.muted, borderBottom: "1px solid " + cs.border + "44" }}>Customer ditemukan:</div>

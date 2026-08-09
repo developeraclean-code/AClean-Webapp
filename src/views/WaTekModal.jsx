@@ -1,4 +1,5 @@
 import { cs } from "../theme/cs.js";
+import { formatPhone } from "../lib/phone.js";
 
 const WA_GREEN = "#25D366";
 
@@ -61,7 +62,7 @@ export default function WaTekModal({ open, target, onClose, appName, openWA }) {
 
         <div style={{ marginBottom: 16 }}>
           <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>📱 WA ke Customer</div>
-          <div style={{ fontSize: 12, color: cs.muted, marginTop: 3 }}>{target.customer} · {target.phone}</div>
+          <div style={{ fontSize: 12, color: cs.muted, marginTop: 3 }}>{target.customer} · {formatPhone(target.phone)}</div>
           <div style={{ fontSize: 11, color: cs.muted, marginTop: 1 }}>🔧 {target.service}</div>
         </div>
 

@@ -1,7 +1,7 @@
 import { memo, useState, useMemo, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor, INVOICE_UNPAID_STATUSES } from "../constants/status.js";
-import { smartSearchNormalize, samePhone } from "../lib/phone.js";
+import { smartSearchNormalize, samePhone, formatPhone } from "../lib/phone.js";
 import { useAppContext } from "../context/AppContext.js";
 import { categoryOf, LINE_CATEGORY } from "../lib/invoicing.js";
 import AcUnitInvoiceModal from "./AcUnitInvoiceModal.jsx";
@@ -401,7 +401,7 @@ const handleSendMerged = async (retryInvList = null) => {
   if (!isRetry) {
     const ok = await showConfirm({
       title: "Gabung & Kirim Invoice",
-      message: `Kirim ${invs.length} invoice digabung jadi 1 PDF ke ${customer} (${invs[0].phone})?\n\nInvoice yang dipilih:\n${invs.map(i => `• ${i.id} — ${fmt(i.total)}`).join("\n")}`,
+      message: `Kirim ${invs.length} invoice digabung jadi 1 PDF ke ${customer} (${formatPhone(invs[0].phone)})?\n\nInvoice yang dipilih:\n${invs.map(i => `• ${i.id} — ${fmt(i.total)}`).join("\n")}`,
     });
     if (!ok) return;
   }

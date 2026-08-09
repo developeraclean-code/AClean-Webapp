@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase } from "../supabaseClient.js";
+import { normalizePhone, cleanPhoneInput } from "../lib/phone.js";
 import { cs } from "../theme/cs.js";
 
 const inp = (err) => ({
@@ -62,7 +63,7 @@ export default function TeknisiFormModal({
         const pinVal = (newTeknisiForm.commission_pin || "").trim() || null;
         const upd = {
           name: newTeknisiForm.name.trim(),
-          phone: newTeknisiForm.phone.trim(),
+          phone: normalizePhone(newTeknisiForm.phone),
           role: newTeknisiForm.role,
           skills: newTeknisiForm.skills || [],
           commission_pin: pinVal,
@@ -91,13 +92,13 @@ export default function TeknisiFormModal({
       } else {
         const res = await fetch("/api/manage-user", {
           method: "POST", headers: await _apiHeaders(),
-          body: JSON.stringify({ action: "create", email: newTeknisiForm.email.trim(), password: autoPass, name: newTeknisiForm.name.trim(), role: newTeknisiForm.role, phone: newTeknisiForm.phone.trim(), callerRole: currentUser?.role }),
+          body: JSON.stringify({ action: "create", email: newTeknisiForm.email.trim(), password: autoPass, name: newTeknisiForm.name.trim(), role: newTeknisiForm.role, phone: normalizePhone(newTeknisiForm.phone), callerRole: currentUser?.role }),
         });
         const result = await res.json();
         if (!result.ok) { showNotif("❌ " + (result.error || "Gagal buat akun")); return; }
         const uid = result.user?.id;
         const colorMap = { Teknisi: "#22c55e", Helper: "#a78bfa", Supervisor: "#38bdf8" };
-        const newTek = { id: uid, name: newTeknisiForm.name.trim(), role: newTeknisiForm.role, phone: newTeknisiForm.phone.trim(), email: newTeknisiForm.email.trim(), skills: [], jobs_today: 0, status: "active", active: true, color: colorMap[newTeknisiForm.role] || "#22c55e", avatar: newTeknisiForm.name.charAt(0).toUpperCase() };
+        const newTek = { id: uid, name: newTeknisiForm.name.trim(), role: newTeknisiForm.role, phone: normalizePhone(newTeknisiForm.phone), email: newTeknisiForm.email.trim(), skills: [], jobs_today: 0, status: "active", active: true, color: colorMap[newTeknisiForm.role] || "#22c55e", avatar: newTeknisiForm.name.charAt(0).toUpperCase() };
         setTeknisiData(prev => [...prev, newTek]);
         setUserAccounts(prev => prev.find(u => u.id === uid) ? prev : [...prev, { ...newTek, lastLogin: "Belum login" }]);
         addAgentLog("TEKNISI_ADDED", "Anggota baru: " + newTeknisiForm.name + " (" + newTeknisiForm.role + ") + akun login", "SUCCESS");
@@ -193,8 +194,8 @@ export default function TeknisiFormModal({
                 <label style={lbl}>Nomor WA <span style={{ color: cs.red }}>*</span></label>
                 <input
                   value={newTeknisiForm.phone || ""}
-                  onChange={e => set("phone", e.target.value)}
-                  placeholder="628xxx"
+                  onChange={e => set("phone", cleanPhoneInput(e.target.value))}
+                  placeholder="0812xxx atau +49xxx (luar negeri)"
                   style={inp(errors.phone)}
                 />
                 {errors.phone && <div style={{ fontSize: 11, color: cs.red, marginTop: 3 }}>⚠ {errors.phone}</div>}

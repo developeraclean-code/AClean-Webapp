@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase } from "../supabaseClient.js";
-import { normalizePhone, samePhone } from "../lib/phone.js";
+import { normalizePhone, samePhone, cleanPhoneInput } from "../lib/phone.js";
 import { getLocalDate } from "../lib/dateTime.js";
 import { sameCustomer } from "../lib/customers.js";
 import { insertCustomer, updateCustomer } from "../data/writes.js";
@@ -65,7 +65,7 @@ export default function CustomerFormModal({
     if (!form.phone.trim()) e.phone = "Nomor HP wajib diisi";
     else {
       const n = normalizePhone(form.phone);
-      if (!n || !/^\d{9,15}$/.test(n)) e.phone = "Format tidak valid — gunakan format 628xxx (9–15 digit)";
+      if (!n || !/^\d{8,15}$/.test(n)) e.phone = "Format tidak valid — ID: 0812xxx, luar negeri: +<kode negara>xxx (8–15 digit)";
     }
     return e;
   };
@@ -203,11 +203,10 @@ export default function CustomerFormModal({
                 <input
                   value={form.phone}
                   onChange={e => {
-                    const v = normalizePhone(e.target.value) || e.target.value;
-                    set("phone", v);
+                    set("phone", cleanPhoneInput(e.target.value));
                     if (errors.phone) setErrors(prev => ({ ...prev, phone: "" }));
                   }}
-                  placeholder="628xxx"
+                  placeholder="0812xxx (ID) atau +49xxx (luar negeri)"
                   style={inp(errors.phone)}
                 />
                 {errors.phone && <div style={{ fontSize: 11, color: cs.red, marginTop: 3 }}>⚠ {errors.phone}</div>}

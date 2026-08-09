@@ -4,6 +4,7 @@ import { useAppContext } from "../context/AppContext.js";
 import { DEFAULT_BONUS_CATEGORIES } from "../constants/bonus.js";
 import { ORDER_DONE_STATUSES } from "../constants/status.js";
 import { employmentStatus, fmtTenure } from "../lib/employment.js";
+import { formatPhone } from "../lib/phone.js";
 import {
   localDateStr, getMondayOf, getSaturdayOf, addWeeks,
   fullWeekBonusAmt, computeGross, kasbonOwed, kasbonSisa,
@@ -348,7 +349,7 @@ return (
               <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 99, background: stC + "22", color: stC, border: "1px solid " + stC + "44", fontWeight: 700 }}>{t.status}</span>
             </div>
             <div style={{ fontSize: 11, color: cs.muted, marginBottom: 10 }}>
-              <div>📱 {t.phone}</div>
+              <div>📱 {formatPhone(t.phone)}</div>
               {(() => {
                 const emp = employmentStatus(t.work_start_date);
                 const tenure = fmtTenure(t.work_start_date);

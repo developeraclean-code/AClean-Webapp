@@ -1,7 +1,7 @@
 import React, { memo } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor } from "../constants/status.js";
-import { normalizePhone, smartSearchNormalize } from "../lib/phone.js";
+import { normalizePhone, smartSearchNormalize, formatPhone } from "../lib/phone.js";
 import { useAppContext } from "../context/AppContext.js";
 
 // Warna avatar deterministik berdasarkan nama
@@ -267,7 +267,7 @@ return (
                       );
                     })()}
                     <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: 11, color: cs.muted }}>
-                      {cu.phone && <span>{cu.phone}</span>}
+                      {cu.phone && <span>{formatPhone(cu.phone)}</span>}
                       {(cu.area || cu.address) && <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }}>{cu.area || cu.address}</span>}
                       {lastSvc && <span>Terakhir: {lastSvc.date}</span>}
                     </div>
@@ -302,7 +302,7 @@ return (
                     {(group[0].name || "?").charAt(0).toUpperCase()}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: cs.text }}>📱 {group[0].phone}</div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: cs.text }}>📱 {formatPhone(group[0].phone)}</div>
                     <div style={{ fontSize: 10, color: cs.muted, marginTop: 1 }}>{group.length} Lokasi</div>
                   </div>
                   {!isTekHelper && (
@@ -393,7 +393,7 @@ return (
         {siblingLocations.length > 1 && (
           <div style={{ background: cs.card, border: "1px solid " + cs.accent + "33", borderRadius: 12, padding: "10px 12px" }}>
             <div style={{ fontSize: 11, color: cs.muted, fontWeight: 600, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
-              📱 {selectedCustomer.phone} · <span style={{ color: cs.accent }}>{siblingLocations.length} Lokasi</span> — pilih untuk lihat riwayat per lokasi
+              📱 {formatPhone(selectedCustomer.phone)} · <span style={{ color: cs.accent }}>{siblingLocations.length} Lokasi</span> — pilih untuk lihat riwayat per lokasi
             </div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               {siblingLocations.map(loc => {
@@ -476,7 +476,7 @@ return (
                       )}
                     </div>
                     <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12, color: cs.muted }}>
-                      {selectedCustomer.phone && <span>{selectedCustomer.phone}</span>}
+                      {selectedCustomer.phone && <span>{formatPhone(selectedCustomer.phone)}</span>}
                       {selectedCustomer.area && <span>{selectedCustomer.area}</span>}
                       {selectedCustomer.email && <span>{selectedCustomer.email}</span>}
                     </div>

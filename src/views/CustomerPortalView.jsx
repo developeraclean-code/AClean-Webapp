@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { INVOICE_UNPAID_STATUSES } from "../constants/status.js";
+import { formatPhone } from "../lib/phone.js";
 
 const API_BASE = "/api";
 const GOOGLE_REVIEW_URL = "https://g.page/r/Ce7qdwu8xHxoEAI/review";
@@ -336,11 +337,11 @@ function CustomerCard({ data, locationNames = [] }) {
           </div>
         </div>
         <div style={s.customerName}>
-          {isMulti ? data.phone : (data.customer_name || "Pelanggan AClean")}
+          {isMulti ? formatPhone(data.phone) : (data.customer_name || "Pelanggan AClean")}
         </div>
         {isMulti
           ? <div style={s.customerPhone}>{locationNames.length} lokasi terdaftar</div>
-          : <div style={s.customerPhone}>📱 {data.phone}</div>}
+          : <div style={s.customerPhone}>📱 {formatPhone(data.phone)}</div>}
 
         <div style={s.customerMeta}>
           <span style={s.badge}>🧰 {totalOrders} kali servis</span>

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { normalizePhone, samePhone } from "../lib/phone.js";
+import { normalizePhone, samePhone, cleanPhoneInput } from "../lib/phone.js";
 import { findCustomer, buildCustomerHistory, sameCustomer } from "../lib/customers.js";
 import { cs } from "../theme/cs.js";
 
@@ -126,7 +126,7 @@ export default function OrderFormModal({
               <div style={card}>
                 <div style={secTitle}>Data Pelanggan</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {[["Nama Customer", "customer", "Nama customer"], ["Nomor HP", "phone", "628xxx"], ["Alamat Lengkap", "address", "Jl. ..."], ["Catatan", "notes", "Catatan tambahan..."]].map(([label, key, ph]) => (
+                  {[["Nama Customer", "customer", "Nama customer"], ["Nomor HP", "phone", "0812xxx atau +49xxx"], ["Alamat Lengkap", "address", "Jl. ..."], ["Catatan", "notes", "Catatan tambahan..."]].map(([label, key, ph]) => (
                     <div key={key}>
                       <label style={lbl}>{label}{(key === "customer" || key === "phone") && <span style={{ color: cs.red }}> *</span>}</label>
                       <input
@@ -135,12 +135,13 @@ export default function OrderFormModal({
                         onChange={e => {
                           const val = e.target.value;
                           if (key === "phone") {
-                            const norm = normalizePhone(val);
+                            const clean = cleanPhoneInput(val); // jaga "+" saat mengetik
+                            const norm = normalizePhone(clean);
                             const matches = customersData.filter(c => samePhone(c.phone, norm));
                             if (matches.length === 1) {
-                              setForm(f => ({ ...f, phone: norm, customer: matches[0].name, address: matches[0].address || f.address, area: matches[0].area || f.area }));
+                              setForm(f => ({ ...f, phone: clean, customer: matches[0].name, address: matches[0].address || f.address, area: matches[0].area || f.area }));
                             } else {
-                              setForm(f => ({ ...f, phone: norm || val }));
+                              setForm(f => ({ ...f, phone: clean }));
                             }
                           } else {
                             set(key, val);

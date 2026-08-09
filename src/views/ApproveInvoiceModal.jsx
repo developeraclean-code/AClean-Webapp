@@ -1,4 +1,5 @@
 import { cs } from "../theme/cs.js";
+import { formatPhone } from "../lib/phone.js";
 
 export default function ApproveInvoiceModal({ open, invoice, onClose, approveAndSend, approveSaveOnly, fmt }) {
   if (!open || !invoice) return null;
@@ -29,7 +30,7 @@ export default function ApproveInvoiceModal({ open, invoice, onClose, approveAnd
           </div>
           <div style={{ fontSize: 12, color: cs.muted }}>👤 {invoice.customer}</div>
           <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>🔧 {invoice.service}</div>
-          <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>📱 {invoice.phone}</div>
+          <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>📱 {formatPhone(invoice.phone)}</div>
         </div>
 
         <div style={{ display: "grid", gap: 10 }}>
@@ -43,7 +44,7 @@ export default function ApproveInvoiceModal({ open, invoice, onClose, approveAnd
             <div>
               <div style={{ fontWeight: 800, fontSize: 14, color: "#fff" }}>Approve & Kirim ke Customer</div>
               <div style={{ fontSize: 11, color: "rgba(255,255,255,0.8)", marginTop: 2 }}>
-                Invoice langsung dikirim via WA ke {invoice.phone}
+                Invoice langsung dikirim via WA ke {formatPhone(invoice.phone)}
               </div>
             </div>
           </button>

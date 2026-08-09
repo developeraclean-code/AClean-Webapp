@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import { cs } from "../theme/cs.js";
-import { normalizePhone } from "../lib/phone.js";
+import { normalizePhone, formatPhone } from "../lib/phone.js";
 import { categoryFromCatalog, computePph23 } from "../lib/invoicing.js";
 
 const fmt = (n) => "Rp " + (Number(n) || 0).toLocaleString("id-ID");
@@ -378,7 +378,7 @@ export default function QuotationModal({
             <div>
               <div style={{ fontWeight: 800, fontSize: 16, color: cs.text }}>📋 {isEdit ? "Edit Quotation" : "Buat Quotation Baru"}</div>
               <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>
-                {custDisplay ? `${custDisplay.name} · ${custDisplay.phone || ""}` : "Pilih customer dahulu"}
+                {custDisplay ? `${custDisplay.name} · ${formatPhone(custDisplay.phone) || ""}` : "Pilih customer dahulu"}
               </div>
             </div>
             <button onClick={onClose} style={{ background: "none", border: "none", color: cs.muted, fontSize: 20, cursor: "pointer" }}>×</button>
@@ -424,7 +424,7 @@ export default function QuotationModal({
                           display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                         <div>
                           <div style={{ fontSize: 13, fontWeight: 700, color: cs.text }}>{c.name}</div>
-                          <div style={{ fontSize: 11, color: cs.muted }}>{c.phone} · {c.area}</div>
+                          <div style={{ fontSize: 11, color: cs.muted }}>{formatPhone(c.phone)} · {c.area}</div>
                         </div>
                         {selectedCust?.id === c.id && <span style={{ color: cs.accent }}>✓</span>}
                       </div>
@@ -440,12 +440,12 @@ export default function QuotationModal({
                 </>
               ) : (
                 <div style={{ display: "grid", gap: 10 }}>
-                  {[["name","Nama Customer *"], ["phone","No. HP (628xxx)"], ["area","Area/Kota"], ["alamat","Alamat Lengkap"]].map(([f, lbl]) => (
+                  {[["name","Nama Customer *"], ["phone","No. HP (0812xxx / +49xxx)"], ["area","Area/Kota"], ["alamat","Alamat Lengkap"]].map(([f, lbl]) => (
                     <div key={f}>
                       <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>{lbl}</div>
                       <input value={newCust[f]} onChange={e => setNewCust(p => ({ ...p, [f]: e.target.value }))}
                         onBlur={f === "phone" ? e => setNewCust(p => ({ ...p, phone: normalizePhone(e.target.value) })) : undefined}
-                        style={inp} placeholder={f === "phone" ? "auto-format 628xxx" : ""} />
+                        style={inp} placeholder={f === "phone" ? "0812xxx atau +49xxx" : ""} />
                     </div>
                   ))}
                 </div>
@@ -711,7 +711,7 @@ export default function QuotationModal({
                 <div style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid " + cs.border + "44" }}>
                   <div style={{ fontSize: 12, color: cs.muted }}>Customer</div>
                   <div style={{ fontWeight: 700, color: cs.text }}>{custDisplay?.name || "—"}</div>
-                  <div style={{ fontSize: 12, color: cs.muted }}>{custDisplay?.phone} · {custDisplay?.area || selectedCust?.area || newCust.area}</div>
+                  <div style={{ fontSize: 12, color: cs.muted }}>{formatPhone(custDisplay?.phone)} · {custDisplay?.area || selectedCust?.area || newCust.area}</div>
                 </div>
 
                 {/* Items breakdown */}

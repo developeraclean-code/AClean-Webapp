@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { cs } from "../theme/cs.js";
+import { formatPhone } from "../lib/phone.js";
 import QuotationModal from "./QuotationModal.jsx";
 
 const fmt = (n) => "Rp " + (Number(n) || 0).toLocaleString("id-ID");
@@ -205,7 +206,7 @@ export default function QuotationView({
         await supabase.from("quotations").update({ status: "SENT", updated_at: new Date().toISOString() }).eq("id", quo.id);
         setQuotationsData?.(prev => prev.map(q => q.id === quo.id ? { ...q, status: "SENT" } : q));
       }
-      showNotif?.(`📱 WA dikirim ke ${quo.phone}${pdfAttachment ? " 📎 PDF terlampir" : ""}`);
+      showNotif?.(`📱 WA dikirim ke ${formatPhone(quo.phone)}${pdfAttachment ? " 📎 PDF terlampir" : ""}`);
     } finally {
       setSendingWAId(null);
     }
@@ -293,7 +294,7 @@ export default function QuotationView({
                       )}
                     </div>
                     <div style={{ fontSize: 13, color: cs.text, marginTop: 4 }}>{quo.customer}</div>
-                    <div style={{ fontSize: 12, color: cs.muted }}>{quo.phone} · {quo.area}</div>
+                    <div style={{ fontSize: 12, color: cs.muted }}>{formatPhone(quo.phone)} · {quo.area}</div>
                   </div>
                   <div style={{ textAlign: "right" }}>
                     <div style={{ fontWeight: 800, fontSize: 15, color: cs.accent }}>{fmt(quo.total)}</div>
