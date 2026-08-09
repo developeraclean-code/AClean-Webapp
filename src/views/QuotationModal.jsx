@@ -65,9 +65,13 @@ export default function QuotationModal({
   getLocalDate, editData, priceListData,
   extraPriceOptions,    // opsional — harga deal khusus klien (price book maintenance) → opsi jasa/addon
   maintenanceClientId,  // opsional — link quotation ke maintenance client
-  maintenancePrefill,   // opsional — { name, phone, address } untuk pre-fill customer
+  maintenancePrefill,   // opsional — { name, phone, address, replaceUnit?, notes? } untuk pre-fill customer
 }) {
   const isEdit = !!editData;
+  // replaceUnit: { brand, kapasitas, label } — dari Statistik "Kandidat Ganti Unit"
+  // (MaintenanceView.jsx StatsTab) → pre-fill 1 baris Unit AC supaya insight-nya
+  // langsung actionable, bukan cuma tampil lalu harus diketik ulang dari nol.
+  const replaceUnit = !isEdit && maintenancePrefill?.replaceUnit;
   const [activeTab, setActiveTab] = useState("customer");
   const [saving, setSaving] = useState(false);
 
@@ -78,11 +82,14 @@ export default function QuotationModal({
   const [newCust, setNewCust]           = useState({ name: "", phone: "", area: "", alamat: "" });
 
   // ── Items: Unit AC (opsional) ──
-  const [withUnitAC, setWithUnitAC] = useState(isEdit ? (editData.items || []).some(i => i.item_type === "unit_ac") : false);
+  const [withUnitAC, setWithUnitAC] = useState(isEdit ? (editData.items || []).some(i => i.item_type === "unit_ac") : !!replaceUnit);
   const [acUnits, setAcUnits]       = useState(() => {
     if (isEdit) {
       const units = (editData.items || []).filter(i => i.item_type === "unit_ac");
       return units.length > 0 ? units.map(u => ({ ...u, _id: Math.random(), _manual: true, nama: u.nama || u.description || "", harga_satuan: u.unit_price, subtotal: u.subtotal || u.unit_price * u.qty })) : [emptyUnit()];
+    }
+    if (replaceUnit) {
+      return [{ ...emptyUnit(), nama: replaceUnit.label || "", brand: replaceUnit.brand || "", kapasitas: replaceUnit.kapasitas || "1 PK" }];
     }
     return [emptyUnit()];
   });
@@ -113,7 +120,7 @@ export default function QuotationModal({
   const [pph23On, setPph23On]     = useState(isEdit ? !!editData.pph23 : false);
 
   // ── Notes ──
-  const [notes, setNotes] = useState(isEdit ? (editData.notes || "") : "");
+  const [notes, setNotes] = useState(isEdit ? (editData.notes || "") : (maintenancePrefill?.notes || ""));
 
   // ── Aksi tab: save as ──
   const [saveAs, setSaveAs] = useState("DRAFT");

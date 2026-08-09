@@ -1429,20 +1429,23 @@ export async function maintenance(req, res) {
         // Referensi kontrak disimpan di notes. Status PENDING_APPROVAL → masuk alur
         // approve Owner di menu Invoice (bukan langsung UNPAID).
         if (action === "generate-contract-invoice") {
-          const { contract_id, client_id, period_label, unit_count, amount, notes: invNotes } = body;
+          const { contract_id, client_id, period_label, period_start, period_end, unit_count, amount, notes: invNotes } = body;
           if (!client_id || !amount) return res.status(400).json({ error: "client_id dan amount wajib" });
           // Ambil data klien
           const cRes = await fetch(REST(`maintenance_clients?id=eq.${encodeURIComponent(client_id)}&select=name,pic_name,pic_phone,address`), { headers });
           const cData = await cRes.json();
           const client = cData[0];
           if (!client) return res.status(404).json({ error: "Klien tidak ditemukan" });
-          // Nomor kontrak untuk catatan invoice (kolom contract_id tidak ada di invoices)
+          // Nomor kontrak + cakupan layanan untuk catatan invoice & anti-dobel-tagih di bawah
+          // (kolom contract_id tidak ada di invoices)
           let contractNo = "";
+          let servicesIncluded = null;
           if (contract_id) {
             try {
-              const ctRes = await fetch(REST(`maintenance_contracts?id=eq.${encodeURIComponent(contract_id)}&select=contract_number&limit=1`), { headers });
+              const ctRes = await fetch(REST(`maintenance_contracts?id=eq.${encodeURIComponent(contract_id)}&select=contract_number,services_included&limit=1`), { headers });
               const ct = ctRes.ok ? await ctRes.json() : [];
               contractNo = ct[0]?.contract_number || "";
+              servicesIncluded = Array.isArray(ct[0]?.services_included) ? ct[0].services_included : null;
             } catch (_) {}
           }
           // Generate invoice number
@@ -1468,7 +1471,31 @@ export async function maintenance(req, res) {
           };
           const r = await fetch(REST("invoices"), { method: "POST", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(inv) });
           if (!r.ok) return res.status(400).json({ error: "Gagal buat invoice kontrak", detail: await r.text() });
-          return res.status(200).json({ invoice: (await r.json())[0] || inv });
+          const createdInv = (await r.json())[0] || inv;
+
+          // ── Anti-dobel-tagih: kontrak sudah cover log servis periode ini (utk
+          // kategori yg termasuk services_included) → tandai invoiced=true supaya
+          // TIDAK muncul lagi buat ditagih ulang manual di tab Invoice B2B. Log
+          // kategori lain (mis. perbaikan di luar cakupan kontrak) TETAP bisa ditagih
+          // terpisah. Non-blocking: kalau gagal, invoice kontrak tetap valid — cuma
+          // perlu dobel-cek manual di Invoice B2B.
+          let logsMarked = 0;
+          if (period_start && period_end && servicesIncluded && servicesIncluded.length > 0) {
+            try {
+              const catFilter = servicesIncluded.map(s => encodeURIComponent(s)).join(",");
+              const q = `maintenance_logs?client_id=eq.${encodeURIComponent(client_id)}`
+                + `&service_date=gte.${encodeURIComponent(period_start)}&service_date=lte.${encodeURIComponent(period_end)}`
+                + `&service_category=in.(${catFilter})&or=(invoiced.is.null,invoiced.eq.false)&select=id`;
+              const mRes = await fetch(REST(q), {
+                method: "PATCH",
+                headers: { ...headers, Prefer: "return=representation" },
+                body: JSON.stringify({ invoiced: true }),
+              });
+              if (mRes.ok) logsMarked = (await mRes.json()).length;
+              else console.warn("[generate-contract-invoice] mark logs invoiced warn:", await mRes.text());
+            } catch (e) { console.warn("[generate-contract-invoice] mark logs invoiced gagal:", e.message); }
+          }
+          return res.status(200).json({ invoice: createdInv, logs_marked: logsMarked });
         }
 
         return res.status(400).json({ error: "Action tidak dikenal: " + action });

@@ -212,6 +212,10 @@ export default function MaintenanceView({
   const [busy, setBusy] = useState(false);
   const [docsMode, setDocsMode] = useState(false);
   const [ppmMode, setPpmMode] = useState(false);
+  // Jembatan Statistik → Quotasi: kandidat "ganti unit" (StatsTab) lompat ke tab
+  // Quotasi dengan form penawaran sudah terisi — dulu insight ini buntu (cuma
+  // ditampilkan, harus input ulang manual dari nol di tab lain).
+  const [quotaPrefill, setQuotaPrefill] = useState(null); // { unit, reasons } | null
 
   const call = useCallback(async (action, payload = {}) => {
     const r = await apiFetch("/api/maintenance", {
@@ -358,11 +362,12 @@ export default function MaintenanceView({
             {tab === "unit"     && <UnitsTab sel={sel} units={units} setUnits={setUnits} logs={logs} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} apiFetch={apiFetch} supabase={supabase} setOrdersData={setOrdersData} getLocalDate={getLocalDate} teknisiData={teknisiData} createOrderFn={createOrderFn} createTeamSplitFn={createTeamSplitFn} />}
             {tab === "history"  && <HistoryTab units={units} logs={logs} setLogs={setLogs} sel={sel} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} apiFetch={apiFetch} />}
             {tab === "followup" && <FollowupTab sel={sel} units={units} logs={logs} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} currentUser={currentUser} supabase={supabase} setOrdersData={setOrdersData} getLocalDate={getLocalDate} />}
-            {tab === "manifest"  && <ManifestTab sel={sel} units={units} call={call} showNotif={showNotif} />}
+            {tab === "manifest"  && <ManifestTab sel={sel} units={units} call={call} showNotif={showNotif} showConfirm={showConfirm} teknisiData={teknisiData} supabase={supabase} setOrdersData={setOrdersData} getLocalDate={getLocalDate} createOrderFn={createOrderFn} createTeamSplitFn={createTeamSplitFn} />}
             {tab === "contract"  && <ContractTab sel={sel} units={units} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} currentUser={currentUser} />}
             {tab === "workorder" && <WorkOrderTab sel={sel} units={units} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} currentUser={currentUser} />}
             {tab === "svchistory" && <HistoryServiceTab sel={sel} call={call} showNotif={showNotif} />}
-            {tab === "stats"    && <StatsTab units={units} logs={logs} sel={sel} call={call} />}
+            {tab === "stats"    && <StatsTab units={units} logs={logs} sel={sel} call={call}
+              onSuggestReplace={(unit, reasons) => { setQuotaPrefill({ unit, reasons }); setTab("quotation"); }} />}
             {tab === "quotation" && (
               <QuotasiTab
                 sel={sel} quotations={clientQuotations} call={call}
@@ -373,6 +378,7 @@ export default function MaintenanceView({
                 showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner}
                 appSettings={appSettings} sendWAFn={sendWAFn}
                 uploadQuotationPDFFn={uploadQuotationPDFFn}
+                quotaPrefill={quotaPrefill} setQuotaPrefill={setQuotaPrefill}
               />
             )}
             {tab === "price"   && <PriceTab sel={sel} units={units} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} />}
@@ -1755,7 +1761,7 @@ function HistoryServiceTab({ sel, call, showNotif }) {
 }
 
 // ─────────── STATS TAB ───────────
-function StatsTab({ units, logs, sel, call }) {
+function StatsTab({ units, logs, sel, call, onSuggestReplace }) {
   // ── Analisis "unit boros" — follow-up terbuka jadi salah satu sinyal skor ──
   const [openFollowups, setOpenFollowups] = useState([]);
   const [fuLoadErr, setFuLoadErr] = useState(false);
@@ -1847,6 +1853,14 @@ function StatsTab({ units, logs, sel, call }) {
                   <div style={{ fontSize: 11, color: cs.muted, marginTop: 4 }}>
                     {reasons.map((r, i) => <span key={i}>• {r} </span>)}
                   </div>
+                  {onSuggestReplace && (
+                    <div style={{ marginTop: 6, textAlign: "right" }}>
+                      <button onClick={() => onSuggestReplace(u, reasons)}
+                        style={{ background: col + "18", border: "1px solid " + col + "55", color: col, padding: "4px 10px", borderRadius: 7, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                        📄 Buat Penawaran Ganti Unit
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -2343,7 +2357,7 @@ const QUO_STATUS_COLOR = {
 };
 const QUO_LABEL = { DRAFT: "📝 Draft", SENT: "📤 Terkirim", APPROVED: "✅ Disetujui", EXPIRED: "⏰ Kadaluarsa", CANCELLED: "❌ Dibatalkan" };
 
-function QuotasiTab({ sel, quotations, call, quotationsData, setQuotationsData, setOrdersData, ordersData, supabase, customersData, priceListData, getLocalDate, showNotif, showConfirm, isOwner, appSettings, sendWAFn, uploadQuotationPDFFn }) {
+function QuotasiTab({ sel, quotations, call, quotationsData, setQuotationsData, setOrdersData, ordersData, supabase, customersData, priceListData, getLocalDate, showNotif, showConfirm, isOwner, appSettings, sendWAFn, uploadQuotationPDFFn, quotaPrefill, setQuotaPrefill }) {
   const [showCreate, setShowCreate] = useState(false);
   const [editQ, setEditQ] = useState(null);
   const [linkJobTargetId, setLinkJobTargetId] = useState(null); // quotation.id yg sedang dipilih job-nya
@@ -2492,6 +2506,32 @@ function QuotasiTab({ sel, quotations, call, quotationsData, setQuotationsData, 
 
   const prefill = { name: sel.name, phone: sel.pic_phone || "", address: sel.address || "" };
 
+  // ── Jembatan dari Statistik "Kandidat Ganti Unit" — buka form quotation baru
+  // sudah terisi unit yang mau diganti + alasannya di catatan. Ditangkap ke state
+  // LOKAL (replaceCtx) begitu diterima — bukan dibaca langsung dari prop quotaPrefill
+  // saat render — karena clear-nya (setQuotaPrefill(null), balik ke parent) & buka
+  // modal (setShowCreate(true)) ke-batch React di render yang SAMA; kalau prefill
+  // dibaca langsung dari prop, modal akan sempat kebuka TANPA data (prop sudah null
+  // duluan di render yang sama saat showCreate baru jadi true).
+  const [replaceCtx, setReplaceCtx] = useState(null);
+  useEffect(() => {
+    if (!quotaPrefill) return;
+    setReplaceCtx(quotaPrefill);
+    setEditQ(null);
+    setShowCreate(true);
+    setQuotaPrefill?.(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quotaPrefill]);
+  const replacePrefill = replaceCtx ? {
+    ...prefill,
+    replaceUnit: {
+      brand: replaceCtx.unit.brand || "",
+      kapasitas: replaceCtx.unit.capacity_pk ? `${replaceCtx.unit.capacity_pk} PK` : "",
+      label: `Ganti Unit AC — ${replaceCtx.unit.unit_code}${replaceCtx.unit.location ? " (" + replaceCtx.unit.location + ")" : ""}`,
+    },
+    notes: `Rekomendasi ganti unit ${replaceCtx.unit.unit_code}: ${replaceCtx.reasons.join(", ")}`,
+  } : null;
+
   // ── Tautkan penawaran ke job/order yang dibuat manual (bukan via Approve) ──
   const usedJobIds = new Set((quotationsData || []).map(q => q.job_id).filter(Boolean));
   const nName = (s) => String(s || "").trim().toLowerCase();
@@ -2520,7 +2560,7 @@ function QuotasiTab({ sel, quotations, call, quotationsData, setQuotationsData, 
         <div style={{ color: cs.muted, fontSize: 12 }}>
           Semua quotation untuk <b style={{ color: cs.text }}>{sel.name}</b>
         </div>
-        <button onClick={() => { setEditQ(null); setShowCreate(true); }} style={{ ...btn, marginLeft: "auto" }}>+ Buat Quotation</button>
+        <button onClick={() => { setReplaceCtx(null); setEditQ(null); setShowCreate(true); }} style={{ ...btn, marginLeft: "auto" }}>+ Buat Quotation</button>
       </div>
 
       {quotations.length === 0 ? (
@@ -2643,11 +2683,11 @@ function QuotasiTab({ sel, quotations, call, quotationsData, setQuotationsData, 
       )}
 
       {showCreate && (
-        <div style={{ position: "fixed", inset: 0, background: "#000b", zIndex: 500, overflowY: "auto" }} onClick={() => setShowCreate(false)}>
+        <div style={{ position: "fixed", inset: 0, background: "#000b", zIndex: 500, overflowY: "auto" }} onClick={() => { setShowCreate(false); setReplaceCtx(null); }}>
           <div onClick={e => e.stopPropagation()} style={{ maxWidth: 780, margin: "24px auto", padding: "0 16px 80px" }}>
             <Suspense fallback={<div style={{ color: cs.muted, padding: 40, textAlign: "center" }}>Memuat form quotation…</div>}>
               <QuotationModal
-                onClose={() => { setShowCreate(false); setEditQ(null); }}
+                onClose={() => { setShowCreate(false); setEditQ(null); setReplaceCtx(null); }}
                 supabase={supabase}
                 customersData={customersData}
                 showNotif={showNotif}
@@ -2657,7 +2697,7 @@ function QuotasiTab({ sel, quotations, call, quotationsData, setQuotationsData, 
                 extraPriceOptions={clientPriceOptions}
                 editData={editQ}
                 maintenanceClientId={sel.id}
-                maintenancePrefill={editQ ? undefined : prefill}
+                maintenancePrefill={editQ ? undefined : (replacePrefill || prefill)}
               />
             </Suspense>
           </div>
@@ -2919,13 +2959,19 @@ function FollowupModal({ units, sel, call, showNotif, onClose, onSave }) {
 }
 
 // ─────────── MANIFEST TAB ───────────
-function ManifestTab({ sel, units, call, showNotif }) {
-  const today = new Date().toISOString().slice(0, 10);
+// service_category (Manifest, per-unit) → service (orders, per-order) — tidak 1:1
+// tapi cukup dekat untuk order yang di-generate dari Manifest.
+const MANIFEST_CAT_TO_SERVICE = { cuci_rutin: "Cleaning", inspeksi: "Maintenance", perbaikan: "Repair", pengecekan: "Maintenance" };
+
+function ManifestTab({ sel, units, call, showNotif, showConfirm, teknisiData, supabase, setOrdersData, getLocalDate, createOrderFn, createTeamSplitFn }) {
+  const today = typeof getLocalDate === "function" ? getLocalDate() : new Date().toISOString().slice(0, 10);
   const [date, setDate] = useState(today);
   const [manifest, setManifest] = useState(null);
   const [assignments, setAssignments] = useState({});
   const [busy, setBusy] = useState(false);
+  const [creatingOrders, setCreatingOrders] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const teknisiOpts = (teknisiData || []).filter(t => t.role === "Teknisi" || t.role === "Helper");
 
   const load = useCallback(async () => {
     if (!sel || !date) return;
@@ -2935,7 +2981,7 @@ function ManifestTab({ sel, units, call, showNotif }) {
       setManifest(j.manifest || null);
       const map = {};
       (j.manifest?.pre_service_manifest_items || []).forEach(it => {
-        map[it.unit_id] = { team_label: it.team_label || "", technician: it.technician || "", service_category: it.service_category || "cuci_rutin" };
+        map[it.unit_id] = { team_label: it.team_label || "", technician: it.technician || "", helper: it.helper || "", service_category: it.service_category || "cuci_rutin" };
       });
       setAssignments(map);
     } catch (e) { showNotif("❌ " + e.message); }
@@ -2956,7 +3002,7 @@ function ManifestTab({ sel, units, call, showNotif }) {
     setBusy(true);
     try {
       const items = activeUnits.filter(u => assignments[u.id]?.team_label || assignments[u.id]?.technician)
-        .map(u => ({ unit_id: u.id, team_label: assignments[u.id]?.team_label || null, technician: assignments[u.id]?.technician || null, service_category: assignments[u.id]?.service_category || "cuci_rutin" }));
+        .map(u => ({ unit_id: u.id, team_label: assignments[u.id]?.team_label || null, technician: assignments[u.id]?.technician || null, helper: assignments[u.id]?.helper || null, service_category: assignments[u.id]?.service_category || "cuci_rutin" }));
       const j = await call("create-manifest", { client_id: sel.id, service_date: date, items, created_by: "admin" });
       setManifest(j.manifest);
       showNotif("✅ Manifest disimpan — " + items.length + " unit terassign");
@@ -2966,6 +3012,75 @@ function ManifestTab({ sel, units, call, showNotif }) {
 
   const teams = [...new Set(Object.values(assignments).map(a => a.team_label).filter(Boolean))];
   const assigned = activeUnits.filter(u => assignments[u.id]?.team_label).length;
+
+  // ── Buat Order dari Manifest — dulu Manifest cuma kertas kerja terpisah, harus
+  // input ulang dari nol di tab Unit kalau mau benar-benar dispatch. Sekarang
+  // assignment yang sudah diisi di sini LANGSUNG jadi order Planning Order —
+  // grup per Tim (>=2 tim → createTeamSplitFn/sub-order paralel; 1 tim → order
+  // tunggal, reuse pola sama persis dgn UnitsTab.createOrder).
+  const createOrdersFromManifest = async () => {
+    const withTeam = activeUnits.filter(u => assignments[u.id]?.team_label?.trim());
+    if (withTeam.length === 0) { showNotif("❌ Isi kolom Tim minimal 1 unit dulu"); return; }
+    const ok = await showConfirm?.({
+      icon: "🚀", title: "Buat Order dari Manifest?",
+      message: `${withTeam.length} unit dengan Tim terisi akan dibuat jadi order Planning Order untuk ${date}. Lanjutkan?`,
+      confirmText: "Ya, Buat Order",
+    });
+    if (showConfirm && !ok) return;
+
+    const groups = {};
+    withTeam.forEach(u => {
+      const a = assignments[u.id];
+      const key = a.team_label.trim();
+      if (!groups[key]) groups[key] = { teknisi: "", helper: "", unitIds: [], cats: {} };
+      groups[key].unitIds.push(u.id);
+      const cat = a.service_category || "cuci_rutin";
+      groups[key].cats[cat] = (groups[key].cats[cat] || 0) + 1;
+      if (!groups[key].teknisi && a.technician) groups[key].teknisi = a.technician;
+      if (!groups[key].helper && a.helper) groups[key].helper = a.helper;
+    });
+    const teamKeys = Object.keys(groups);
+    const dominantService = (cats) => MANIFEST_CAT_TO_SERVICE[Object.entries(cats).sort((x, y) => y[1] - x[1])[0]?.[0]] || "Cleaning";
+
+    setCreatingOrders(true);
+    try {
+      if (teamKeys.length >= 2 && createTeamSplitFn) {
+        const allCats = {};
+        withTeam.forEach(u => { const c = assignments[u.id].service_category || "cuci_rutin"; allCats[c] = (allCats[c] || 0) + 1; });
+        const base = {
+          customer: sel.name, phone: sel.pic_phone || "", address: sel.address || "", area: sel.area || "",
+          service: dominantService(allCats), date, time: "09:00",
+          notes: `Dari Manifest ${date}`, maintenance_client_id: sel.id,
+        };
+        const teams = teamKeys.map(k => ({ teknisi: groups[k].teknisi, helper: groups[k].helper, unitIds: groups[k].unitIds }));
+        const groupId = await createTeamSplitFn({ base, teams });
+        if (groupId) showNotif(`✅ ${teamKeys.length} order tim dibuat dari Manifest (grup ${groupId})`);
+      } else {
+        const key = teamKeys[0];
+        const g = groups[key];
+        const svc = dominantService(g.cats);
+        const baseForm = {
+          customer: sel.name, phone: sel.pic_phone || "", address: sel.address || "", area: sel.area || "",
+          service: svc, type: svc, units: g.unitIds.length, date, time: "09:00",
+          notes: `Dari Manifest ${date} — Tim ${key}`,
+          maintenance_client_id: sel.id, maintenance_unit_ids: g.unitIds,
+        };
+        if (g.teknisi && createOrderFn) {
+          const res = await createOrderFn({ ...baseForm, teknisi: g.teknisi, helper: g.helper || "" });
+          if (res) showNotif(`✅ Order dibuat & ditugaskan ke ${g.teknisi}`);
+        } else {
+          const jobId = newJobId();
+          const orderPayload = { id: jobId, ...baseForm, time_end: "11:00", status: "PENDING", dispatch: false, source: "maintenance" };
+          const { error } = await supabase.from("orders").insert(orderPayload);
+          if (error) { showNotif("❌ Gagal buat order: " + error.message); }
+          else {
+            setOrdersData?.(prev => prev.some(o => o.id === jobId) ? prev : [orderPayload, ...prev]);
+            showNotif(`✅ Order ${jobId} (PENDING) masuk Planning Order — assign teknisi di sana.`);
+          }
+        }
+      }
+    } finally { setCreatingOrders(false); }
+  };
 
   return (
     <div>
@@ -2977,13 +3092,21 @@ function ManifestTab({ sel, units, call, showNotif }) {
         {manifest && <span style={{ ...pillGreen }}>✅ Tersimpan</span>}
         {assigned > 0 && !manifest && <span style={{ ...pillBlue }}>{assigned} unit terassign</span>}
         {teams.length > 0 && <span style={{ color: cs.muted, fontSize: 12 }}>Tim: {teams.join(", ")}</span>}
-        <button onClick={doSave} disabled={busy} style={{ ...btn, marginLeft: "auto", opacity: busy ? .5 : 1 }}>
-          {busy ? "Menyimpan…" : "💾 Simpan Manifest"}
-        </button>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          <button onClick={doSave} disabled={busy} style={{ ...btnGhost, opacity: busy ? .5 : 1 }}>
+            {busy ? "Menyimpan…" : "💾 Simpan Manifest"}
+          </button>
+          <button onClick={createOrdersFromManifest} disabled={creatingOrders || assigned === 0}
+            style={{ ...btn, background: cs.green, opacity: (creatingOrders || assigned === 0) ? .5 : 1, cursor: (creatingOrders || assigned === 0) ? "not-allowed" : "pointer" }}
+            title={assigned === 0 ? "Isi kolom Tim dulu" : "Buat order Planning Order dari assignment di bawah"}>
+            {creatingOrders ? "Membuat…" : "🚀 Buat Order dari Manifest"}
+          </button>
+        </div>
       </div>
 
       <div style={{ color: cs.muted, fontSize: 12, marginBottom: 10 }}>
-        Isi kolom Tim (misal: Tim Rey, LT1) dan Teknisi per unit sebelum berangkat.
+        Isi kolom Tim (misal: Tim Rey, LT1), Teknisi &amp; Helper per unit sebelum berangkat, lalu "🚀 Buat Order dari
+        Manifest" untuk langsung dispatch ke Planning Order — bukan cuma catatan internal.
         Unit berstatus <strong>AC Baru</strong> otomatis di-skip dari penugasan.
       </div>
 
@@ -2992,7 +3115,7 @@ function ManifestTab({ sel, units, call, showNotif }) {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr>
-                {["Unit","Lokasi","PK","Status","Tim","Teknisi","Kategori"].map(h => <th key={h} style={th}>{h}</th>)}
+                {["Unit","Lokasi","PK","Status","Tim","Teknisi","Helper","Kategori"].map(h => <th key={h} style={th}>{h}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -3009,8 +3132,18 @@ function ManifestTab({ sel, units, call, showNotif }) {
                         placeholder="Tim A" style={{ ...inp, width: 80, padding: "4px 7px", fontSize: 12 }} />
                     </td>
                     <td style={td}>
-                      <input value={a.technician || ""} onChange={e => setAssign(u.id, "technician", e.target.value)}
-                        placeholder="Nama" style={{ ...inp, width: 90, padding: "4px 7px", fontSize: 12 }} />
+                      <select value={a.technician || ""} onChange={e => setAssign(u.id, "technician", e.target.value)}
+                        style={{ ...inp, width: 110, padding: "4px 7px", fontSize: 12 }}>
+                        <option value="">— pilih —</option>
+                        {teknisiOpts.map(t => <option key={t.id} value={t.name}>{t.name}{t.role === "Helper" ? " [H]" : ""}</option>)}
+                      </select>
+                    </td>
+                    <td style={td}>
+                      <select value={a.helper || ""} onChange={e => setAssign(u.id, "helper", e.target.value)}
+                        style={{ ...inp, width: 110, padding: "4px 7px", fontSize: 12 }}>
+                        <option value="">— tanpa helper —</option>
+                        {teknisiOpts.filter(t => t.name !== a.technician).map(t => <option key={t.id} value={t.name}>{t.name}{t.role === "Helper" ? " [H]" : ""}</option>)}
+                      </select>
                     </td>
                     <td style={td}>
                       <select value={a.service_category || "cuci_rutin"} onChange={e => setAssign(u.id, "service_category", e.target.value)}
@@ -3026,7 +3159,7 @@ function ManifestTab({ sel, units, call, showNotif }) {
               })}
               {baruUnits.length > 0 && (
                 <tr>
-                  <td colSpan={7} style={{ ...td, color: cs.muted, fontSize: 12, fontStyle: "italic", textAlign: "center", paddingTop: 12 }}>
+                  <td colSpan={8} style={{ ...td, color: cs.muted, fontSize: 12, fontStyle: "italic", textAlign: "center", paddingTop: 12 }}>
                     {baruUnits.length} unit AC Baru ({baruUnits.map(u => u.unit_code).join(", ")}) — otomatis di-skip, tidak memerlukan penugasan
                   </td>
                 </tr>
@@ -3541,7 +3674,8 @@ function ContractTab({ sel, call, showNotif, showConfirm, isOwner, currentUser }
     setBusy(true);
     try {
       const j = await call("generate-contract-invoice", { ...form, client_id: sel.id });
-      showNotif("✅ Invoice " + (j.invoice?.id || "") + " berhasil dibuat");
+      const markedMsg = j.logs_marked > 0 ? ` — ${j.logs_marked} log servis periode ini ditandai sudah tertagih (anti dobel-tagih di Invoice B2B)` : "";
+      showNotif("✅ Invoice " + (j.invoice?.id || "") + " berhasil dibuat" + markedMsg);
       setGenModal(null);
     } catch (e) { showNotif("❌ " + e.message); }
     finally { setBusy(false); }
@@ -3702,10 +3836,14 @@ function GenInvoiceModal({ data, onClose, onGenerate, busy, clientName }) {
   const today = new Date();
   const monthNames = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];
   const defaultLabel = `Maintenance ${monthNames[today.getMonth()]} ${today.getFullYear()}`;
+  const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
+  const lastOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().slice(0, 10);
   const [form, setForm] = useState({
     contract_id: data.contract_id || null,
     amount: data.amount || "",
     period_label: defaultLabel,
+    period_start: firstOfMonth,
+    period_end: lastOfMonth,
     unit_count: "",
     notes: "",
   });
@@ -3720,12 +3858,16 @@ function GenInvoiceModal({ data, onClose, onGenerate, busy, clientName }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <Field l="Label Periode"><input value={form.period_label} onChange={e => set("period_label", e.target.value)} style={inp} /></Field>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <Field l="Periode Mulai"><input type="date" value={form.period_start} onChange={e => set("period_start", e.target.value)} style={inp} /></Field>
+          <Field l="Periode Selesai"><input type="date" value={form.period_end} onChange={e => set("period_end", e.target.value)} style={inp} /></Field>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
           <Field l="Jumlah Unit Aktual"><input type="number" value={form.unit_count} onChange={e => set("unit_count", e.target.value)} style={inp} placeholder="28" /></Field>
           <Field l="Nominal Invoice (Rp)"><input type="number" value={form.amount} onChange={e => set("amount", e.target.value)} style={inp} /></Field>
         </div>
         <Field l="Catatan tambahan"><textarea value={form.notes} onChange={e => set("notes", e.target.value)} style={{ ...inp, minHeight: 50 }} placeholder="Opsional — muncul di invoice" /></Field>
         <div style={{ background: cs.surface, borderRadius: 8, padding: 10, fontSize: 12, color: cs.muted }}>
-          Invoice akan dibuat dengan status <b style={{ color: cs.text }}>UNPAID</b> dan bisa diedit sebelum dikirim ke klien.
+          Log servis kategori tercakup kontrak dalam periode ini akan ditandai "sudah ditagih" otomatis — supaya tidak ke-tagih dobel lewat tab Invoice B2B. Invoice dibuat dengan status <b style={{ color: cs.text }}>Menunggu Approval</b>.
         </div>
       </div>
       <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
