@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useMemo, lazy, Suspense } from "react
 import { cs } from "../theme/cs.js";
 import { unitHealth, borosRanking, BOROS_LEVEL_GANTI, HEALTH_META } from "../lib/maintenanceHealth.js";
 import { daysUntil } from "../lib/dateTime.js";
+import { checkMaintenanceOrderOverlap, formatOverlapWarning } from "../lib/checkMaintenanceOrderOverlap.js";
 import UnitTrendModal from "./UnitTrendModal.jsx";
 
 // Pill styles — didefinisikan di atas karena dirujuk oleh const module-level
@@ -300,7 +301,13 @@ export default function MaintenanceView({
   }
 
   if (ppmMode) {
-    return <PPMCalendar call={call} showNotif={showNotif} onBack={() => setPpmMode(false)} />;
+    return <PPMCalendar call={call} showNotif={showNotif} onBack={() => setPpmMode(false)}
+      onOpenClient={(clientId) => {
+        const c = clients.find(x => x.id === clientId);
+        if (!c) { showNotif("❌ Klien tidak ditemukan di daftar — coba refresh"); return; }
+        setPpmMode(false);
+        openClient(c);
+      }} />;
   }
 
   if (!sel) {
@@ -364,7 +371,7 @@ export default function MaintenanceView({
             {tab === "followup" && <FollowupTab sel={sel} units={units} logs={logs} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} currentUser={currentUser} supabase={supabase} setOrdersData={setOrdersData} getLocalDate={getLocalDate} />}
             {tab === "manifest"  && <ManifestTab sel={sel} units={units} call={call} showNotif={showNotif} showConfirm={showConfirm} teknisiData={teknisiData} supabase={supabase} setOrdersData={setOrdersData} getLocalDate={getLocalDate} createOrderFn={createOrderFn} createTeamSplitFn={createTeamSplitFn} />}
             {tab === "contract"  && <ContractTab sel={sel} units={units} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} currentUser={currentUser} />}
-            {tab === "workorder" && <WorkOrderTab sel={sel} units={units} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} currentUser={currentUser} />}
+            {tab === "workorder" && <WorkOrderTab sel={sel} units={units} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} currentUser={currentUser} teknisiData={teknisiData} />}
             {tab === "svchistory" && <HistoryServiceTab sel={sel} call={call} showNotif={showNotif} />}
             {tab === "stats"    && <StatsTab units={units} logs={logs} sel={sel} call={call}
               onSuggestReplace={(unit, reasons) => { setQuotaPrefill({ unit, reasons }); setTab("quotation"); }} />}
@@ -813,6 +820,14 @@ function UnitsTab({ sel, units, setUnits, logs = [], call, showNotif, showConfir
 
   const createOrder = async ({ date, service, time, notes, teknisi, helper, teamCount, teamAssign }) => {
     if (picked.size === 0) { showNotif("❌ Pilih minimal 1 unit"); return false; }
+    // Guard anti-dobel-jadwal: unit yang sama bisa dibuatkan order dari 4 jalur
+    // berbeda (Unit/Follow-up/Quotasi/Manifest) tanpa saling tahu — cek dulu.
+    const overlap = await checkMaintenanceOrderOverlap(supabase, { clientId: sel.id, unitIds: [...picked], date });
+    if (overlap.length > 0) {
+      const unitLabelById = Object.fromEntries(units.map(u => [u.id, u.unit_code]));
+      const ok = await showConfirm?.({ icon: "⚠️", title: "Unit sudah punya order?", message: formatOverlapWarning(overlap, unitLabelById), confirmText: "Ya, Tetap Buat" });
+      if (showConfirm && !ok) return false;
+    }
     const locs = [...new Set(pickedUnits.map(u => u.location).filter(Boolean))];
     const locNote = locs.length ? "Lokasi: " + locs.join(", ") : "";
     const noteStr = [`Maintenance ${sel.name}`, locNote, notes].filter(Boolean).join(" · ");
@@ -2740,15 +2755,23 @@ function FollowupTab({ sel, units, logs, call, showNotif, showConfirm, isOwner, 
   const buatOrderDariTemuan = async (f, unit) => {
     if (!supabase) { showNotif("❌ Koneksi DB tidak tersedia"); return; }
     const unitLabel = unit ? `${unit.unit_code}${unit.location ? " — " + unit.location : ""}` : "unit ?";
+    const today = typeof getLocalDate === "function" ? getLocalDate() : new Date().toISOString().slice(0, 10);
+    // Guard anti-dobel-jadwal — bukan penolakan, cuma info tambahan di confirm
+    // (repair dari temuan MEMANG sering sengaja dijadwalkan bareng cuci rutin hari
+    // yang sama, jadi overlap di sini seringnya benign — biar admin yang putuskan).
+    let overlapNote = "";
+    if (f.unit_id) {
+      const overlap = await checkMaintenanceOrderOverlap(supabase, { clientId: sel.id, unitIds: [f.unit_id], date: today });
+      if (overlap.length > 0) overlapNote = "\n\n⚠️ " + formatOverlapWarning(overlap, { [f.unit_id]: unitLabel }).split("\n\n")[0];
+    }
     const ok = await showConfirm({
       icon: "🛠", title: "Buat Order Perbaikan?",
-      message: `Order Repair untuk ${unitLabel} (${ISSUE_LABELS[f.issue_type] || f.issue_type}) akan masuk Planning Order sebagai PENDING — tanggal hari ini, geser & assign teknisi di sana. Status temuan otomatis jadi "Terjadwal".`,
+      message: `Order Repair untuk ${unitLabel} (${ISSUE_LABELS[f.issue_type] || f.issue_type}) akan masuk Planning Order sebagai PENDING — tanggal hari ini, geser & assign teknisi di sana. Status temuan otomatis jadi "Terjadwal".${overlapNote}`,
       confirmText: "Ya, Buat Order",
     });
     if (!ok) return;
     setOrderBusy(f.id);
     try {
-      const today = typeof getLocalDate === "function" ? getLocalDate() : new Date().toISOString().slice(0, 10);
       const jobId = newJobId();
       const notes = [
         `Follow-up maintenance ${sel.name}: ${ISSUE_LABELS[f.issue_type] || f.issue_type}`,
@@ -3021,9 +3044,17 @@ function ManifestTab({ sel, units, call, showNotif, showConfirm, teknisiData, su
   const createOrdersFromManifest = async () => {
     const withTeam = activeUnits.filter(u => assignments[u.id]?.team_label?.trim());
     if (withTeam.length === 0) { showNotif("❌ Isi kolom Tim minimal 1 unit dulu"); return; }
+    // Guard anti-dobel-jadwal — unit yang sama bisa sudah dibuatkan order dari tab
+    // lain (Unit/Follow-up) tanpa Manifest ini tahu.
+    let overlapNote = "";
+    const overlap = await checkMaintenanceOrderOverlap(supabase, { clientId: sel.id, unitIds: withTeam.map(u => u.id), date });
+    if (overlap.length > 0) {
+      const unitLabelById = Object.fromEntries(units.map(u => [u.id, u.unit_code]));
+      overlapNote = "\n\n⚠️ " + formatOverlapWarning(overlap, unitLabelById).split("\n\n")[0];
+    }
     const ok = await showConfirm?.({
       icon: "🚀", title: "Buat Order dari Manifest?",
-      message: `${withTeam.length} unit dengan Tim terisi akan dibuat jadi order Planning Order untuk ${date}. Lanjutkan?`,
+      message: `${withTeam.length} unit dengan Tim terisi akan dibuat jadi order Planning Order untuk ${date}. Lanjutkan?${overlapNote}`,
       confirmText: "Ya, Buat Order",
     });
     if (showConfirm && !ok) return;
@@ -3173,7 +3204,7 @@ function ManifestTab({ sel, units, call, showNotif, showConfirm, teknisiData, su
 }
 
 // ─────────── PPM CALENDAR (global lintas klien) ───────────
-function PPMCalendar({ call, showNotif, onBack }) {
+function PPMCalendar({ call, showNotif, onBack, onOpenClient }) {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [months, setMonths] = useState(3);
@@ -3251,6 +3282,12 @@ function PPMCalendar({ call, showNotif, onBack }) {
                         <div style={{ color: evOverdue ? cs.red : cs.muted, fontSize: 11, marginTop: 8, fontWeight: 600 }}>
                           📅 Kunjungan: {fmtDate(ev.next_service_date)}
                         </div>
+                        {onOpenClient && (
+                          <button onClick={() => onOpenClient(ev.client_id)}
+                            style={{ marginTop: 10, width: "100%", background: cs.accent + "15", border: "1px solid " + cs.accent + "44", color: cs.accent, borderRadius: 7, padding: "6px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                            🛠 Buka Klien → Buat Order
+                          </button>
+                        )}
                       </div>
                     );
                   })}
@@ -3884,7 +3921,7 @@ function GenInvoiceModal({ data, onClose, onGenerate, busy, clientName }) {
 const WO_TYPE_LABELS = { preventive: "Preventif", corrective: "Korektif", emergency: "Darurat", inspection: "Inspeksi" };
 const WO_STATUS_COLOR = { draft: cs.muted, approved: cs.accent, in_progress: cs.yellow || "#eab308", done: cs.green, cancelled: cs.red };
 
-function WorkOrderTab({ sel, units, call, showNotif, showConfirm, isOwner, currentUser }) {
+function WorkOrderTab({ sel, units, call, showNotif, showConfirm, isOwner, currentUser, teknisiData }) {
   const [wos, setWos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null);
@@ -3982,13 +4019,14 @@ function WorkOrderTab({ sel, units, call, showNotif, showConfirm, isOwner, curre
       )}
 
       {modal !== null && (
-        <WorkOrderModal wo={modal} units={units} onClose={() => setModal(null)} onSave={saveWO} busy={busy} />
+        <WorkOrderModal wo={modal} units={units} onClose={() => setModal(null)} onSave={saveWO} busy={busy} teknisiData={teknisiData} />
       )}
     </div>
   );
 }
 
-function WorkOrderModal({ wo, units, onClose, onSave, busy }) {
+function WorkOrderModal({ wo, units, onClose, onSave, busy, teknisiData }) {
+  const teknisiOpts = (teknisiData || []).filter(t => t.role === "Teknisi" || t.role === "Helper");
   const isNew = !wo.id;
   const [form, setForm] = useState({
     title: wo.title || "",
@@ -4024,7 +4062,12 @@ function WorkOrderModal({ wo, units, onClose, onSave, busy }) {
           <Field l="Tanggal Jadwal"><input type="date" value={form.scheduled_date} onChange={e => set("scheduled_date", e.target.value)} style={inp} /></Field>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <Field l="Teknisi Assigned"><input value={form.assigned_to} onChange={e => set("assigned_to", e.target.value)} style={inp} placeholder="Rey" /></Field>
+          <Field l="Teknisi Assigned">
+            <select value={form.assigned_to} onChange={e => set("assigned_to", e.target.value)} style={inp}>
+              <option value="">— pilih —</option>
+              {teknisiOpts.map(t => <option key={t.id} value={t.name}>{t.name}{t.role === "Helper" ? " [H]" : ""}</option>)}
+            </select>
+          </Field>
           <Field l="Estimasi Biaya (Rp)"><input type="number" value={form.estimated_cost} onChange={e => set("estimated_cost", e.target.value)} style={inp} /></Field>
         </div>
         <Field l="Deskripsi"><textarea value={form.description} onChange={e => set("description", e.target.value)} style={{ ...inp, minHeight: 50 }} /></Field>
