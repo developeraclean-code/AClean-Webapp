@@ -1,16 +1,31 @@
 // api/_validate.js — Validation & sanitization helpers bersama untuk semua handler API.
 // Dipindah apa adanya dari api/[route].js (Batch 1 pemecahan router, Jul 2026).
 
+// Normalisasi nomor untuk target Fonnte.
+// - Indonesia: 08xx / 62xx / 8xx → 628xxx (kanonik, tanpa "+")
+// - Internasional: diawali "+" ATAU kode negara asing (mis. 49.., 60.., 971..)
+//   → literal apa adanya (digit), TIDAK dipaksa jadi 62. Fonnte kirim ke nomor
+//   itu langsung (param countryCode hanya berlaku utk nomor berawalan "0").
+// Konsisten dgn normalizePhone di src/lib/phone.js (penyimpanan frontend).
 export function validateAndNormalizePhone(phone) {
   if (!phone) return null;
-  let normalized = String(phone).replace(/[^0-9+]/g, "");
-  if (normalized.startsWith("+62")) normalized = normalized.substring(1);
-  if (normalized.startsWith("0")) normalized = "62" + normalized.substring(1);
-  if (!normalized.startsWith("62")) normalized = "62" + normalized;
+  const s = String(phone).trim();
+  const intl = s.startsWith("+"); // penanda internasional eksplisit
+  let d = s.replace(/[^0-9]/g, "");
+  if (!d) return null;
 
-  // Must be valid Indonesian phone: 62 + 9-12 digits (total 11-14 digits)
-  if (!/^62\d{9,12}$/.test(normalized)) return null;
-  return normalized;
+  if (intl) {
+    // Internasional literal (termasuk +62 = Indonesia). Jangan paksa 62.
+    return /^\d{8,15}$/.test(d) ? d : null;
+  }
+  if (d.startsWith("0")) d = "62" + d.slice(1);       // 08xx → 628xx (lokal ID)
+  else if (d.startsWith("62")) { /* ID sudah kanonik */ }
+  else if (d.startsWith("8")) d = "62" + d;           // 8xx → 628xx (mobile ID tanpa prefix)
+  // else: kode negara asing tersimpan tanpa "+" (49.., 60.., 971..) → biarkan as-is
+
+  // Valid = 8-15 digit (ID 628xxx maupun internasional)
+  if (!/^\d{8,15}$/.test(d)) return null;
+  return d;
 }
 
 // Semua format phone yang mungkin tersimpan di DB — untuk query OR matching
