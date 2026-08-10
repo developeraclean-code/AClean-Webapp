@@ -1298,14 +1298,18 @@ return (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {multiInvoiceCustomers.slice(0, 3).map(([phone, invs]) => (
             <button key={phone}
-              onClick={() => setGroupPaymentCtx({
-                phone,
-                invoices: invs,
-                suggestedAmount: invs.reduce((s, i) => s + (i.total || 0), 0),
-                proofUrl: null,
-                method: "transfer",
-                suggId: null,
-              })}
+              onClick={() => {
+                // Tarik bukti bayar WA yang sudah ditangkap AI (payment_suggestions PENDING) utk phone ini
+                const sugg = (paymentSuggestions || []).find(s => samePhone(s.phone, phone) && s.image_url);
+                setGroupPaymentCtx({
+                  phone,
+                  invoices: invs,
+                  suggestedAmount: invs.reduce((s, i) => s + (i.total || 0), 0),
+                  proofUrl: sugg?.image_url || null,
+                  method: "transfer",
+                  suggId: sugg?.id || null,
+                });
+              }}
               style={{ background: "#06b6d422", border: "1px solid #06b6d466", color: "#06b6d4", padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
               {invs[0]?.customer || phone} ({invs.length} inv · {fmt(invs.reduce((s,i) => s+(i.total||0), 0))})
             </button>
@@ -1837,7 +1841,9 @@ return (
                 {setGroupPaymentCtx && (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
                   <button onClick={() => {
                     const sameCust = invoicesData.filter(i => i.phone === inv.phone && INVOICE_UNPAID_STATUSES.includes(i.status));
-                    setGroupPaymentCtx({ phone: inv.phone, invoices: sameCust.length > 0 ? sameCust : [inv], suggestedAmount: 0, proofUrl: null, method: "transfer", suggId: null });
+                    // Tarik bukti bayar WA yang sudah ditangkap AI (payment_suggestions PENDING) utk phone ini
+                    const sugg = (paymentSuggestions || []).find(s => samePhone(s.phone, inv.phone) && s.image_url);
+                    setGroupPaymentCtx({ phone: inv.phone, invoices: sameCust.length > 0 ? sameCust : [inv], suggestedAmount: 0, proofUrl: sugg?.image_url || null, method: "transfer", suggId: sugg?.id || null });
                   }} style={{ background: "#06b6d422", border: "1px solid #06b6d444", color: "#06b6d4", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
                     💳 Group Payment
                   </button>
