@@ -112,7 +112,7 @@ export default function EditInvoiceModal({
       if (!e2) saved = true;
     }
     if (!saved) await updateInvoice(supabase, editInvoiceData.id, { total: newTotalFinal }, auditUserName());
-    addAgentLog("INVOICE_EDITED", `Invoice ${editInvoiceData.id} diedit → ${fmt(newTotalFinal)}` + (editInvoiceForm.notes ? ` (${editInvoiceForm.notes})` : "") + " by Owner", "SUCCESS");
+    addAgentLog("INVOICE_EDITED", `Invoice ${editInvoiceData.id} diedit → ${fmt(newTotalFinal)}` + (editInvoiceForm.notes ? ` (${editInvoiceForm.notes})` : "") + ` by ${currentUser?.name || auditUserName?.() || "?"} (${currentUser?.role || "?"})`, "SUCCESS");
     showNotif(`✅ Invoice ${editInvoiceData.id} diupdate → ${fmt(newTotalFinal)}`);
     onClose();
   };

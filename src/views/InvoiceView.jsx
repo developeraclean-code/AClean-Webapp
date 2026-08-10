@@ -1599,10 +1599,10 @@ return (
                 🔩 Edit Material
               </button>
             )}
-            {/* Edit invoice — hanya untuk invoice NON ac_unit_sale */}
+            {/* Edit invoice (nama/alamat/nilai) — Owner & Admin, semua status non-PAID.
+                NON ac_unit_sale. RLS invoices (migrasi 119) izinkan UPDATE Owner/Admin. */}
             {inv.invoice_type !== "ac_unit_sale" && inv.status !== "PAID" &&
-              (currentUser?.role === "Owner" ||
-                (currentUser?.role === "Admin" && inv.status === "PENDING_APPROVAL")) && (
+              (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
                 <button onClick={() => {
                   setEditInvoiceData(inv); setEditInvoiceForm({ labor: inv.labor, material: inv.material, discount: inv.discount || 0, trade_in: inv.trade_in || false, trade_in_amount: inv.trade_in_amount || 250000, pph23: inv.pph23 || false, notes: "" }); const _allItems = parseMD(inv.materials_detail).map((m, idx) => ({ ...m, _idx: idx }));
                   // Split via kategori billing (bukan tebak-nama): LABOR/FEE → section jasa, sisanya → material
