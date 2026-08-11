@@ -10,9 +10,9 @@ export async function submitLaporan({
   isTrackedByCode, isTrackedByName, isUnitDone, laporanBarangItems, laporanCatatan, laporanCleaningInRepair,
   laporanFotos, laporanInstallItems, laporanJasaItems, laporanMaterials, laporanModal,
   laporanRekomendasi, laporanRepairItems, laporanRepairType, laporanSurveyCatatan,
-  laporanSurveyHasil, laporanUnits, lookupHargaGlobal, multiDayProjectKey, normalizeLines,
+  laporanSurveyHasil, laporanUnits, lookupHargaGlobal, normalizeLines,
   normalizePhone, ordersData, priceListData, pushNotif, quotationsData,
-  refreshMaterialsBroughtMap, reportError, resolveMultiDayInvoiceAction, safeArr,
+  refreshMaterialsBroughtMap, reportError, safeArr,
   seedAcRegistry, sendWA, setInvoicesData, setLaporanModal, setLaporanReports,
   setLaporanSubmitted, setOrdersData, setQuotationsData, setTeknisiData, showConfirm,
   showNotif, submitLaporanLock, summarize, supabase, syncTrackedStock, teknisiData,
@@ -639,8 +639,9 @@ export async function submitLaporan({
       // Team-split: invoice B2B tunggal per project, di-key ke job_group_id untuk SEMUA
       // anggota grup. Tim mana pun yang diverifikasi duluan membuat invoice; sisanya menemukan
       // invoice itu via job_id = job_group_id → skip (anti invoice ganda).
-      // Multi-hari TIDAK ditangani di sini — diproses dengan AKUMULASI di bawah (setelah mDetail
-      // dibangun) lewat resolveMultiDayInvoiceAction(): 1 invoice induk, item tiap hari digabung.
+      // Multi-hari TIDAK punya perlakuan khusus lagi (kebijakan Owner 11 Agu 2026):
+      // tiap hari kerja = 1 order = 1 invoice sendiri, sama seperti job biasa. Penagihan
+      // dikirim per-invoice; kalau customer bayar sekaligus, dipakai Group Payment.
       const isTeamSplit = !!laporanModal.is_team_split && !!laporanModal.job_group_id;
       if (isTeamSplit) {
         const groupInv = invoicesData.find(i => i.job_id === laporanModal.job_group_id);
@@ -687,83 +688,39 @@ export async function submitLaporan({
       const laborFromDetail = _summary.labor;
       const matFromDetail = _summary.material;
 
-      // ── MULTI-HARI: akumulasi ke 1 invoice INDUK, bukan invoice ganda ───────────────
-      // Hanya untuk laporan is_multi_day. Flow normal & team-split tidak terpengaruh sama sekali.
-      // Cek invoice grup langsung ke DB (race-safe) → MERGE / CREATE / CREATE_SEPARATE.
-      let didMergeMultiDay = false;
-      let multiDayAnchorJobId = null;
       // ── Anti-duplikat invoice (defense-in-depth) ──
-      // (a) order SUDAH tertaut invoice aktif (gabungan manual job_id=null / edit ulang), atau
-      // (b) order hari ke-2+ (day_number>1) yang TIDAK ter-flag is_multi_day (data cacat) →
-      // JANGAN buat invoice baru; cukup tautkan + COMPLETED. (Multi-hari ter-flag benar lanjut
-      // ke resolver di bawah.) Laporan tetap tersimpan — hanya pembuatan invoice yang di-skip.
+      // Order SUDAH tertaut invoice aktif (gabungan manual job_id=null / edit ulang laporan)
+      // → JANGAN buat invoice ke-2 untuk order yang sama; cukup tautkan + COMPLETED.
+      // Laporan tetap tersimpan — hanya pembuatan invoice yang di-skip.
+      // CATATAN (11 Agu 2026): guard "day_number>1 tanpa flag multi-hari" DIHAPUS —
+      // dulu perlu karena hari ke-2+ memang tidak boleh punya invoice sendiri. Sekarang
+      // tiap hari = 1 invoice sendiri, jadi guard itu justru memblokir yang seharusnya.
+      let skipInvoiceCreate = false;
       {
         const _ordDup = ordersData.find(o => o.id === laporanModal.id);
         const _linkedDup = _ordDup?.invoice_id
           ? invoicesData.find(i => i.id === _ordDup.invoice_id && String(i.status || "").toUpperCase() !== "CANCELLED")
           : null;
-        const _orphanMD = laporanModal.is_multi_day !== true && _ordDup?.is_multi_day !== true
-          && Number(laporanModal.day_number || _ordDup?.day_number) > 1;
-        if (laporanModal.service !== "Survey" && (_linkedDup || _orphanMD)) {
-          const _tgt = _linkedDup?.id || _ordDup?.invoice_id || null;
-          setOrdersData(prev => prev.map(o => o.id === laporanModal.id ? { ...o, status: "COMPLETED", ...(_tgt ? { invoice_id: _tgt } : {}) } : o));
-          try { await updateOrderStatus(supabase, laporanModal.id, "COMPLETED", auditUserName(), _tgt ? { invoice_id: _tgt } : {}); } catch (e) { reportError("order.complete.statusSync", e, { jobId: laporanModal.id }); }
+        if (laporanModal.service !== "Survey" && _linkedDup) {
+          setOrdersData(prev => prev.map(o => o.id === laporanModal.id ? { ...o, status: "COMPLETED", invoice_id: _linkedDup.id } : o));
+          try { await updateOrderStatus(supabase, laporanModal.id, "COMPLETED", auditUserName(), { invoice_id: _linkedDup.id }); } catch (e) { reportError("order.complete.statusSync", e, { jobId: laporanModal.id }); }
           addAgentLog("INVOICE_DUP_GUARD",
-            `Laporan ${laporanModal.id} (hari ke-${laporanModal.day_number || "?"}) — ${_linkedDup ? "tertaut invoice " + _linkedDup.id : "day_number>1 tanpa flag multi-hari"}, TIDAK buat invoice baru`, "INFO");
-          showNotif(_linkedDup
-            ? `ℹ️ Laporan masuk & ditautkan ke invoice ${_linkedDup.id}. Tidak ada invoice baru — edit invoice induk bila perlu.`
-            : `ℹ️ Laporan hari ke-${laporanModal.day_number || "?"} masuk. Tidak buat invoice baru (multi-hari) — tautkan/edit invoice induk manual.`);
-          didMergeMultiDay = true;
+            `Laporan ${laporanModal.id} — order sudah tertaut invoice ${_linkedDup.id}, TIDAK buat invoice baru`, "INFO");
+          showNotif(`ℹ️ Laporan masuk & ditautkan ke invoice ${_linkedDup.id}. Tidak ada invoice baru — edit invoice itu bila ada tambahan.`);
+          skipInvoiceCreate = true;
         }
       }
-      if (!didMergeMultiDay && laporanModal.is_multi_day === true) {
-        const projectKey = multiDayProjectKey(laporanModal);
-        const { data: grpRows, error: grpErr } = await supabase
-          .from("invoices")
-          .select("id,job_id,status,materials_detail,labor,material,total,garansi_days,garansi_expires,created_at")
-          .eq("job_id", projectKey)
-          .neq("status", "CANCELLED")
-          .order("created_at", { ascending: true });
-        if (grpErr) {
-          console.error("[MULTIDAY_PRECHECK]", grpErr.message);
-          showNotif("❌ Gagal cek invoice grup multi-hari — submit dibatalkan, coba lagi.");
-          return;
-        }
-        const mdAction = resolveMultiDayInvoiceAction({ report: laporanModal, invoices: grpRows || [] });
-        multiDayAnchorJobId = mdAction.anchorJobId;
 
-        if (mdAction.type === "SKIP") {
-          // Multi-hari: invoice induk SUDAH ADA & belum lunas → JANGAN buat invoice baru
-          // DAN JANGAN tambah nilai otomatis (SOP: laporan harian tumpang-tindih → cegah
-          // dobel-hitung). Cukup tautkan order ini ke invoice induk; Owner edit manual.
-          const existing = mdAction.existing;
-          setOrdersData(prev => prev.map(o => o.id === laporanModal.id ? { ...o, status: "COMPLETED", invoice_id: existing.id } : o));
-          try { await updateOrderStatus(supabase, laporanModal.id, "COMPLETED", auditUserName(), { invoice_id: existing.id }); } catch (e) { reportError("order.complete.statusSync", e, { jobId: laporanModal.id }); }
-          addAgentLog("MULTIDAY_SKIP_INVOICE",
-            `Laporan ${laporanModal.id} (hari ke-${laporanModal.day_number || "?"}) — invoice induk ${existing.id} sudah ada, tidak buat/menambah (edit manual bila perlu)`,
-            "INFO");
-          showNotif(`ℹ️ Laporan hari ke-${laporanModal.day_number || "?"} masuk & ditautkan ke invoice induk ${existing.id} (${fmt(existing.total)}). Tidak ada invoice baru — edit invoice induk bila ada tambahan.`);
-          didMergeMultiDay = true;
-        }
-        // CREATE / CREATE_SEPARATE → lanjut ke pembuatan invoice di bawah (anchor = multiDayAnchorJobId).
-      }
-
-      if (!didMergeMultiDay) {
+      if (!skipInvoiceCreate) {
       // P1: simpan kategori billing eksplisit per baris (bukan tebak nama saat baca).
-      const _normDetail = normalizeLines(mDetail);
-      // Multi-hari (CREATE): tag tiap baris dgn source_job_id agar idempotent untuk akumulasi berikutnya.
-      const detailToStore = laporanModal.is_multi_day === true
-        ? _normDetail.map(r => ({ ...r, source_job_id: laporanModal.id }))
-        : _normDetail;
+      const detailToStore = normalizeLines(mDetail);
       const newInvoice = {
         id: invId,
-        // Multi-hari → anchor dari resolveMultiDayInvoiceAction (induk utk CREATE, id order sendiri
-        // utk CREATE_SEPARATE saat invoice grup sudah lunas). Team-split → job_group_id. Sisanya → id sendiri.
-        job_id: (laporanModal.is_multi_day === true && multiDayAnchorJobId)
-          ? multiDayAnchorJobId
-          : (laporanModal.is_team_split && laporanModal.job_group_id)
-            ? laporanModal.job_group_id
-            : laporanModal.id,
+        // Team-split → job_group_id (1 invoice B2B per project, tim mana pun yang duluan).
+        // Sisanya (termasuk multi-hari) → id order sendiri = 1 order 1 invoice.
+        job_id: (laporanModal.is_team_split && laporanModal.job_group_id)
+          ? laporanModal.job_group_id
+          : laporanModal.id,
         customer: laporanModal.customer,
         phone: laporanModal.phone || customersData.find(c => c.name === laporanModal.customer)?.phone || "",
         // Alamat pekerjaan dari order — tampil di blok "Tagihan Kepada" invoice PDF
@@ -774,7 +731,7 @@ export async function submitLaporan({
         units: laporanUnits.length,
         labor: laborFromDetail,
         material: matFromDetail,
-        materials_detail: detailToStore,     // array untuk state/display (tagged source_job_id utk multi-hari)
+        materials_detail: detailToStore,     // array untuk state/display
         garansi_status: garansiStatusLocal,  // hanya state, tidak ke DB
         repair_gratis: isRepairGratis ? laporanRepairType : undefined,  // NEW: store repair type (gratis-garansi/gratis-customer)
         discount: 0,
@@ -929,7 +886,7 @@ export async function submitLaporan({
           console.warn("[ARA_NOTIFY_OWNER_FAILED]", err.message);
         }
       }
-      } // ── tutup if (!didMergeMultiDay) — pembuatan invoice baru ──
+      } // ── tutup if (!skipInvoiceCreate) — pembuatan invoice baru ──
     }
 
     // ── Sync job_materials_brought: tandai USED / RETURNED ──

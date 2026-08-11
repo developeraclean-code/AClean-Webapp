@@ -64,20 +64,14 @@ export async function approveInvoiceCore(inv, {
     setInvoicesData(prev => prev.map(i =>
       i.id === inv.id ? { ...i, status: "UNPAID", sent: sentAt, due } : i
     ));
+    // 1 order = 1 invoice (termasuk multi-hari, kebijakan Owner 11 Agu 2026): approve
+    // HANYA menyentuh order pemilik invoice ini. Dulu status ikut di-propagate ke semua
+    // child multi-hari karena 1 invoice induk mewakili seluruh hari — sekarang tiap hari
+    // punya invoice sendiri, jadi propagasi itu akan menimpa invoice_id anak dan merusak
+    // pasangan 1:1-nya.
     setOrdersData(prev => prev.map(o =>
-      // Multi-hari: propagate ke parent + semua child multi-day
-      (o.id === inv.job_id || (o.parent_job_id === inv.job_id && o.is_multi_day))
-        ? { ...o, invoice_id: inv.id, status: "INVOICE_APPROVED" } : o
+      o.id === inv.job_id ? { ...o, invoice_id: inv.id, status: "INVOICE_APPROVED" } : o
     ));
-    // Sync ke DB untuk child multi-day juga
-    {
-      const childIds = (ordersData || [])
-        .filter(o => o.parent_job_id === inv.job_id && o.is_multi_day)
-        .map(o => o.id);
-      if (childIds.length > 0) {
-        supabase.from("orders").update({ invoice_id: inv.id, status: "INVOICE_APPROVED" }).in("id", childIds);
-      }
-    }
     // GAP 4: simpan approved_by, trigger DB akan catat audit_log
     await setAuditUser();
     // Update invoice — try full, fallback minimal

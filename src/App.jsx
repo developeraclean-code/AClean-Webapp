@@ -13,7 +13,6 @@ import { classifyMaterial } from "./lib/materialRecon.js";
 import { getTechColor as getTechColorFromLib } from "./lib/techColor.js";
 import { sameCustomer, findCustomer, buildCustomerHistory } from "./lib/customers.js";
 import { detectContinuationCandidates } from "./lib/orders.js";
-import { resolveMultiDayInvoiceAction, multiDayProjectKey } from "./lib/invoiceMultiDay.js";
 import { summarize, checkInvoiceConsistency, describeInconsistency, normalizeLines, buildWarrantyDiscountLine, categoryOf, LINE_CATEGORY, categoryFromCatalog, computePph23 } from "./lib/invoicing.js";
 import { listPendingBAP, flushBAPQueue } from "./lib/bapOfflineQueue.js";
 import { buildInvoiceDetail } from "./lib/laporanInvoice.js";
@@ -4332,9 +4331,9 @@ export default function ACleanWebApp() {
     isTrackedByCode, isTrackedByName, isUnitDone, laporanBarangItems, laporanCatatan, laporanCleaningInRepair,
     laporanFotos, laporanInstallItems, laporanJasaItems, laporanMaterials, laporanModal,
     laporanRekomendasi, laporanRepairItems, laporanRepairType, laporanSurveyCatatan,
-    laporanSurveyHasil, laporanUnits, lookupHargaGlobal, multiDayProjectKey, normalizeLines,
+    laporanSurveyHasil, laporanUnits, lookupHargaGlobal, normalizeLines,
     normalizePhone, ordersData, priceListData, pushNotif, quotationsData,
-    refreshMaterialsBroughtMap, reportError, resolveMultiDayInvoiceAction, safeArr,
+    refreshMaterialsBroughtMap, reportError, safeArr,
     seedAcRegistry, sendWA, setInvoicesData, setLaporanModal, setLaporanReports,
     setLaporanSubmitted, setOrdersData, setQuotationsData, setTeknisiData, showConfirm,
     showNotif, submitLaporanLock, summarize, supabase, syncTrackedStock, teknisiData,

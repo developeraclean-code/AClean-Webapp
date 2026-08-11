@@ -171,21 +171,17 @@ const revBreakdown = [
 ].filter(([, rev, , cnt]) => rev > 0 || cnt > 0);
 
 // ── Teknisi performance — filter sesuai periode ──
-// Multi-hari: tiap hari child dianggap "1 job teknisi" (karena teknisi memang bekerja di hari itu)
-// Revenue: bagi rata invoice ke jumlah hari kalau multi-day
+// Multi-hari: tiap hari child dianggap "1 job teknisi" (karena teknisi memang bekerja di hari itu).
+// Revenue: sejak kebijakan 1 order = 1 invoice (11 Agu 2026), tiap hari kerja punya invoice
+// sendiri → cukup match langsung job_id, tanpa bagi-rata lintas hari. Dulu perlu dibagi rata
+// karena 1 invoice induk mewakili semua hari (dan teknisi tiap hari bisa beda).
 const tekPerf = [...new Set(ordersData.map(o => o.teknisi).filter(Boolean))].map(name => {
   const myOrders = ordersPeriod.filter(o => o.teknisi === name);
   const myDone = myOrders.filter(o => DONE_STATUSES.includes(o.status) || o.status === "CONTINUED").length;
-  // Revenue: untuk multi-day, invoice di-link ke parent saja → match via id atau via parent_job_id
+  const myOrderIds = new Set(myOrders.map(o => o.id));
   const myRev = paidInv
-    .filter(i => myOrders.some(o => o.id === i.job_id || o.parent_job_id === i.job_id))
-    .reduce((a, b) => {
-      // Bagi revenue rata kalau multi-day (biar tidak over-count satu invoice ke teknisi yang berbeda di hari berbeda)
-      const linkedOrders = ordersData.filter(o => o.id === b.job_id || (o.parent_job_id === b.job_id && o.is_multi_day));
-      const myShare = linkedOrders.filter(o => o.teknisi === name).length;
-      const totalDays = Math.max(linkedOrders.length, 1);
-      return a + (effRevenue(b) * myShare / totalDays);
-    }, 0);
+    .filter(i => myOrderIds.has(i.job_id))
+    .reduce((a, b) => a + effRevenue(b), 0);
   return { name, done: myDone, total: myOrders.length, rev: Math.round(myRev), isHelper: false };
 }).filter(t => t.total > 0).sort((a, b) => b.done - a.done);
 

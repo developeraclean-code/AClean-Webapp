@@ -1493,15 +1493,18 @@ return (
                   📨 {inv.wa_sent_count}x{inv.wa_last_sent_mode === "merged" ? " (gabung)" : ""}
                 </span>
               )}
-              {/* Badge multi-hari: tampil jika ada child orders MULTI-DAY terkait invoice ini */}
+              {/* Badge multi-hari: sejak 1 order = 1 invoice (11 Agu 2026), invoice ini hanya
+                  mewakili SATU hari kerja dari job multi-hari — badge menyebut hari keberapa
+                  supaya tidak disangka mencakup seluruh hari (dulu memang begitu). */}
               {(() => {
-                const parentOrder = (ordersData || []).find(o => o.id === inv.job_id);
-                const childOrders = (ordersData || []).filter(o => o.parent_job_id === inv.job_id && o.is_multi_day);
-                if (childOrders.length === 0 && !parentOrder?.is_multi_day) return null;
-                const totalDays = 1 + childOrders.length;
+                const ord = (ordersData || []).find(o => o.id === inv.job_id);
+                if (!ord?.is_multi_day) return null;
+                const parentId = ord.parent_job_id || ord.id;
+                const totalDays = 1 + (ordersData || []).filter(o => o.parent_job_id === parentId && o.is_multi_day).length;
                 return (
-                  <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 99, background: "#f9731618", color: "#f97316", border: "1px solid #f9731644", fontWeight: 700 }}>
-                    📋 Multi-Hari ({totalDays} hari)
+                  <span title="Job multi-hari — tiap hari ditagih dengan invoice terpisah"
+                    style={{ fontSize: 10, padding: "2px 8px", borderRadius: 99, background: "#f9731618", color: "#f97316", border: "1px solid #f9731644", fontWeight: 700 }}>
+                    📋 Hari {ord.day_number || 1}/{totalDays}
                   </span>
                 );
               })()}

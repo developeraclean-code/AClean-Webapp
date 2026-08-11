@@ -28,20 +28,14 @@ export async function markPaid(inv, method = "transfer", notes = "", sendCustNot
     setInvoicesData(prev => prev.map(i =>
       i.id === inv.id ? { ...i, status: "PAID", paid_at: paidAt, ...(paymentProofUrl ? { payment_proof_url: paymentProofUrl } : {}) } : i
     ));
+    // 1 order = 1 invoice (termasuk multi-hari, kebijakan Owner 11 Agu 2026): pelunasan
+    // HANYA menyentuh order pemilik invoice ini. Dulu status PAID ikut di-propagate ke
+    // semua child multi-hari karena 1 invoice induk mewakili seluruh hari — sekarang tiap
+    // hari ditagih terpisah, jadi propagasi itu akan menandai hari lain lunas padahal
+    // invoice-nya sendiri belum dibayar. Bayar sekaligus → pakai Group Payment.
     setOrdersData(prev => prev.map(o =>
-      // Multi-hari: parent + child multi-day + via invoice_id link → semua PAID
-      (o.id === inv.job_id || o.invoice_id === inv.id || (o.parent_job_id === inv.job_id && o.is_multi_day))
-        ? { ...o, status: "PAID" } : o
+      (o.id === inv.job_id || o.invoice_id === inv.id) ? { ...o, status: "PAID" } : o
     ));
-    // Sync ke DB untuk child multi-day yang belum punya invoice_id link
-    {
-      const childIds = (ordersData || [])
-        .filter(o => o.parent_job_id === inv.job_id && o.is_multi_day)
-        .map(o => o.id);
-      if (childIds.length > 0) {
-        supabase.from("orders").update({ status: "PAID" }).in("id", childIds);
-      }
-    }
     await setAuditUser();
     {
       const { error: mpErr } = await markInvoicePaid(supabase, inv.id, paidAt, auditUserName());
