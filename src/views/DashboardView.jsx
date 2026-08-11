@@ -1,6 +1,7 @@
-import { memo, useState } from "react";
+import { memo, useState, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor, statusLabel, ORDER_DONE_STATUSES } from "../constants/status.js";
+import { fetchAllOrders, fetchAllInvoices, fetchPayrollCost } from "../data/reads.js";
 import { displayStock } from "../lib/inventory.js";
 import AbsenBanner from "./AbsenBanner.jsx";
 import { useAppContext } from "../context/AppContext.js";
@@ -11,6 +12,36 @@ function DashboardView({ ordersData, invoicesData, inventoryData, teknisiData, o
 const role = currentUser?.role || "Admin";
 const [gridDate, setGridDate] = useState(TODAY);
 const hariIni = new Date(TODAY + "T00:00:00+07:00").toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+
+// ── Data untuk Analitik Keuangan (Owner) — WAJIB dipanggil sebelum early-return
+// dashboard Teknisi/Helper di bawah supaya urutan hook konsisten tiap render.
+//
+// Kenapa fetch terpisah: props `invoicesData`/`ordersData` sengaja di-cap 300/500 baris
+// TERBARU (reads.js) demi speed login. Untuk grafik tren 6 bulan itu fatal — per 11 Agu
+// 2026 cap 300 hanya menjangkau invoice sejak 20 Juli, jadi Apr–Jun tampil Rp 0 padahal
+// nyatanya 141jt/179jt/189jt, dan Juli tampil 69jt dari 201jt yang sebenarnya.
+// Pola sama dengan ReportsView (Statistik) — biar dua halaman ini tidak lagi beda angka.
+const [finOrders, setFinOrders] = useState(null);
+const [finInvoices, setFinInvoices] = useState(null);
+const [finPayroll, setFinPayroll] = useState(null);
+useEffect(() => {
+  if (role !== "Owner" || !supabase) return;   // hanya Owner yang punya panel ini
+  let cancelled = false;
+  (async () => {
+    try {
+      const [{ data: ord }, { data: inv }, { data: pay }] = await Promise.all([
+        fetchAllOrders(supabase), fetchAllInvoices(supabase), fetchPayrollCost(supabase),
+      ]);
+      if (cancelled) return;
+      setFinOrders(ord || []); setFinInvoices(inv || []); setFinPayroll(pay || []);
+    } catch (e) {
+      // Non-blocking: panel tetap tampil pakai data ber-cap (lebih baik angka lama
+      // daripada dashboard kosong) — tapi jangan senyap total.
+      console.warn("[FIN_ANALYTICS] gagal muat data penuh:", e?.message || e);
+    }
+  })();
+  return () => { cancelled = true; };
+}, [role, supabase]);
 
 // ── TEKNISI & HELPER DASHBOARD ─────────────────────────────
 if (role === "Teknisi" || role === "Helper") {
@@ -928,11 +959,36 @@ return (
         };
       });
 
-      const revenueByMonth = months.map(m => ({
-        ...m,
-        revenue: invoicesData.filter(i => i.status === "PAID" && jobDate(i).startsWith(m.prefix)).reduce((s, i) => s + (i.total || 0), 0),
-        expenseTotal: (expensesData || []).filter(e => (e.date || "").startsWith(m.prefix)).reduce((s, e) => s + (e.amount || 0), 0),
-      }));
+      // Data historis PENUH (lihat komentar finOrders/finInvoices di atas). Selama fetch
+      // belum selesai, fallback ke props ber-cap supaya panel tidak flash kosong.
+      const finInv = finInvoices || invoicesData;
+      const finOrd = finOrders || ordersData;
+      const finOrderDateMap = Object.fromEntries((finOrd || []).filter(o => o.date).map(o => [o.id, o.date]));
+      const finJobDate = (inv) => finOrderDateMap[inv.job_id] || (inv.created_at || "").slice(0, 10) || "";
+
+      // ── Biaya gaji per bulan (tabel weekly_payroll — TIDAK ada di `expenses`) ──
+      // Basis kas: pakai tanggal dibayar; slip yang belum dibayar dipakai period_end
+      // (minggu sudah berjalan = biaya sudah timbul, dan kartunya bernama "Estimasi Profit").
+      // Nilai = gaji BERSIH, karena kasbon sudah masuk expenses saat dicairkan.
+      const payrollByMonth = {};
+      (finPayroll || []).forEach(p => {
+        const d = (p.paid_at ? String(p.paid_at).slice(0, 10) : (p.period_end || "")).slice(0, 7);
+        if (!d) return;
+        const bersih = (Number(p.gross_salary) || 0) + (Number(p.manual_bonus) || 0) - (Number(p.kasbon_deduct) || 0);
+        payrollByMonth[d] = (payrollByMonth[d] || 0) + bersih;
+      });
+
+      const revenueByMonth = months.map(m => {
+        const expLain = (expensesData || []).filter(e => (e.date || "").startsWith(m.prefix)).reduce((s, e) => s + (e.amount || 0), 0);
+        const gaji = payrollByMonth[m.prefix] || 0;
+        return {
+          ...m,
+          revenue: finInv.filter(i => i.status === "PAID" && finJobDate(i).startsWith(m.prefix)).reduce((s, i) => s + (i.total || 0), 0),
+          expenseLain: expLain,
+          gaji,
+          expenseTotal: expLain + gaji,
+        };
+      });
 
       const thisMPrefix = bulanIni;
       const [ty, tm] = bulanIni.split("-").map(Number);
@@ -943,12 +999,17 @@ return (
       const revLastM = revenueByMonth.find(m => m.prefix === lastMPrefix)?.revenue || 0;
       const revGrowth = revLastM > 0 ? Math.round(((revThisM - revLastM) / revLastM) * 100) : null;
 
-      const expThisM = revenueByMonth.find(m => m.prefix === thisMPrefix)?.expenseTotal || 0;
+      const thisM = revenueByMonth.find(m => m.prefix === thisMPrefix);
+      const expThisM = thisM?.expenseTotal || 0;
+      const gajiThisM = thisM?.gaji || 0;
       const profitThisM = revThisM - expThisM;
-      const unpaidTotal = invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE").reduce((s, i) => s + (i.total || 0), 0);
+      // Outstanding pakai data penuh juga — invoice belum lunas justru cenderung LAMA,
+      // paling rawan kepotong cap 300 baris terbaru.
+      const unpaidList = finInv.filter(i => i.status === "UNPAID" || i.status === "OVERDUE");
+      const unpaidTotal = unpaidList.reduce((s, i) => s + (i.total || 0), 0);
 
       const byService = {};
-      invoicesData.filter(i => i.status === "PAID" && jobDate(i).startsWith(thisMPrefix)).forEach(i => {
+      finInv.filter(i => i.status === "PAID" && finJobDate(i).startsWith(thisMPrefix)).forEach(i => {
         const s = i.service || "Lainnya";
         byService[s] = (byService[s] || 0) + (i.total || 0);
       });
@@ -968,9 +1029,13 @@ return (
               { label: "Revenue Bulan Ini", value: fmt(revThisM), color: cs.green, icon: "💰",
                 sub: revGrowth !== null ? (revGrowth >= 0 ? "▲ " : "▼ ") + Math.abs(revGrowth) + "% vs bln lalu" : "Bulan pertama",
                 subColor: revGrowth === null ? cs.muted : revGrowth >= 0 ? cs.green : cs.red },
-              { label: "Pengeluaran Bln Ini", value: fmt(expThisM), color: cs.yellow, icon: "🧾", sub: "Dari " + (expensesData || []).filter(e => (e.date || "").startsWith(thisMPrefix)).length + " transaksi", subColor: cs.muted },
+              { label: "Pengeluaran Bln Ini", value: fmt(expThisM), color: cs.yellow, icon: "🧾",
+                sub: gajiThisM > 0
+                  ? "Termasuk gaji tim " + fmt(gajiThisM)
+                  : "Dari " + (expensesData || []).filter(e => (e.date || "").startsWith(thisMPrefix)).length + " transaksi",
+                subColor: cs.muted },
               { label: "Estimasi Profit", value: fmt(profitThisM), color: profitThisM >= 0 ? cs.green : cs.red, icon: "📈", sub: expThisM > 0 && revThisM > 0 ? "Margin " + Math.round(profitThisM / revThisM * 100) + "%" : "Belum ada pengeluaran", subColor: cs.muted },
-              { label: "Outstanding Unpaid", value: fmt(unpaidTotal), color: cs.yellow, icon: "⏳", sub: invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length + " invoice belum lunas", subColor: cs.muted },
+              { label: "Outstanding Unpaid", value: fmt(unpaidTotal), color: cs.yellow, icon: "⏳", sub: unpaidList.length + " invoice belum lunas", subColor: cs.muted },
             ].map(k => (
               <div key={k.label} style={{ background: cs.surface, border: "1px solid " + k.color + "33", borderRadius: 12, padding: "12px 14px" }}>
                 <div style={{ fontSize: 18, marginBottom: 6 }}>{k.icon}</div>
@@ -1057,6 +1122,18 @@ return (
                 byCategory[cat].count++;
                 byCategory[cat].items.push(e.subcategory || e.item_name || "—");
               });
+              // Gaji tim: sumbernya weekly_payroll, bukan tabel expenses — dimasukkan
+              // sebagai kategori tersendiri supaya terlihat jelas dan tidak lagi "hilang".
+              if (gajiThisM > 0) {
+                const slipBln = (finPayroll || []).filter(p =>
+                  (p.paid_at ? String(p.paid_at).slice(0, 10) : (p.period_end || "")).startsWith(thisMPrefix));
+                const belumBayar = slipBln.filter(p => !p.is_paid).length;
+                byCategory.salary = {
+                  total: gajiThisM,
+                  count: slipBln.length,
+                  items: [belumBayar > 0 ? `${belumBayar} slip belum dibayar` : "semua slip terbayar", "net setelah potong kasbon"],
+                };
+              }
 
               const catEntries = Object.entries(byCategory).sort((a, b) => b[1].total - a[1].total);
               const expTotal = catEntries.reduce((s, [, v]) => s + v.total, 0);
@@ -1085,7 +1162,7 @@ return (
                               <div style={{ height: 5, background: cs.border, borderRadius: 99, overflow: "hidden" }}>
                                 <div style={{ height: "100%", width: pct + "%", background: meta.color, borderRadius: 99 }} />
                               </div>
-                              <div style={{ fontSize: 10, color: cs.muted, marginTop: 3 }}>{stat.count} transaksi · {[...new Set(stat.items)].slice(0, 2).join(", ")}{stat.count > 2 ? "..." : ""}</div>
+                              <div style={{ fontSize: 10, color: cs.muted, marginTop: 3 }}>{stat.count} {cat === "salary" ? "slip gaji" : "transaksi"} · {[...new Set(stat.items)].slice(0, 2).join(", ")}{cat !== "salary" && stat.count > 2 ? "..." : ""}</div>
                             </div>
                           </div>
                         );

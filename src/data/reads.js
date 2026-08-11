@@ -335,6 +335,18 @@ export const fetchWeeklyPayroll = (supabase, periodStart) =>
     .eq("period_start", periodStart)
     .order("user_name");
 
+// Biaya gaji seluruh periode — untuk Analitik Keuangan (Dashboard Owner), yang sebelumnya
+// HANYA membaca tabel `expenses` sehingga gaji (pos biaya terbesar) tidak pernah ikut
+// terhitung & margin tampak jauh lebih tinggi dari sebenarnya.
+//
+// PENTING — pakai gaji BERSIH: gross_salary + manual_bonus − kasbon_deduct.
+// Kasbon karyawan SUDAH dicatat di `expenses` (petty_cash / "Kasbon Karyawan") saat
+// dicairkan; memakai gross_salary mentah akan menghitung kasbon dua kali.
+export const fetchPayrollCost = (supabase) =>
+  supabase.from("weekly_payroll")
+    .select("period_start,period_end,gross_salary,manual_bonus,kasbon_deduct,is_paid,paid_at")
+    .order("period_start", { ascending: false });
+
 export const fetchWeeklyPayrollByUser = (supabase, userId, limit = 12) =>
   supabase.from("weekly_payroll")
     .select("*")
