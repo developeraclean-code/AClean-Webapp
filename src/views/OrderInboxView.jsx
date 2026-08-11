@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { cs } from "../theme/cs.js";
 import { SERVICE_TYPES } from "../constants/services.js";
 import { statusColor, statusLabel } from "../constants/status.js";
@@ -1016,6 +1016,13 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   );
   const [form, setForm] = useState({ ...EMPTY_FORM, date: TODAY });
   const [saving, setSaving] = useState(false);
+  // Kunci anti dobel-submit. `saving` (state) TIDAK cukup: handleSave menunggu
+  // checkWAPhone() dulu sebelum setSaving(true), jadi tombol masih aktif selama
+  // request itu jalan → klik ke-2 lolos & order kembar tersimpan. Ref di-set
+  // sinkron di baris pertama, jadi klik ke-2 langsung ditolak di tick yang sama.
+  // Insiden nyata 11 Agu 2026: BAPAK WILLIAM OAK dobel order, selisih 63 ms
+  // (WA-1786430901862 dapat laporan, WA-1786430902366 nyangkut PENDING selamanya).
+  const savingLock = useRef(false);
   const [showQuickPaste, setShowQuickPaste] = useState(false);
   const [editId, setEditId] = useState(null);
   const [weekOffset, setWeekOffset] = useState(0);
@@ -1535,13 +1542,20 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   }
 
   async function handleSave(opts = {}) {
-    if (!form.customer.trim()) return showNotif("Nama customer wajib diisi", "error");
-    if (!form.date) return showNotif("Tanggal wajib diisi", "error");
-    if (!form.service) return showNotif("Layanan wajib diisi", "error");
+    // Kunci SINKRON di baris pertama — lihat komentar savingLock di atas.
+    if (savingLock.current) return;
+    savingLock.current = true;
+    // Lepas kunci di setiap jalur keluar (validasi gagal / menunggu konfirmasi user);
+    // jalur sukses dilepas di blok finally di bawah.
+    const unlock = () => { savingLock.current = false; };
+    if (!form.customer.trim()) { unlock(); return showNotif("Nama customer wajib diisi", "error"); }
+    if (!form.date) { unlock(); return showNotif("Tanggal wajib diisi", "error"); }
+    if (!form.service) { unlock(); return showNotif("Layanan wajib diisi", "error"); }
     // Phone WAJIB — tanpa phone, customer baru tidak bisa dibuat & invoice/penagihan
     // tidak bisa di-track. Lebih baik blok di sini daripada bikin orphan data.
     const phoneNorm = normalizePhone(form.phone || "");
     if (!phoneNorm || phoneNorm.length < 10) {
+      unlock();
       return showNotif("⚠ No. HP customer wajib diisi (min 10 digit). Tanpa nomor, customer baru tidak bisa dibuat & invoice/penagihan tidak bisa di-track.", "error");
     }
 
@@ -1551,6 +1565,9 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       try {
         const waCheck = await checkWAPhone(phoneNorm);
         if (!waCheck.exact.found && waCheck.similar.length > 0) {
+          // Menunggu keputusan user → lepas kunci, kalau tidak handleSave() dari
+          // onProceed/klik ulang akan ditolak terus (form seolah macet).
+          unlock();
           setPhoneCheck({
             inputPhone: phoneNorm,
             similar: waCheck.similar,
@@ -1741,6 +1758,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       showNotif("Gagal simpan: " + (e.message || "unknown"), "error");
     } finally {
       setSaving(false);
+      savingLock.current = false;
     }
   }
 
