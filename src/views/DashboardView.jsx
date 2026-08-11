@@ -1,6 +1,6 @@
 import { memo, useState } from "react";
 import { cs } from "../theme/cs.js";
-import { statusColor, statusLabel } from "../constants/status.js";
+import { statusColor, statusLabel, ORDER_DONE_STATUSES } from "../constants/status.js";
 import { displayStock } from "../lib/inventory.js";
 import AbsenBanner from "./AbsenBanner.jsx";
 import { useAppContext } from "../context/AppContext.js";
@@ -19,7 +19,11 @@ if (role === "Teknisi" || role === "Helper") {
   const myColor = techColors[myName] || cs.accent;
   const myJobs = ordersData.filter(o => o.teknisi === myName);
   const todayJobs = myJobs.filter(o => o.date === TODAY);
-  const doneCount = myJobs.filter(o => o.status === "COMPLETED").length;
+  // "Selesai" = ORDER_DONE_STATUSES (sumber bersama dgn Statistik/reports), BUKAN hanya
+  // status literal COMPLETED. Order yang sudah maju ke REPORT_SUBMITTED/INVOICE_APPROVED/
+  // PAID tetap pekerjaan yang selesai — dulu dihitung 0 dan bikin Dashboard terlihat
+  // "tidak update" padahal datanya sudah benar (temuan 11 Agu 2026).
+  const doneCount = myJobs.filter(o => ORDER_DONE_STATUSES.includes(o.status)).length;
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
@@ -223,7 +227,7 @@ return (
     {/* KPI Cards */}
     <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(4,1fr)", gap: 14 }}>
       {[
-        { label: "Order Hari Ini", value: todayOrders.length, sub: `${todayOrders.filter(o => o.status === "IN_PROGRESS").length} aktif · ${todayOrders.filter(o => o.status === "COMPLETED").length} selesai`, color: cs.accent, icon: "📋", onClick: () => setActiveMenu("orders") },
+        { label: "Order Hari Ini", value: todayOrders.length, sub: `${todayOrders.filter(o => o.status === "IN_PROGRESS").length} aktif · ${todayOrders.filter(o => ORDER_DONE_STATUSES.includes(o.status)).length} selesai`, color: cs.accent, icon: "📋", onClick: () => setActiveMenu("orders") },
         { label: "Invoice Unpaid", value: unpaidCount, sub: "Perlu follow-up", color: cs.yellow, icon: "🧾", onClick: () => { setActiveMenu("invoice"); setInvoiceFilter("UNPAID"); } },
         ...(role === "Owner" ? [{ label: "Pendapatan Bln Ini", value: fmt(totalRevBulanIni), sub: "Invoice terbayar", color: cs.green, icon: "💰", onClick: () => { setActiveMenu("invoice"); setInvoiceFilter("PAID"); } }] : [{ label: "Invoice Selesai", value: invoicesData.filter(i => i.status === "PAID" && jobDate(i).startsWith(bulanIni)).length, sub: "Dikerjakan bln ini", color: cs.green, icon: "✅", onClick: () => { setActiveMenu("invoice"); setInvoiceFilter("PAID"); } }]),
         { label: "Stok Kritis", value: lowStock, sub: "Perlu restock", color: cs.red, icon: "📦", onClick: () => setActiveMenu("inventory") },
@@ -595,7 +599,7 @@ return (
                 {isToday && <span style={{ marginLeft: 8, fontSize: 10, background: cs.accent + "22", color: cs.accent, border: "1px solid " + cs.accent + "44", borderRadius: 99, padding: "2px 8px", fontWeight: 700 }}>Hari Ini</span>}
               </div>
               <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>
-                {totalOrders} order · {gridOrders.filter(o => o.status === "COMPLETED").length} selesai · {gridOrders.filter(o => o.status === "IN_PROGRESS").length} aktif · {gridOrders.filter(o => o.status === "PENDING").length} pending
+                {totalOrders} order · {gridOrders.filter(o => ORDER_DONE_STATUSES.includes(o.status)).length} selesai · {gridOrders.filter(o => o.status === "IN_PROGRESS").length} aktif · {gridOrders.filter(o => o.status === "PENDING").length} pending
               </div>
             </div>
             {!isToday && orderDates.includes(TODAY) && (
@@ -1120,7 +1124,7 @@ return (
             {allTekNames2.map(tek => {
               const col = getTechColor(tek, teknisiData);
               const jobsBulan = ordersData.filter(o => o.teknisi === tek && (o.date || "").startsWith(bulanIniPfx));
-              const selesai = jobsBulan.filter(o => ["COMPLETED", "PAID"].includes(o.status)).length;
+              const selesai = jobsBulan.filter(o => ORDER_DONE_STATUSES.includes(o.status)).length;
               const pending = jobsBulan.filter(o => ["PENDING", "CONFIRMED", "IN_PROGRESS", "ON_SITE"].includes(o.status)).length;
               const revInvTek = invoicesData.filter(i => {
                 const invTek = i.teknisi || ordersData.find(o => o.id === i.job_id)?.teknisi;
