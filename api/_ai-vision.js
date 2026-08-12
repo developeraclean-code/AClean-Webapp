@@ -47,16 +47,29 @@ Output WAJIB JSON valid (tidak ada prefix/suffix lain), struktur:
 
 Field per intent:
 - expense: {
-    amount: number,
     merchant: string,
-    date: "YYYY-MM-DD"|null,
-    category: "petty_cash"|"material_purchase",  // WAJIB salah satu dari 2
-    subcategory: string  // WAJIB salah satu nilai exact dibawah, tidak boleh nilai lain
+    date: "YYYY-MM-DD"|null,   // tanggal STRUK. Jangan mengarang — null kalau tidak terbaca.
+    items: [{                   // satu entri per pengeluaran. Nota 1 barang → 1 entri.
+      amount: number,           // nominal BARIS INI saja, bukan total nota
+      item_name: string,        // nama barang/jasa singkat apa adanya dari nota/caption,
+                                // mis "Kapasitor 15uF", "Duct Tape lem 1 roll", "Bensin", "Parkir"
+      category: "petty_cash"|"material_purchase",
+      subcategory: string       // WAJIB salah satu nilai exact dibawah, tidak boleh nilai lain
+    }]
   }
+  PENTING — kalau satu foto/caption memuat BEBERAPA pengeluaran berbeda
+  (contoh: "isi bensin 15.000, parkir apartemen 5.000"), buat SATU entri items[] untuk
+  MASING-MASING. Jangan digabung jadi satu, dan jangan hanya ambil yang pertama.
+  Kalau beberapa baris nota adalah barang sejenis dalam satu pembelian
+  (contoh nota toko: pipa + duct tape + bracket), boleh digabung jadi 1 entri
+  dengan amount = total nota dan item_name berisi ringkasan barangnya.
+
   Aturan subcategory wajib salah satu:
   - Kalau category="petty_cash": "Bensin Motor", "Perbaikan Motor", "Parkir", "Lain-lain"
     (struk makan/tol/jajan/minum → pakai "Lain-lain")
   - Kalau category="material_purchase": "Pipa AC", "Kabel", "Freon", "Material Lain"
+    (HANYA 4 nilai itu. Barang apa pun di luar pipa/kabel/freon — kapasitor, duct tape,
+     bracket, sparepart, alat — pakai "Material Lain". Detail barangnya taruh di item_name.)
   Pilihan category: foto struk bensin SPBU/parkir/perbaikan motor/jajan/makan → "petty_cash".
   Foto nota toko bangunan/pipa/kabel/freon/material → "material_purchase".
 - material: { items: [{ type: "freon"|"pipa"|"kabel"|"lain", brand: string|null, size: string|null, qty: number|null }] }
@@ -250,71 +263,101 @@ export async function persistClassification({ SU, SK, classification, sender, gr
   if (classification.intent === "expense" && groupCfg.ai_expense_enabled && confOK) {
     const d = classification.data || {};
     const today = new Date().toISOString().slice(0, 10);
-    // Normalisasi category → wajib salah satu dari 2 enum existing app
-    const validCats = new Set(["petty_cash", "material_purchase"]);
-    const cat = validCats.has(d.category) ? d.category : "petty_cash";
-    // Whitelist subcategory — harus match exact dgn ExpensesView.PETTY_CASH_SUBS / MATERIAL_SUBS
+    // Whitelist subcategory — harus match exact dgn ExpensesView.PETTY_CASH_SUBS / MATERIAL_SUBS.
+    // Sengaja TIDAK diperluas (keputusan Owner 12 Agu 2026): material di luar pipa/kabel/
+    // freon tetap "Material Lain", detail barangnya masuk ke kolom item_name.
     const PETTY = new Set(["Bensin Motor", "Perbaikan Motor", "Parkir", "Kasbon Karyawan", "Lembur", "Bonus", "Lain-lain"]);
     const MAT   = new Set(["Pipa AC", "Kabel", "Freon", "Material Lain"]);
-    const rawSub = d.subcategory ? String(d.subcategory).trim() : "";
-    const sub = cat === "material_purchase"
-      ? (MAT.has(rawSub) ? rawSub : "Material Lain")
-      : (PETTY.has(rawSub) ? rawSub : "Lain-lain");
+    const validCats = new Set(["petty_cash", "material_purchase"]);
     // Robust amount parse — handle "50.000" / "Rp 50,000" / "50000" / 50000
     const parseAmt = (v) => {
       if (typeof v === "number" && Number.isFinite(v)) return Math.abs(v);
       const digits = String(v || "").replace(/[^\d]/g, "");
       return digits ? parseInt(digits, 10) : 0;
     };
-    const descParts = [`[AI] ${d.merchant || "Foto struk"}`];
-    if (messageText) descParts.push(messageText);
-    // Date guard: AI bisa salah baca tanggal struk (mis. 2025 atau bulan terbalik).
-    // Kalau AI date di luar ±30 hari dari today, fallback ke today (disamakan dgn window
-    // payment 30h). Owner bisa edit saat approve.
+
+    // Date guard: AI bisa salah baca tanggal struk (mis. tahun 2025, atau DD-MM tertukar
+    // jadi MM-DD). Toleransi 30 hari ke BELAKANG saja — struk tidak mungkin dari masa
+    // depan, jadi tanggal > hari ini SELALU fallback ke today. (Bug nyata 10 Agu 2026:
+    // nota tersimpan bertanggal 19 Agu karena guard lama pakai selisih ABSOLUT ±30 hari,
+    // sehingga tanggal masa depan ikut lolos dan biaya mendarat di bulan yang salah.)
     let safeDate = today;
     if (d.date && /^\d{4}-\d{2}-\d{2}$/.test(d.date)) {
       const aiTs = Date.parse(d.date + "T00:00:00+07:00");
       const todayTs = Date.parse(today + "T00:00:00+07:00");
       if (Number.isFinite(aiTs)) {
-        const diffDays = Math.abs((aiTs - todayTs) / 86400000);
-        if (diffDays <= 30) safeDate = d.date;
+        const selisihHari = (todayTs - aiTs) / 86400000; // positif = di masa lalu
+        if (selisihHari >= 0 && selisihHari <= 30) safeDate = d.date;
       }
     }
-    const aiAmount = parseAmt(d.amount);
-    // ── Cross-source dedup: nama + nominal + tanggal sama (text-pattern paralel / dashboard) ──
-    if (await expenseDuplicateExists({ SU, SK, teknisiName: sender.name, amount: aiAmount, date: safeDate, subcategory: sub })) {
-      console.log("[AI_VISION_EXPENSE] skip duplikat:", sender.name, aiAmount, safeDate);
-      return { extractionId, expenseId: null, paymentSuggestionId: null, duplicate: true };
-    }
-    const expBody = {
-      date: safeDate,
-      category: cat,
-      subcategory: sub,
-      description: descParts.join(" — "),
-      amount: aiAmount,
-      teknisi_name: sender.name,
-      created_by: "wa_group_ai",
-      validation_status: "PENDING_AI",
-      ai_extraction_id: extractionId,
-      dedup_key: buildExpenseDedupKey({ teknisiName: sender.name, amount: aiAmount, date: safeDate, subcategory: sub }),
-    };
-    const r = await fetch(SU + "/rest/v1/expenses", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=representation" },
-      body: JSON.stringify(expBody),
-    });
-    if (r.status === 409) {
-      console.log("[AI_VISION_EXPENSE] skip duplikat (DB constraint):", sender.name, aiAmount, safeDate);
-    } else if (r.ok) {
-      const rows = await r.json().catch(() => []);
-      expenseId = rows[0]?.id || null;
-      if (expenseId) {
-        fetch(SU + "/rest/v1/ai_extractions?id=eq." + extractionId, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK },
-          body: JSON.stringify({ linked_table: "expenses", linked_id: String(expenseId) }),
-        }).catch(sentryCatch("ai_extract_link_expense", { extractionId, expenseId }));
+
+    // Normalisasi ke array item. Bentuk lama (satu expense flat) tetap didukung supaya
+    // respons AI yang belum mengikuti skema baru tidak hilang begitu saja.
+    const rawItems = Array.isArray(d.items) && d.items.length > 0
+      ? d.items
+      : [{ amount: d.amount, item_name: d.item_name, category: d.category, subcategory: d.subcategory }];
+
+    const insertedIds = [];
+    for (const it of rawItems) {
+      const cat = validCats.has(it?.category) ? it.category : (validCats.has(d.category) ? d.category : "petty_cash");
+      const rawSub = it?.subcategory ? String(it.subcategory).trim() : "";
+      const sub = cat === "material_purchase"
+        ? (MAT.has(rawSub) ? rawSub : "Material Lain")
+        : (PETTY.has(rawSub) ? rawSub : "Lain-lain");
+      const aiAmount = parseAmt(it?.amount);
+      if (!aiAmount) continue; // baris tanpa nominal tidak berguna sebagai biaya
+      const itemName = String(it?.item_name || "").trim().slice(0, 120) || null;
+
+      const descParts = [`[AI] ${d.merchant || "Foto struk"}`];
+      if (itemName) descParts.push(itemName);
+      if (messageText) descParts.push(messageText);
+
+      // ── Cross-source dedup: nama + nominal + tanggal + subcategory ──
+      // Kunci SENGAJA tidak menyertakan item_name: formatnya harus tetap sama dengan
+      // jalur text-pattern WA & input dashboard, kalau tidak biaya yang sama dari 2
+      // channel lolos dua-duanya. Konsekuensinya, 2 baris dgn nominal DAN subcategory
+      // identik dalam satu nota akan dianggap duplikat (hanya 1 tersimpan) — dipilih
+      // sadar: lebih aman kurang catat daripada dobel catat di jalur uang.
+      if (await expenseDuplicateExists({ SU, SK, teknisiName: sender.name, amount: aiAmount, date: safeDate, subcategory: sub })) {
+        console.log("[AI_VISION_EXPENSE] skip duplikat:", sender.name, aiAmount, safeDate, sub);
+        continue;
       }
+      const expBody = {
+        date: safeDate,
+        category: cat,
+        subcategory: sub,
+        item_name: itemName,
+        description: descParts.join(" — "),
+        amount: aiAmount,
+        teknisi_name: sender.name,
+        created_by: "wa_group_ai",
+        validation_status: "PENDING_AI",
+        ai_extraction_id: extractionId,
+        dedup_key: buildExpenseDedupKey({ teknisiName: sender.name, amount: aiAmount, date: safeDate, subcategory: sub }),
+      };
+      const r = await fetch(SU + "/rest/v1/expenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=representation" },
+        body: JSON.stringify(expBody),
+      });
+      if (r.status === 409) {
+        console.log("[AI_VISION_EXPENSE] skip duplikat (DB constraint):", sender.name, aiAmount, safeDate);
+      } else if (r.ok) {
+        const rows = await r.json().catch(() => []);
+        if (rows[0]?.id) insertedIds.push(rows[0].id);
+      }
+    }
+    if (rawItems.length > 1) {
+      console.log(`[AI_VISION_EXPENSE] nota multi-item: ${insertedIds.length}/${rawItems.length} baris tersimpan`);
+    }
+    // expenseId = baris pertama (kompatibilitas pemanggil & link ai_extractions).
+    expenseId = insertedIds[0] || null;
+    if (expenseId) {
+      fetch(SU + "/rest/v1/ai_extractions?id=eq." + extractionId, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK },
+        body: JSON.stringify({ linked_table: "expenses", linked_id: String(expenseId) }),
+      }).catch(sentryCatch("ai_extract_link_expense", { extractionId, expenseId }));
     }
   }
 
