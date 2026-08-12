@@ -32,10 +32,13 @@ const COLS_GARANSI = [
   { key: "ket", label: "Keterangan", w: 22 },
 ];
 const COLS_BERITA_PENGERJAAN = [
-  { key: "nama", label: "Detail", w: 38 },
+  { key: "nama", label: "Detail", w: 42 },
   { key: "qty", label: "Qty", w: 10 },
-  { key: "ket", label: "Keterangan", w: 30 },
-  { key: "total", label: "Total", w: 20, align: "right", sum: true },
+  // Satuan ("Unit"/"pcs"/…) dipindah ke sebelah Qty (dulu kolom "Total" di paling kanan).
+  // Tetap pakai key "total" agar data lama tampil tanpa migrasi. Tanpa sum — BA Pengerjaan
+  // adalah catatan serah-terima kerja, bukan dokumen nilai (nilai ada di BA Termin/Tagihan).
+  { key: "total", label: "Satuan", w: 16 },
+  { key: "ket", label: "Keterangan", w: 32 },
 ];
 export const docColumns = (jenis = "") =>
   jenis.includes("Commissioning") || jenis.includes("Uji") ? COLS_COMMISSIONING
@@ -95,10 +98,10 @@ export const DOC_PRESETS = {
     { nama: "Mesin (pinjam pakai)", qty: "1 unit", total: "" },
   ],
   "Berita Acara Pengerjaan": [
-    { nama: "Pemasangan unit indoor + outdoor", qty: "1 unit", total: "" },
-    { nama: "Instalasi pipa & kabel", qty: "", total: "" },
-    { nama: "Vakum & isi freon", qty: "", total: "" },
-    { nama: "Running test", qty: "", total: "" },
+    { nama: "Pemasangan unit indoor + outdoor", qty: "1", total: "unit" },
+    { nama: "Instalasi pipa & kabel", qty: "1", total: "set" },
+    { nama: "Vakum & isi freon", qty: "1", total: "unit" },
+    { nama: "Running test", qty: "1", total: "unit" },
   ],
   "Berita Acara Termin": [
     { nama: "Termin 1 — DP", qty: "30%", total: "" },
