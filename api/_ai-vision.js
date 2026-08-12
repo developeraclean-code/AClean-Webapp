@@ -37,6 +37,17 @@ Klasifikasikan foto ini ke salah satu intent berikut:
 ${intentList}
 "unknown" — bukan salah satu di atas
 
+ATURAN PRIORITAS INTENT (penting, urutan menentukan):
+1. Ada NOMINAL RUPIAH, atau kata beli/pembelian/bayar/transfer/tf/harga/nota/bon/faktur/
+   kwitansi/struk → SELALU "expense". Ini berlaku WALAUPUN barangnya material
+   (pipa/kabel/freon/plastik/sparepart) — pembelian material tetap UANG KELUAR.
+   Contoh: "mohon diproses pembelian plastic cuci senilai 882.000" → expense, bukan material.
+2. "material" HANYA untuk laporan STOK MURNI tanpa nominal apa pun — barang dibawa,
+   dipakai, sisa, atau dikembalikan ke kantor.
+   Contoh: "pipa A16 sisa 5m kembali kantor", "freon R32 sisa 3,1kg terpakai 500gram".
+3. Kalau ragu antara expense dan material, dan ada angka yang tampak seperti rupiah
+   → pilih "expense" (lebih aman: uang tidak boleh hilang dari pencatatan).
+
 Output WAJIB JSON valid (tidak ada prefix/suffix lain), struktur:
 {
   "intent": "expense" | "material" | "payment" | "unknown",
