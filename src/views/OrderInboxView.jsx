@@ -1905,18 +1905,26 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         update = {
           ...update,
           teknisi: utama?.name || null,
+          // teknisi2/teknisi3 WAJIB ikut di-reset. Dulu hanya teknisi+helper* yang ditulis
+          // ulang, sehingga saat order dipindah slot, orang dari slot LAMA tertinggal di
+          // teknisi2/3 dan ikut terbawa ke tim baru — orang itu lalu terbaca ada di 2 tim
+          // pada jam sama → blok Time Grid merah "konflik" padahal jadwalnya sah.
+          // Insiden nyata 13 Agu 2026: Ardi (Team 02) nyangkut sbg teknisi2 di order
+          // Team 06 (PT Sarana Catur Tirtakelola) setelah order dipindah slot.
+          teknisi2: null,
+          teknisi3: null,
           helper: helpers[0]?.name || null,
           helper2: helpers[1]?.name || null,
           helper3: helpers[2]?.name || null,
         };
       } else if (teamPresets[value]) {
-        update = { ...update, teknisi: teamPresets[value], helper: null, helper2: null, helper3: null };
+        update = { ...update, teknisi: teamPresets[value], teknisi2: null, teknisi3: null, helper: null, helper2: null, helper3: null };
       } else {
         showNotif("⚠️ Tim " + value + " belum punya anggota & belum ada preset", "warning");
       }
     } else if (field === "team_slot" && !value && !order.project_id) {
-      // Clear team_slot pada regular order → reset teknisi & helper juga
-      update = { ...update, teknisi: null, helper: null, helper2: null, helper3: null };
+      // Clear team_slot pada regular order → reset SEMUA kolom orang (6 kolom), bukan sebagian
+      update = { ...update, teknisi: null, teknisi2: null, teknisi3: null, helper: null, helper2: null, helper3: null };
     }
 
     // P2: cek konflik jadwal SEBELUM menulis assignment (parity dgn jalur buat-order yang sudah
