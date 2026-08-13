@@ -118,7 +118,8 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, w
     if (!s) return [];
     return Array.from({ length: MEMBER_COUNT }, (_, i) => {
       const n = i + 1;
-      return s[`member${n}`] ? { name: s[`member${n}`], role: s[`member${n}_role`] || (n <= 4 ? "teknisi" : "helper") } : null;
+      // Fallback role selaras EMPTY_SLOT: hanya anggota-1 yang teknisi, sisanya helper.
+      return s[`member${n}`] ? { name: s[`member${n}`], role: s[`member${n}_role`] || (n === 1 ? "teknisi" : "helper") } : null;
     }).filter(Boolean);
   }
 
@@ -847,11 +848,18 @@ const TEAM_SLOTS_BASE = [
 const MEMBER_ROLES = ["teknisi", "helper"];
 // Kapasitas tim: 8 orang (4 teknisi + 4 helper) — migrasi 127, naik dari 4 orang.
 const MEMBER_COUNT = 8;
+// Default peran: HANYA anggota-1 yang teknisi penanggung jawab, sisanya helper.
+// Regresi 20 Jul 2026 (commit 48c96f8, "tim 8 orang = 4 teknisi + 4 helper"): default
+// member1–4 diubah jadi "teknisi". Praktiknya tim AClean itu pasangan teknisi+helper dan
+// orang jarang mengubah role manual → anggota ke-2 tercatat "teknisi", masuk kolom
+// teknisi2, dan kolom helper KOSONG. Efeknya Dashboard/WA menampilkan "Tanpa Helper".
+// Terlihat di data: member2 100% "helper" s/d Juni → 97% "teknisi" di Agustus.
+// Butuh >1 teknisi dalam satu tim? Ubah role-nya manual di panel Tim Harian.
 const EMPTY_SLOT = {
   member1: "", member1_role: "teknisi",
-  member2: "", member2_role: "teknisi",
-  member3: "", member3_role: "teknisi",
-  member4: "", member4_role: "teknisi",
+  member2: "", member2_role: "helper",
+  member3: "", member3_role: "helper",
+  member4: "", member4_role: "helper",
   member5: "", member5_role: "helper",
   member6: "", member6_role: "helper",
   member7: "", member7_role: "helper",
@@ -1900,23 +1908,14 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       const slot = getSlotData(order.date, value);
       const members = slot ? slotMemberRoles(slot) : [];
       if (members.length > 0) {
-        const utama = members.find(m => (m.role || "").toLowerCase() === "teknisi") || members[0];
-        const helpers = members.filter(m => m !== utama);
-        update = {
-          ...update,
-          teknisi: utama?.name || null,
-          // teknisi2/teknisi3 WAJIB ikut di-reset. Dulu hanya teknisi+helper* yang ditulis
-          // ulang, sehingga saat order dipindah slot, orang dari slot LAMA tertinggal di
-          // teknisi2/3 dan ikut terbawa ke tim baru — orang itu lalu terbaca ada di 2 tim
-          // pada jam sama → blok Time Grid merah "konflik" padahal jadwalnya sah.
-          // Insiden nyata 13 Agu 2026: Ardi (Team 02) nyangkut sbg teknisi2 di order
-          // Team 06 (PT Sarana Catur Tirtakelola) setelah order dipindah slot.
-          teknisi2: null,
-          teknisi3: null,
-          helper: helpers[0]?.name || null,
-          helper2: helpers[1]?.name || null,
-          helper3: helpers[2]?.name || null,
-        };
+        // SATU sumber kebenaran dgn saveSlot/confirmSlot — dulu dua fungsi ini memetakan
+        // roster yang SAMA ke kolom BERBEDA (di sini orang-ke-2 → helper; di
+        // buildTeamPropagatePayload → teknisi2 bila role-nya "teknisi"), jadi hasil akhir
+        // tergantung tombol mana yang terakhir ditekan. buildTeamPropagatePayload juga
+        // menulis SEMUA 6 kolom orang, termasuk mengosongkan teknisi2/3 — mencegah sisa
+        // orang dari slot lama ikut terbawa saat order dipindah slot (insiden 13 Agu 2026:
+        // Ardi/Team 02 nyangkut sbg teknisi2 di order Team 06 → grid merah palsu).
+        update = { ...update, ...buildTeamPropagatePayload(members) };
       } else if (teamPresets[value]) {
         update = { ...update, teknisi: teamPresets[value], teknisi2: null, teknisi3: null, helper: null, helper2: null, helper3: null };
       } else {
