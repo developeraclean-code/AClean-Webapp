@@ -436,7 +436,10 @@ function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknis
 
   const memberFields = Array.from({ length: MEMBER_COUNT }, (_, i) => `member${i + 1}`);
   const roleFields   = Array.from({ length: MEMBER_COUNT }, (_, i) => `member${i + 1}_role`);
-  const defaultRoles = Array.from({ length: MEMBER_COUNT }, (_, i) => i < 4 ? "teknisi" : "helper");
+  // Selaras EMPTY_SLOT & getSlotMembers: hanya anggota-1 yang teknisi, sisanya helper.
+  // (Dulu i < 4 → badge T/H menampilkan "T" untuk anggota 2–4 yang belum punya peran
+  // tersimpan, tidak konsisten dgn yang benar-benar ditulis ke order.)
+  const defaultRoles = Array.from({ length: MEMBER_COUNT }, (_, i) => i === 0 ? "teknisi" : "helper");
 
   // Hitung order count per slot per hari
   function orderCount(date, slotName) {
@@ -1154,7 +1157,19 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
 
   async function saveSlot(date, slotName, fields) {
     setSlotLoading(true);
-    const payload = { date, slot: slotName, ...fields, updated_at: new Date().toISOString() };
+    // Self-heal peran anggota KOSONG. Peran pada kursi yang belum diisi tidak bermakna,
+    // tapi nilainya TERSIMPAN dan menang atas default kode — sisa default lama
+    // ("teknisi" untuk member2–4, regresi 20 Jul 2026) bikin orang yang nanti diisi ke
+    // kursi itu langsung terbaca teknisi → masuk kolom teknisi2, helper kosong lagi.
+    // Direset tiap simpan supaya baris slot lama ikut bersih tanpa perlu migrasi data.
+    const norm = { ...fields };
+    for (let n = 1; n <= MEMBER_COUNT; n++) {
+      if (!(`member${n}` in norm)) continue;            // payload parsial → jangan sentuh
+      if (!String(norm[`member${n}`] || "").trim()) {
+        norm[`member${n}_role`] = n === 1 ? "teknisi" : "helper";
+      }
+    }
+    const payload = { date, slot: slotName, ...norm, updated_at: new Date().toISOString() };
     const { data, error } = await supabase.from("daily_team_slots")
       .upsert(payload, { onConflict: "date,slot" }).select().single();
     setSlotLoading(false);
