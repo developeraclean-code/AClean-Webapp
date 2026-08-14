@@ -131,6 +131,7 @@ di satu jalur WAJIB dicerminkan di jalur satunya, lalu tes KEDUA jalur.
 | Delete user via Supabase client | Tidak ada RLS policy → `/api/manage-user` |
 | Anggap daftar migrasi = skema DB lengkap | Ada kolom dibuat di luar migrasi (contoh: `invoices.approved_at`, terverifikasi 2026-07-19) → sebelum pakai kolom "yang katanya ada", cek `information_schema.columns` di Supabase |
 | Update status order hanya by `job_id` tanpa cross-check | `job_id` dari state form/invoice bisa stale/salah → status order lain ikut salah sasaran (lihat §D, insiden 03 Agu 2026) |
+| Edit unit laporan hanya di SATU kolom (`units` atau `units_json`) | `service_reports` simpan unit di DUA kolom: `units` (jsonb, dibaca UI — `r.units` di LaporanDetailModal/LaporanTimView) & `units_json` (text, dibaca autolog `api/_handlers/portal.js:965`). Update satu saja → UI tampil unit basi ATAU autolog nge-log unit salah. Insiden nyata (14 Agu 2026): reconcile install Waskito cuma update `units_json`, UI tetap tampil 4 unit lama pasca-refresh. Update KEDUANYA dgn nilai identik |
 
 ## Fase Akhir — Destilasi Pelajaran (loop self-learning)
 
