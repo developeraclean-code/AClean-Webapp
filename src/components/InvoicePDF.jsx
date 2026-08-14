@@ -9,7 +9,7 @@ Font.registerHyphenationCallback((word) => [word]);
 // terhadap nilai ini — kalau cache R2 lebih lama dari versi ini, PDF di-generate
 // ulang otomatis (bukan pakai cache lama), tanpa perlu hapus pdf_url manual per
 // invoice. Lupa bump ini = perubahan desain baru tidak kelihatan di invoice lama.
-export const PDF_TEMPLATE_VERSION = "2026-08-05T12:35:00Z";
+export const PDF_TEMPLATE_VERSION = "2026-08-14T10:00:00Z";
 
 // ── Helpers ──
 const fmt = (n) => "Rp " + (Number(n) || 0).toLocaleString("id-ID");
@@ -112,7 +112,7 @@ function StatusPill({ status, due, paidAt }) {
   const info = STATUS_INFO[status] || STATUS_INFO.UNPAID;
   const isPaid = status === "PAID";
   return (
-    <View style={s.statusRow}>
+    <View wrap={false} style={s.statusRow}>
       <Text style={[s.statusPill, { backgroundColor: info.bg, color: info.fg }]}>{info.label}</Text>
       {isPaid
         ? (paidAt ? <Text style={s.statusMeta}>Dibayar: {paidAt}</Text> : null)
@@ -123,7 +123,7 @@ function StatusPill({ status, due, paidAt }) {
 
 function PaymentInfoBox({ appSettings, style }) {
   return (
-    <View style={[s.payBox, style]}>
+    <View wrap={false} style={[s.payBox, style]}>
       <Text style={s.payTitle}>Informasi Pembayaran</Text>
       <Text style={s.payBank}>Transfer Bank {appSettings.bank_name || "BCA"}</Text>
       <Text style={s.payNum}>{appSettings.bank_number || "8830883011"}</Text>
@@ -137,13 +137,31 @@ function PaymentInfoBox({ appSettings, style }) {
 // Informasi Pembayaran tetap tampil sendirian selebar penuh.
 function PaymentGaransiRow({ appSettings, garansiText }) {
   return (
-    <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
+    <View wrap={false} style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
       <PaymentInfoBox appSettings={appSettings} style={{ flex: 1, marginTop: 0 }} />
       {garansiText ? (
-        <View style={[s.garansiBox, { flex: 1, marginTop: 0 }]}>
+        <View wrap={false} style={[s.garansiBox, { flex: 1, marginTop: 0 }]}>
           <Text style={s.garansiText}>{garansiText}</Text>
         </View>
       ) : null}
+    </View>
+  );
+}
+
+// Blok penutup (status bayar + info rekening + garansi) dirender sebagai SATU kesatuan
+// yang tidak boleh dipotong halaman.
+//
+// Dulu PaymentGaransiRow — sebuah baris flex 2 kolom — tidak punya wrap={false}. Kalau
+// blok ini jatuh TEPAT di batas halaman, react-pdf memaksa memotongnya: kotak kiri
+// (Informasi Pembayaran) ditinggal di halaman 1 dengan tinggi yang tak cukup sehingga
+// baris-baris teksnya saling TUMPUK, sementara kotak Garansi lompat ke halaman 2.
+// Terlihat nyata di invoice INV078737188 (PT Sarana Catur Tirtakelola, 16 baris item).
+// Dengan wrap={false}, blok utuh ini pindah ke halaman berikutnya bila ruang kurang.
+function ClosingBlock({ status, due, paidAt, appSettings, garansiText }) {
+  return (
+    <View wrap={false}>
+      <StatusPill status={status} due={due} paidAt={paidAt} />
+      <PaymentGaransiRow appSettings={appSettings} garansiText={garansiText} />
     </View>
   );
 }
@@ -331,7 +349,7 @@ function InvoicePage({ inv, logoUrl, appSettings = {}, invoiceItems = [], portal
           </>
         )}
 
-        <View style={s.totalBar}>
+        <View wrap={false} style={s.totalBar}>
           <Text style={s.totalLabel}>{hasPph ? "DIBAYAR KE ACLEAN" : "TOTAL TAGIHAN"}</Text>
           <Text style={s.totalVal}>{fmt(inv.total)}</Text>
         </View>
@@ -339,7 +357,7 @@ function InvoicePage({ inv, logoUrl, appSettings = {}, invoiceItems = [], portal
         {(inv.paid_amount || 0) > 0 && inv.status !== "PAID" && (
           <>
             <View style={s.adjRow}><Text>DP / Sudah Dibayar</Text><Text>- {fmt(inv.paid_amount)}</Text></View>
-            <View style={[s.totalBar, { backgroundColor: "#c2410c" }]}>
+            <View wrap={false} style={[s.totalBar, { backgroundColor: "#c2410c" }]}>
               <Text style={s.totalLabel}>SISA TAGIHAN</Text>
               <Text style={s.totalVal}>{fmt(sisaBayar)}</Text>
             </View>
@@ -347,9 +365,9 @@ function InvoicePage({ inv, logoUrl, appSettings = {}, invoiceItems = [], portal
         )}
       </View>
 
-      <StatusPill status={inv.status} due={inv.due} paidAt={inv.paid_at ? fmtDate(inv.paid_at) : null} />
-
-      <PaymentGaransiRow
+      <ClosingBlock
+        status={inv.status} due={inv.due}
+        paidAt={inv.paid_at ? fmtDate(inv.paid_at) : null}
         appSettings={appSettings}
         garansiText={inv.garansi_expires
           ? `Garansi Servis ${inv.garansi_days || 30} Hari — berlaku sampai ${inv.garansi_expires}. Jika AC bermasalah dalam masa garansi, hubungi kami tanpa biaya tambahan.`
@@ -513,15 +531,14 @@ function MergedInvoicePage({ invList, logoUrl, appSettings = {}, portalLink = nu
             <Text style={{ fontSize: 9, color: "#1f7a4d", fontFamily: "Times-Bold" }}>- {fmt(paidAll)}</Text>
           </View>
         )}
-        <View style={[s.totalBar, { marginTop: 0, backgroundColor: aggStatus === "PAID" ? "#1f7a4d" : "#2f5ea3" }]}>
+        <View wrap={false} style={[s.totalBar, { marginTop: 0, backgroundColor: aggStatus === "PAID" ? "#1f7a4d" : "#2f5ea3" }]}>
           <Text style={s.totalLabel}>{aggStatus === "PAID" ? "TOTAL DIBAYAR" : "TOTAL TAGIHAN"}</Text>
           <Text style={s.totalVal}>{fmt(aggStatus === "PAID" ? totalAll : sisaAll)}</Text>
         </View>
       </View>
 
-      <StatusPill status={aggStatus} due={dueLatest} paidAt={paidLatest} />
-
-      <PaymentGaransiRow
+      <ClosingBlock
+        status={aggStatus} due={dueLatest} paidAt={paidLatest}
         appSettings={appSettings}
         garansiText={garansiLatest ? `Garansi servis — berlaku sampai ${garansiLatest}. Jika AC bermasalah dalam masa garansi, hubungi kami tanpa biaya tambahan.` : null}
       />
