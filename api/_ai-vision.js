@@ -38,8 +38,14 @@ ${intentList}
 "unknown" — bukan salah satu di atas
 
 ATURAN PRIORITAS INTENT (penting, urutan menentukan):
-1. Ada NOMINAL RUPIAH, atau kata beli/pembelian/bayar/transfer/tf/harga/nota/bon/faktur/
-   kwitansi/struk → SELALU "expense". Ini berlaku WALAUPUN barangnya material
+0. Kalau "payment" ADA di daftar intent aktif di atas DAN foto = bukti pembayaran MASUK
+   ke kita (screenshot transfer BERHASIL / mutasi bank bertanda kredit-masuk / bukti setor
+   tunai — umumnya customer membayar tagihan) → "payment". Ini UANG MASUK, bukan pembelian.
+   Ciri: tampilan m-banking/e-wallet "Transfer Berhasil/Sukses", ada nominal + bank/tujuan,
+   TIDAK ada daftar barang yang dibeli. Aturan 1 (expense) di bawah TIDAK berlaku untuk ini.
+1. Selain payment di atas: ada NOMINAL RUPIAH, atau kata beli/pembelian/bayar/transfer/tf/
+   harga/nota/bon/faktur/kwitansi/struk untuk UANG KELUAR (tim membeli barang/jasa)
+   → "expense". Ini berlaku WALAUPUN barangnya material
    (pipa/kabel/freon/plastik/sparepart) — pembelian material tetap UANG KELUAR.
    Contoh: "mohon diproses pembelian plastic cuci senilai 882.000" → expense, bukan material.
 2. "material" HANYA untuk laporan STOK MURNI tanpa nominal apa pun — barang dibawa,
