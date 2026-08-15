@@ -498,3 +498,51 @@ export async function taskMaintenancePmDue() {
   await log("MAINTENANCE_PM_DUE", `Alert PM: ${totOverdue} overdue + ${totMinggu} minggu ini (${Object.keys(byClient).length} klien)`, "INFO");
   return { ok: true, overdue: totOverdue, due_week: totMinggu };
 }
+
+// ══════════════════════════════════════════════════
+// TASK: Media-Gap Alert — deteksi Fonnte berhenti kirim media (foto)
+// Insiden 14 Agu 2026: seharian 0 foto masuk (Fonnte drop media) padahal 552
+// pesan teks normal → bukti transfer customer tak terdeteksi → payment
+// suggestion mati DIAM-DIAM (baru ketahuan besoknya). Alert Owner same-day
+// kalau WA jelas aktif (banyak pesan masuk) tapi 0 media dalam 5 jam terakhir.
+// Toggle: media_gap_alert_enabled (default ON). Owner-only — tak pernah WA ke
+// customer, jadi gate cukup isCronJobEnabled (bisa dimatikan di Settings).
+// ══════════════════════════════════════════════════
+export async function taskMediaGapAlert() {
+  const { data: togData } = await sb.from("app_settings").select("key,value")
+    .in("key", ["media_gap_alert_enabled", "cron_jobs"]);
+  const togMap = Object.fromEntries((togData || []).map(s => [s.key, s.value]));
+  if (!isCronJobEnabled(togMap, "media_gap_alert_enabled")) {
+    await log("MEDIA_GAP_ALERT", "Dilewati — media_gap_alert_enabled OFF", "INFO");
+    return { skipped: true };
+  }
+
+  // Dedupe: sudah alert dalam 12 jam terakhir → skip (jangan spam Owner).
+  const { data: recent } = await sb.from("agent_logs").select("time")
+    .eq("action", "MEDIA_GAP_ALERT_FIRED")
+    .gte("time", new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString())
+    .limit(1);
+  if (recent?.length) return { skipped: true, reason: "sudah alert <12j" };
+
+  // Window 5 jam terakhir. Hitung pesan masuk vs media (foto/dokumen/video).
+  const since = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString();
+  const { count: inbound } = await sb.from("wa_webhook_raw")
+    .select("*", { count: "exact", head: true })
+    .gte("created_at", since).eq("has_message", true);
+  const { count: media } = await sb.from("wa_webhook_raw")
+    .select("*", { count: "exact", head: true })
+    .gte("created_at", since).eq("has_message", true)
+    .in("msg_type", ["image", "document", "video"]);
+
+  const MIN_ACTIVITY = 30;   // WA jelas aktif kalau >=30 pesan masuk dalam 5 jam
+  if ((inbound || 0) < MIN_ACTIVITY || (media || 0) > 0) {
+    return { checked: true, inbound: inbound || 0, media: media || 0, ok: true };
+  }
+
+  // WA aktif tapi 0 media 5 jam → kemungkinan Fonnte berhenti meneruskan gambar.
+  const jam = new Date(Date.now() + 7 * 60 * 60 * 1000).toLocaleString("id-ID", { hour: "2-digit", minute: "2-digit" });
+  const msg = `⚠️ *ALERT: Media WA Tidak Masuk*\n\n${inbound} pesan masuk dalam 5 jam terakhir, tapi *0 foto/media*. Kemungkinan Fonnte berhenti meneruskan gambar (seperti insiden 14 Agu).\n\nDampak: *bukti transfer customer tidak terdeteksi* → payment suggestion bisa terlewat.\n\nCek: kirim tes foto ke nomor bisnis. Kalau tidak masuk → restart device / scan ulang Fonnte.\n_(per ${jam} WIB)_`;
+  await sendWA(OWNER_PHONE, msg);
+  await log("MEDIA_GAP_ALERT_FIRED", `${inbound} pesan / 0 media dalam 5 jam → alert Owner`, "WARNING");
+  return { alerted: true, inbound: inbound || 0, media: 0 };
+}
