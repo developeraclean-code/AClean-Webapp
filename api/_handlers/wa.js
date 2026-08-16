@@ -5,7 +5,7 @@
 import { checkRateLimit } from "../_auth.js";
 import { validateAndNormalizePhone, buildPhoneVariants, validateMessage, sanitizeName } from "../_validate.js";
 import { criticalFetch, sentryCatch } from "../_report.js";
-import { classifyImage, persistClassification } from "../_ai-vision.js";
+import { classifyImage, persistClassification, safeDateStr } from "../_ai-vision.js";
 import { analyzeToolBagPhoto } from "../_tool-bag-vision.js";
 import { classifyText, matchSelesaiToOrder, persistTextClassification } from "../_ai-text.js";
 import { uploadBufferToR2, downloadToBuffer, hasR2Config } from "../_r2-upload.js";
@@ -1324,7 +1324,7 @@ export async function receiveWa(req, res) {
                       body: JSON.stringify({
                         phone: sender, sender_name: senderName, raw_message: message.slice(0,500),
                         amount: extracted.amount || null, bank: extracted.bank || null,
-                        transfer_date: extracted.transfer_date || null,
+                        transfer_date: safeDateStr(extracted.transfer_date),
                         invoice_id: matchedInvoiceId, order_id: matchedOrderId,
                         status: "PENDING", source: "text", created_at: nowIso
                       })
@@ -1995,7 +1995,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                         body: JSON.stringify({
                           phone: sender, sender_name: senderName, raw_message: "(gambar bukti transfer)",
                           amount: classified.amount || null, bank: classified.bank || null,
-                          transfer_date: classified.transfer_date || null,
+                          transfer_date: safeDateStr(classified.transfer_date),
                           invoice_id: matchedInvoiceId, order_id: matchedOrderId,
                           status: "PENDING", source: "image",
                           image_url: savedImageUrl || mediaUrl, created_at: nowIso

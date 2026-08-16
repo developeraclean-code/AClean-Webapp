@@ -24,6 +24,18 @@ function meetsMinConfidence(conf, min) {
   return (CONF_RANK[String(conf || "LOW").toUpperCase()] || 1) >= (CONF_RANK[String(min || "MEDIUM").toUpperCase()] || 2);
 }
 
+// Sanitasi tanggal dari AI — model kadang balas "unknown"/"tidak tersedia"/teks
+// lain alih-alih null. Kalau string non-tanggal itu masuk ke kolom `date`,
+// Postgres tolak (22007) & SELURUH insert payment_suggestions gagal → bukti bayar
+// customer hilang. Terima hanya YYYY-MM-DD valid; selain itu null. (Insiden 9-15 Agu 2026)
+export function safeDateStr(v) {
+  if (!v || typeof v !== "string") return null;
+  const s = v.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const d = new Date(s + "T00:00:00Z");
+  return isNaN(d.getTime()) ? null : s;
+}
+
 function buildPrompt(groupCfg) {
   const enabled = [];
   if (groupCfg.ai_expense_enabled)   enabled.push('"expense" — foto struk / nota / kwitansi belanja operasional');
@@ -426,7 +438,7 @@ export async function persistClassification({ SU, SK, classification, sender, gr
       image_url: imageUrl,
       amount: parseAmtP(d.amount),
       bank: d.bank || null,
-      transfer_date: d.transfer_date || null,
+      transfer_date: safeDateStr(d.transfer_date),
       status: "PENDING",
       source: "wa_group_ai",
       validation_status: "PENDING",
