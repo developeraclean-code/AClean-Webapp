@@ -164,6 +164,16 @@ export const fetchServiceReports = (supabase) =>
     .select(REPORT_COLS)
     .order("submitted_at", { ascending: false }).limit(5000);
 
+// Rekap jenis pekerjaan (Dashboard) — proyeksi RINGAN (tanpa kolom foto/bap berat).
+// Hanya VERIFIED sejak `sinceDate` (YYYY-MM-DD) untuk navigasi minggu/bulan prev/next.
+export const fetchReportWorkStats = (supabase, sinceDate) =>
+  supabase.from("service_reports")
+    .select("job_id,service,date,status,units,total_units")
+    .eq("status", "VERIFIED")
+    .gte("date", sinceDate)
+    .order("date", { ascending: false })
+    .limit(5000);
+
 // Incremental: hanya laporan yang berubah/baru sejak `since` (updated_at, set on insert & update).
 // Polling live pakai ini agar egress minim — payload berat (foto/json) hanya saat ada perubahan.
 export const fetchServiceReportsSince = (supabase, since) =>

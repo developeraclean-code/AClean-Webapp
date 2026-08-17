@@ -1,10 +1,58 @@
 import { memo, useState, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor, statusLabel, ORDER_DONE_STATUSES } from "../constants/status.js";
-import { fetchAllOrders, fetchAllInvoices, fetchPayrollCost } from "../data/reads.js";
+import { fetchAllOrders, fetchAllInvoices, fetchPayrollCost, fetchReportWorkStats } from "../data/reads.js";
 import { displayStock } from "../lib/inventory.js";
 import AbsenBanner from "./AbsenBanner.jsx";
 import { useAppContext } from "../context/AppContext.js";
+
+// ── Rekap Jenis Pekerjaan (Dashboard) ──────────────────────────────
+const toISOLocal = (d) => { const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return z.toISOString().slice(0, 10); };
+const fmtDayMon = (d) => d.toLocaleDateString("id-ID", { day: "numeric", month: "short" });
+// Rentang periode dari mode ("minggu"/"bulan") + offset (0=sekarang, -1=sebelumnya).
+function workPeriodRange(mode, offset) {
+  const now = new Date();
+  if (mode === "bulan") {
+    const first = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+    const last = new Date(now.getFullYear(), now.getMonth() + offset + 1, 0);
+    return { start: toISOLocal(first), end: toISOLocal(last), label: first.toLocaleDateString("id-ID", { month: "long", year: "numeric" }) };
+  }
+  const dow = now.getDay();                       // 0=Minggu
+  const mon = new Date(now); mon.setDate(now.getDate() - ((dow + 6) % 7) + offset * 7);
+  const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+  return { start: toISOLocal(mon), end: toISOLocal(sun), label: `${fmtDayMon(mon)} – ${fmtDayMon(sun)} ${sun.getFullYear()}` };
+}
+// Hitung agregat jenis pekerjaan dari laporan VERIFIED (units jsonb per unit).
+// cleaning/install = per UNIT, kapasitor = per unit (pcs), freon = per JOB (split bayar/free via invoice gratis).
+function computeWorkStats(reports, invMap) {
+  const s = { cleaning: 0, install: 0, kapasitor: 0, freonJobs: 0, freonAddJobs: 0, freonVacJobs: 0, freonPaid: 0, freonFree: 0 };
+  for (const r of reports) {
+    const svc = String(r.service || "");
+    const units = Array.isArray(r.units) ? r.units : [];
+    const nUnits = units.length || Number(r.total_units) || 0;
+    if (svc === "Cleaning") s.cleaning += nUnits;
+    if (svc === "Install") s.install += nUnits;
+    let hasFreonAdd = false, hasFreonVac = false;
+    for (const u of units) {
+      const p = (Array.isArray(u?.pekerjaan) ? u.pekerjaan : []).join(" | ");
+      if (svc !== "Cleaning" && /cleaning/i.test(p)) s.cleaning++;
+      if (svc !== "Install" && (/bongkar pasang/i.test(p) || (/(pemasangan|pasang)/i.test(p) && /(unit|bracket|indoor|outdoor)/i.test(p)))) s.install++;
+      if (/kapasitor/i.test(p)) s.kapasitor++;
+      if (/penambahan freon/i.test(p)) hasFreonAdd = true;
+      if (/kuras vacum|jasa vacum/i.test(p)) hasFreonVac = true;
+    }
+    if (hasFreonAdd) s.freonAddJobs++;
+    if (hasFreonVac) s.freonVacJobs++;
+    if (hasFreonAdd || hasFreonVac) {
+      s.freonJobs++;
+      const inv = invMap[r.job_id];
+      // repair_gratis = kolom TEXT → nilainya string "true"/"false"; total 0 = gratis juga.
+      const gratis = inv && (inv.repair_gratis === true || inv.repair_gratis === "true" || inv.repair_gratis === "t" || Number(inv.total) === 0);
+      if (gratis) s.freonFree++; else s.freonPaid++;
+    }
+  }
+  return s;
+}
 
 function DashboardView({ ordersData, invoicesData, inventoryData, teknisiData, omsetView, setOmsetView, waConversations, bulanIni, setActiveMenu, setInvoiceFilter, setModalOrder, setWaPanel, setWaTekTarget, setModalWaTek, getTechColor, triggerRekapHarian, openLaporanModal, openBAPModal, openMaterialBringModal, openJobReport, materialsBroughtMap, sendWA, dispatchWA, setSelectedInvoice, setModalPDF, customersData, laporanReports, findCustomer, setSelectedCustomer, setCustomerTab, setHistoryPreview, expensesData, apiHeaders, bapEnabled }) {
   // Fase 1: primitif global dari AppContext.
@@ -24,16 +72,21 @@ const hariIni = new Date(TODAY + "T00:00:00+07:00").toLocaleDateString("id-ID", 
 const [finOrders, setFinOrders] = useState(null);
 const [finInvoices, setFinInvoices] = useState(null);
 const [finPayroll, setFinPayroll] = useState(null);
+const [finReports, setFinReports] = useState(null);
+// Rekap jenis pekerjaan: mode ("minggu"/"bulan") + offset (0=periode berjalan, geser prev/next)
+const [workMode, setWorkMode] = useState("bulan");
+const [workOffset, setWorkOffset] = useState(0);
 useEffect(() => {
   if (role !== "Owner" || !supabase) return;   // hanya Owner yang punya panel ini
   let cancelled = false;
   (async () => {
     try {
-      const [{ data: ord }, { data: inv }, { data: pay }] = await Promise.all([
-        fetchAllOrders(supabase), fetchAllInvoices(supabase), fetchPayrollCost(supabase),
+      const sinceReports = toISOLocal(new Date(new Date().getFullYear(), new Date().getMonth() - 6, 1));
+      const [{ data: ord }, { data: inv }, { data: pay }, { data: rep }] = await Promise.all([
+        fetchAllOrders(supabase), fetchAllInvoices(supabase), fetchPayrollCost(supabase), fetchReportWorkStats(supabase, sinceReports),
       ]);
       if (cancelled) return;
-      setFinOrders(ord || []); setFinInvoices(inv || []); setFinPayroll(pay || []);
+      setFinOrders(ord || []); setFinInvoices(inv || []); setFinPayroll(pay || []); setFinReports(rep || []);
     } catch (e) {
       // Non-blocking: panel tetap tampil pakai data ber-cap (lebih baik angka lama
       // daripada dashboard kosong) — tapi jangan senyap total.
@@ -436,34 +489,47 @@ return (
             );
           })()}
 
-          {/* Kartu per anggota tim hari ini */}
+          {/* Rekap Jenis Pekerjaan — per minggu/bulan, geser prev/next */}
           <div style={{ borderTop: "1px solid " + cs.border, paddingTop: 12, marginBottom: 10 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted, marginBottom: 8 }}>👥 Job Hari Ini per Anggota Tim</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(120px,1fr))", gap: 7 }}>
-              {allTeam.map(t => {
-                const jobCnt = jobsToday[t.name] || 0;
-                const col = techColors[t.name] || cs.accent;
-                const isActive = jobCnt > 0;
-                return (
-                  <div key={t.name} style={{
-                    background: isActive ? col + "18" : cs.surface,
-                    border: "1px solid " + (isActive ? col + "44" : cs.border),
-                    borderRadius: 10, padding: "8px 10px", textAlign: "center"
-                  }}>
-                    <div style={{
-                      width: 32, height: 32, borderRadius: 10, background: col + "33",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: 14, fontWeight: 800, color: col, margin: "0 auto 6px"
-                    }}>
-                      {(t.name || "?")[0]}
+            {(() => {
+              const invMap = Object.fromEntries((finInvoices || invoicesData || []).map(i => [i.job_id, i]));
+              const { start, end, label } = workPeriodRange(workMode, workOffset);
+              const reps = (finReports || laporanReports || []).filter(r => r.status === "VERIFIED" && r.date && r.date >= start && r.date <= end);
+              const st = computeWorkStats(reps, invMap);
+              const btn = (active) => ({ padding: "3px 10px", borderRadius: 7, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                border: "1px solid " + (active ? cs.accent : cs.border), background: active ? cs.accent + "22" : cs.surface, color: active ? cs.accent : cs.muted });
+              const nav = (disabled) => ({ padding: "3px 9px", borderRadius: 7, fontSize: 12, border: "1px solid " + cs.border, background: cs.surface, color: cs.text, opacity: disabled ? 0.4 : 1, cursor: disabled ? "default" : "pointer" });
+              const Card = ({ icon, label: lb, value, unit, color, extra, sub }) => (
+                <div style={{ background: cs.surface, border: "1px solid " + color + "44", borderRadius: 10, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>{icon} {lb}</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color, lineHeight: 1 }}>{value}<span style={{ fontSize: 11, color: cs.muted, fontWeight: 600 }}> {unit}</span></div>
+                  {extra && <div style={{ fontSize: 10.5, color: cs.muted, marginTop: 5 }}>{extra}</div>}
+                  {sub && <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>{sub}</div>}
+                </div>
+              );
+              return (
+                <>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: cs.text }}>🧾 Rekap Jenis Pekerjaan</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <button onClick={() => { setWorkMode("minggu"); setWorkOffset(0); }} style={btn(workMode === "minggu")}>Minggu</button>
+                      <button onClick={() => { setWorkMode("bulan"); setWorkOffset(0); }} style={btn(workMode === "bulan")}>Bulan</button>
+                      <button onClick={() => setWorkOffset(o => o - 1)} style={nav(false)}>◀</button>
+                      <span style={{ minWidth: 120, textAlign: "center", fontSize: 11, fontWeight: 700, color: cs.text }}>{label}</span>
+                      <button onClick={() => setWorkOffset(o => Math.min(0, o + 1))} disabled={workOffset >= 0} style={nav(workOffset >= 0)}>▶</button>
                     </div>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: cs.text, marginBottom: 2 }}>{t.name}</div>
-                    <div style={{ fontSize: 10, color: col, fontWeight: 700 }}>{jobCnt} job</div>
-                    <div style={{ fontSize: 9, color: cs.muted }}>{t.role || "Teknisi"}</div>
                   </div>
-                );
-              })}
-            </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(150px,1fr))", gap: 8 }}>
+                    <Card icon="🧼" label="Cleaning" value={st.cleaning} unit="unit" color="#38bdf8" />
+                    <Card icon="🔧" label="Pasang AC / Bongkar Pasang" value={st.install} unit="unit" color="#a78bfa" />
+                    <Card icon="⚡" label="Ganti Kapasitor" value={st.kapasitor} unit="pcs" color="#f59e0b" />
+                    <Card icon="❄️" label="Freon (Tambah + Vacum)" value={st.freonJobs} unit="job" color="#34d399"
+                      extra={`💰 ${st.freonPaid} bayar · 🎁 ${st.freonFree} free`} sub={`Penambahan ${st.freonAddJobs} · Kuras Vacum ${st.freonVacJobs}`} />
+                  </div>
+                  {finReports === null && <div style={{ fontSize: 10, color: cs.muted, marginTop: 6 }}>⏳ Memuat data lengkap…</div>}
+                </>
+              );
+            })()}
           </div>
 
           {/* Ranking omset per teknisi — Owner only */}
@@ -1197,44 +1263,53 @@ return (
           <div style={{ fontWeight: 700, color: cs.text, fontSize: 15, marginBottom: 14 }}>
             👥 Performa Tim — {bulanIniPfx.slice(5).padStart(2, "0")}/{bulanIniPfx.slice(0, 4)}
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3,1fr)", gap: 12 }}>
-            {allTekNames2.map(tek => {
+          {(() => {
+            // Hanya anggota yang MENGHASILKAN omset bulan ini (revenue > 0). Helper & yang 0
+            // omset otomatis tersembunyi. Revenue pakai finInvoices/finOrders (uncapped) bila ada.
+            const invSrc = finInvoices || invoicesData;
+            const ordSrc = finOrders || ordersData;
+            const rows = allTekNames2.map(tek => {
               const col = getTechColor(tek, teknisiData);
-              const jobsBulan = ordersData.filter(o => o.teknisi === tek && (o.date || "").startsWith(bulanIniPfx));
+              const jobsBulan = ordSrc.filter(o => o.teknisi === tek && (o.date || "").startsWith(bulanIniPfx));
               const selesai = jobsBulan.filter(o => ORDER_DONE_STATUSES.includes(o.status)).length;
-              const pending = jobsBulan.filter(o => ["PENDING", "CONFIRMED", "IN_PROGRESS", "ON_SITE"].includes(o.status)).length;
-              const revInvTek = invoicesData.filter(i => {
-                const invTek = i.teknisi || ordersData.find(o => o.id === i.job_id)?.teknisi;
+              const revInvTek = invSrc.filter(i => {
+                const invTek = i.teknisi || ordSrc.find(o => o.id === i.job_id)?.teknisi;
                 return invTek === tek && i.status === "PAID" && jobDate(i).startsWith(bulanIniPfx);
               }).reduce((a, b) => a + (b.total || 0), 0);
               const lapVerif = laporanReports.filter(r => r.teknisi === tek && r.status === "VERIFIED" && (r.date || r.submitted_at || "").startsWith(bulanIniPfx)).length;
               const lapRevisi = laporanReports.filter(r => r.teknisi === tek && r.status === "REVISION" && (r.date || r.submitted_at || "").startsWith(bulanIniPfx)).length;
-              return (
-                <div key={tek} style={{ background: cs.surface, border: "1px solid " + col + "33", borderRadius: 12, padding: "14px 16px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-                    <div style={{ width: 36, height: 36, borderRadius: 10, background: col + "22", border: "1px solid " + col + "44", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, color: col, fontSize: 15 }}>
-                      {tek.charAt(0)}
+              return { tek, col, jobsBulan: jobsBulan.length, selesai, revInvTek, lapVerif, lapRevisi };
+            }).filter(r => r.revInvTek > 0).sort((a, b) => b.revInvTek - a.revInvTek);
+            if (rows.length === 0) return <div style={{ fontSize: 12, color: cs.muted }}>Belum ada anggota tim dengan omset bulan ini.</div>;
+            return (
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3,1fr)", gap: 12 }}>
+                {rows.map(({ tek, col, jobsBulan, selesai, revInvTek, lapVerif, lapRevisi }) => (
+                  <div key={tek} style={{ background: cs.surface, border: "1px solid " + col + "33", borderRadius: 12, padding: "14px 16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                      <div style={{ width: 36, height: 36, borderRadius: 10, background: col + "22", border: "1px solid " + col + "44", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, color: col, fontSize: 15 }}>
+                        {tek.charAt(0)}
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 700, color: cs.text, fontSize: 13 }}>{tek.split(" ")[0]}</div>
+                        <div style={{ fontSize: 10, color: cs.muted }}>{teknisiData.find(t => t.name === tek)?.role || "Teknisi"}</div>
+                      </div>
                     </div>
-                    <div>
-                      <div style={{ fontWeight: 700, color: cs.text, fontSize: 13 }}>{tek.split(" ")[0]}</div>
-                      <div style={{ fontSize: 10, color: cs.muted }}>{teknisiData.find(t => t.name === tek)?.role || "Teknisi"}</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 12px", fontSize: 11 }}>
+                      <div><span style={{ color: cs.muted }}>Job bln ini</span><div style={{ fontWeight: 800, color: cs.text, fontSize: 16 }}>{jobsBulan}</div></div>
+                      <div><span style={{ color: cs.muted }}>Selesai</span><div style={{ fontWeight: 800, color: cs.green, fontSize: 16 }}>{selesai}</div></div>
+                      <div><span style={{ color: cs.muted }}>Laporan ✓</span><div style={{ fontWeight: 700, color: col }}>{lapVerif}</div></div>
+                      <div><span style={{ color: cs.muted }}>Revisi</span><div style={{ fontWeight: 700, color: lapRevisi > 0 ? cs.yellow : cs.muted }}>{lapRevisi}</div></div>
                     </div>
+                    {isOwner && (
+                      <div style={{ marginTop: 8, fontSize: 11, background: cs.green + "12", border: "1px solid " + cs.green + "22", borderRadius: 7, padding: "4px 8px", color: cs.green, fontWeight: 700 }}>
+                        💰 Revenue: {fmt(revInvTek)}
+                      </div>
+                    )}
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 12px", fontSize: 11 }}>
-                    <div><span style={{ color: cs.muted }}>Job bln ini</span><div style={{ fontWeight: 800, color: cs.text, fontSize: 16 }}>{jobsBulan.length}</div></div>
-                    <div><span style={{ color: cs.muted }}>Selesai</span><div style={{ fontWeight: 800, color: cs.green, fontSize: 16 }}>{selesai}</div></div>
-                    <div><span style={{ color: cs.muted }}>Laporan ✓</span><div style={{ fontWeight: 700, color: col }}>{lapVerif}</div></div>
-                    <div><span style={{ color: cs.muted }}>Revisi</span><div style={{ fontWeight: 700, color: lapRevisi > 0 ? cs.yellow : cs.muted }}>{lapRevisi}</div></div>
-                  </div>
-                  {isOwner && revInvTek > 0 && (
-                    <div style={{ marginTop: 8, fontSize: 11, background: cs.green + "12", border: "1px solid " + cs.green + "22", borderRadius: 7, padding: "4px 8px", color: cs.green, fontWeight: 700 }}>
-                      💰 Revenue: {fmt(revInvTek)}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+                ))}
+              </div>
+            );
+          })()}
         </div>
       );
     })()}
