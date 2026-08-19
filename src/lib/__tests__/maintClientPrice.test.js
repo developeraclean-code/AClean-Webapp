@@ -35,7 +35,7 @@ describe("normalizeAcCode", () => {
   });
 });
 
-describe("clientCleaningUnitPrice (STRICT tipe+PK)", () => {
+describe("clientCleaningUnitPrice (tipe+PK, wildcard fallback)", () => {
   const unit = { tipe: "AC Split 1PK", pk: "1PK" };
 
   it("match persis tipe & PK → pakai harga deal", () => {
@@ -52,13 +52,25 @@ describe("clientCleaningUnitPrice (STRICT tipe+PK)", () => {
     expect(clientCleaningUnitPrice([row({ service_type: "Isi Freon" })], unit)).toBe(null);
   });
 
-  it("wildcard TIDAK dipakai: capacity_pk atau ac_type kosong → null", () => {
-    expect(clientCleaningUnitPrice([row({ capacity_pk: null })], unit)).toBe(null);
+  it("wildcard (capacity_pk kosong) = harga flat per tipe → DIPAKAI", () => {
+    expect(clientCleaningUnitPrice([row({ capacity_pk: null })], unit)).toBe(95000);
+    expect(clientCleaningUnitPrice([row({ capacity_pk: "" })], unit)).toBe(95000);
+    // berlaku utk PK apa pun / PK tak terbaca
+    expect(clientCleaningUnitPrice([row({ capacity_pk: null })], { tipe: "AC Split 2PK", pk: "2PK" })).toBe(95000);
+    expect(clientCleaningUnitPrice([row({ capacity_pk: null })], { tipe: "AC Split" })).toBe(95000);
+  });
+
+  it("baris ber-PK MENANG atas wildcard (strict prioritas)", () => {
+    const prices = [row({ capacity_pk: null, unit_price: 80000 }), row({ capacity_pk: 1, unit_price: 95000 })];
+    expect(clientCleaningUnitPrice(prices, unit)).toBe(95000);
+  });
+
+  it("ac_type kosong tetap diabaikan (tipe wajib cocok)", () => {
     expect(clientCleaningUnitPrice([row({ ac_type: null })], unit)).toBe(null);
     expect(clientCleaningUnitPrice([row({ ac_type: "" })], unit)).toBe(null);
   });
 
-  it("PK beda → null (fallback global oleh caller)", () => {
+  it("PK beda & tak ada wildcard → null (fallback global oleh caller)", () => {
     expect(clientCleaningUnitPrice([row()], { tipe: "AC Split 2PK", pk: "2PK" })).toBe(null);
   });
 
