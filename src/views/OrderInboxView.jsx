@@ -5,8 +5,9 @@ import { statusColor, statusLabel } from "../constants/status.js";
 import { normalizePhone, samePhone, cleanPhoneInput } from "../lib/phone.js";
 import { getTechColor } from "../lib/techColor.js";
 import { detectContinuationCandidates, calcContinuationDayNum, multiDayProgress } from "../lib/orders.js";
-import { withMaintenanceLink } from "../lib/maintenanceLink.js";
+import { withMaintenanceLink, findMaintClientByPhoneAddr } from "../lib/maintenanceLink.js";
 import QuickScheduleModal from "../components/QuickScheduleModal.jsx";
+import MaintUnitPickerModal from "./MaintUnitPickerModal.jsx";
 import { useAppContext } from "../context/AppContext.js";
 
 // ── Durasi estimasi (jam) — sama dengan logic di App.jsx ──
@@ -1438,6 +1439,8 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   const [serverCustMatches, setServerCustMatches] = useState({ key: "", rows: [] });
   // WA phone validation — warning kalau phone tidak ada riwayat chat tapi ada nomor mirip
   const [phoneCheck, setPhoneCheck] = useState(null);
+  // Popup pilih-unit untuk order klien maintenance (tahan insert sampai admin pilih/lewati).
+  const [unitPicker, setUnitPicker] = useState(null);
   // shape: { inputPhone, similar: [{phone, name, last_chat, msg_count}], onProceed, onPickSuggestion }
 
   async function checkWAPhone(phoneNorm) {
@@ -1562,6 +1565,88 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       address: lastOrder?.address || c.address || f.address,
       customer_id: c.id || null,
     }));
+  }
+
+  // Insert order baru + efek samping (continuation, auto-save customer, state lokal).
+  // Dipisah dari handleSave agar bisa dipanggil DUA jalur: (1) inline saat bukan job
+  // maintenance, (2) dari popup pilih-unit setelah admin memilih/melewati unit.
+  // `unitIds` → orders.maintenance_unit_ids (laporan teknisi hal 1/4 auto-terisi).
+  // Melempar error ke caller (caller yang urus savingLock + toast gagal).
+  async function createOrderRow(basePayload, id, unitIds = [], linkedName = null, continuation = null) {
+    const row = { ...basePayload, id, ...(unitIds && unitIds.length ? { maintenance_unit_ids: unitIds } : {}) };
+    const { error } = await supabase.from("orders").insert(row);
+    if (error) throw error;
+    if (linkedName) showNotif(`🏢 Order ditautkan ke kontrak ${linkedName}`);
+
+    // Order lanjutan multi-hari: update induk + sibling.
+    if (continuation) {
+      const parentId = continuation.id;
+      const { error: pErr } = await supabase.from("orders")
+        .update({ status: "CONTINUED", is_multi_day: true, day_number: 1 }).eq("id", parentId);
+      if (pErr) console.warn("Update parent multi-day failed:", pErr.message);
+      const siblingIds = ordersData.filter(o => o.parent_job_id === parentId && o.is_multi_day).map(o => o.id);
+      if (siblingIds.length > 0) {
+        const { error: sErr } = await supabase.from("orders").update({ is_multi_day: true }).in("id", siblingIds);
+        if (sErr) console.warn("Update sibling multi-day failed:", sErr.message);
+      }
+      setOrdersData(prev => prev.map(o => {
+        if (o.id === parentId) return { ...o, status: "CONTINUED", is_multi_day: true, day_number: 1 };
+        if (siblingIds.includes(o.id)) return { ...o, is_multi_day: true };
+        return o;
+      }));
+      setContinuationFrom(null);
+    }
+
+    // Auto-save customer bila belum tertaut (cek existing by phone+name → bump stats).
+    if (!basePayload.customer_id && basePayload.customer && basePayload.phone) {
+      const orderDate = basePayload.date || new Date().toISOString().slice(0, 10);
+      let saved = null;
+      const { data: existRows } = await supabase.from("customers")
+        .select("id,name,phone,address,area,total_orders,last_service")
+        .eq("phone", basePayload.phone).eq("name", basePayload.customer).limit(1);
+      if (existRows && existRows.length) {
+        const ex = existRows[0];
+        const newTotal = (ex.total_orders || 0) + 1;
+        const { data: upd } = await supabase.from("customers")
+          .update({ total_orders: newTotal, last_service: orderDate }).eq("id", ex.id).select().single();
+        saved = upd || { ...ex, total_orders: newTotal, last_service: orderDate };
+      } else {
+        const { data: ins } = await supabase.from("customers").insert({
+          name: basePayload.customer, phone: basePayload.phone, address: basePayload.address || null,
+          notes: "", is_vip: false, total_orders: 1, joined_date: orderDate, last_service: orderDate,
+        }).select().single();
+        saved = ins;
+      }
+      if (saved?.id) {
+        await supabase.from("orders").update({ customer_id: saved.id }).eq("id", id);
+        row.customer_id = saved.id;
+        setCustomersData(prev => {
+          const exists = prev.find(c => c.id === saved.id);
+          if (exists) return prev.map(c => c.id === saved.id ? { ...c, ...saved } : c);
+          return [...prev, saved];
+        });
+      }
+    }
+    // State lokal pakai row lengkap (bawa maintenance_client_id + unit_ids) → badge langsung muncul.
+    setOrdersData(prev => [{ ...row, created_at: new Date().toISOString() }, ...prev]);
+    const unitMsg = unitIds && unitIds.length ? ` · ${unitIds.length} unit dipilih` : "";
+    showNotif(continuation ? `✅ Order lanjutan Hari ${basePayload.day_number} dibuat${unitMsg}` : `Order masuk disimpan${unitMsg}`);
+  }
+
+  // Finalisasi order dari popup pilih-unit (dipanggil onConfirm/onSkip).
+  async function finalizePickedOrder(unitIds) {
+    if (!unitPicker || savingLock.current) return;
+    savingLock.current = true; setSaving(true);
+    const { basePayload, id, continuation, client } = unitPicker;
+    try {
+      await createOrderRow(basePayload, id, unitIds, client?.name || null, continuation);
+      setForm({ ...EMPTY_FORM, date: TODAY });
+      setUnitPicker(null);
+    } catch (e) {
+      showNotif("Gagal simpan: " + (e.message || "unknown"), "error");
+    } finally {
+      setSaving(false); savingLock.current = false;
+    }
   }
 
   async function handleSave(opts = {}) {
@@ -1691,90 +1776,25 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         setEditId(null);
       } else {
         const id = "WA-" + Date.now();
-        // Auto-link kontrak: order Planning Order untuk customer klien maintenance
-        // ikut membawa maintenance_client_id (kunci = customer_id, lihat
-        // lib/maintenanceLink.js). Tanpa ini order lahir "yatim" → laporan teknisi
-        // jatuh ke form manual & riwayat unit tidak terisi.
+        // Auto-link kontrak (kunci = customer_id, lib/maintenanceLink.js). Tanpa ini
+        // order lahir "yatim" → laporan teknisi jatuh ke form manual & riwayat unit kosong.
         const { payload: linkedPayload, linked } = withMaintenanceLink(payload, maintClients);
-        const { error } = await supabase.from("orders").insert({ ...linkedPayload, id });
-        if (error) throw error;
-        if (linked) showNotif(`🏢 Order ditautkan ke kontrak ${linked.name}`);
-
-        // Jika ini order lanjutan: update parent jadi CONTINUED + tandai is_multi_day
-        if (continuationFrom) {
-          const parentId = continuationFrom.id;
-          // Update parent
-          const { error: pErr } = await supabase.from("orders")
-            .update({ status: "CONTINUED", is_multi_day: true, day_number: 1 })
-            .eq("id", parentId);
-          if (pErr) console.warn("Update parent multi-day failed:", pErr.message);
-
-          // Tandai sibling multi-day yang sudah ada (bulk via .in untuk konsisten)
-          // Filter: hanya sibling MULTI-DAY (skip Repair-from-Complain yang non-multi-day)
-          const siblingIds = ordersData
-            .filter(o => o.parent_job_id === parentId && o.is_multi_day)
-            .map(o => o.id);
-          if (siblingIds.length > 0) {
-            const { error: sErr } = await supabase.from("orders")
-              .update({ is_multi_day: true })
-              .in("id", siblingIds);
-            if (sErr) console.warn("Update sibling multi-day failed:", sErr.message);
-          }
-
-          // State update lokal
-          setOrdersData(prev => prev.map(o => {
-            if (o.id === parentId) return { ...o, status: "CONTINUED", is_multi_day: true, day_number: 1 };
-            if (siblingIds.includes(o.id)) return { ...o, is_multi_day: true };
-            return o;
-          }));
-          setContinuationFrom(null);
+        // Klien maintenance? via customer_id (linked, paling andal) ATAU HP+alamat.
+        // Kalau ya & unit belum dipilih → tahan insert, munculkan popup pilih-unit
+        // (repair/complain → riwayat unit akurat). finally di bawah melepas savingLock.
+        const maintHit = linked || findMaintClientByPhoneAddr(payload.phone, payload.address, maintClients, customersData);
+        const hasUnits = Array.isArray(payload.maintenance_unit_ids) && payload.maintenance_unit_ids.length > 0;
+        if (maintHit && !hasUnits) {
+          setUnitPicker({
+            client: maintHit,
+            serviceType: payload.service,
+            basePayload: { ...linkedPayload, maintenance_client_id: maintHit.id },
+            id,
+            continuation: continuationFrom,
+          });
+          return; // finally akan lepas savingLock; insert dilanjutkan finalizePickedOrder()
         }
-
-        // Auto-save customer if not already linked.
-        // Cek existing dulu (by phone+name) agar TIDAK overwrite stats customer lama.
-        if (!form.customer_id && payload.customer && payload.phone) {
-          const orderDate = payload.date || new Date().toISOString().slice(0, 10);
-          let saved = null;
-          // 1. Cari existing by (phone, name)
-          const { data: existRows } = await supabase.from("customers")
-            .select("id,name,phone,address,area,total_orders,last_service")
-            .eq("phone", payload.phone).eq("name", payload.customer).limit(1);
-          if (existRows && existRows.length) {
-            // Existing → hanya bump stats, jangan overwrite nama/alamat/joined
-            const ex = existRows[0];
-            const newTotal = (ex.total_orders || 0) + 1;
-            const { data: upd } = await supabase.from("customers")
-              .update({ total_orders: newTotal, last_service: orderDate })
-              .eq("id", ex.id).select().single();
-            saved = upd || { ...ex, total_orders: newTotal, last_service: orderDate };
-          } else {
-            // Baru → insert
-            const { data: ins } = await supabase.from("customers").insert({
-              name: payload.customer,
-              phone: payload.phone,
-              address: payload.address || null,
-              notes: "",
-              is_vip: false,
-              total_orders: 1,
-              joined_date: orderDate,
-              last_service: orderDate,
-            }).select().single();
-            saved = ins;
-          }
-          if (saved?.id) {
-            await supabase.from("orders").update({ customer_id: saved.id }).eq("id", id);
-            setOrdersData(prev => prev.map(o => o.id === id ? { ...o, customer_id: saved.id } : o));
-            setCustomersData(prev => {
-              const exists = prev.find(c => c.id === saved.id);
-              if (exists) return prev.map(c => c.id === saved.id ? { ...c, ...saved } : c);
-              return [...prev, saved];
-            });
-          }
-        }
-        // Pakai linkedPayload (bukan payload) — kalau tidak, state lokal kehilangan
-        // maintenance_client_id sampai refresh & badge/grid unit tidak muncul.
-        setOrdersData(prev => [{ ...linkedPayload, id, created_at: new Date().toISOString() }, ...prev]);
-        showNotif(continuationFrom ? `✅ Order lanjutan Hari ${payload.day_number} dibuat` : "Order masuk disimpan");
+        await createOrderRow(linkedPayload, id, [], linked?.name || null, continuationFrom);
       }
       setForm({ ...EMPTY_FORM, date: TODAY });
     } catch (e) {
@@ -2714,6 +2734,17 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       </div>
 
       {/* ── Modal: WA Phone Validation Warning ── */}
+      {unitPicker && (
+        <MaintUnitPickerModal
+          client={unitPicker.client}
+          serviceType={unitPicker.serviceType}
+          apiHeaders={apiHeaders}
+          showNotif={showNotif}
+          onConfirm={(unitIds) => finalizePickedOrder(unitIds)}
+          onSkip={() => finalizePickedOrder([])}
+        />
+      )}
+
       {phoneCheck && (
         <div style={{
           position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 9999,

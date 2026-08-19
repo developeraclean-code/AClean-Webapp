@@ -1254,7 +1254,8 @@ export default function ACleanWebApp() {
         });
         if (!r.ok) return;
         const { clients = [] } = await r.json().catch(() => ({}));
-        if (alive) setMaintClientsIndex(clients.map(c => ({ id: c.id, name: c.name, customer_id: c.customer_id, contract_status: c.contract_status })));
+        // pic_phone + address disertakan untuk deteksi HP+alamat (popup pilih-unit di Planning Order).
+        if (alive) setMaintClientsIndex(clients.map(c => ({ id: c.id, name: c.name, customer_id: c.customer_id, contract_status: c.contract_status, pic_phone: c.pic_phone, address: c.address })));
       } catch (_) { /* non-blocking — auto-link cukup tidak jalan, order tetap tersimpan */ }
     })();
     return () => { alive = false; };
