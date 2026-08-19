@@ -468,7 +468,8 @@ const buildVerifyInvoice = (r, ord, dealPricesOverride) => {
       const unitsWithTipe = rUnits.filter(u => u && u.tipe);
       if (unitsWithTipe.length > 0) {
         unitsWithTipe.forEach((u) => {
-          // Harga deal per-klien maintenance menang bila match STRICT tipe+PK
+          // Harga deal per-klien maintenance menang bila match tipe+PK (strict) ATAU
+          // baris wildcard tipe (capacity_pk kosong = flat semua PK) — lihat maintClientPrice.js
           const dealPrice = dealPrices ? clientCleaningUnitPrice(dealPrices, u) : null;
           const svcBesarOpt = { serviceBesar: isServiceBesarPekerjaan(u.pekerjaan) };
           const hargaUnit = dealPrice != null ? dealPrice : hargaPerUnitFromTipe(r.service, u.tipe, priceListData, svcBesarOpt);
@@ -660,6 +661,10 @@ const verifyLaporan = async (r) => {
       status: finalStatus2,
       garansi_days: 30, garansi_expires: new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
       due: new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10),
+      // Tautkan invoice ke klien kontrak dari order (denormalisasi). Jangan andalkan
+      // autolog portal untuk PATCH belakangan — kalau autolog tak jalan/unit tak
+      // ter-match, invoice yatim & hilang dari panel tagihan klien maintenance.
+      maintenance_client_id: ord?.maintenance_client_id || null,
       sent: false, created_at: new Date().toISOString()
     };
     const { data: oldDB, error: fetchOldErr } = await supabase

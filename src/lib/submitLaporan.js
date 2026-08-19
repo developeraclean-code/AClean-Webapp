@@ -741,6 +741,10 @@ export async function submitLaporan({
         status: "PENDING_APPROVAL",
         garansi_days: gDays,
         garansi_expires: gExpires,
+        // Tautkan invoice ke klien kontrak dari order (denormalisasi). Tanpa ini
+        // invoice hanya ter-link bila autolog portal kebetulan jalan → bisa yatim
+        // & hilang dari panel tagihan klien maintenance (audit 19 Agu 2026).
+        maintenance_client_id: laporanModal.maintenance_client_id || null,
         created_at: new Date().toISOString(),
       };
 
@@ -826,6 +830,7 @@ export async function submitLaporan({
             customer: newInvoice.customer, service: newInvoice.service,
             units: newInvoice.units, labor: newInvoice.labor,
             material: newInvoice.material, total: newInvoice.total,
+            maintenance_client_id: newInvoice.maintenance_client_id || null,
             status: st,
           });
           if (!e2) { retryOk = true; break; }
