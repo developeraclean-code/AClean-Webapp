@@ -77,16 +77,24 @@ export default function DocPaper({ doc, project }) {
           </div>
         </div>
       )}
-      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 28 }}>
-        <div style={{ textAlign: "center", width: "45%" }}>
-          <div>{sig.lRole}<br />{sig.lName}</div>
-          <div style={{ marginTop: 54, borderTop: "1px solid #0f172a", paddingTop: 4, fontWeight: 700 }}>{doc.ttdTeknisi}</div>
-        </div>
-        <div style={{ textAlign: "center", width: "45%" }}>
-          <div>{sig.rRole}<br />{penerima}</div>
-          {doc.ttdCustomerImg && <img alt="ttd" src={doc.ttdCustomerImg} style={{ height: 46, display: "block", margin: "6px auto -8px" }} />}
-          <div style={{ marginTop: 54, borderTop: "1px solid #0f172a", paddingTop: 4, fontWeight: 700 }}>{doc.ttdCustomer}</div>
-        </div>
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 24, gap: 24 }}>
+        <SignCol role={sig.lRole} name={sig.lName} signName={doc.ttdTeknisi} />
+        <SignCol role={sig.rRole} name={penerima} signName={doc.ttdCustomer} img={doc.ttdCustomerImg} />
+      </div>
+    </div>
+  );
+}
+
+// Satu kolom tanda tangan. Tinggi TETAP + garis di-pin ke bawah (marginTop:auto)
+// → garis & nama SELALU sejajar antar kolom walau nama penerima panjang (wrap 2
+// baris). wordBreak mencegah nama jebol keluar kotak.
+function SignCol({ role, name, signName, img }) {
+  return (
+    <div style={{ width: "45%", minWidth: 0, textAlign: "center", display: "flex", flexDirection: "column", height: 96 }}>
+      <div style={{ lineHeight: 1.3, wordBreak: "break-word" }}>{role}<br />{name}</div>
+      <div style={{ marginTop: "auto" }}>
+        {img && <img alt="ttd" src={img} style={{ maxHeight: 40, maxWidth: "90%", display: "block", margin: "0 auto 2px" }} />}
+        <div style={{ borderTop: "1px solid #0f172a", paddingTop: 4, fontWeight: 700, lineHeight: 1.25, wordBreak: "break-word" }}>{signName}</div>
       </div>
     </div>
   );

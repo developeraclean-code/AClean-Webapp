@@ -24,10 +24,13 @@ const s = StyleSheet.create({
   td: { padding: 5, fontSize: 9, borderRightWidth: 1, borderRightColor: "#cbd5e1", borderBottomWidth: 1, borderBottomColor: "#cbd5e1" },
   cNo: { width: "8%", textAlign: "center" }, cName: { width: "50%" }, cQty: { width: "20%" }, cKet: { width: "22%", textAlign: "right" },
   ckRow: { flexDirection: "row", marginBottom: 2 },
-  signWrap: { flexDirection: "row", justifyContent: "space-between", marginTop: 36 },
-  signBox: { width: "45%", alignItems: "center" },
-  signImg: { height: 46, marginTop: 4, marginBottom: -6, objectFit: "contain" },
-  signLine: { marginTop: 48, borderTopWidth: 1, borderTopColor: "#0f172a", paddingTop: 3, fontWeight: 700, width: "100%", textAlign: "center" },
+  signWrap: { flexDirection: "row", justifyContent: "space-between", marginTop: 28 },
+  // Tinggi TETAP + spacer flexGrow → garis TTD selalu sejajar antar kolom walau
+  // nama penerima panjang (wrap). Ganti marginTop:48 lama yang bikin tak rata.
+  signBox: { width: "45%", alignItems: "center", height: 96 },
+  signSpacer: { flexGrow: 1 },
+  signImg: { height: 38, marginBottom: 2, objectFit: "contain" },
+  signLine: { borderTopWidth: 1, borderTopColor: "#0f172a", paddingTop: 3, fontWeight: 700, width: "100%", textAlign: "center" },
 });
 
 export default function ProjectDocPDF({ doc, project, appSettings = {}, logoUrl = null }) {
@@ -106,10 +109,12 @@ export default function ProjectDocPDF({ doc, project, appSettings = {}, logoUrl 
         <View style={s.signWrap}>
           <View style={s.signBox}>
             <Text>{sig.lRole}{"\n"}{sig.lName}</Text>
+            <View style={s.signSpacer} />
             <Text style={s.signLine}>{doc.ttdTeknisi || "( ........... )"}</Text>
           </View>
           <View style={s.signBox}>
             <Text>{sig.rRole}{"\n"}{penerima}</Text>
+            <View style={s.signSpacer} />
             {doc.ttdCustomerImg ? <Image style={s.signImg} src={doc.ttdCustomerImg} /> : null}
             <Text style={s.signLine}>{doc.ttdCustomer && doc.ttdCustomer !== "(belum)" ? doc.ttdCustomer : "( ........... )"}</Text>
           </View>
