@@ -1,10 +1,16 @@
-import { memo, useState, useEffect, useCallback } from "react";
+import { memo, useState, useEffect, useCallback, useMemo } from "react";
 import { cs } from "../theme/cs.js";
 import { useAppContext } from "../context/AppContext.js";
 import { DEFAULT_BONUS_CATEGORIES } from "../constants/bonus.js";
 import { ORDER_DONE_STATUSES } from "../constants/status.js";
 import { employmentStatus, fmtTenure } from "../lib/employment.js";
 import { formatPhone } from "../lib/phone.js";
+import {
+  detectBonusFromInvoice, bonusCandidateInfo,
+  daysSinceBonusDate as daysSinceDate, effBonusStatus,
+} from "../lib/bonus.js";
+import { buildBonusRekap } from "../lib/bonusRekap.js";
+import BonusRekapPanel from "./BonusRekapPanel.jsx";
 import {
   localDateStr, getMondayOf, getSaturdayOf, addWeeks,
   fullWeekBonusAmt, computeGross, kasbonOwed, kasbonSisa,
@@ -54,15 +60,7 @@ function fmtDate(d) {
   return new Date(d + "T00:00:00").toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
 }
 // fullWeekBonusAmt/computeGross/kasbonOwed/kasbonSisa → src/lib/payroll.js
-// Komisi PENDING → ELIGIBLE otomatis setelah 30 hari (derive, tanpa cron)
-function daysSinceDate(dateStr) {
-  if (!dateStr) return 0;
-  return Math.floor((Date.now() - new Date(dateStr + "T00:00:00").getTime()) / 86400000);
-}
-function effBonusStatus(b) {
-  if (b.status === "PENDING" && daysSinceDate(b.order_date) >= 30) return "ELIGIBLE";
-  return b.status;
-}
+// daysSinceDate/effBonusStatus (PENDING → ELIGIBLE otomatis 30 hari) → src/lib/bonus.js
 
 function TeknisiAdminView({ teknisiData, setTeknisiData, ordersData, laporanReports, setEditTeknisi, setNewTeknisiForm, setModalTeknisi, openWA, invoicesData, bonusCategories = [], setBonusCategories, BONUS_LABELS = {}, BONUS_DEFAULTS = {} }) {
   // Fase 1: primitif global dari AppContext.
@@ -509,7 +507,7 @@ return (
 // GAJI TAB — Payroll + Komisi Order
 // ═══════════════════════════════════════════════════════════════
 function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase, showNotif, showConfirm, addAgentLog, openWA, TODAY, bonusCategories = [], setBonusCategories, BONUS_LABELS = {}, BONUS_DEFAULTS = {} }) {
-  const [subTab, setSubTab]         = useState("payroll"); // "payroll" | "komisi" | "setting"
+  const [subTab, setSubTab]         = useState("payroll"); // "payroll" | "komisi" | "rekap" | "setting"
   const [periodStart, setPeriodStart] = useState(() => getMondayOf(TODAY));
   const periodEnd = getSaturdayOf(periodStart);
 
@@ -540,6 +538,7 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
   const [bonuses, setBonuses]           = useState([]);
   const [ordersNoBonus, setOrdersNoBonus] = useState([]);
   const [periodInvMap, setPeriodInvMap] = useState({}); // { invoiceId: { id, total, materials_detail } }
+  const [periodOrders, setPeriodOrders] = useState([]);  // SEMUA order selesai bulan itu — sumber rekap cetak
   const [loadingBonus, setLoadingBonus] = useState(false);
   const [openBonusIds, setOpenBonusIds] = useState(() => new Set()); // order2 yg panel input bonusnya terbuka (multi, inline)
   const [voidForm, setVoidForm]         = useState(null); // { id, reason }
@@ -615,27 +614,27 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
     // Filter orders: belum ada bonus entry + memenuhi kriteria bonus
     // 3 kategori: 1) Omset > 1jt (bukan pemasangan), 2) Pemasangan >= 2 unit, 3) Freon/Kapasitor
     const existingOrderIds = new Set((bonRes.data || []).map(b => b.order_id));
+    // Kriteria layak bonus (omset besar / install multi-unit / material khusus) → lib/bonus.js
+    // supaya panel review dan rekap cetak tidak pernah beda hitungan.
     const eligible = orders.filter(o => {
       if (existingOrderIds.has(o.id)) return false;
       const inv = fetchedInvMap[o.invoice_id];
-      const invTotal = Number(inv?.total || 0);
       const det = detectBonusFromInvoice(inv?.materials_detail, o.service, bonusCategories);
-      // Kategori 1: Omset >= 1jt (non-Install), atau Install >= 1,5jt
-      const isOmsetBesar = (o.service !== "Install" && invTotal >= 1000000) ||
-                           (o.service === "Install" && invTotal >= 1500000);
-      // Kategori 2: Pemasangan >= 2 unit
-      const isInstallMulti = o.service === "Install" && Number(o.units) >= 2;
-      // Kategori 3: Ada freon, kapasitor, atau thermis (tidak perlu threshold nilai invoice)
-      const hasSpecialService = det.detected.some(cid => ["freon", "kapasitor", "thermis"].includes(cid));
-      return isOmsetBesar || isInstallMulti || hasSpecialService;
+      return bonusCandidateInfo(o, Number(inv?.total || 0), det.detected).eligible;
     });
     setPeriodInvMap(fetchedInvMap);
+    setPeriodOrders(orders);
     setOrdersNoBonus(eligible);
     setLoadingBonus(false);
   }, [supabase, bonusStart, bonusEnd, bonusCategories]);
 
   useEffect(() => { if (subTab === "payroll") loadPayroll(); }, [subTab, loadPayroll]);
-  useEffect(() => { if (subTab === "komisi") loadBonuses(); }, [subTab, loadBonuses]);
+  useEffect(() => { if (subTab === "komisi" || subTab === "rekap") loadBonuses(); }, [subTab, loadBonuses]);
+
+  // Rekap bulanan siap-cetak (dibangun dari data yang sama dengan tab Komisi).
+  const bonusRekap = useMemo(() => buildBonusRekap({
+    month: bonusMonth, bonuses, orders: periodOrders, invMap: periodInvMap, bonusCategories,
+  }), [bonusMonth, bonuses, periodOrders, periodInvMap, bonusCategories]);
 
   // Sync localBonus dari payrollRows setiap kali rows berubah
   useEffect(() => {
@@ -994,7 +993,7 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
     <div style={{ display: "grid", gap: 16 }}>
       {/* Sub-tab */}
       <div style={{ display: "flex", gap: 8 }}>
-        {[{ k: "payroll", l: "💵 Payroll Mingguan" }, { k: "komisi", l: "🎯 Komisi Order" }, ...(isOwner ? [{ k: "setting", l: "⚙️ Setting Bonus" }] : [])].map(s => (
+        {[{ k: "payroll", l: "💵 Payroll Mingguan" }, { k: "komisi", l: "🎯 Komisi Order" }, { k: "rekap", l: "📄 Rekap & Cetak" }, ...(isOwner ? [{ k: "setting", l: "⚙️ Setting Bonus" }] : [])].map(s => (
           <button key={s.k} onClick={() => setSubTab(s.k)} style={{
             padding: "8px 18px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 13, border: "1px solid",
             borderColor: subTab === s.k ? cs.accent : cs.border,
@@ -1663,6 +1662,22 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
         );
       })()}
 
+      {/* ── REKAP & CETAK BONUS ── */}
+      {subTab === "rekap" && (
+        <BonusRekapPanel
+          rekap={bonusRekap}
+          bonusMonth={bonusMonth}
+          setBonusMonth={setBonusMonth}
+          addMonths={addMonths}
+          todayYearMonth={todayYearMonth}
+          loading={loadingBonus}
+          onReload={loadBonuses}
+          showNotif={showNotif}
+          addAgentLog={addAgentLog}
+          currentUser={currentUser}
+        />
+      )}
+
       {/* ── SETTING BONUS (Owner only) ── */}
       {subTab === "setting" && isOwner && (
         <BonusSettingPanel
@@ -1770,36 +1785,8 @@ function BonusSettingPanel({ bonusCategories, setBonusCategories, supabase, show
   );
 }
 
-// ── Helpers: deteksi dari invoice + install kumulatif ──
-// Detect bonus material spesifik: freon (kuras vacum + isi freon / tambah freon), kapasitor AC, thermis
-function detectBonusFromInvoice(materialsDetail, orderService = "", bonusCategories = []) {
-  // Build detection keywords map from bonusCategories
-  const keywordMap = {};
-  bonusCategories.forEach(cat => {
-    if (cat.detection_keywords && Array.isArray(cat.detection_keywords) && cat.detection_keywords.length > 0) {
-      keywordMap[cat.id] = cat.detection_keywords;
-    }
-  });
-
-  const result = { detected: [], names: {} }; // detected: [categoryId], names: { categoryId: [itemNames] }
-  try {
-    const items = JSON.parse(materialsDetail || "[]");
-    for (const item of items) {
-      const nama = (item.nama || "").toLowerCase().trim();
-      // Check each category's detection keywords
-      for (const [categoryId, keywords] of Object.entries(keywordMap)) {
-        if (keywords.length === 0) continue; // Skip categories with no detection keywords
-        // ALL keywords must be present in the item name (AND logic)
-        const allMatch = keywords.every(kw => nama.includes(kw.toLowerCase().trim()));
-        if (allMatch) {
-          if (!result.detected.includes(categoryId)) result.detected.push(categoryId);
-          (result.names[categoryId] = result.names[categoryId] || []).push(item.nama);
-        }
-      }
-    }
-  } catch (err) { console.error("Material detection error:", err); }
-  return result;
-}
+// ── Helpers: install kumulatif ──
+// detectBonusFromInvoice() → src/lib/bonus.js (dipakai bersama lib/bonusRekap.js)
 
 // Status "pekerjaan selesai" — pakai ORDER_DONE_STATUSES bersama (constants/status.js)
 // supaya konsisten dgn ReportsView/reads.js/lib/reports.js, bukan didefinisikan ulang lokal.
