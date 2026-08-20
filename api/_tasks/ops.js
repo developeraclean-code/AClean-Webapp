@@ -546,3 +546,62 @@ export async function taskMediaGapAlert() {
   await log("MEDIA_GAP_ALERT_FIRED", `${inbound} pesan / 0 media dalam 5 jam → alert Owner`, "WARNING");
   return { alerted: true, inbound: inbound || 0, media: 0 };
 }
+
+// ══════════════════════════════════════════════════
+// TASK: data-integrity-audit — mingguan (Senin 07:00 WIB)
+// Jadikan audit integritas data yang dulu manual (invoice yatim, FK dangling,
+// unit_id salah link) sebagai pemeriksaan TERJADWAL. Panggil fungsi SQL
+// audit_maintenance_integrity() (migrasi 132) → alert Owner kalau ada anomali
+// critical/warn. Bersih = senyap (cuma log). Owner-only, tak pernah WA customer.
+// Toggle: data_integrity_audit_enabled. Mengubah kelemahan "bug senyap" jadi
+// deteksi dini (assessment SFM 20 Agu 2026).
+// ══════════════════════════════════════════════════
+const INTEGRITY_LABELS = {
+  invoice_maint_yatim: "Invoice maintenance tanpa client_id (yatim)",
+  log_client_mismatch: "Log servis nyasar ke klien salah",
+  log_unit_dangling: "Log menunjuk unit tak ada",
+  unit_client_dangling: "Unit menunjuk klien tak ada",
+  followup_unit_dangling: "Temuan menunjuk unit tak ada",
+  unit_code_dup: "Kode unit dobel dalam 1 klien",
+  unit_ids_missing: "Order menunjuk unit tak ada",
+  unit_ids_other_client: "Order menunjuk unit milik klien lain",
+  unit_active_no_interval: "Unit aktif tanpa interval servis",
+  followup_log_dangling: "Temuan menunjuk log tak ada",
+  log_order_dangling: "Log menunjuk order sudah dihapus (jinak)",
+};
+
+export async function taskDataIntegrityAudit() {
+  const { data: togData } = await sb.from("app_settings").select("key,value")
+    .in("key", ["data_integrity_audit_enabled", "cron_jobs"]);
+  const togMap = Object.fromEntries((togData || []).map(s => [s.key, s.value]));
+  if (!isCronJobEnabled(togMap, "data_integrity_audit_enabled") || togMap["data_integrity_audit_enabled"] !== "true") {
+    await log("DATA_INTEGRITY_AUDIT", "Dilewati — data_integrity_audit_enabled OFF", "INFO");
+    return { skipped: true };
+  }
+
+  const { data, error } = await sb.rpc("audit_maintenance_integrity");
+  if (error) {
+    await log("DATA_INTEGRITY_AUDIT", "RPC gagal: " + error.message, "ERROR");
+    Sentry.captureException(error, { tags: { task: "data-integrity-audit" } });
+    return { error: error.message };
+  }
+  const findings = Array.isArray(data) ? data : [];
+  // Hanya critical/warn yang di-alert; 'info' (mis. log yatim jinak) cukup dicatat.
+  const actionable = findings.filter(f => f.severity === "critical" || f.severity === "warn");
+  if (!actionable.length) {
+    await log("DATA_INTEGRITY_AUDIT", `Bersih ✓ (${findings.length} info)`, "INFO");
+    return { ok: true, clean: true };
+  }
+
+  const lines = actionable.map(f => {
+    const icon = f.severity === "critical" ? "🔴" : "⚠️";
+    const label = INTEGRITY_LABELS[f.check] || f.check;
+    const sample = f.sample ? `\n   ${String(f.sample).slice(0, 120)}` : "";
+    return `${icon} ${label}: *${f.n}*${sample}`;
+  });
+  const nCrit = actionable.filter(f => f.severity === "critical").length;
+  const msg = `🧭 *AUDIT INTEGRITAS DATA MAINTENANCE*\n\nDitemukan ${actionable.length} jenis anomali${nCrit ? ` (${nCrit} critical)` : ""}:\n\n${lines.join("\n\n")}\n\nPerbaiki via menu terkait / minta bantuan agent audit.`;
+  if (OWNER_PHONE) await sendWA(OWNER_PHONE, msg);
+  await log("DATA_INTEGRITY_AUDIT", `Alert ${actionable.length} anomali: ${actionable.map(f => f.check + "=" + f.n).join(", ")}`, nCrit ? "ERROR" : "WARNING");
+  return { ok: true, anomalies: actionable.length, critical: nCrit };
+}

@@ -3,6 +3,7 @@ name: Quality
 # Gate cepat (~1 menit, tanpa secrets) di tiap push/PR ke main:
 #   - lint   : cegah error senyap (catch kosong = build merah)
 #   - typecheck : TS bertahap di data layer (salah key tabel/field = error)
+#   - migrations : cegah nomor migrasi dobel baru (salah urut apply)
 #   - unit   : vitest (logika murni di src/lib)
 # E2E (Playwright) terpisah di e2e.yml.
 
@@ -46,6 +47,9 @@ jobs:
 
       - name: Typecheck (TS data layer)
         run: npm run typecheck
+
+      - name: Migrations tidy (no new dup numbers)
+        run: npm run check:migrations
 
       - name: Unit tests (vitest)
         run: npm test

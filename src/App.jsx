@@ -3,6 +3,8 @@ import { supabase } from "./supabaseClient.js";
 import { normalizePhone, samePhone } from "./lib/phone.js";
 import { getLocalDate, getLocalISOString, isWorkingHours } from "./lib/dateTime.js";
 import { safeJsonParse } from "./lib/safeJson.js";
+import { useDebounce } from "./lib/useDebounce.js";
+import { cachedFetch, invalidateCache } from "./lib/fetchCache.js";
 import { reportError } from "./lib/reportError.js";
 import {
   validatePhone, validateTime, validateDate,
@@ -428,17 +430,6 @@ Jika "teknisi X tidak masuk hari ini":
 `.trim();
 
 // A.2 OPTIMIZATION: Custom hook untuk debounce nilai (prevent excessive re-renders saat typing)
-function useDebounce(value, delay) {
-  const [debouncedValue, setDebouncedValue] = useState(value);
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedValue(value);
-    }, delay);
-    return () => clearTimeout(handler);
-  }, [value, delay]);
-  return debouncedValue;
-}
-
 export { ErrorBoundary };
 
 // ── AuditHistory (stabilisasi #2B) — tampilkan riwayat perubahan per row ──
@@ -581,21 +572,6 @@ function AuditHistory({ tableName, rowId, open, onClose, cs = {} }) {
 // ── In-memory fetch cache (session-scoped) ──
 // Mencegah re-fetch ke Supabase pada manual refresh / navigasi ulang.
 // Data tetap fresh via Realtime channels yang sudah ada.
-const CACHE_TTL = 60_000; // 1 menit
-const _fetchCache = { store: {} };
-function cachedFetch(key, fetcher) {
-  const hit = _fetchCache.store[key];
-  if (hit && Date.now() - hit.ts < CACHE_TTL) return Promise.resolve(hit.value);
-  return fetcher().then(result => {
-    _fetchCache.store[key] = { value: result, ts: Date.now() };
-    return result;
-  });
-}
-function invalidateCache(...keys) {
-  if (keys.length === 0) { _fetchCache.store = {}; return; }
-  keys.forEach(k => delete _fetchCache.store[k]);
-}
-
 // ── Group Payment Modal ──
 function GroupPaymentModal({ ctx, onConfirm, onClose, fmt, cs }) {
   const { invoices, suggestedAmount, proofUrl: initProof, method: initMethod } = ctx;

@@ -14,7 +14,7 @@ import { sb, sendWA, log, OWNER_PHONE } from "./_tasks/_shared.js";
 import { taskCleanup, taskR2Cleanup90d, taskExpenseFotoCleanup30d, taskPaymentProofCleanup90d, taskSnapshotCleanup, taskWaCleanup, taskLogCleanup } from "./_tasks/cleanup.js";
 import { taskReminder, taskDaily, taskStock, taskServisReminder, taskVoucherExpiryReminder, taskLaporanStaleAlert, taskMaterialPulangReminder, taskWeeklyReport, taskMorningDispatch, taskRatingPrompt } from "./_tasks/reminders.js";
 import { taskWaSnapshot, taskWaBackfill, taskScanBuktiBayar } from "./_tasks/wa-ai.js";
-import { taskProjectAlerts, taskAutoReturnBrought, taskBackupData, taskPayrollWA, taskBonusEligible, taskMaintenanceContractExpiry, taskMaintenanceFollowupAlert, taskMaintenancePmDue, taskMediaGapAlert } from "./_tasks/ops.js";
+import { taskProjectAlerts, taskAutoReturnBrought, taskBackupData, taskPayrollWA, taskBonusEligible, taskMaintenanceContractExpiry, taskMaintenanceFollowupAlert, taskMaintenancePmDue, taskMediaGapAlert, taskDataIntegrityAudit } from "./_tasks/ops.js";
 
 // Initialize Sentry
 initSentry();
@@ -58,6 +58,7 @@ async function taskTick() {
     { t: "bonus-eligible",           fn: taskBonusEligible,          h: 7 },
     { t: "media-gap-alert",          fn: taskMediaGapAlert,          h: 13 },
     { t: "media-gap-alert-sore",     fn: taskMediaGapAlert,          h: 16 },
+    { t: "data-integrity-audit",     fn: taskDataIntegrityAudit,     h: 7,  dow: 1 },
     { t: "payroll-wa",               fn: taskPayrollWA,              h: 18, dow: 6 },
     // wa-snapshot DIMATIKAN dari jadwal (4 Jul 2026) — window review pattern WA
     // selesai 12 Jun; dump harian percakapan grup tak lagi diperlukan. Fungsi
@@ -197,6 +198,7 @@ export default async function handler(req, res) {
       "snapshot-cleanup": taskSnapshotCleanup,
       "project-alerts":   taskProjectAlerts,
       "media-gap-alert":  taskMediaGapAlert,
+      "data-integrity-audit": taskDataIntegrityAudit,
       "reminder":         taskReminder,
       "tick":             taskTick,
     };
