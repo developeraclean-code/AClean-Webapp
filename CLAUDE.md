@@ -220,6 +220,8 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
 132       # Applied — fungsi audit integritas maintenance
 133       # Pending (jalankan manual di Supabase SQL Editor) — tautkan CUST1310 ↔ klien
           #   maintenance PT Sarana Catur Tirtakelola + backfill customer_id 2 order
+134       # Pending (jalankan manual di Supabase SQL Editor) — tautkan klien Eka Jaya
+          #   (CUST959, fix nama INTERNASIONAL) & Jaya Kreasi Spectra (CUST1022 + alamat)
 ```
 
 > Daftar di atas pernah tertinggal jauh (berhenti di 126 padahal file sudah 132).
