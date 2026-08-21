@@ -92,3 +92,21 @@ export const smartSearchNormalize = (val) => {
   if (/^\d{5,}$/.test(stripped)) return normalizePhone(stripped);
   return val;
 };
+
+// Ambil semua nomor telepon yang tertulis di TEKS BEBAS (mis. customers.notes:
+// "PIC kontrak: Bapak Alief Aji (6287820958051). Nomor utama 6285714121850").
+// customers hanya punya SATU kolom phone, jadi nomor PIC/alternatif disimpan di
+// notes. Fungsi ini yang membuatnya tetap bisa dikenali — dipakai soft-warning di
+// Planning Order saat admin menempel nomor alternatif (biar tidak bikin customer
+// duplikat). Hanya deret 9-15 digit yang dianggap nomor, jadi potongan alamat
+// seperti "RT 014 RW 003" tidak ikut terjaring.
+export const extractPhones = (text) => {
+  if (!text) return [];
+  const out = [];
+  const seen = new Set();
+  for (const m of String(text).matchAll(/\+?\d[\d\s.\-()]{7,}\d/g)) {
+    const n = normalizePhone(m[0].trim());
+    if (/^\d{9,15}$/.test(n) && !seen.has(n)) { seen.add(n); out.push(n); }
+  }
+  return out;
+};

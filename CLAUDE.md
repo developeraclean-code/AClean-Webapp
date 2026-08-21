@@ -222,6 +222,8 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
           #   maintenance PT Sarana Catur Tirtakelola + backfill customer_id 2 order
 134       # Pending (jalankan manual di Supabase SQL Editor) — tautkan klien Eka Jaya
           #   (CUST959, fix nama INTERNASIONAL) & Jaya Kreasi Spectra (CUST1022 + alamat)
+135       # Pending (jalankan manual di Supabase SQL Editor) — gabung customer duplikat
+          #   Jaya Kreasi Alam Sutera: CUST784 → CUST678, lalu CUST784 dihapus
 ```
 
 > Daftar di atas pernah tertinggal jauh (berhenti di 126 padahal file sudah 132).

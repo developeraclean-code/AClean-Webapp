@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { cs } from "../theme/cs.js";
 import { SERVICE_TYPES } from "../constants/services.js";
 import { statusColor, statusLabel } from "../constants/status.js";
-import { normalizePhone, samePhone, cleanPhoneInput } from "../lib/phone.js";
+import { normalizePhone, samePhone, cleanPhoneInput, extractPhones, formatPhone } from "../lib/phone.js";
 import { getTechColor } from "../lib/techColor.js";
 import { detectContinuationCandidates, calcContinuationDayNum, multiDayProgress } from "../lib/orders.js";
 import { withMaintenanceLink, findMaintClientByPhoneAddr } from "../lib/maintenanceLink.js";
@@ -1573,6 +1573,22 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     return mergeMatches(client, server).slice(0, 4);
   }, [form.phone, customersData, serverCustMatches, mergeMatches]);
 
+  // Soft-warning nomor alternatif: nomor yang ditempel BUKAN nomor utama siapa pun,
+  // tapi tercatat di notes seorang customer (customers cuma punya 1 kolom phone, jadi
+  // nomor PIC ke-2 memang disimpan di notes). Tanpa ini admin cenderung bikin customer
+  // baru → perusahaan yang sama terpecah dua, persis kasus PT Catur / Jaya Kreasi.
+  // Cocok hanya saat nomor sudah lengkap (samePhone = perbandingan persis), jadi tak
+  // ada warning berkedip saat masih mengetik.
+  const altPhoneMatches = useMemo(() => {
+    const typed = (form.phone || "").replace(/\D/g, "");
+    if (typed.length < 8) return [];
+    const already = new Set(phoneSuggest.map(c => c.id));
+    return (customersData || [])
+      .filter(c => !already.has(c.id) && c.notes &&
+        extractPhones(c.notes).some(pn => samePhone(pn, form.phone)))
+      .slice(0, 3);
+  }, [form.phone, customersData, phoneSuggest]);
+
   // Riwayat order terakhir customer yang dipilih (untuk autofill alamat)
   const customerLastOrder = useMemo(() => {
     if (!form.customer_id) return null;
@@ -1590,7 +1606,10 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     return next;
   }), []);
 
-  function applyCustomer(c) {
+  // keepPhone: dipakai saat customer dipilih lewat nomor ALTERNATIF (dari notes) —
+  // nomor yang diketik admin adalah kontak yang memang mau dihubungi untuk job ini,
+  // jadi jangan ditimpa nomor utama. Tautan tetap benar lewat customer_id.
+  function applyCustomer(c, { keepPhone = false } = {}) {
     // Ambil alamat dari order terakhir customer ini
     const lastOrder = ordersData
       .filter(o => o.customer_id === c.id && o.address)
@@ -1598,7 +1617,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     setForm(f => ({
       ...f,
       customer: c.name,
-      phone: c.phone || f.phone,
+      phone: keepPhone ? f.phone : (c.phone || f.phone),
       address: lastOrder?.address || c.address || f.address,
       customer_id: c.id || null,
     }));
@@ -2234,6 +2253,37 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
               </div>
             )}
           </div>
+
+          {/* Soft-warning: nomor alternatif yang tercatat di catatan customer */}
+          {altPhoneMatches.length > 0 && !form.customer_id && (
+            <div style={{ gridColumn: "1 / -1", background: "#f59e0b14", border: "1px solid #f59e0b44", borderRadius: 12, overflow: "hidden" }}>
+              <div style={{ padding: "9px 14px", background: "#f59e0b1a", display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 15 }}>⚠️</span>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: "#f59e0b" }}>Nomor Alternatif Terdeteksi</div>
+                  <div style={{ fontSize: 11, color: "#fbbf24" }}>
+                    Nomor ini bukan nomor utama, tapi tercatat di catatan customer berikut. Jangan buat customer baru.
+                  </div>
+                </div>
+              </div>
+              {altPhoneMatches.map(c => (
+                <div key={c.id} style={{ padding: "9px 14px", borderTop: "1px solid #f59e0b22", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ fontSize: 12 }}>
+                    <span style={{ fontWeight: 700, color: "#fbbf24" }}>{c.name}</span>
+                    <span style={{ color: "#94a3b8", marginLeft: 8 }}>nomor utama {formatPhone(c.phone) || "—"}</span>
+                  </div>
+                  <button
+                    onClick={() => applyCustomer(c, { keepPhone: true })}
+                    style={{ padding: "5px 12px", borderRadius: 8, border: "none", background: "#f59e0b", color: "#0a0f1e", fontWeight: 700, fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" }}>
+                    Pakai Customer Ini
+                  </button>
+                </div>
+              ))}
+              <div style={{ padding: "7px 14px", borderTop: "1px solid #f59e0b22", fontSize: 10.5, color: "#94a3b8" }}>
+                Nomor yang Anda ketik tetap dipakai sebagai kontak order — penautan riwayat lewat customer ID.
+              </div>
+            </div>
+          )}
 
           {/* Auto-detect pekerjaan lanjutan */}
           {autoDetectedJobs.length > 0 && !continuationDismissed && (
