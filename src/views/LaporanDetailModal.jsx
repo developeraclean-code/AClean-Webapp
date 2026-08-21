@@ -576,9 +576,18 @@ export default function LaporanDetailModal({ ctx }) {
                 if (serviceChanged) selectedLaporan.service = newService;
 
                 if (!elErr) {
-                  // Rule: admin edit = sumber invoice paling benar → regenerate invoice jika ada
+                  // Rule: admin edit report boleh regen invoice HANYA selama invoice masih
+                  // draft (PENDING_APPROVAL) & belum terkirim. Begitu invoice sudah di-approve
+                  // (APPROVED/UNPAID/…) atau dikirim ke customer, tagihan itu FINAL — edit report
+                  // (mis. catat pemakaian material biar stok kepotong) TIDAK boleh menimpanya
+                  // & membatalkan approval. Stok tetap disync di bawah; ubah tagihan lewat menu
+                  // Invoice → "Edit Nilai" bila memang perlu. (Keputusan Owner 21 Agu 2026.)
                   const existInv = invoicesData.find(i => i.job_id === selectedLaporan.job_id);
-                  if (existInv) {
+                  const invoiceLocked = !!existInv && (existInv.status !== "PENDING_APPROVAL" || existInv.sent === true);
+                  if (invoiceLocked) {
+                    addAgentLog("INVOICE_EDIT_SKIP_LOCKED", `Invoice ${existInv.id} (${existInv.status}${existInv.sent ? ", terkirim" : ""}) TIDAK diubah dari edit laporan — sudah final. Editor: ${currentUser?.name}`, "INFO");
+                  }
+                  if (existInv && !invoiceLocked) {
                     const ord = ordersData.find(o => o.id === selectedLaporan.job_id);
                     // Harga deal per-klien maintenance — paritas dgn builder verify LaporanTimView.
                     // Match STRICT tipe+PK; gagal fetch / tanpa baris cocok → harga global.
@@ -737,6 +746,7 @@ export default function LaporanDetailModal({ ctx }) {
                 const stockMsg = stockMatsToDeduct.length > 0 ? `+${stockMatsToDeduct.length} stok` : "";
                 addAgentLog("LAPORAN_EDITED", `Laporan ${selectedLaporan.job_id} diedit oleh ${currentUser?.name}${serviceChanged ? ` (service: ${selectedLaporan.service})` : ""}${stockMsg ? ` (${stockMsg})` : ""} ${photoMsg ? '(+foto)' : ''}`, "SUCCESS");
                 showNotif(`✅ Laporan ${selectedLaporan.job_id} diupdate${svcMsg} (unit+material+catatan${photoMsg ? '+foto' : ''}${stockMsg ? '+'+stockMsg : ''})`);
+                if (invoiceLocked) showNotif(`🔒 Invoice ${existInv.id} sudah ${existInv.status}${existInv.sent ? " & terkirim" : ""} — TAGIHAN tidak diubah. Laporan & stok tersimpan. Ubah tagihan lewat menu Invoice → "Edit Nilai" bila perlu.`);
                 setModalLaporanDetail(false); setEditLaporanMode(false); setEditPhotoMode(false); setEditLaporanFotos([]); setEditStockMats([]);
               }} style={{ background: "linear-gradient(135deg," + cs.green + ",#059669)", border: "none", color: "#fff", padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 800, fontSize: 14 }}>
                 ✓ Simpan Semua Perubahan
