@@ -224,6 +224,8 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
           #   INTERNASIONAL) & Jaya Kreasi Spectra (CUST1022 + alamat)
 135       # Applied 21 Agu 2026 — gabung customer duplikat Jaya Kreasi Alam Sutera:
           #   CUST784 → CUST678, CUST784 dihapus
+136       # Applied 21 Agu 2026 — cap kontrak 2 job Multiguna dikembalikan dari
+          #   Spectra → Alam Sutera (order + invoice)
 ```
 
 > Daftar di atas pernah tertinggal jauh (berhenti di 126 padahal file sudah 132).
