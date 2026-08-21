@@ -3,6 +3,7 @@ import { cs } from "../theme/cs.js";
 import AbsenBanner from "./AbsenBanner.jsx";
 import KasbonWidget from "./KasbonWidget.jsx";
 import ExpenseInputWidget from "./ExpenseInputWidget.jsx";
+import MyJobHistoryModal from "./MyJobHistoryModal.jsx";
 
 const STATUS_CONFIG = {
   PENDING:    { label: "Pending",    color: "#94a3b8", bg: "#94a3b822" },
@@ -16,6 +17,7 @@ const STATUS_CONFIG = {
 function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, openJobReport, materialsBroughtMap, updateOrderStatus, supabase, sendWA, auditUserName, showNotif, setActiveMenu, apiHeaders, kasbonProps, expenseProps }) {
   const myName = currentUser?.name || "";
   const [updating, setUpdating] = useState(null); // order.id sedang diupdate
+  const [showHistory, setShowHistory] = useState(false);
 
   // Filter: order hari ini milik teknisi/helper ini
   const todayOrders = ordersData.filter(o => {
@@ -82,6 +84,10 @@ function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, open
             🧰 Alat Saya
           </button>
         </div>
+        <button onClick={() => setShowHistory(true)}
+          style={{ width: "100%", marginTop: 8, background: "#10b98115", border: "1px solid #10b98144", color: cs.green, borderRadius: 10, padding: "9px", fontSize: 12, cursor: "pointer", fontWeight: 700 }}>
+          📜 Riwayat Pekerjaan Saya
+        </button>
       </div>
 
       {/* Absen mandiri — Teknisi & Helper */}
@@ -227,6 +233,16 @@ function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, open
             </div>
           );
         })
+      )}
+
+      {/* Riwayat pekerjaan pribadi */}
+      {showHistory && (
+        <MyJobHistoryModal
+          currentUser={currentUser}
+          ordersData={ordersData}
+          onClose={() => setShowHistory(false)}
+          onOpenReport={() => { setShowHistory(false); setActiveMenu?.("myreport"); }}
+        />
       )}
 
       {/* Sticky CTA: jika ada job ON_SITE */}

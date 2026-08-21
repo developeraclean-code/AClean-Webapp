@@ -1,8 +1,9 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor, statusLabel } from "../constants/status.js";
 import { smartSearchNormalize } from "../lib/phone.js";
 import { useAppContext } from "../context/AppContext.js";
+import MyJobHistoryModal from "./MyJobHistoryModal.jsx";
 
 function ScheduleView({ ordersData, setOrdersData, laporanReports, customersData, teknisiData, weekOffset, setWeekOffset, scheduleView, setScheduleView, filterTeknisi, setFilterTeknisi, calLaporanFilter, setCalLaporanFilter, searchSchedule, setSearchSchedule, schedListFilter, setSchedListFilter, schedPage, setSchedPage, setModalOrder, setSelectedCustomer, setCustomerTab, setActiveMenu, setEditOrderItem, setEditOrderForm, setModalEditOrder, setHistoryPreview, setWaTekTarget, setModalWaTek, getTechColor, dispatchStatus, sendDispatchWA, dispatchWA, deleteOrder, openWA, openLaporanModal, openJobReport, materialsBroughtMap, sendWA, updateOrderStatus, hitungJamSelesai, downloadRekapHarian, triggerRekapHarian, SCHED_PAGE_SIZE, getLocalDate, userAccounts, uploadServiceReportPDFForWA, invoicesData, setLaporanReports }) {
   // Fase 1: primitif global dari AppContext.
@@ -27,6 +28,7 @@ const techColors = Object.fromEntries([...new Set(ordersData.map(o => o.teknisi)
 // For Teknisi role: force filter to own name; for Owner/Admin: use filterTeknisi state
 const isTekRole = currentUser?.role === "Teknisi" || currentUser?.role === "Helper";
 const myTekName = currentUser?.name || "";
+const [showHistory, setShowHistory] = useState(false);
 const activeTek = isTekRole ? myTekName : filterTeknisi;
 
 const allTekNames = [...new Set(ordersData.map(o => o.teknisi).filter(Boolean))];
@@ -119,6 +121,13 @@ return (
         )}
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {/* Riwayat pekerjaan pribadi — teknisi/helper */}
+        {isTekRole && (
+          <button onClick={() => setShowHistory(true)}
+            style={{ background: "#10b98115", border: "1px solid #10b98144", color: cs.green, borderRadius: 9, padding: "7px 14px", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+            📜 Riwayat
+          </button>
+        )}
         {/* Week navigation — hanya untuk Owner/Admin */}
         {!isTekRole && (
           <div style={{ display: "flex", alignItems: "center", gap: 6, background: cs.card, border: "1px solid " + cs.border, borderRadius: 9, padding: "4px 10px" }}>
@@ -763,6 +772,15 @@ return (
           </div>
         )}
       </>
+    )}
+
+    {showHistory && (
+      <MyJobHistoryModal
+        currentUser={currentUser}
+        ordersData={ordersData}
+        onClose={() => setShowHistory(false)}
+        onOpenReport={() => { setShowHistory(false); setActiveMenu?.("myreport"); }}
+      />
     )}
   </div>
 );
