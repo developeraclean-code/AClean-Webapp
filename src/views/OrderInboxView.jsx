@@ -1017,6 +1017,28 @@ const EMPTY_FORM = {
   customer_id: null,
 };
 
+// Satu baris di dropdown suggest customer (dipakai field Nama & field No. WhatsApp).
+// Menampilkan konteks yang cukup untuk membedakan customer bernama mirip:
+// nama kontrak lengkap (klien maintenance), lalu HP · area/alamat singkat.
+function SuggestRow({ c, maint, lastDate }) {
+  // customers.area sering kosong → jatuh ke potongan alamat supaya baris tak melompong.
+  const addr = (c.address || "").trim();
+  const lokasi = c.area || (addr.length > 46 ? addr.slice(0, 46) + "…" : addr);
+  return (
+    <>
+      <div style={{ color: cs.text, fontWeight: 600, fontSize: 12 }}>{c.name}</div>
+      {maint?.name && maint.name !== c.name && (
+        <div style={{ color: cs.yellow, fontSize: 11, marginTop: 1 }}>🏢 {maint.name}</div>
+      )}
+      <div style={{ color: cs.muted, fontSize: 11, marginTop: 1 }}>
+        {c.phone || "—"}
+        {lokasi ? " · " + lokasi : ""}
+        {lastDate ? <span style={{ color: cs.accent, marginLeft: 6 }}>Terakhir: {lastDate}</span> : ""}
+      </div>
+    </>
+  );
+}
+
 export default function OrderInboxView({ ordersData, setOrdersData, customersData, setCustomersData, teknisiData, sendWA, showUndoToast, insertOrder, apiHeaders, laporanReports }) {
   // Fase 1 refactor: primitif global (currentUser/supabase/showNotif/showConfirm/
   // auditUserName/TODAY) dibaca dari AppContext, bukan prop-drilling. View ini
@@ -1512,6 +1534,19 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     return Array.from(m.values());
   }, []);
 
+  // customer_id → klien maintenance. Dipakai dua hal di dropdown suggest:
+  // (1) badge nama lengkap kontrak (customers.name sering disingkat saat input WA,
+  //     mis. "PT CATUR" padahal kontraknya "PT Sarana Catur Tirtakelola"),
+  // (2) ikut dicari saat admin mengetik nama versi kontrak.
+  const maintByCustomer = useMemo(() => {
+    const m = new Map();
+    (maintClients || []).forEach(mc => {
+      const cid = String(mc?.customer_id || "").trim();
+      if (cid) m.set(cid, mc);
+    });
+    return m;
+  }, [maintClients]);
+
   // Autocomplete: cari by nama ATAU nomor WA
   const customerSuggest = useMemo(() => {
     const raw = form.customer.trim();
@@ -1522,10 +1557,12 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       isPhone
         ? (c.phone || "").replace(/\D/g, "").includes(raw.replace(/\D/g, ""))
         : c.name?.toLowerCase().includes(q) || (c.phone || "").includes(q)
+          // nama versi kontrak juga cocok — admin sering ingat nama lengkap PT-nya
+          || (maintByCustomer.get(String(c.id))?.name || "").toLowerCase().includes(q)
     );
     const server = (isPhone && serverCustMatches.key === normalizePhone(raw)) ? serverCustMatches.rows : [];
     return mergeMatches(client, server).slice(0, 6);
-  }, [form.customer, customersData, serverCustMatches, mergeMatches]);
+  }, [form.customer, customersData, serverCustMatches, mergeMatches, maintByCustomer]);
 
   // Lookup nomor WA di field phone → suggest customer
   const phoneSuggest = useMemo(() => {
@@ -2161,12 +2198,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
                       style={{ padding: "9px 12px", cursor: "pointer", borderBottom: "1px solid " + cs.border + "55" }}
                       onMouseEnter={e => e.currentTarget.style.background = cs.border + "66"}
                       onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                      <div style={{ color: cs.text, fontWeight: 600, fontSize: 12 }}>{c.name}</div>
-                      <div style={{ color: cs.muted, fontSize: 11, marginTop: 1 }}>
-                        {c.phone || "—"}
-                        {c.area ? " · " + c.area : ""}
-                        {lastOrd ? <span style={{ color: cs.accent, marginLeft: 6 }}>Terakhir: {lastOrd.date}</span> : ""}
-                      </div>
+                      <SuggestRow c={c} maint={maintByCustomer.get(String(c.id))} lastDate={lastOrd?.date} />
                     </div>
                   );
                 })}
@@ -2196,8 +2228,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
                     style={{ padding: "9px 12px", cursor: "pointer", borderBottom: "1px solid " + cs.border + "55" }}
                     onMouseEnter={e => e.currentTarget.style.background = cs.border + "66"}
                     onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                    <div style={{ color: cs.text, fontWeight: 600, fontSize: 12 }}>{c.name}</div>
-                    <div style={{ color: cs.muted, fontSize: 11 }}>{c.phone}{c.area ? " · " + c.area : ""}</div>
+                    <SuggestRow c={c} maint={maintByCustomer.get(String(c.id))} />
                   </div>
                 ))}
               </div>

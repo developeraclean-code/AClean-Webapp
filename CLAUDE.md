@@ -212,7 +212,18 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
 124       # report_card_sent_columns (belum commit ke git — cek status Applied sebelum pakai kolomnya)
 125       # Applied — maintenance_log measurements
 126       # Applied — followup→order link (kolom order_id)
+127       # Applied — team slot 8 anggota + standby
+128       # Applied — team guidelines
+129       # Applied — maintenance_units drop unique code
+130       # Applied — maintenance unit group
+131       # Applied — quotations PPh23
+132       # Applied — fungsi audit integritas maintenance
+133       # Pending (jalankan manual di Supabase SQL Editor) — tautkan CUST1310 ↔ klien
+          #   maintenance PT Sarana Catur Tirtakelola + backfill customer_id 2 order
 ```
+
+> Daftar di atas pernah tertinggal jauh (berhenti di 126 padahal file sudah 132).
+> Sumber kebenaran nomor = isi folder `migrations/`, bukan daftar ini.
 
 > Migrasi baru: pakai skill `new-migration`; nomor = tertinggi + 1 (hati-hati nomor dobel seperti 122).
 
