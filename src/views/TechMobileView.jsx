@@ -3,7 +3,6 @@ import { cs } from "../theme/cs.js";
 import AbsenBanner from "./AbsenBanner.jsx";
 import KasbonWidget from "./KasbonWidget.jsx";
 import ExpenseInputWidget from "./ExpenseInputWidget.jsx";
-import MyJobHistoryModal from "./MyJobHistoryModal.jsx";
 
 const STATUS_CONFIG = {
   PENDING:    { label: "Pending",    color: "#94a3b8", bg: "#94a3b822" },
@@ -14,10 +13,9 @@ const STATUS_CONFIG = {
   COMPLETED:  { label: "Selesai",    color: "#10b981", bg: "#10b98122" },
 };
 
-function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, openJobReport, materialsBroughtMap, updateOrderStatus, supabase, sendWA, auditUserName, showNotif, setActiveMenu, apiHeaders, kasbonProps, expenseProps }) {
+function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, openJobReport, materialsBroughtMap, updateOrderStatus, supabase, sendWA, auditUserName, showNotif, setActiveMenu, apiHeaders, kasbonProps, expenseProps, customersData, setHistoryPreview }) {
   const myName = currentUser?.name || "";
   const [updating, setUpdating] = useState(null); // order.id sedang diupdate
-  const [showHistory, setShowHistory] = useState(false);
 
   // Filter: order hari ini milik teknisi/helper ini
   const todayOrders = ordersData.filter(o => {
@@ -61,6 +59,14 @@ function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, open
     window.open(`https://wa.me/${num}`, "_blank");
   };
 
+  // History customer — sama seperti tombol di menu Jadwal (CustomerHistoryModal
+  // via setHistoryPreview di App). Cari baris customer utk match akurat (customer_id),
+  // fallback objek minimal dari order.
+  const openHistory = (order) => {
+    const cu = (customersData || []).find(c => c.phone === order.phone);
+    setHistoryPreview?.(cu || { name: order.customer, phone: order.phone, address: order.address });
+  };
+
   // Sticky CTA: ada job ON_SITE?
   const onSiteJob = todayOrders.find(o => o.status === "ON_SITE");
 
@@ -84,10 +90,6 @@ function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, open
             🧰 Alat Saya
           </button>
         </div>
-        <button onClick={() => setShowHistory(true)}
-          style={{ width: "100%", marginTop: 8, background: "#10b98115", border: "1px solid #10b98144", color: cs.green, borderRadius: 10, padding: "9px", fontSize: 12, cursor: "pointer", fontWeight: 700 }}>
-          📜 Riwayat Pekerjaan Saya
-        </button>
       </div>
 
       {/* Absen mandiri — Teknisi & Helper */}
@@ -210,21 +212,27 @@ function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, open
                 )}
 
                 {/* Secondary actions */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                  <button onClick={() => openWACustomer(order.phone)}
-                    style={{ background: "#25d36622", border: "1px solid #25d36644", color: "#25d366", borderRadius: 10, padding: "10px", fontSize: 12, cursor: "pointer", fontWeight: 600 }}>
-                    💬 WA Customer
-                  </button>
+                <div style={{ display: "grid", gap: 8 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <button onClick={() => openWACustomer(order.phone)}
+                      style={{ background: "#25d36622", border: "1px solid #25d36644", color: "#25d366", borderRadius: 10, padding: "10px", fontSize: 12, cursor: "pointer", fontWeight: 600 }}>
+                      💬 WA Customer
+                    </button>
+                    <button onClick={() => openHistory(order)}
+                      style={{ background: cs.accent + "18", border: "1px solid " + cs.accent + "44", color: cs.accent, borderRadius: 10, padding: "10px", fontSize: 12, cursor: "pointer", fontWeight: 600 }}>
+                      📋 History
+                    </button>
+                  </div>
                   {!isCompleted && (
                     <button onClick={() => (openJobReport || openLaporanModal)(order)}
-                      style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, borderRadius: 10, padding: "10px", fontSize: 12, cursor: "pointer", fontWeight: 600, position: "relative" }}>
+                      style={{ width: "100%", background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, borderRadius: 10, padding: "10px", fontSize: 12, cursor: "pointer", fontWeight: 600, position: "relative" }}>
                       📝 Laporan & Material
                       {bCount > 0 && <span style={{ position: "absolute", top: -6, right: -6, background: "#a855f7", color: "#fff", fontSize: 9, fontWeight: 800, padding: "1px 5px", borderRadius: 99 }}>{bCount}</span>}
                     </button>
                   )}
                   {isCompleted && (
                     <button onClick={() => setActiveMenu?.("myreport")}
-                      style={{ background: cs.surface, border: "1px solid " + cs.border, color: cs.muted, borderRadius: 10, padding: "10px", fontSize: 12, cursor: "pointer" }}>
+                      style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, color: cs.muted, borderRadius: 10, padding: "10px", fontSize: 12, cursor: "pointer" }}>
                       📄 Lihat Laporan
                     </button>
                   )}
@@ -233,16 +241,6 @@ function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, open
             </div>
           );
         })
-      )}
-
-      {/* Riwayat pekerjaan pribadi */}
-      {showHistory && (
-        <MyJobHistoryModal
-          currentUser={currentUser}
-          ordersData={ordersData}
-          onClose={() => setShowHistory(false)}
-          onOpenReport={() => { setShowHistory(false); setActiveMenu?.("myreport"); }}
-        />
       )}
 
       {/* Sticky CTA: jika ada job ON_SITE */}

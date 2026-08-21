@@ -3518,6 +3518,8 @@ export default function ACleanWebApp() {
           apiHeaders={_apiHeaders}
           kasbonProps={kasbonProps}
           expenseProps={expenseProps}
+          customersData={customersData}
+          setHistoryPreview={setHistoryPreview}
         />
       );
     }
