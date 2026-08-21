@@ -23,7 +23,8 @@
 --   • PT. Transmarco Bojong Larang & PT. TRANSMARCO GUDANG → dikosongkan atas
 --     keputusan Owner 21 Agu 2026.
 --   • PT. Berkat Asia Kemasindo (19 unit, kontrak aktif) → belum ada baris customers
---     sama sekali; menunggu keputusan Owner apakah dibuatkan.
+--     sama sekali. DIABAIKAN atas keputusan Owner 21 Agu 2026 — jangan diangkat lagi
+--     sebagai temuan; klien ini memang sengaja dibiarkan tanpa tautan customers.
 --   • 2 order PT JAYA KREASI MULTIGUNA (CUST678) yang saat ini salah tertaut ke
 --     kontrak Spectra → menunggu keputusan Owner (lihat catatan di bawah).
 --
