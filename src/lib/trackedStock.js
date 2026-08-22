@@ -85,7 +85,18 @@ export async function syncTrackedStock(reportId, orderId, newMaterials, customer
       const delta = -(oldUnitSum[unitId] || 0) + (newUnitSum[unitId] || 0);
       if (delta === 0) continue;
       const ns = Math.max(0, Number(unit.stock || 0) + delta);
-      await supabase.from("inventory_units").update({ stock: ns, updated_at: new Date().toISOString() }).eq("id", unitId);
+      // RLS: tulis inventory_units dibatasi Owner/Admin (migrasi 141). Jalur ini bisa
+      // dipanggil sebagai TEKNISI saat submit laporan — kalau toggle Material Harian
+      // dimatikan, update di sini akan ditolak. Jangan biarkan senyap: catat errornya
+      // supaya ketahuan di console/Sentry, bukan jadi stok yang diam-diam tidak berubah.
+      const { error: uErr } = await supabase.from("inventory_units")
+        .update({ stock: ns, updated_at: new Date().toISOString() }).eq("id", unitId);
+      if (uErr) {
+        console.warn("[syncTrackedStock] update stok unit ditolak:", uErr.message, { unitId, ns });
+        addAgentLog?.("STOK_UNIT_UPDATE_DITOLAK",
+          `Update stok unit ${unitId} → ${ns} ditolak: ${uErr.message}`, "WARNING");
+        continue; // jangan sinkronkan state lokal dgn nilai yang tidak tersimpan
+      }
       setInvUnitsData(prev => prev.map(u => u.id === unitId ? { ...u, stock: ns } : u));
     }
 

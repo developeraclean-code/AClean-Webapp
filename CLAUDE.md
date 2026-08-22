@@ -233,6 +233,8 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
 139       # Applied 22 Agu 2026 — deteksi bonus Kapasitor cukup kata "kapasitor"
 140       # Applied 22 Agu 2026 — arsip unit stok = Owner only (trigger DB
           #   trg_guard_inventory_unit_archive) + kolom archived_by
+141       # Applied 22 Agu 2026 — RLS inventory_units berjenjang (baca semua, tulis
+          #   Owner/Admin, hapus Owner) + tabel inventory_unit_stock_log (trigger)
 ```
 
 > Daftar di atas pernah tertinggal jauh (berhenti di 126 padahal file sudah 132).
