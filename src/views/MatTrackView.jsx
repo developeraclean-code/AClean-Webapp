@@ -313,7 +313,7 @@ function MaterialReconTab({ supabase, appSettings }) {
 
 function MatTrackView({ inventoryData, invUnitsData, setInvUnitsData, invTxData, setInvTxData, matTrackFilter, setMatTrackFilter, matTrackSearch, setMatTrackSearch, matTrackDateFrom, setMatTrackDateFrom, matTrackDateTo, setMatTrackDateTo, setModalStok, fetchInventoryUnits, setInventoryData, appSettings }) {
   // Fase 1: primitif global dari AppContext.
-  const { supabase, showNotif, currentUser } = useAppContext();
+  const { supabase, showNotif, currentUser, addAgentLog } = useAppContext();
 const TRACK_ITEMS = inventoryData.filter(item =>
   item.material_type === "freon" ||
   item.material_type === "pipa" ||
@@ -656,13 +656,24 @@ const toggleUnit = async (unitId, isActive) => {
 };
 
 const archiveUnit = async (unitId, reason) => {
+  // Alasan WAJIB: arsip menghilangkan sisa stok unit dari peredaran tanpa transaksi
+  // penyeimbang, jadi tanpa alasan tercatat tidak bisa diaudit (temuan 22 Agu 2026:
+  // 70 unit diarsipkan padahal masih bersisa, 5 di antaranya tanpa alasan sama sekali).
+  const alasan = (reason || "").trim();
+  if (alasan.length < 3) { showNotif("❌ Alasan arsip wajib diisi (min. 3 huruf)"); return; }
+  const unit = (invUnitsData || []).find(u => u.id === unitId);
   const { error } = await supabase.from("inventory_units").update({
     archived: true,
     archived_at: new Date().toISOString(),
-    archived_reason: reason || null,
+    archived_reason: alasan,
+    archived_by: currentUser?.name || null,
     is_active: false,
   }).eq("id", unitId);
   if (!error) {
+    addAgentLog?.("STOK_UNIT_ARSIP",
+      `Unit ${unit?.unit_label || unitId} (${unit?.inventory_code || "-"}) diarsipkan oleh ${currentUser?.name || "-"}` +
+      ` — sisa stok saat diarsipkan: ${Number(unit?.stock || 0)} · alasan: ${alasan}`,
+      Number(unit?.stock || 0) > 0 ? "WARNING" : "INFO");
     setInvUnitsData(prev => prev.map(u => u.id === unitId
       ? { ...u, archived: true, archived_at: new Date().toISOString(), archived_reason: reason || null, is_active: false }
       : u
@@ -676,13 +687,18 @@ const archiveUnit = async (unitId, reason) => {
 };
 
 const unarchiveUnit = async (unitId) => {
+  const unit = (invUnitsData || []).find(u => u.id === unitId);
   const { error } = await supabase.from("inventory_units").update({
     archived: false,
     archived_at: null,
     archived_reason: null,
+    archived_by: currentUser?.name || null,
     is_active: false,
   }).eq("id", unitId);
   if (!error) {
+    addAgentLog?.("STOK_UNIT_PULIHKAN",
+      `Unit ${unit?.unit_label || unitId} (${unit?.inventory_code || "-"}) dikembalikan dari arsip oleh ${currentUser?.name || "-"}`,
+      "INFO");
     setInvUnitsData(prev => prev.map(u => u.id === unitId
       ? { ...u, archived: false, archived_at: null, archived_reason: null }
       : u
@@ -727,6 +743,10 @@ txFiltered.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")
 const restockLog = [...invTxData].filter(tx => tx.qty > 0).sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
 
 const isOwnerAdmin = currentUser?.role === "Owner" || currentUser?.role === "Admin";
+// Arsip/Pulihkan = hak Owner (keputusan Owner 22 Agu 2026, dikunci juga di DB lewat
+// trigger trg_guard_inventory_unit_archive — migrasi 140). Admin tetap BOLEH melihat
+// daftar arsip supaya transparan, tapi harus lapor Owner untuk mengarsipkan.
+const isOwner = currentUser?.role === "Owner";
 
 return (
   <div style={{ display: "grid", gap: 16 }}>
@@ -1185,6 +1205,66 @@ return (
       </div>
     </div>
 
+    {/* ── Rekap arsip per BULAN x ITEM ──
+         Angka yang dijumlah = sisa stok yang MASIH TERCATAT saat unit diarsipkan.
+         Ini perkiraan susut/pemakaian tak tercatat per bulan: kalau sebuah tabung
+         diarsipkan "kosong dibuang" tapi sistem masih mencatat 2,4 kg, selisih itulah
+         yang muncul di sini. Berguna untuk melihat pola bulanan, bukan angka akuntansi. */}
+    {isOwnerAdmin && archiveTabFilter === "diarsipkan" && (() => {
+      const arch = (invUnitsData || []).filter(u => u.archived);
+      if (arch.length === 0) return null;
+      const byMonth = {};
+      for (const u of arch) {
+        const key = (u.archived_at || "").slice(0, 7) || "tanpa-tanggal";
+        const m = byMonth[key] = byMonth[key] || { key, items: {}, totalQty: 0, totalUnit: 0 };
+        const meta = TRACK_ITEMS.find(i => i.code === u.inventory_code) || {};
+        const ck = u.inventory_code || "-";
+        const row = m.items[ck] = m.items[ck] || { code: ck, name: meta.name || ck, satuan: meta.unit || "", qty: 0, unit: 0 };
+        row.qty += Number(u.stock || 0);
+        row.unit += 1;
+        m.totalQty += Number(u.stock || 0);
+        m.totalUnit += 1;
+      }
+      const fmtBulan = (k) => {
+        if (k === "tanpa-tanggal") return "Tanpa tanggal";
+        const [y, mo] = k.split("-");
+        return new Date(Number(y), Number(mo) - 1, 1).toLocaleDateString("id-ID", { month: "long", year: "numeric" });
+      };
+      const months = Object.values(byMonth).sort((a, b) => b.key.localeCompare(a.key));
+      return (
+        <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 16, marginBottom: 14 }}>
+          <div style={{ fontWeight: 800, fontSize: 13, color: cs.text, marginBottom: 4 }}>📅 Rekap Arsip per Bulan &amp; Item</div>
+          <div style={{ fontSize: 11, color: cs.muted, marginBottom: 12, lineHeight: 1.5 }}>
+            Jumlah di bawah = <b style={{ color: cs.text }}>sisa stok yang masih tercatat</b> saat unit diarsipkan.
+            Pakai sebagai perkiraan susut/pemakaian tak tercatat per bulan — bukan angka akuntansi resmi.
+          </div>
+          <div style={{ display: "grid", gap: 10 }}>
+            {months.map(m => (
+              <div key={m.key} style={{ background: cs.surface, borderRadius: 10, padding: "10px 12px", border: "1px solid " + cs.border }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+                  <span style={{ fontWeight: 700, fontSize: 12.5, color: cs.accent }}>{fmtBulan(m.key)}</span>
+                  <span style={{ fontSize: 11, color: cs.muted }}>{m.totalUnit} unit diarsipkan</span>
+                </div>
+                <div style={{ display: "grid", gap: 4 }}>
+                  {Object.values(m.items).sort((a, b) => b.qty - a.qty).map(it => (
+                    <div key={it.code} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, fontSize: 12 }}>
+                      <span style={{ color: cs.text }}>
+                        {it.name}
+                        <span style={{ color: cs.muted, fontSize: 10.5, marginLeft: 6 }}>{it.unit} unit</span>
+                      </span>
+                      <span style={{ fontWeight: 700, color: it.qty > 0 ? cs.yellow : cs.muted, whiteSpace: "nowrap" }}>
+                        {it.qty.toFixed(1)} {it.satuan}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    })()}
+
     {/* ── Daftar Material — satu card per item (ikut filter kategori + cari) ── */}
     {(() => {
       const q0 = matTrackSearch.trim().toLowerCase();
@@ -1379,7 +1459,13 @@ return (
                           style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: unit.is_active ? cs.red + "18" : cs.green + "18", border: "1px solid " + (unit.is_active ? cs.red : cs.green) + "44", color: unit.is_active ? cs.red : cs.green, cursor: "pointer" }}>
                           {unit.is_active ? "Nonaktif" : "Aktifkan"}
                         </button>
-                        {unit.archived ? (
+                        {/* Arsip/Pulihkan = Owner only. Admin lihat penanda, bukan tombol. */}
+                        {!isOwner ? (
+                          <span style={{ fontSize: 10, color: cs.muted, border: "1px dashed " + cs.border, borderRadius: 6, padding: "3px 8px", whiteSpace: "nowrap" }}
+                            title="Arsip/pulihkan unit hanya bisa dilakukan Owner — silakan lapor ke Owner">
+                            🔒 {unit.archived ? "Arsip" : "Arsip: Owner"}
+                          </span>
+                        ) : unit.archived ? (
                           <button onClick={() => unarchiveUnit(unit.id)}
                             style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: cs.green + "22", border: "1px solid " + cs.green + "55", color: cs.green, cursor: "pointer", fontWeight: 700 }}>
                             ↩ Pulihkan
@@ -1395,7 +1481,7 @@ return (
                     )}
                   </div>
                   {/* ── Konfirmasi archive ── */}
-                  {isConfirmingArchive && (
+                  {isConfirmingArchive && isOwner && (
                         <div style={{ padding: "10px 14px", background: cs.red + "08", borderTop: "1px solid " + cs.red + "22" }}>
                           <div style={{ fontSize: 12, fontWeight: 700, color: cs.red, marginBottom: 6 }}>Arsipkan {unit.unit_label}?</div>
                           <div style={{ fontSize: 11, color: cs.muted, marginBottom: 8 }}>Unit dibuang fisik — data pemakaian tetap tersimpan.</div>

@@ -231,6 +231,8 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
 138       # Applied 22 Agu 2026 — deteksi bonus Freon cukup kata "freon" (buang
           #   syarat "kuras vacum"); keyword ber-logika DAN, jangan ditambah
 139       # Applied 22 Agu 2026 — deteksi bonus Kapasitor cukup kata "kapasitor"
+140       # Applied 22 Agu 2026 — arsip unit stok = Owner only (trigger DB
+          #   trg_guard_inventory_unit_archive) + kolom archived_by
 ```
 
 > Daftar di atas pernah tertinggal jauh (berhenti di 126 padahal file sudah 132).
