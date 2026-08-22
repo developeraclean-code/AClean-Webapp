@@ -226,6 +226,8 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
           #   CUST784 → CUST678, CUST784 dihapus
 136       # Applied 21 Agu 2026 — cap kontrak 2 job Multiguna dikembalikan dari
           #   Spectra → Alam Sutera (order + invoice)
+137       # Applied 22 Agu 2026 — 48 antrean PENDING MatTrack s/d 21 Agu ditutup
+          #   sbg REJECTED (tanpa potong stok); mulai bersih dari 22 Agu
 ```
 
 > Daftar di atas pernah tertinggal jauh (berhenti di 126 padahal file sudah 132).
