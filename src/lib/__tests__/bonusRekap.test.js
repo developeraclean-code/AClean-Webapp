@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildBonusRekap, bonusRekapToCSV, bonusRekapToPrintHTML } from "../bonusRekap.js";
+import { buildBonusRekap, bonusRekapToCSV, bonusRekapToPrintHTML, bonusExcludedToCSV } from "../bonusRekap.js";
 import { DEFAULT_BONUS_CATEGORIES } from "../../constants/bonus.js";
 
 const CATS = DEFAULT_BONUS_CATEGORIES;
@@ -114,6 +114,29 @@ describe("exporter", () => {
     expect(csv).toContain("=== REKAP PER ORANG");
     expect(csv).toContain("=== REKAP PER KATEGORI BONUS ===");
     expect(csv).toContain(",60000,"); // total bonus J1 sebagai angka
+  });
+
+  it("CSV tersaring hanya memuat kategori yang diminta", () => {
+    const r = build();
+    const csv = bonusExcludedToCSV(r, "BELUM_INPUT");
+    expect(csv).toContain("Kategori: Layak bonus — BELUM di-input");
+    expect(csv).toContain("Jumlah job: 1");
+    expect(csv).toContain("J4");        // job layak bonus, belum diinput
+    expect(csv).not.toContain("J3");    // job dismissed — tidak boleh ikut
+  });
+
+  it("CSV tersaring tanpa kategori = semua job tanpa bonus", () => {
+    const csv = bonusExcludedToCSV(build(), null);
+    expect(csv).toContain("Kategori: Semua kategori");
+    expect(csv).toContain("Jumlah job: 2");
+    expect(csv).toContain("J3");
+    expect(csv).toContain("J4");
+  });
+
+  it("CSV tersaring kategori kosong tetap valid (0 job)", () => {
+    const csv = bonusExcludedToCSV(build(), "VOID");
+    expect(csv).toContain("Jumlah job: 0");
+    expect(csv).toContain("No\",\"Tanggal");
   });
 
   it("HTML cetak berisi tabel & auto-print", () => {

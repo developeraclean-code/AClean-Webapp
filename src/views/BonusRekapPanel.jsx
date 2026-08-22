@@ -4,7 +4,7 @@
 import { useState } from "react";
 import { cs } from "../theme/cs.js";
 import {
-  downloadBonusRekapCSV, printBonusRekap, EXCLUDE_LABELS,
+  downloadBonusRekapCSV, downloadBonusExcludedCSV, printBonusRekap, EXCLUDE_LABELS,
 } from "../lib/bonusRekap.js";
 
 const KATEGORI_COLOR = {
@@ -39,7 +39,22 @@ export default function BonusRekapPanel({
 }) {
   const [lastAction, setLastAction] = useState(null); // { label, at }
   const [showExcluded, setShowExcluded] = useState(true);
+  // Saring seksi B per kategori. Bulan sibuk bisa 388 job tanpa bonus, padahal yang
+  // perlu ditindak cuma yang "layak bonus tapi belum di-input" (mis. 48) — tanpa
+  // saringan, daftar kerja itu tenggelam.
+  const [excFilter, setExcFilter] = useState(null); // null = semua kategori
   const s = rekap.summary;
+
+  const excludedRows = excFilter
+    ? rekap.excluded.filter(r => r.kategori === excFilter)
+    : rekap.excluded;
+
+  const handleExcludedCSV = () => {
+    const fileName = downloadBonusExcludedCSV(rekap, excFilter);
+    setLastAction({ label: "📥 CSV " + fileName, at: new Date() });
+    addAgentLog?.("EXPORT_BONUS", `Daftar ${EXCLUDE_LABELS[excFilter] || "tanpa bonus"} ${rekap.monthLabel} (${excludedRows.length} job) diunduh oleh ${currentUser?.name || "-"}`, "SUCCESS");
+    showNotif?.(`✅ ${fileName} berhasil diunduh (${excludedRows.length} job)`);
+  };
 
   const handleCSV = () => {
     const fileName = downloadBonusRekapCSV(rekap);
@@ -175,16 +190,42 @@ export default function BonusRekapPanel({
           <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 10, padding: 12 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
               <div style={{ fontWeight: 700, fontSize: 13, color: cs.yellow }}>
-                B. 🚫 Tidak Termasuk Bonus ({rekap.excluded.length} job)
+                B. 🚫 Tidak Termasuk Bonus ({excludedRows.length}{excFilter ? ` dari ${rekap.excluded.length}` : ""} job)
               </div>
-              {Object.entries(s.excludedByKategori).map(([k, n]) => (
-                <span key={k} style={{ fontSize: 10, fontWeight: 700, borderRadius: 5, padding: "2px 7px", background: (KATEGORI_COLOR[k] || cs.border) + "33", color: KATEGORI_COLOR[k] || cs.muted }}>
-                  {EXCLUDE_LABELS[k] || k}: {n}
-                </span>
-              ))}
-              <button onClick={() => setShowExcluded(v => !v)} style={{ ...btn(), marginLeft: "auto", fontSize: 11, padding: "4px 10px" }}>
-                {showExcluded ? "▲ Sembunyikan" : "▼ Tampilkan"}
-              </button>
+              {/* Badge kategori = tombol saring. Klik lagi untuk kembali ke semua. */}
+              {Object.entries(s.excludedByKategori).map(([k, n]) => {
+                const on = excFilter === k;
+                const color = KATEGORI_COLOR[k] || cs.muted;
+                return (
+                  <button key={k} onClick={() => setExcFilter(on ? null : k)}
+                    title={on ? "Klik untuk tampilkan semua kategori" : "Klik untuk tampilkan kategori ini saja"}
+                    style={{
+                      fontSize: 10, fontWeight: 700, borderRadius: 5, padding: "3px 8px", cursor: "pointer",
+                      background: on ? color : color + "33",
+                      color: on ? "#0a0f1e" : color,
+                      border: "1px solid " + (on ? color : "transparent"),
+                    }}>
+                    {on ? "✓ " : ""}{EXCLUDE_LABELS[k] || k}: {n}
+                  </button>
+                );
+              })}
+              {excFilter && (
+                <button onClick={() => setExcFilter(null)} style={{ ...btn(), fontSize: 10, padding: "3px 9px" }}>
+                  ✕ Semua kategori
+                </button>
+              )}
+              <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+                {excludedRows.length > 0 && (
+                  <button onClick={handleExcludedCSV}
+                    title={excFilter ? "Unduh hanya kategori yang sedang disaring" : "Unduh seluruh daftar job tanpa bonus"}
+                    style={{ ...btn(), fontSize: 11, padding: "4px 10px", background: cs.accent, border: "none", color: "#fff", fontWeight: 700 }}>
+                    📥 Download {excFilter ? "Kategori Ini" : "Daftar Ini"} ({excludedRows.length})
+                  </button>
+                )}
+                <button onClick={() => setShowExcluded(v => !v)} style={{ ...btn(), fontSize: 11, padding: "4px 10px" }}>
+                  {showExcluded ? "▲ Sembunyikan" : "▼ Tampilkan"}
+                </button>
+              </div>
             </div>
             {showExcluded && (
               <div style={{ overflowX: "auto" }}>
@@ -198,9 +239,11 @@ export default function BonusRekapPanel({
                     </tr>
                   </thead>
                   <tbody>
-                    {rekap.excluded.length === 0 ? (
-                      <tr><td style={{ ...td, textAlign: "center", color: cs.muted }} colSpan={9}>Semua job bulan ini dapat bonus.</td></tr>
-                    ) : rekap.excluded.map((r, i) => (
+                    {excludedRows.length === 0 ? (
+                      <tr><td style={{ ...td, textAlign: "center", color: cs.muted }} colSpan={9}>
+                        {excFilter ? "Tidak ada job di kategori ini." : "Semua job bulan ini dapat bonus."}
+                      </td></tr>
+                    ) : excludedRows.map((r, i) => (
                       <tr key={r.orderId + "-" + r.kategori + "-" + i}>
                         <td style={{ ...td, whiteSpace: "nowrap" }}>{fmtDateShort(r.date)}</td>
                         <td style={{ ...td, fontFamily: "monospace" }}>{r.orderId}</td>

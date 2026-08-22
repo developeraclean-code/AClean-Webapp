@@ -279,6 +279,51 @@ export function bonusRekapToCSV(rekap) {
   return "﻿" + rows.join("\n");
 }
 
+// Slug nama file per kategori — dipakai unduhan tersaring (mis. hanya "layak bonus").
+const KATEGORI_SLUG = {
+  BELUM_INPUT: "Layak_Belum_Diinput",
+  DISMISSED:   "Ditandai_Tanpa_Bonus",
+  NO_CRITERIA: "Tidak_Memenuhi_Kriteria",
+  VOID:        "Bonus_Void",
+};
+
+// CSV berisi HANYA job "tidak termasuk bonus" pada satu kategori (atau semua bila
+// kategori null). Dipakai Owner untuk daftar kerja: mis. 48 job layak bonus yang
+// masih perlu di-input, tanpa harus menyaring 388 baris di file rekap penuh.
+export function bonusExcludedToCSV(rekap, kategori = null) {
+  const rows_ = kategori ? rekap.excluded.filter(r => r.kategori === kategori) : rekap.excluded;
+  const label = kategori ? (EXCLUDE_LABELS[kategori] || kategori) : "Semua kategori";
+  const rows = [];
+  rows.push(q("DAFTAR JOB TIDAK TERMASUK BONUS — ACLEAN SERVICE AC"));
+  rows.push(q("Periode: " + rekap.monthLabel));
+  rows.push(q("Kategori: " + label));
+  rows.push(q("Jumlah job: " + rows_.length));
+  rows.push(q("Digenerate: " + rekap.generatedAt.toLocaleString("id-ID")));
+  rows.push("");
+  rows.push(["No","Tanggal","Job ID","Nama Job (Customer)","Layanan","Unit","Teknisi","Helper",
+    "Nilai Transaksi","Kategori","Alasan"].map(q).join(","));
+  rows_.forEach((r, i) => {
+    rows.push([
+      i + 1, q(fmtDateShort(r.date)), q(r.orderId), q(r.customer), q(r.service), q(r.units),
+      q(r.teknisi), q(r.helper), r.nilai, q(EXCLUDE_LABELS[r.kategori] || r.kategori), q(r.alasan),
+    ].join(","));
+  });
+  rows.push(["", "", "", "", "", "", "", q("TOTAL NILAI"),
+    rows_.reduce((s, r) => s + Number(r.nilai || 0), 0), "", ""].join(","));
+  return "\ufeff" + rows.join("\n");
+}
+
+export function downloadBonusExcludedCSV(rekap, kategori = null) {
+  const blob = new Blob([bonusExcludedToCSV(rekap, kategori)], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `Bonus_${KATEGORI_SLUG[kategori] || "Tanpa_Bonus"}_${rekap.month}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  return a.download;
+}
+
 export function downloadBonusRekapCSV(rekap) {
   const blob = new Blob([bonusRekapToCSV(rekap)], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
