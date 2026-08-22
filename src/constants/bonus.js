@@ -19,7 +19,9 @@ export const DEFAULT_BONUS_CATEGORIES = [
   // mempersempit. "vacum" juga TIDAK boleh — ada 122 item "Jasa Vacum AC" (vacuum saat
   // instalasi, bukan isi freon) yang akan salah dapat bonus.
   { id: "freon",       label: "Isi Freon",            amount: 25000,  detection_keywords: ["freon"] },
-  { id: "kapasitor",   label: "Kapasitor",            amount: 35000,  detection_keywords: ["kapasitor ac"] },
+  // Satu keyword, alasan sama dgn freon di atas (migrasi 139). Menangkap "Sparepart
+  // Kapasitor Fan Outdoor", "Jasa Pergantian Kapasitor Fan Indoor", dll.
+  { id: "kapasitor",   label: "Kapasitor",            amount: 35000,  detection_keywords: ["kapasitor"] },
   { id: "thermis",     label: "Sparepart Thermis",    amount: 35000,  detection_keywords: ["thermis"] },
   { id: "install_2",   label: "Pasang >2 Unit/hari",  amount: 100000, detection_keywords: [] },
   { id: "install_3",   label: "Pasang >3 Unit/hari",  amount: 200000, detection_keywords: [] },

@@ -230,6 +230,7 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
           #   sbg REJECTED (tanpa potong stok); mulai bersih dari 22 Agu
 138       # Applied 22 Agu 2026 — deteksi bonus Freon cukup kata "freon" (buang
           #   syarat "kuras vacum"); keyword ber-logika DAN, jangan ditambah
+139       # Applied 22 Agu 2026 — deteksi bonus Kapasitor cukup kata "kapasitor"
 ```
 
 > Daftar di atas pernah tertinggal jauh (berhenti di 126 padahal file sudah 132).
