@@ -575,15 +575,20 @@ export default function LaporanDetailModal({ ctx }) {
                 setLaporanReports(prev => prev.map(r => r.id === selectedLaporan.id ? { ...r, service: newService, rekomendasi: editLaporanForm.rekomendasi, catatan_global: editLaporanForm.catatan_global, units: editLaporanForm.editUnits, units_json: JSON.stringify(editLaporanForm.editUnits || []), total_units: (editLaporanForm.editUnits || []).length || selectedLaporan.total_units || 1, materials: combinedMats, materials_json: JSON.stringify(combinedMats), status: newStatus, editLog: allLogs, ..._fotoSync } : r));
                 if (serviceChanged) selectedLaporan.service = newService;
 
+                // Rule: admin edit report boleh regen invoice HANYA selama invoice masih
+                // draft (PENDING_APPROVAL) & belum terkirim. Begitu invoice sudah di-approve
+                // (APPROVED/UNPAID/…) atau dikirim ke customer, tagihan itu FINAL — edit report
+                // (mis. catat pemakaian material biar stok kepotong) TIDAK boleh menimpanya
+                // & membatalkan approval. Stok tetap disync di bawah; ubah tagihan lewat menu
+                // Invoice → "Edit Nilai" bila memang perlu. (Keputusan Owner 21 Agu 2026.)
+                //
+                // Dideklarasikan DI LUAR blok `if (!elErr)` karena dipakai lagi di notifikasi
+                // penutup di bawah — sempat di dalam blok → ReferenceError di setiap simpan,
+                // handler putus sebelum modal ditutup (insiden 22 Agu 2026).
+                const existInv = invoicesData.find(i => i.job_id === selectedLaporan.job_id);
+                const invoiceLocked = !!existInv && (existInv.status !== "PENDING_APPROVAL" || existInv.sent === true);
+
                 if (!elErr) {
-                  // Rule: admin edit report boleh regen invoice HANYA selama invoice masih
-                  // draft (PENDING_APPROVAL) & belum terkirim. Begitu invoice sudah di-approve
-                  // (APPROVED/UNPAID/…) atau dikirim ke customer, tagihan itu FINAL — edit report
-                  // (mis. catat pemakaian material biar stok kepotong) TIDAK boleh menimpanya
-                  // & membatalkan approval. Stok tetap disync di bawah; ubah tagihan lewat menu
-                  // Invoice → "Edit Nilai" bila memang perlu. (Keputusan Owner 21 Agu 2026.)
-                  const existInv = invoicesData.find(i => i.job_id === selectedLaporan.job_id);
-                  const invoiceLocked = !!existInv && (existInv.status !== "PENDING_APPROVAL" || existInv.sent === true);
                   if (invoiceLocked) {
                     addAgentLog("INVOICE_EDIT_SKIP_LOCKED", `Invoice ${existInv.id} (${existInv.status}${existInv.sent ? ", terkirim" : ""}) TIDAK diubah dari edit laporan — sudah final. Editor: ${currentUser?.name}`, "INFO");
                   }
