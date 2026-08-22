@@ -13,7 +13,12 @@ export const DEFAULT_BONUS_CATEGORIES = [
   { id: "margin_1jt",  label: "Margin >1jt",          amount: 50000,  detection_keywords: [] },
   { id: "margin_2jt",  label: "Margin >2jt",          amount: 100000, detection_keywords: [] },
   { id: "margin_3jt",  label: "Margin >3jt",          amount: 200000, detection_keywords: [] },
-  { id: "freon",       label: "Isi Freon",            amount: 25000,  detection_keywords: ["freon", "kuras vacum"] },
+  // Satu keyword saja: SEMUA item yang memuat "freon" masuk kategori ini — "Tambah Freon",
+  // "Kuras Vacum + Isi Freon", maupun "Freon R-32" (keputusan Owner 22 Agu 2026, migrasi 138).
+  // JANGAN tambah keyword lain: pencocokan ber-logika DAN, jadi menambah keyword justru
+  // mempersempit. "vacum" juga TIDAK boleh — ada 122 item "Jasa Vacum AC" (vacuum saat
+  // instalasi, bukan isi freon) yang akan salah dapat bonus.
+  { id: "freon",       label: "Isi Freon",            amount: 25000,  detection_keywords: ["freon"] },
   { id: "kapasitor",   label: "Kapasitor",            amount: 35000,  detection_keywords: ["kapasitor ac"] },
   { id: "thermis",     label: "Sparepart Thermis",    amount: 35000,  detection_keywords: ["thermis"] },
   { id: "install_2",   label: "Pasang >2 Unit/hari",  amount: 100000, detection_keywords: [] },
