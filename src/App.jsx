@@ -4835,7 +4835,7 @@ export default function ACleanWebApp() {
             INSTALL_ITEMS, KONDISI_SBL, KONDISI_SDH, PEKERJAAN_OPT, SATUAN_OPT, TIPE_AC_OPT,
             _apiFetch, _apiHeaders, activeEditUnitIdx, addAgentLog, auditUserName, currentUser,
             downloadServiceReportPDF, editGratisAlasan, editLaporanForm, editLaporanFotos, editLaporanMode, editPhotoMode,
-            editRepairType, editStockMats, getBracketKey, hargaPerUnitFromTipe, hitungLabor, invUnitsData, isServiceBesarPekerjaan,
+            appSettings, editRepairType, editStockMats, getBracketKey, hargaPerUnitFromTipe, hitungLabor, invUnitsData, isServiceBesarPekerjaan,
             inventoryData, invoicesData, isMobile, laporanBarangItems, laporanInstallItems, lookupHargaGlobal,
             ordersData, priceListData, safeArr, selectedLaporan, setActiveEditUnitIdx, setEditGratisAlasan,
             setEditLaporanForm, setEditLaporanFotos, setEditLaporanMode, setEditPhotoMode, setEditRepairType, setEditStockMats,

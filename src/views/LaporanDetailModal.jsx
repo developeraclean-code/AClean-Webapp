@@ -1,6 +1,7 @@
 import React from "react";
 import { cs } from "../theme/cs.js";
 import { clientCleaningUnitPrice } from "../lib/maintClientPrice.js";
+import { classifyMaterial } from "../lib/materialRecon.js";
 
 // Detail/Edit Laporan modal — diekstrak dari App.jsx (Tahap 2 refactor, lazy-loaded).
 // Semua dependensi level-komponen dilewatkan via satu prop `ctx` (lihat App.jsx).
@@ -9,13 +10,18 @@ export default function LaporanDetailModal({ ctx }) {
     INSTALL_ITEMS, KONDISI_SBL, KONDISI_SDH, PEKERJAAN_OPT, SATUAN_OPT, TIPE_AC_OPT,
     _apiFetch, _apiHeaders, activeEditUnitIdx, addAgentLog, auditUserName, currentUser,
     downloadServiceReportPDF, editGratisAlasan, editLaporanForm, editLaporanFotos, editLaporanMode, editPhotoMode,
-    editRepairType, editStockMats, getBracketKey, hargaPerUnitFromTipe, hitungLabor, invUnitsData, isServiceBesarPekerjaan,
+    appSettings, editRepairType, editStockMats, getBracketKey, hargaPerUnitFromTipe, hitungLabor, invUnitsData, isServiceBesarPekerjaan,
     inventoryData, invoicesData, isMobile, laporanBarangItems, laporanInstallItems, lookupHargaGlobal,
     ordersData, priceListData, safeArr, selectedLaporan, setActiveEditUnitIdx, setEditGratisAlasan,
     setEditLaporanForm, setEditLaporanFotos, setEditLaporanMode, setEditPhotoMode, setEditRepairType, setEditStockMats,
     setInvoicesData, setLaporanInstallItems, setLaporanReports, setModalLaporanDetail, showNotif, supabase,
     syncTrackedStock, updateInvoice, updateServiceReport,
   } = ctx;
+  // Material Harian = SATU-SATUNYA pintu potong stok pipa/kabel/freon saat toggle ini ON
+  // (keputusan Owner 22 Agu 2026). Paritas dengan guard dropHarian di lib/submitLaporan.js.
+  // Sebelumnya jalur admin di modal ini tak punya guard → pipa/freon terpotong di sini LALU
+  // terpotong lagi saat checkout teknisi dikonfirmasi di MatTrack (dobel, insiden 22 Agu 2026).
+  const harianGate = appSettings?.material_confirm_deduct_enabled === "true";
   return (
     <div style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => { setModalLaporanDetail(false); setEditLaporanMode(false); setEditPhotoMode(false); setEditLaporanFotos([]); }}>
       <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: isMobile ? "16px 16px 0 0" : 20, width: "100%", maxWidth: isMobile ? "100%" : 640, maxHeight: "90vh", overflowY: "auto", padding: 28 }} onClick={e => e.stopPropagation()}>
@@ -359,6 +365,24 @@ export default function LaporanDetailModal({ ctx }) {
 
             {/* ══ STOK MATERIAL TERPAKAI — disembunyikan untuk Survey ══ */}
             {(editLaporanForm.editService || selectedLaporan?.service) !== "Survey" && (() => {
+              // Toggle Material Harian ON → editor ini tidak memotong apa pun (syncTrackedStock
+              // hanya memproses pipa/freon, dan keduanya kini dikecualikan). Tampilkan keterangan
+              // jujur alih-alih pemilih roll yang menjanjikan potongan yang tak pernah terjadi.
+              if (harianGate) return (
+                <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "14px" }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: cs.muted, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 6 }}>
+                    📦 Stok Material Terpakai
+                  </div>
+                  <div style={{ fontSize: 11.5, color: cs.muted, background: cs.surface, borderRadius: 7, padding: "9px 11px", lineHeight: 1.55 }}>
+                    ℹ️ Pemotongan stok <strong style={{ color: cs.text }}>pipa, kabel, dan freon</strong> dilakukan lewat
+                    {" "}<strong style={{ color: cs.text }}>Material Harian → MatTrack</strong> (konfirmasi Owner atas checkout teknisi),
+                    bukan dari layar ini. Mencatatnya di sini tidak akan memotong stok.
+                    <div style={{ marginTop: 6, color: cs.yellow }}>
+                      Ada checkout menunggu konfirmasi? Buka <strong>Stok Material → MatTrack</strong>.
+                    </div>
+                  </div>
+                </div>
+              );
               const addStockMat = () => setEditStockMats(p => [...p, { id: Date.now(), nama: "", jumlah: 1, satuan: "pcs", freon_tabung_code: "", freon_unit_label: "", freon_inv_code: "" }]);
               const updateMat = (id, patch) => setEditStockMats(p => p.map(m => m.id === id ? { ...m, ...patch } : m));
               const removeMat = (id) => setEditStockMats(p => p.filter(m => m.id !== id));
@@ -734,7 +758,13 @@ export default function LaporanDetailModal({ ctx }) {
 
                 // ── Idempotent sync stok tracked (pipa/freon) dari input admin ──
                 // syncTrackedStock: hapus usage tracked lama → insert baru → recalculate dari DB
-                const stockMatsToDeduct = editStockMats.filter(m => m.nama && parseFloat(m.jumlah) > 0);
+                // Guard paritas dgn submitLaporan.js: saat Material Harian jadi gate, kategori
+                // pipa/kabel/freon TIDAK boleh dipotong dari sini (cegah dobel dgn MatTrack).
+                // Ditaruh di handler juga — bukan cuma di UI — supaya state lama yang terlanjur
+                // terisi tidak lolos saat disimpan.
+                const stockMatsToDeduct = editStockMats
+                  .filter(m => m.nama && parseFloat(m.jumlah) > 0)
+                  .filter(m => !harianGate || classifyMaterial(m.nama) === "lain");
                 if (selectedLaporan.id) {
                   await syncTrackedStock(
                     selectedLaporan.id,
