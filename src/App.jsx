@@ -1238,6 +1238,30 @@ export default function ACleanWebApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoggedIn, _maintIdxTrigger]);
 
+  // Lazy-load tabel single-view (dulu di bootstrap, kini ditunda demi load awal ringan):
+  //   inv_tx → hanya MatTrackView (menu "mattrack")
+  //   project_daily_reports → hanya MyReportView (menu "myreport")
+  // Muat SEKALI saat menu-nya pertama dibuka. Data TIDAK dikurangi — cuma ditunda.
+  const _invTxLoaded = useRef(false);
+  const _pdrLoaded = useRef(false);
+  useEffect(() => {
+    if (activeMenu === "mattrack" && !_invTxLoaded.current) {
+      _invTxLoaded.current = true;
+      fetchInventoryTransactions(supabase)
+        .then(({ data, error }) => { if (!error && data) setInvTxData(data); })
+        .catch(() => { _invTxLoaded.current = false; });
+    }
+    if (activeMenu === "myreport" && !_pdrLoaded.current) {
+      _pdrLoaded.current = true;
+      supabase.from("project_daily_reports")
+        .select("id,order_id,project_id,tanggal,status,submitted_by")
+        .order("tanggal", { ascending: false }).limit(1000)
+        .then(({ data, error }) => { if (!error && data) setProjectDailyReports(data); })
+        .catch(() => { _pdrLoaded.current = false; });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeMenu]);
+
   // Server-side search Invoice — debounce 350ms; reset hasil saat search dibersihkan
   useEffect(() => {
     const q = (searchInvoice || "").trim();

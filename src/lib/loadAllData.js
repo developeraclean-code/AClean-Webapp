@@ -16,21 +16,21 @@ export async function loadAllData({
   setWaConversations, setWaProvider, supabase,
 }) {
         // Opsi-A: agent_logs, expenses, quotations dikeluarkan dari loadAll — diload on-demand saat view dibuka
+        // inv_tx (hanya MatTrack) & project_daily_reports (hanya MyReport) DIKELUARKAN
+        // dari bootstrap → lazy-load saat menu-nya dibuka (App.jsx, useEffect activeMenu).
+        // Data TIDAK dikurangi, cuma ditunda → payload awal lebih ringan.
         const results = await Promise.allSettled([
           cachedFetch("orders", () => fetchOrders(supabase)),
           cachedFetch("invoices", () => fetchInvoices(supabase)),
           cachedFetch("customers", () => fetchCustomers(supabase)),
           cachedFetch("inventory", () => fetchInventory(supabase)),
           cachedFetch("service_reports", () => fetchServiceReports(supabase)),
-          cachedFetch("inv_tx", () => fetchInventoryTransactions(supabase)),
           cachedFetch("inv_units", () => fetchInventoryUnits(supabase)),
-          cachedFetch("project_daily_reports", () => supabase.from("project_daily_reports").select("id,order_id,project_id,tanggal,status,submitted_by").order("tanggal", { ascending: false }).limit(1000)),
         ]);
-        const [ordersRes, invoicesRes, customersRes, inventoryRes, laporanRes, invTxRes, invUnitsRes, pdrRes] = results.map(r => r.status === "fulfilled" ? r.value : { error: r.reason });
+        const [ordersRes, invoicesRes, customersRes, inventoryRes, laporanRes, invUnitsRes] = results.map(r => r.status === "fulfilled" ? r.value : { error: r.reason });
         // Selalu pakai data DB jika tidak error (bahkan array kosong = data nyata dari DB)
         // Jika error = fallback ke demo data yang sudah di-init
         if (!ordersRes.error && ordersRes.data) setOrdersData(ordersRes.data);
-        if (!invTxRes?.error && invTxRes?.data) setInvTxData(invTxRes.data);
         if (!invUnitsRes?.error && invUnitsRes?.data) setInvUnitsData(invUnitsRes.data);
         if (!invoicesRes.error && invoicesRes.data) setInvoicesData(invoicesRes.data);
         if (!customersRes.error && customersRes.data) setCustomersData(customersRes.data);
@@ -44,7 +44,6 @@ export async function loadAllData({
         if (!laporanRes.error && laporanRes.data) {
           setLaporanReports(dedupReportsByJob(laporanRes.data.map(parseLaporanRow)));
         }
-        if (!pdrRes?.error && pdrRes?.data) setProjectDailyReports(pdrRes.data);
         // Jika DB error total, keep demo data (already in useState init)
         // agent_logs: diakses lewat Monitoring → tab Audit Log (server-side)
 
@@ -53,19 +52,32 @@ export async function loadAllData({
         // ── Auto-cleanup agent_logs > 90 hari: dilakukan oleh cron backend,
         //    bukan frontend — setelah RLS fix, anon/authenticated tidak bisa DELETE ──
 
+        // ── PARALEL: luncurkan SEMUA fetch sekunder barengan (dulu berurutan → serial
+        // latency ~1 dtk). Promise.resolve() memaksa request Supabase mulai SEKARANG
+        // (builder lazy → tak jalan sampai di-then/await). Blok await di bawah tinggal
+        // menunggu yang sudah in-flight — logika proses tiap blok TIDAK diubah. ──
+        const _isOwnerAdmin = ["Owner", "Admin"].includes(currentUser?.role);
+        const _pPayDisp = Promise.all([fetchPayments(supabase), fetchDispatchLogs(supabase)]);
+        const _pSettings = Promise.resolve(fetchAppSettings(supabase));
+        const _pTek = Promise.resolve(fetchUserProfiles(supabase));
+        const _pUA = Promise.resolve(fetchUserAccounts(supabase));
+        const _pWA = Promise.resolve(fetchWaConversations(supabase, 100)).catch(() => ({ error: true }));
+        const _pPL = Promise.resolve(fetchPriceList(supabase));
+        const _pBrain = Promise.resolve(fetchAraBrain(supabase));
+        const _pPS = _isOwnerAdmin
+          ? Promise.resolve(supabase.from("payment_suggestions").select("*").eq("status", "PENDING").order("created_at", { ascending: false }).limit(20))
+          : Promise.resolve({ data: null });
+
         // GAP 3: Load payments summary & dispatch recent (untuk dashboard)
         try {
-          const [payRes, dispRes] = await Promise.all([
-            fetchPayments(supabase),
-            fetchDispatchLogs(supabase),
-          ]);
+          const [payRes, dispRes] = await _pPayDisp;
           if (!payRes.error && payRes.data) setPaymentsData(payRes.data);
           if (!dispRes.error && dispRes.data) setDispatchLogs(dispRes.data);
         } catch (e) { /* tabel belum ada, skip */ }
 
         // Load app_settings dari Supabase DB (backup dari localStorage)
         try {
-          const setRes = await fetchAppSettings(supabase);
+          const setRes = await _pSettings;
           if (!setRes.error && setRes.data) {
             const sMap = Object.fromEntries(setRes.data.map(s => [s.key, s.value]));
             // ── Load bonus_categories from app_settings ──
@@ -166,7 +178,7 @@ export async function loadAllData({
 
         // Load Teknisi dari Supabase — fallback ke TEKNISI_DATA jika kosong/error
         try {
-          const tekRes = await fetchUserProfiles(supabase);
+          const tekRes = await _pTek;
           if (!tekRes.error && tekRes.data && tekRes.data.length > 0) {
             const tekList = tekRes.data.filter(u => {
               const r = (u.role || "").toLowerCase();
@@ -188,7 +200,7 @@ export async function loadAllData({
 
         // Load semua user → userAccounts (untuk panel manage user)
         try {
-          const uaRes = await fetchUserAccounts(supabase);
+          const uaRes = await _pUA;
           if (!uaRes.error && uaRes.data && uaRes.data.length > 0) {
             const roleColors = { owner: "#f59e0b", admin: "#38bdf8", finance: "#10b981", teknisi: "#22c55e", helper: "#a78bfa" };
             const normalized = uaRes.data.map(u => ({
@@ -207,13 +219,13 @@ export async function loadAllData({
 
         // Load WA conversations dari Supabase (tabel opsional)
         try {
-          const waRes = await fetchWaConversations(supabase, 100);
+          const waRes = await _pWA;
           if (!waRes.error && waRes.data && waRes.data.length > 0) setWaConversations(waRes.data);
         } catch (e) { /* WA tabel belum ada - skip */ }
 
         // ── GAP-03 FIX + PriceList state: Load price_list dari DB ──
         try {
-          const plRes = await fetchPriceList(supabase);
+          const plRes = await _pPL;
           if (!plRes.error && plRes.data && plRes.data.length > 0) {
             // Set state untuk renderPriceList UI
             setPriceListData(plRes.data);
@@ -226,7 +238,7 @@ export async function loadAllData({
 
         // ── BRAIN LOAD: Baca brain.md & brain_customer dari Supabase ara_brain ──
         try {
-          const brainRes = await fetchAraBrain(supabase);
+          const brainRes = await _pBrain;
           if (!brainRes.error && brainRes.data && brainRes.data.length > 0) {
             const brainMap = Object.fromEntries(brainRes.data.map(r => [r.key, r.value]));
             // Load dari DB, TAPI skip jika v4.0 (use hardcoded v5.1 instead)
@@ -245,10 +257,9 @@ export async function loadAllData({
         } catch (e) { console.warn("ara_brain DB load failed, pakai localStorage:", e?.message); }
 
         // ── Load pending payment suggestions (HANYA Owner/Admin) ──
-        if (["Owner","Admin"].includes(currentUser?.role)) {
+        if (_isOwnerAdmin) {
           try {
-            const { data: psData } = await supabase.from("payment_suggestions")
-              .select("*").eq("status","PENDING").order("created_at",{ascending:false}).limit(20);
+            const { data: psData } = await _pPS;
             if (psData?.length > 0) setPaymentSuggestions(psData);
           } catch(_) { /* tabel belum ada, skip */ }
         }
