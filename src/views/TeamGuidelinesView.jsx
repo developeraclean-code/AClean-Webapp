@@ -4,14 +4,27 @@ import { cs } from "../theme/cs.js";
 // TeamGuidelinesView — menu "Tata Tertib & Jobdesk".
 // Konten dari tabel Supabase `team_guidelines` (migrasi 128). Teknisi/Helper baca;
 // Owner/Admin bisa inline-edit teks tiap poin (edit teks saja — poin sudah fix).
-// Struktur: 3 tab (Tata Tertib / Tugas & Kewajiban / Jobdesk); tab tugas & jobdesk
-// punya sub-toggle Teknisi/Helper. RLS DB yang menjaga otorisasi write.
+// Struktur: 4 tab (Tata Tertib / Tugas & Kewajiban / Jobdesk / SOP Layanan); tab tugas
+// & jobdesk punya sub-toggle Teknisi/Helper. RLS DB yang menjaga otorisasi write.
+// Tab "SOP Layanan" = poster statis (PNG di public/sop/), read-only, tampil untuk SEMUA
+// role yang bisa buka menu ini — tidak ada data DB & tidak bisa diedit dari UI.
 // Props: { supabase, currentUser, showNotif, showConfirm }
 
 const TABS = [
   { key: "tata_tertib", label: "📋 Tata Tertib", roleScoped: false, color: cs.accent },
   { key: "tugas_kewajiban", label: "✅ Tugas & Kewajiban", roleScoped: true, color: cs.green },
   { key: "jobdesk", label: "🛠 Jobdesk", roleScoped: true, color: cs.yellow },
+  { key: "sop", label: "🧾 SOP Layanan", roleScoped: false, color: cs.ara },
+];
+
+// Poster SOP untuk customer — file statis di public/sop/ (bukan dari DB).
+const SOP_DOCS = [
+  { key: "cleaning", chip: "🧽 Cleaning", title: "SOP Cleaning Service AC",
+    desc: "Tahapan pekerjaan tim AClean saat cleaning unit AC.", src: "/sop/sop-cleaning.png" },
+  { key: "cek", chip: "🔧 Cek Unit", title: "SOP Pengecekan Unit Bermasalah",
+    desc: "Untuk kendala AC panas / tidak dingin atau bocor air.", src: "/sop/sop-cek-unit.png" },
+  { key: "testpress", chip: "🧪 Test Press", title: "SOP Test Press Unit AC",
+    desc: "Dilakukan saat ditemukan indikasi kekurangan tekanan Freon.", src: "/sop/sop-test-press.png" },
 ];
 
 export default function TeamGuidelinesView({ supabase, currentUser, showNotif, showConfirm }) {
@@ -19,6 +32,7 @@ export default function TeamGuidelinesView({ supabase, currentUser, showNotif, s
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("tata_tertib");
   const [sub, setSub] = useState("teknisi"); // teknisi | helper (untuk tab role-scoped)
+  const [sopKey, setSopKey] = useState(SOP_DOCS[0].key); // dokumen SOP aktif (tab "sop")
   const [editId, setEditId] = useState(null);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
@@ -94,8 +108,8 @@ export default function TeamGuidelinesView({ supabase, currentUser, showNotif, s
       <div style={{ marginBottom: 14 }}>
         <div style={{ fontSize: 20, fontWeight: 800, color: cs.text }}>📋 Tata Tertib & Jobdesk</div>
         <div style={{ fontSize: 13, color: cs.muted, marginTop: 2 }}>
-          Acuan aturan, tugas, dan jobdesk tim AClean.
-          {canEdit && <span style={{ color: cs.accent }}> Kamu bisa edit teks tiap poin (✏️).</span>}
+          Acuan aturan, tugas, jobdesk, dan SOP layanan tim AClean.
+          {canEdit && tab !== "sop" && <span style={{ color: cs.accent }}> Kamu bisa edit teks tiap poin (✏️).</span>}
         </div>
       </div>
 
@@ -133,8 +147,50 @@ export default function TeamGuidelinesView({ supabase, currentUser, showNotif, s
         </div>
       )}
 
+      {/* Tab SOP: poster statis, read-only, semua role */}
+      {tab === "sop" && (
+        <div style={{ display: "grid", gap: 12 }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {SOP_DOCS.map((d) => (
+              <button key={d.key} onClick={() => setSopKey(d.key)}
+                style={{
+                  padding: "7px 14px", borderRadius: 99, cursor: "pointer", fontSize: 12.5, fontWeight: 700,
+                  border: "1px solid " + (sopKey === d.key ? cs.accent : cs.border),
+                  background: sopKey === d.key ? cs.accent : cs.surface,
+                  color: sopKey === d.key ? "#0a0f1e" : cs.muted,
+                }}>
+                {d.chip}
+              </button>
+            ))}
+          </div>
+          {SOP_DOCS.filter((d) => d.key === sopKey).map((d) => (
+            <div key={d.key} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: 12 }}>
+              <div style={{ fontSize: 14.5, fontWeight: 800, color: cs.text }}>{d.title}</div>
+              <div style={{ fontSize: 12.5, color: cs.muted, marginTop: 2, marginBottom: 10 }}>{d.desc}</div>
+              <a href={d.src} target="_blank" rel="noopener noreferrer" title="Klik untuk buka ukuran penuh">
+                <img src={d.src} alt={d.title} loading="lazy"
+                  style={{ width: "100%", display: "block", borderRadius: 10, border: "1px solid " + cs.border, background: "#fff" }} />
+              </a>
+              <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                <a href={d.src} target="_blank" rel="noopener noreferrer"
+                  style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, textDecoration: "none", background: cs.accent + "22", color: cs.accent, border: "1px solid " + cs.accent + "44" }}>
+                  🔍 Buka ukuran penuh
+                </a>
+                <a href={d.src} download={d.src.split("/").pop()}
+                  style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, textDecoration: "none", background: cs.surface, color: cs.muted, border: "1px solid " + cs.border }}>
+                  ⬇️ Unduh gambar
+                </a>
+              </div>
+              <div style={{ fontSize: 11.5, color: cs.muted, marginTop: 9, lineHeight: 1.5 }}>
+                Boleh dikirim ke customer sebagai penjelasan tahapan kerja & aturan biaya.
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Daftar poin */}
-      {loading ? (
+      {tab === "sop" ? null : loading ? (
         <div style={{ textAlign: "center", color: cs.muted, fontSize: 13, padding: 24 }}>Memuat…</div>
       ) : items.length === 0 ? (
         <div style={{ background: cs.surface, border: "1px dashed " + cs.border, borderRadius: 12, padding: 20, textAlign: "center", fontSize: 12.5, color: cs.muted }}>
@@ -194,7 +250,7 @@ export default function TeamGuidelinesView({ supabase, currentUser, showNotif, s
       )}
 
       {/* Tambah poin baru (Owner/Admin) */}
-      {canEdit && !loading && (
+      {canEdit && !loading && tab !== "sop" && (
         <div style={{ marginTop: 12 }}>
           {adding ? (
             <div style={{ background: cs.card, border: "1px solid " + cs.accent, borderRadius: 10, padding: "11px 13px", display: "grid", gap: 8 }}>
