@@ -85,18 +85,16 @@ export function verifyAppToken(token) {
   } catch { return null; }
 }
 
-// Helper untuk endpoint yang butuh role check
-// Pakai setelah validateInternalToken pass. Return true kalau caller pakai App Token & role match.
-// Kalau caller pakai Supabase Bearer / legacy secret (req.appClaims undefined), return true (caller harus cek role manual).
-export function requireRole(req, res, allowedRoles) {
-  const claims = req.appClaims;
-  if (!claims) return true; // legacy/Supabase Bearer — caller bertanggung jawab cek role sendiri
-  if (!allowedRoles.includes(claims.role)) {
-    res.status(403).json({ error: `Forbidden: butuh role ${allowedRoles.join("/")}` });
-    return false;
-  }
-  return true;
-}
+// CATATAN (audit keamanan 22 Agu 2026): helper requireRole() DIHAPUS dari sini.
+// Ia tidak pernah dipakai satu handler pun, DAN cara kerjanya fail-open: saat
+// req.appClaims kosong — yaitu ketika pemanggil memakai Supabase Bearer biasa yang
+// dipegang SEMUA user login, termasuk Teknisi — ia mengembalikan true (izinkan).
+// Kalau suatu saat dipakai, ia justru memberi rasa aman palsu.
+//
+// Cara yang benar, seperti dipakai handler manage-user (api/_handlers/auth-token.js:218):
+// ambil role dari req.appClaims (token bertanda tangan, tak bisa dipalsukan) ATAU
+// decode `sub` dari Bearer JWT lalu query user_profiles pakai service key.
+// JANGAN PERNAH percaya role yang dikirim di body request.
 
 export async function validateInternalToken(req, res) {
   const secret = process.env.INTERNAL_API_SECRET;
