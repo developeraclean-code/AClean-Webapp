@@ -347,6 +347,7 @@ const savePayment = async (inv) => {
 const MERGE_MAX = 5;
 const [mergeStage, setMergeStage]     = useState(null); // null | "picker" | "select"
 const [mergePhone, setMergePhone]     = useState(null); // phone customer yang dipilih
+const [multiMoreOpen, setMultiMoreOpen] = useState(false); // dropdown "lainnya" di banner Multi-Invoice
 const [mergeSelectedIds, setMergeSelectedIds] = useState([]);
 const [mergeSending, setMergeSending] = useState(false);
 const [mergeApproving, setMergeApproving] = useState(false);
@@ -1301,29 +1302,57 @@ return (
         <span style={{ fontSize: 12, color: cs.muted, flex: 1 }}>
           {multiInvoiceCustomers.length} customer punya {multiInvoiceCustomers.reduce((s,[,arr]) => s + arr.length, 0)} invoice unpaid
         </span>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {multiInvoiceCustomers.slice(0, 3).map(([phone, invs]) => (
-            <button key={phone}
-              onClick={() => {
-                // Tarik bukti bayar WA yang sudah ditangkap AI (payment_suggestions PENDING) utk phone ini
-                const sugg = (paymentSuggestions || []).find(s => samePhone(s.phone, phone) && s.image_url);
-                setGroupPaymentCtx({
-                  phone,
-                  invoices: invs,
-                  suggestedAmount: invs.reduce((s, i) => s + (i.total || 0), 0),
-                  proofUrl: sugg?.image_url || null,
-                  method: "transfer",
-                  suggId: sugg?.id || null,
-                });
-              }}
-              style={{ background: "#06b6d422", border: "1px solid #06b6d466", color: "#06b6d4", padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
-              {invs[0]?.customer || phone} ({invs.length} inv · {fmt(invs.reduce((s,i) => s+(i.total||0), 0))})
-            </button>
-          ))}
-          {multiInvoiceCustomers.length > 3 && (
-            <span style={{ fontSize: 11, color: cs.muted, alignSelf: "center" }}>+{multiInvoiceCustomers.length - 3} lainnya</span>
-          )}
-        </div>
+        {(() => {
+          // Buka Group Payment untuk 1 customer (+ tarik bukti bayar WA yang ditangkap AI).
+          const openGroupPay = (phone, invs) => {
+            const sugg = (paymentSuggestions || []).find(s => samePhone(s.phone, phone) && s.image_url);
+            setGroupPaymentCtx({
+              phone, invoices: invs,
+              suggestedAmount: invs.reduce((s, i) => s + (i.total || 0), 0),
+              proofUrl: sugg?.image_url || null,
+              method: "transfer",
+              suggId: sugg?.id || null,
+            });
+            setMultiMoreOpen(false);
+          };
+          const pill = (phone, invs) => `${invs[0]?.customer || phone} (${invs.length} inv · ${fmt(invs.reduce((s, i) => s + (i.total || 0), 0))})`;
+          const rest = multiInvoiceCustomers.slice(3);
+          return (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", position: "relative" }}>
+              {multiInvoiceCustomers.slice(0, 3).map(([phone, invs]) => (
+                <button key={phone} onClick={() => openGroupPay(phone, invs)}
+                  style={{ background: "#06b6d422", border: "1px solid #06b6d466", color: "#06b6d4", padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+                  {pill(phone, invs)}
+                </button>
+              ))}
+              {rest.length > 0 && (
+                <div style={{ position: "relative" }}>
+                  <button onClick={() => setMultiMoreOpen(o => !o)}
+                    style={{ background: "#06b6d418", border: "1px solid #06b6d466", color: "#06b6d4", padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+                    +{rest.length} lainnya {multiMoreOpen ? "▲" : "▼"}
+                  </button>
+                  {multiMoreOpen && (
+                    <>
+                      {/* klik luar → tutup */}
+                      <div onClick={() => setMultiMoreOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
+                      <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 41, background: cs.card, border: "1px solid #06b6d466", borderRadius: 10, boxShadow: "0 8px 24px #0008", minWidth: 260, maxHeight: 320, overflowY: "auto", padding: 4 }}>
+                        {rest.map(([phone, invs]) => (
+                          <button key={phone} onClick={() => openGroupPay(phone, invs)}
+                            style={{ display: "flex", justifyContent: "space-between", gap: 10, width: "100%", background: "transparent", border: "none", borderRadius: 7, padding: "8px 10px", cursor: "pointer", fontSize: 12, color: cs.text, textAlign: "left" }}
+                            onMouseEnter={e => e.currentTarget.style.background = "#06b6d418"}
+                            onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                            <span style={{ fontWeight: 700 }}>{invs[0]?.customer || phone}</span>
+                            <span style={{ color: "#06b6d4", whiteSpace: "nowrap" }}>{invs.length} inv · {fmt(invs.reduce((s, i) => s + (i.total || 0), 0))}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
     )}
 
