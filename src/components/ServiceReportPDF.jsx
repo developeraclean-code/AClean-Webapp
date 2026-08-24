@@ -1,4 +1,5 @@
 import { Document, Page, Text, View, StyleSheet, Image } from "@react-pdf/renderer";
+import { condSetelahTone } from "../lib/reportConditions.js";
 
 const fmtDate = (d) => {
   if (!d) return "—";
@@ -36,6 +37,8 @@ const s = StyleSheet.create({
   badge:       { backgroundColor: "#eff6ff", color: "#1d4ed8", fontSize: 6.5, padding: "1 4", borderRadius: 99, marginRight: 2, marginBottom: 1 },
   badgeYellow: { backgroundColor: "#fefce8", color: "#854d0e", fontSize: 6.5, padding: "1 4", borderRadius: 99, marginRight: 2, marginBottom: 1 },
   badgeGreen:  { backgroundColor: "#f0fdf4", color: "#166534", fontSize: 6.5, padding: "1 4", borderRadius: 99, marginRight: 2, marginBottom: 1 },
+  badgeNeutral:{ backgroundColor: "#f1f5f9", color: "#64748b", fontSize: 6.5, padding: "1 4", borderRadius: 99, marginRight: 2, marginBottom: 1 },
+  badgeRed:    { backgroundColor: "#fef2f2", color: "#b91c1c", fontSize: 6.5, padding: "1 4", borderRadius: 99, marginRight: 2, marginBottom: 1 },
   // Bottom row: catatan + tanda tangan
   bottomRow:   { flexDirection: "row", gap: 8, marginBottom: 8 },
   catatanBox:  { backgroundColor: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 4, padding: "6 8", fontSize: 8, color: "#334155", minHeight: 30, flex: 1 },
@@ -66,16 +69,23 @@ function InfoRow({ label, value, accent }) {
   );
 }
 
-function BadgeList({ items, style }) {
+function BadgeList({ items, style, styleFor }) {
   if (!items || items.length === 0) return <Text style={[s.td, { flex: 1, color: "#94a3b8" }]}>—</Text>;
   // Menurun (1 item per baris), pill menyesuaikan lebar teks — bukan mendatar memanjang.
   // flex: 1 = lebar sel mengikuti kolom header (th flex 1).
+  // styleFor(item) opsional → nada per-item (mis. kondisi sesudah: hijau/kuning/merah/abu).
   return (
     <View style={{ flex: 1, flexDirection: "column", alignItems: "flex-start", padding: "4 5" }}>
-      {items.map((item, i) => <Text key={i} style={style}>{item}</Text>)}
+      {items.map((item, i) => <Text key={i} style={styleFor ? styleFor(item) : style}>{item}</Text>)}
     </View>
   );
 }
+
+// Nada badge "Kondisi Sesudah" → style react-pdf (jangan cat semua hijau).
+const setelahStyle = (k) => {
+  const t = condSetelahTone(k);
+  return t === "red" ? s.badgeRed : t === "warn" ? s.badgeYellow : t === "neutral" ? s.badgeNeutral : s.badgeGreen;
+};
 
 function UnitTable({ units }) {
   if (!units || units.length === 0) return null;
@@ -101,7 +111,7 @@ function UnitTable({ units }) {
             </View>
             <BadgeList items={u.kondisi_sebelum} style={s.badgeYellow} />
             <BadgeList items={u.pekerjaan} style={s.badge} />
-            <BadgeList items={u.kondisi_setelah} style={s.badgeGreen} />
+            <BadgeList items={u.kondisi_setelah} styleFor={setelahStyle} />
             <View style={{ width: 46, padding: "4 5" }}>
               {parseFloat(u.freon_ditambah) > 0 ? <Text style={{ fontSize: 7.5 }}>{u.freon_ditambah} psi</Text> : null}
               {u.ampere_akhir ? <Text style={{ fontSize: 7.5 }}>{u.ampere_akhir} A</Text> : null}

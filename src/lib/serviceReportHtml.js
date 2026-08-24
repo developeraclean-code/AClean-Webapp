@@ -3,8 +3,12 @@
 // `appSettings` & `ordersData` ditambahkan sebagai parameter (dulu closure App.jsx).
 // Indentasi body sengaja dipertahankan apa adanya supaya whitespace di dalam
 // template literal (yang ikut ke output HTML) tidak berubah.
+import { condSetelahTone } from "./reportConditions.js";
+
 export function buildServiceReportHTML(laporan, inv, logoUrl, origin, photoDataUrls = {}, forWA = false, appSettings = {}, ordersData = []) {
     const escH = (s) => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    // Nada badge kondisi sesudah → kelas CSS (jangan cat semua hijau).
+    const toneClass = { green: "green", warn: "yellow", red: "red", neutral: "neutral" };
     const ord = ordersData.find(o => o.id === laporan.job_id) || {};
     const units = laporan.units || [];
     const materials = (laporan.materials || []).filter(m => m.nama && m.keterangan !== "jasa");
@@ -106,6 +110,8 @@ export function buildServiceReportHTML(laporan, inv, logoUrl, origin, photoDataU
   .badge { display: table; background: #eff6ff; color: #1d4ed8; font-size: 8px; padding: 1px 5px; border-radius: 99px; margin: 1px 1px 2px 0; }
   .badge.yellow { background: #fefce8; color: #854d0e; }
   .badge.green { background: #f0fdf4; color: #166534; }
+  .badge.neutral { background: #f1f5f9; color: #64748b; }
+  .badge.red { background: #fef2f2; color: #b91c1c; }
 
   /* ── MATERIALS ── */
   .mat-table th { background: #334155; }
@@ -203,7 +209,7 @@ ${units.length > 0 ? `
           </td>
           <td>${(u.kondisi_sebelum || []).map(k => `<span class="badge yellow">${escH(k)}</span>`).join("") || "-"}</td>
           <td>${(u.pekerjaan || []).map(p => `<span class="badge">${escH(p)}</span>`).join("") || "-"}</td>
-          <td>${(u.kondisi_setelah || []).map(k => `<span class="badge green">${escH(k)}</span>`).join("") || "-"}</td>
+          <td>${(u.kondisi_setelah || []).map(k => `<span class="badge ${toneClass[condSetelahTone(k)] || "green"}">${escH(k)}</span>`).join("") || "-"}</td>
           <td style="font-size:8.5px">
             ${parseFloat(u.freon_ditambah) > 0 ? `<div>${u.freon_ditambah} psi</div>` : ""}
             ${u.ampere_akhir ? `<div>${u.ampere_akhir} A</div>` : ""}
