@@ -1,5 +1,5 @@
 import { cs } from "../theme/cs.js";
-import { normalizePhone, samePhone } from "../lib/phone.js";
+import { normalizePhone, samePhone, smartSearchNormalize } from "../lib/phone.js";
 import { fetchWaConversations } from "../data/reads.js";
 
 // Panel monitor WhatsApp (drawer kanan) — diekstrak dari App.jsx (Fase 0 iterasi 4).
@@ -26,6 +26,9 @@ export default function WaPanel({
 
   const isOwnerAdmin = currentUser?.role === "Owner" || currentUser?.role === "Admin";
   const waSearchLower = waSearch.toLowerCase();
+  // Normalisasi input nomor: "+62 819-3322-2209" / "0819..." → "628..." agar cocok
+  // dgn phone tersimpan (628xxx). Kalau input bukan nomor → tetap string apa adanya.
+  const waSearchPhone = smartSearchNormalize(waSearch);
   const filteredConvs = waConversations.map(conv => {
     const cust = customersData.find(x => samePhone(x.phone, conv.phone));
     return { ...conv, _cust: cust || null };
@@ -33,6 +36,7 @@ export default function WaPanel({
     if (!waSearchLower) return true;
     return (conv.name || "").toLowerCase().includes(waSearchLower) ||
       (conv.phone || "").includes(waSearch) ||
+      normalizePhone(conv.phone || "").includes(waSearchPhone) ||
       (conv._cust?.name || "").toLowerCase().includes(waSearchLower) ||
       (conv.last_message || conv.last || "").toLowerCase().includes(waSearchLower);
   });

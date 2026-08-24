@@ -3300,8 +3300,13 @@ export default function ACleanWebApp() {
 
   // ── Group Payment: 1 transfer cover beberapa invoice 1 customer ──
   // Wrapper (Fase 2, pola ctx): handleGroupPayment pindah ke lib/groupPayment.
+  // WAJIB kirim invoicesDataMerged (bukan invoicesData mentah cap-300): invoice unpaid
+  // LAMA di luar window hanya ada di set outstanding. Kalau pakai mentah, targetInvoices
+  // kehilangan sebagian → totalTagihan salah kecil → "melebihi total tagihan" (bug Bu
+  // Doly: bayar 4,47jt utk grup 3 invoice divalidasi ke 1 invoice 2,87jt). setInvoicesData
+  // sudah broadcast ke outstandingInvExtra, jadi update lunas tetap sinkron.
   const handleGroupPayment = (customerPhone, invoiceIds, totalReceived, proofUrl, method) => handleGroupPaymentLib(customerPhone, invoiceIds, totalReceived, proofUrl, method, {
-    addAgentLog, auditUserName, fmt, getLocalISOString, invoicesData, markInvoicePaid,
+    addAgentLog, auditUserName, fmt, getLocalISOString, invoicesData: invoicesDataMerged, markInvoicePaid,
     ordersData, setAuditUser, setInvoicesData, setOrdersData, showNotif, supabase,
   });
 
