@@ -11,6 +11,12 @@ export function buildServiceReportHTML(laporan, inv, logoUrl, origin, photoDataU
     const toneClass = { green: "green", warn: "yellow", red: "red", neutral: "neutral" };
     const ord = ordersData.find(o => o.id === laporan.job_id) || {};
     const units = laporan.units || [];
+    // Tim lengkap: teknisi 1-3 + helper 1-3 (helper diberi label). Dulu hanya
+    // teknisi · helper · teknisi2 → anggota tim besar tak muncul di report card.
+    const teamStr = [
+      ...[laporan.teknisi, laporan.teknisi2, laporan.teknisi3].filter(Boolean),
+      ...[laporan.helper, laporan.helper2, laporan.helper3].filter(Boolean).map(h => h + " (Helper)"),
+    ].join(" · ");
     const materials = (laporan.materials || []).filter(m => m.nama && m.keterangan !== "jasa");
     const jasaItems = (laporan.materials || []).filter(m => m.keterangan === "jasa");
     const fotos = (laporan.foto_urls || []).filter(Boolean);
@@ -168,7 +174,7 @@ ${forWA ? "" : "<script>window.onload = () => { window.print(); }</script>"}
     <div class="info-row"><span class="info-label">Tanggal Service</span><span class="info-val">${escH(svcDate)}</span></div>
     <div class="info-row"><span class="info-label">Jenis Layanan</span><span class="info-val">${escH(laporan.service)}</span></div>
     <div class="info-row"><span class="info-label">Jumlah Unit</span><span class="info-val">${escH(laporan.total_units || units.length || "-")}</span></div>
-    <div class="info-row"><span class="info-label">Teknisi</span><span class="info-val">${escH(laporan.teknisi)}${laporan.helper ? " · " + escH(laporan.helper) : ""}${laporan.teknisi2 ? " · " + escH(laporan.teknisi2) : ""}</span></div>
+    <div class="info-row"><span class="info-label">Teknisi</span><span class="info-val">${escH(teamStr || laporan.teknisi || "-")}</span></div>
     <div class="info-row"><span class="info-label">Status</span><span class="info-val">${escH(laporan.status)}</span></div>
   </div>
 </div>
@@ -195,7 +201,7 @@ ${units.length > 0 ? `
         <th>Kondisi Sebelum</th>
         <th>Pekerjaan Dilakukan</th>
         <th>Kondisi Sesudah</th>
-        <th style="width:52px">Freon / Ampere</th>
+        <th style="width:52px">Tekanan / Ampere</th>
       </tr>
     </thead>
     <tbody>

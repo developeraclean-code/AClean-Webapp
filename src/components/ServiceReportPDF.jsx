@@ -98,7 +98,7 @@ function UnitTable({ units }) {
         <Text style={[s.th, { flex: 1 }]}>Kondisi Sebelum</Text>
         <Text style={[s.th, { flex: 1 }]}>Pekerjaan</Text>
         <Text style={[s.th, { flex: 1 }]}>Kondisi Sesudah</Text>
-        <Text style={[s.th, { width: 46 }]}>Freon/A</Text>
+        <Text style={[s.th, { width: 46 }]}>Tekanan/A</Text>
       </View>
       {units.map((u, i) => (
         <View key={i}>
@@ -183,7 +183,11 @@ export default function ServiceReportPDF({ laporan, inv, logoUrl, photoDataUrls 
   const fotos     = (laporan.foto_urls || []).filter(Boolean);
   const printDate = new Date().toLocaleDateString("id-ID", { day: "2-digit", month: "long", year: "numeric" });
   const svcDate   = laporan.date || (laporan.submitted_at || "").slice(0, 10);
-  const teknisiLine = [laporan.teknisi, laporan.helper, laporan.teknisi2].filter(Boolean).join(" · ") || "—";
+  // Tim lengkap: teknisi 1-3 + helper 1-3 (helper diberi label).
+  const teknisiLine = [
+    ...[laporan.teknisi, laporan.teknisi2, laporan.teknisi3].filter(Boolean),
+    ...[laporan.helper, laporan.helper2, laporan.helper3].filter(Boolean).map(h => h + " (Helper)"),
+  ].join(" · ") || "—";
 
   const photoChunks = [];
   for (let i = 0; i < fotos.length; i += 6) photoChunks.push(fotos.slice(i, i + 6));
