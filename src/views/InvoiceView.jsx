@@ -721,21 +721,26 @@ const handleDeleteAddon = async (item) => {
 
 // Deteksi customer dengan multi-invoice unpaid untuk Group Payment
 const multiInvoiceCustomers = useMemo(() => {
+  // WAJIB pakai invoicesDataMerged (termasuk outstanding di luar window 300) — kalau
+  // pakai invoicesData mentah, customer dengan unpaid LAMA (>window) hanya terlihat
+  // sebagian → gagal ambang "2+" → hilang dari fitur gabung/group payment (bug Bu Doly).
+  const src = invoicesDataMerged || invoicesData;
   const phoneMap = {};
-  invoicesData.forEach(inv => {
+  src.forEach(inv => {
     if (!inv.phone || !INVOICE_UNPAID_STATUSES.includes(inv.status)) return;
     if (!phoneMap[inv.phone]) phoneMap[inv.phone] = [];
     phoneMap[inv.phone].push(inv);
   });
   return Object.entries(phoneMap).filter(([, arr]) => arr.length > 1);
-}, [invoicesData]);
+}, [invoicesDataMerged, invoicesData]);
 
 // ── Customer dengan multi-invoice belum lunas, untuk fitur Mode Gabung kirim WA ──
 // Pakai samePhone() agar 08xxx vs +62xxx dari customer yg sama ter-group jadi satu.
 // Filter status sama dengan mergeFilteredInv supaya picker & stage-select konsisten.
 const mergeCandidates = useMemo(() => {
   const groups = []; // [{ phone, customer, invoices: [...] }]
-  invoicesData.forEach(inv => {
+  // invoicesDataMerged: termasuk unpaid outstanding di luar window 300 (lihat multiInvoiceCustomers).
+  (invoicesDataMerged || invoicesData).forEach(inv => {
     if (!inv.phone) return;
     if (!INVOICE_UNPAID_STATUSES.includes(inv.status)) return;
     const found = groups.find(g => samePhone(g.phone, inv.phone));
@@ -755,15 +760,16 @@ const mergeCandidates = useMemo(() => {
       }, 0),
     }))
     .sort((a, b) => b.invoices.length - a.invoices.length); // banyak dulu
-}, [invoicesData]);
+}, [invoicesDataMerged, invoicesData]);
 // Saat Mode Gabung "select" aktif, tampilkan HANYA invoice customer terpilih (semua, tanpa pagination)
 // Filter status: hanya invoice yang masih punya tagihan (UNPAID/OVERDUE/PARTIAL_PAID) — sesuai intent fitur.
+// Pakai merged agar unpaid lama (di luar window 300) ikut tampil & bisa digabung.
 const mergeFilteredInv = useMemo(() => {
   if (mergeStage !== "select" || !mergePhone) return null;
-  return invoicesData
+  return (invoicesDataMerged || invoicesData)
     .filter(i => i.phone && samePhone(i.phone, mergePhone) && INVOICE_UNPAID_STATUSES.includes(i.status))
     .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
-}, [mergeStage, mergePhone, invoicesData]);
+}, [mergeStage, mergePhone, invoicesDataMerged, invoicesData]);
 
 const displayInv = mergeFilteredInv || filteredInv;
 const totPgI = mergeFilteredInv ? 1 : (Math.ceil(filteredInv.length / INV_PAGE_SIZE) || 1);
