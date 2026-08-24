@@ -615,7 +615,8 @@ return (
                         <span style={{ fontSize: 13, color: cs.text, fontWeight: 700 }}>{svc.service}</span>
                         <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 99, background: svcColor + "18", color: svcColor, fontWeight: 700 }}>{svc.status}</span>
                         {hasLaporan && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 99, background: cs.green + "15", color: cs.green, fontWeight: 700 }}>Laporan Ada</span>}
-                        {svc.total_freon > 0 && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 99, background: cs.yellow + "15", color: cs.yellow, fontWeight: 700 }}>Freon +{svc.total_freon}psi</span>}
+                        {/* Badge "Freon +Npsi" DIHAPUS — total_freon = akumulasi tekanan psi
+                            antar unit, tak bermakna & ambigu. Freon bersifat per-unit. */}
                       </div>
                       <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                         <span style={{ fontSize: 11, color: cs.muted }}>{svc.date}</span>

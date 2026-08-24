@@ -107,7 +107,6 @@ export default function LaporanTeknisiModal({
   // ── Computed (single source) ──
   const maxFoto = maxFotoLaporan(laporanModal); // maintenance 50, reguler 20
   const incompleteUnits = laporanUnits.filter(u => !isUnitDone(u));
-  const totalFreon = laporanUnits.reduce((s, u) => s + (parseFloat(u.freon_ditambah) || 0), 0);
   const presets = MATERIAL_PRESET[laporanModal?.service] || MATERIAL_PRESET.Cleaning;
   const isInstallJob = laporanModal?.service === "Install";
   // Teknisi/Helper: cukup pilih item + jumlah; harga & total urusan Owner (disembunyikan biar tak bingung).
@@ -1700,7 +1699,8 @@ export default function LaporanTeknisiModal({
                   <div>
                     <span style={{ color: cs.muted }}>Total: </span>
                     <span style={{ fontWeight: 700, color: cs.text }}>{laporanUnits.length} unit AC</span>
-                    {totalFreon > 0 && <span style={{ color: cs.muted }}> · Tekanan Freon: <span style={{ color: cs.yellow }}>{totalFreon.toFixed(0)} psi</span></span>}
+                    {/* Total "Tekanan Freon: X psi" DIHAPUS — psi antar unit tak boleh
+                        diakumulasi (ambigu). Tekanan freon per-unit tampil di kartu unit. */}
                     {laporanFotos.filter(f => f.url).length > 0 && <span style={{ color: cs.muted }}> · <span style={{ color: cs.green }}>{laporanFotos.filter(f => f.url).length} foto</span></span>}
                     {laporanMaterials.length > 0 && <span style={{ color: cs.muted }}> · <span style={{ color: cs.accent }}>{laporanMaterials.length} material</span></span>}
                   </div>

@@ -1051,7 +1051,10 @@ return (
             <div><span style={{ color: cs.muted }}>Jumlah Unit: </span><span style={{ color: cs.accent, fontWeight: 700 }}>{r.total_units || 1} unit</span></div>
             {safeArr(r.materials).length > 0 && <div><span style={{ color: cs.muted }}>Material: </span><span style={{ color: cs.text }}>{r.materials.length} item</span></div>}
             {(() => { const fotoCnt = safeArr(r.fotos).filter(f => f.url).length; return fotoCnt > 0 ? <div><span style={{ color: cs.green }}>📸 {fotoCnt} foto</span></div> : null; })()}
-            {(() => { const tF = (r.units || []).reduce((s, u) => s + (parseFloat(u.freon_ditambah) || 0), 0); return tF > 0 ? <div><span style={{ color: cs.muted }}>Freon: </span><span style={{ color: cs.text }}>{tF.toFixed(0)} psi</span></div> : null; })()}
+            {/* Total "Freon: X psi" DIHAPUS (22 Agu 2026): dulu menjumlahkan tekanan psi
+                antar unit (150+150=300) → ambigu & keliru — psi tak bisa diakumulasi.
+                Tekanan freon bersifat per-unit & sudah tampil di kartu tiap unit
+                (badge "150psi" + "Tekanan: N psi"). Freon hanya relevan per report unit. */}
             {/* Summary PK + brand semua unit */}
             {(r.units || []).length > 0 && (() => {
               const unitSummary = (r.units || []).map((u, i) => {
