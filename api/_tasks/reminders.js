@@ -417,7 +417,7 @@ export async function taskMaterialPulangReminder() {
   const byTek = {};
   for (const r of rows || []) {
     const t = (byTek[r.teknisi_name] ||= { name: r.teknisi_name });
-    if (r.session_type === "pagi") t.pagi = r; else t.pulang = r;
+    if (r.session_type === "pagi") t.pagi = r; else if (r.session_type === "pulang") t.pulang = r;
   }
   // pagi ada, pulang belum, dan belum pernah di-reminder
   const need = Object.values(byTek).filter(t => t.pagi && !t.pulang && !t.pagi.pulang_reminder_sent);

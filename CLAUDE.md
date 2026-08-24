@@ -239,6 +239,8 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
           #   EXECUTE anon/PUBLIC pada RPC admin & fungsi trigger + search_path
 143       # Applied 23 Agu 2026 — hapus 3 tabel backup lama (isi diringkas di header
           #   file migrasi sbg rekam jejak; tidak ada rollback)
+144       # Applied 24 Agu 2026 — sesi 'pakai' di teknisi_material_checkout (draft
+          #   pemakaian AI foto+teks grup) + kolom draft_source/needs_unit_pick
 ```
 
 > Daftar di atas pernah tertinggal jauh (berhenti di 126 padahal file sudah 132).

@@ -221,6 +221,7 @@ function MaterialReconTab({ supabase, appSettings }) {
   const byTeknisi = useMemo(() => {
     const map = new Map();
     for (const r of rows) {
+      if (r.session_type !== "pagi" && r.session_type !== "pulang") continue; // 'pakai' (draft AI) diurus di tab Konfirmasi
       if (!map.has(r.teknisi_name)) map.set(r.teknisi_name, { teknisi: r.teknisi_name, pagi: null, pulang: null });
       map.get(r.teknisi_name)[r.session_type] = r;
     }

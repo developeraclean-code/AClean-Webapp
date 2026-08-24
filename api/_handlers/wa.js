@@ -7,7 +7,7 @@ import { validateAndNormalizePhone, buildPhoneVariants, validateMessage, sanitiz
 import { criticalFetch, sentryCatch } from "../_report.js";
 import { classifyImage, persistClassification, safeDateStr } from "../_ai-vision.js";
 import { analyzeToolBagPhoto } from "../_tool-bag-vision.js";
-import { classifyText, matchSelesaiToOrder, persistTextClassification } from "../_ai-text.js";
+import { classifyText, matchSelesaiToOrder, persistTextClassification, extractMaterialUsage, resolveUsageJobs, looksLikeMaterialUsage } from "../_ai-text.js";
 import { uploadBufferToR2, downloadToBuffer, hasR2Config } from "../_r2-upload.js";
 import { md5Buffer, checkImageDuplicate } from "../_image-dedup.js";
 import { parseKasbonText, matchKasbonName, isKasbonApprovalMessage, isKasbonRevisionMessage, resolveKasbonEntry, KASBON_APPROVER_PHONES } from "../_kasbon-parser.js";
@@ -1154,6 +1154,112 @@ export async function receiveWa(req, res) {
           }
         }
 
+        // Step 3.7: AI Material Usage (Fase 2) — laporan teks pemakaian material di grup report.
+        // Susun DRAFT pemakaian (sesi 'pakai', confirm PENDING) → tab Konfirmasi Material.
+        // Tidak auto-potong; owner/admin verifikasi + confirm. Toggle: ai_material_enabled.
+        let aiMatStatus = "skipped";
+        if (!groupImageUrl && groupConfig.ai_material_enabled && SU_g && SK_g && (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY)) {
+          const msgClean = (groupContent || "").trim();
+          if (msgClean.length >= 6 && msgClean.length <= 800 && looksLikeMaterialUsage(msgClean)) {
+            const msgHash = msgClean.toLowerCase().replace(/\s+/g, "").slice(0, 60);
+            const dedupKey = `grpMat_${(groupId || "x").slice(0,40)}_${(participantNorm || "x").slice(0,15)}_${msgHash}`.slice(0, 200);
+            let isDup = false;
+            try {
+              const dr = await fetch(SU_g + "/rest/v1/wa_webhook_dedup", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", apikey: SK_g, Authorization: "Bearer " + SK_g, Prefer: "return=minimal" },
+                body: JSON.stringify({ dedup_key: dedupKey }),
+              });
+              if (dr.status === 409) isDup = true;
+            } catch (e) { console.warn("[AI_MAT] dedup err:", e.message); }
+            if (isDup) { aiMatStatus = "skip_dup"; }
+            else {
+              try {
+                const matEx = await extractMaterialUsage({
+                  messageText: msgClean, sender: { phone: participantNorm, name: profileName }, groupCfg: groupConfig,
+                });
+                if (matEx && !matEx.error && matEx.intent === "material_usage" && matEx.usage.length > 0) {
+                  // Resolve teknisi dari nomor pengirim (62xxx & 0xxx)
+                  const altP = (participantNorm || "").startsWith("62") ? "0" + participantNorm.slice(2) : participantNorm;
+                  const prRes = await fetch(
+                    SU_g + "/rest/v1/user_profiles?select=id,name&or=(phone.eq." + encodeURIComponent(participantNorm || "") + ",phone.eq." + encodeURIComponent(altP || "") + ")&limit=1",
+                    { headers: { apikey: SK_g, Authorization: "Bearer " + SK_g } }).catch(() => null);
+                  const prof = (prRes?.ok ? await prRes.json() : [])[0] || null;
+                  if (!prof) { aiMatStatus = "no_teknisi"; }
+                  else {
+                    const { resolved } = await resolveUsageJobs({ SU: SU_g, SK: SK_g, usage: matEx.usage, senderName: prof.name });
+                    const LBL = { pipa: "Pipa", kabel: "Kabel", freon: "Freon", lain: "Lain" };
+                    // Bangun baris items (hanya material dgn qty valid; pipa/kabel/freon = yg dilacak stok)
+                    const newItems = [];
+                    for (const line of resolved) {
+                      for (const m of (line.materials || [])) {
+                        if (m.qty == null || !(m.qty > 0)) continue;
+                        newItems.push({
+                          material_type: m.type,
+                          label: LBL[m.type] || "Lain",
+                          qty: m.qty,
+                          unit: m.unit || (m.type === "freon" ? "kg" : "m"),
+                          unit_id: null,
+                          confidence: line.match_action === "auto" ? matEx.confidence : "LOW",
+                          match_action: line.match_action,
+                          per_job: [{ job_id: line.job_id || null, customer: line.order_customer || line.customer_name, qty: m.qty }],
+                        });
+                      }
+                    }
+                    if (newItems.length === 0) { aiMatStatus = "no_qty"; }
+                    else {
+                      const today = new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10);
+                      const jobIds = [...new Set(resolved.map(r => r.job_id).filter(Boolean))];
+                      // Merge ke baris 'pakai' existing hari ini (kalau ada) — jangan overwrite
+                      const exRes = await fetch(
+                        SU_g + "/rest/v1/teknisi_material_checkout?teknisi_name=eq." + encodeURIComponent(prof.name) +
+                        "&checkout_date=eq." + today + "&session_type=eq.pakai&select=id,items,job_ids,confirm_status&limit=1",
+                        { headers: { apikey: SK_g, Authorization: "Bearer " + SK_g } }).catch(() => null);
+                      const exRow = (exRes?.ok ? await exRes.json() : [])[0] || null;
+                      if (exRow && exRow.confirm_status !== "CONFIRMED") {
+                        const mergedItems = [...(Array.isArray(exRow.items) ? exRow.items : []), ...newItems];
+                        const mergedJobs = [...new Set([...(exRow.job_ids || []), ...jobIds])];
+                        await fetch(SU_g + "/rest/v1/teknisi_material_checkout?id=eq." + exRow.id, {
+                          method: "PATCH",
+                          headers: { "Content-Type": "application/json", apikey: SK_g, Authorization: "Bearer " + SK_g, Prefer: "return=minimal" },
+                          body: JSON.stringify({ items: mergedItems, job_ids: mergedJobs, needs_unit_pick: true, updated_at: new Date().toISOString() }),
+                        }).catch(() => {});
+                        aiMatStatus = "merged:" + newItems.length;
+                      } else if (!exRow) {
+                        await fetch(SU_g + "/rest/v1/teknisi_material_checkout", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json", apikey: SK_g, Authorization: "Bearer " + SK_g, Prefer: "return=minimal" },
+                          body: JSON.stringify({
+                            teknisi_name: prof.name, teknisi_id: prof.id, checkout_date: today,
+                            session_type: "pakai", items: newItems, job_ids: jobIds,
+                            confirm_status: "PENDING", source: "wa", draft_source: "wa_text",
+                            needs_unit_pick: true, sender_phone: participantNorm,
+                            ai_detected: { usage: matEx.usage, confidence: matEx.confidence },
+                            created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+                          }),
+                        }).catch(() => {});
+                        aiMatStatus = "new:" + newItems.length;
+                      } else { aiMatStatus = "skip_confirmed"; }
+
+                      // ACK ke teknisi
+                      if (FT_g && (aiMatStatus.startsWith("new") || aiMatStatus.startsWith("merged"))) {
+                        const summ = newItems.map(i => `${i.label} ${i.qty}${i.unit}${i.per_job[0].job_id ? " → " + (i.per_job[0].customer || "job") : " (job?)"}`).join("\n");
+                        fetch("https://api.fonnte.com/send", {
+                          method: "POST",
+                          headers: { Authorization: FT_g, "Content-Type": "application/json" },
+                          body: JSON.stringify({ target: participantNorm, message: `📝 Draft pemakaian material dicatat:\n${summ}\n\n🕐 Menunggu konfirmasi Admin/Owner di *Konfirmasi Material*.`, delay: "2", countryCode: "62" })
+                        }).catch(() => {});
+                      }
+                    }
+                  }
+                } else {
+                  aiMatStatus = matEx?.error ? ("err:" + matEx.error) : "unknown";
+                }
+              } catch (e) { console.error("[AI_MAT] failed:", e.message); aiMatStatus = "exc"; }
+            }
+          }
+        }
+
         // Step 4: Notif owner — kalau parsed (biaya/stok_alert), forward_to_owner, atau keyword match
         const shouldNotifyOwner = (parsedType === "biaya" || parsedType === "stok_alert") || fwdToOwner || kwMatched;
         if (shouldNotifyOwner && FT_g && OP_g) {
@@ -1169,7 +1275,7 @@ export async function receiveWa(req, res) {
           }).catch(() => {});
         }
 
-        return res.status(200).json({ status: "group_processed", type: parsedType, logged: shouldLog, ai: aiStatus, aiText: aiTextStatus });
+        return res.status(200).json({ status: "group_processed", type: parsedType, logged: shouldLog, ai: aiStatus, aiText: aiTextStatus, aiMat: aiMatStatus });
       }
 
       const FT = process.env.FONNTE_TOKEN;
