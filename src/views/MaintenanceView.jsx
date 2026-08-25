@@ -21,8 +21,8 @@ const AssetHealthPDFModule = lazy(() =>
     import("@react-pdf/renderer"),
     import("../components/AssetHealthPDF.jsx"),
     import("../lib/maintenanceHealth.js"),
-  ]).then(([renderer, pdf, mh]) => ({
-    default: ({ sel, units, logs, call, onClose }) => {
+  ]).then(([renderer, pdf, mh]) => {
+    const AssetHealthModal = ({ sel, units, logs, call, onClose }) => {
       const { BlobProvider } = renderer;
       const AssetHealthPDF = pdf.default;
       // Follow-up ikut dimuat supaya kandidat di PDF = kandidat di tab Statistik.
@@ -106,8 +106,9 @@ const AssetHealthPDFModule = lazy(() =>
           </div>
         </div>
       );
-    },
-  }))
+    };
+    return { default: AssetHealthModal };
+  })
 );
 const QuotationPDFModule = lazy(() =>
   Promise.all([
