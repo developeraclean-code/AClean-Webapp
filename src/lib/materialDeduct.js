@@ -148,3 +148,38 @@ export function reversalByUnit(txs) {
   }
   return m;
 }
+
+// ── Penjaga stok minus (migrasi 152) ────────────────────────────────────────
+// Sebelum ini kelebihan pakai disembunyikan dua kali: Math.max(0,...) di aplikasi
+// dan GREATEST(0,...) di trigger DB. Klaim 30 m dari roll berisi 2 m lewat tanpa
+// jejak. Sekarang angka ditulis apa adanya dan dijaga CHECK stock >= 0, jadi
+// aplikasi WAJIB memeriksa lebih dulu supaya admin dapat pesan yang bisa dibaca,
+// bukan error database mentah.
+//
+// stokPerUnit = { [unit_id]: sisa stok sekarang }
+// → daftar baris yang qty-nya melebihi stok, untuk ditampilkan ke admin.
+export function hitungKekuranganStok(lines, stokPerUnit) {
+  const stok = stokPerUnit || {};
+  const perUnit = new Map();
+  for (const l of (Array.isArray(lines) ? lines : [])) {
+    if (!l?.unit_id) continue;                       // non-tracked: tak punya unit
+    const q = round2(l.used ?? l.qty ?? 0);
+    if (!(q > 0)) continue;
+    const p = perUnit.get(l.unit_id) || { unit_id: l.unit_id, label: l.label, unit_label: l.unit_label, diminta: 0 };
+    p.diminta = round2(p.diminta + q);
+    perUnit.set(l.unit_id, p);
+  }
+  const kurang = [];
+  for (const p of perUnit.values()) {
+    const tersedia = round2(Number(stok[p.unit_id]) || 0);
+    if (p.diminta > tersedia) kurang.push({ ...p, tersedia, selisih: round2(p.diminta - tersedia) });
+  }
+  return kurang;
+}
+
+// Pesan siap tampil untuk admin.
+export function pesanKekuranganStok(kurang) {
+  return (kurang || [])
+    .map((k) => `${k.unit_label || k.label}: diminta ${k.diminta}, tersedia ${k.tersedia} (kurang ${k.selisih})`)
+    .join(" · ");
+}

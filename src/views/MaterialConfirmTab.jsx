@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, lazy, Suspense } from "react";
 import { cs } from "../theme/cs.js";
-import { computeDayDeduct, applyAdminOverrides, lineKey, buildReversalRow, reversalByUnit } from "../lib/materialDeduct.js";
+import { computeDayDeduct, applyAdminOverrides, lineKey, buildReversalRow, reversalByUnit,
+  hitungKekuranganStok, pesanKekuranganStok } from "../lib/materialDeduct.js";
 import { defaultSplit, splitRemainder, belumTerbagi, splitToAllocations } from "../lib/materialSplit.js";
 import { isiUnitOtomatis } from "../lib/tebakUnit.js";
 
@@ -136,6 +137,15 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
   }, [supabase, view, fetchInventoryUnits, jobDays]);
   useEffect(() => { load(); }, [load]);
 
+  // Stok per tabung/roll SEKARANG — dibaca segar dari DB, bukan dari layar, karena
+  // stok bisa berubah oleh proses lain sejak kartu dimuat.
+  const ambilStokUnit = async (lines) => {
+    const ids = [...new Set((lines || []).map((l) => l.unit_id).filter(Boolean))];
+    if (ids.length === 0) return {};
+    const { data } = await supabase.from("inventory_units").select("id,stock").in("id", ids);
+    return Object.fromEntries((data || []).map((u) => [u.id, Number(u.stock) || 0]));
+  };
+
   const refreshStock = async () => {
     try {
       if (fetchInventoryUnits) { const { data } = await fetchInventoryUnits(supabase); if (data && setInvUnitsData) setInvUnitsData(data); }
@@ -148,6 +158,15 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
     const row = entry.pulang;
     setBusy(row.id);
     try {
+      // Cek awal dari angka yang dilihat admin — supaya gagalnya cepat & jelas,
+      // tanpa terlanjur menandai sesi ini CONFIRMED.
+      const linesLayar = applyAdminOverrides(
+        entry.lines.filter((l) => Number(l.brought) > 0), overrides).lines.filter((l) => l.used > 0);
+      const kurangAwal = hitungKekuranganStok(linesLayar, await ambilStokUnit(linesLayar));
+      if (kurangAwal.length) {
+        showNotif("⚠️ Melebihi stok — " + pesanKekuranganStok(kurangAwal) + ". Betulkan qty terpakai atau stoknya dulu.");
+        setBusy(""); return;
+      }
       const { data: claimed, error: claimErr } = await supabase
         .from("teknisi_material_checkout")
         .update({ confirm_status: "CONFIRMED", confirmed_by: currentUser?.name || null, confirmed_at: new Date().toISOString() })
@@ -162,6 +181,15 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
       const base = computeDayDeduct(pg?.items || [], fresh.items || []);
       const { lines: adjusted, changes } = applyAdminOverrides(base, overrides);
       const lines = adjusted.filter((l) => l.used > 0);
+      // Cek otoritatif atas angka SEGAR. Kalau tidak cukup, batalkan klaimnya —
+      // jangan tinggalkan sesi berstatus CONFIRMED tanpa potongan.
+      const kurang = hitungKekuranganStok(lines, await ambilStokUnit(lines));
+      if (kurang.length) {
+        await supabase.from("teknisi_material_checkout")
+          .update({ confirm_status: "PENDING", confirmed_by: null, confirmed_at: null }).eq("id", row.id);
+        showNotif("⚠️ Melebihi stok — " + pesanKekuranganStok(kurang) + ". Sesi dikembalikan ke Menunggu.");
+        await load(); return;
+      }
       const koreksiMap = Object.fromEntries(changes.map((c) => [c.key, c]));
       const txIds = [];
       for (const l of lines) {
@@ -196,7 +224,9 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
         if (l.unit_id) {
           const total = tulis.reduce((sum, a) => sum + (Number(a.qty) || 0), 0);
           const { data: u } = await supabase.from("inventory_units").select("stock").eq("id", l.unit_id).single();
-          if (u) await supabase.from("inventory_units").update({ stock: Math.max(0, Number(u.stock) - total), updated_at: new Date().toISOString() }).eq("id", l.unit_id);
+          // Angka sebenarnya — TIDAK di-Math.max(0,...). Kalau sampai minus,
+          // CHECK di DB (migrasi 152) yang menolak, bukan disembunyikan diam-diam.
+          if (u) await supabase.from("inventory_units").update({ stock: Number(u.stock) - total, updated_at: new Date().toISOString() }).eq("id", l.unit_id);
         }
       }
       // Jejak koreksi: kolom terpisah + confirm_notes + agent log. Kolom `items`
@@ -325,6 +355,11 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
     if (tanpaNama.length) { showNotif("⚠️ Isi nama material dulu untuk semua baris"); return; }
     const missing = tracked.filter((l) => Number(l.qty) > 0 && !l.unit_id);
     if (missing.length) { showNotif(`⚠️ Pilih tabung/roll dulu untuk: ${missing.map((l) => l.label).join(", ")}`); return; }
+    const kurang = hitungKekuranganStok(tracked, await ambilStokUnit(tracked));
+    if (kurang.length) {
+      showNotif("⚠️ Melebihi stok — " + pesanKekuranganStok(kurang) + ". Betulkan qty atau pilih tabung/roll lain.");
+      return;
+    }
     setBusy(row.id);
     try {
       const { data: claimed, error: claimErr } = await supabase
@@ -354,7 +389,7 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
         }).select("id").single();
         if (ins?.id) txIds.push(ins.id);
         const { data: u } = await supabase.from("inventory_units").select("stock").eq("id", l.unit_id).single();
-        if (u) await supabase.from("inventory_units").update({ stock: Math.max(0, Number(u.stock) - qty), updated_at: new Date().toISOString() }).eq("id", l.unit_id);
+        if (u) await supabase.from("inventory_units").update({ stock: Number(u.stock) - qty, updated_at: new Date().toISOString() }).eq("id", l.unit_id);
       }
       await supabase.from("teknisi_material_checkout").update({ deduct_tx_ids: txIds }).eq("id", row.id);
       showNotif(`✅ Draft dikonfirmasi — ${txIds.length} pemakaian dipotong dari stok`);
