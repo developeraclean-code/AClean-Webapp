@@ -120,9 +120,15 @@ function presetPulang(pagiSess) {
   return out;
 }
 
-function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiFetch, _apiHeaders, notifyOwnerWA, appSettings }) {
-  const myName = currentUser?.name || "";
-  const date = todayJkt();
+// asTeknisi / asDate: mode "Owner-Admin mengisi mewakili teknisi" (dibuka dari tab
+// Konfirmasi Material). Layar & aturan persis sama dengan yang dilihat teknisi —
+// termasuk pemilih tabung/roll — supaya pengarahan unitnya tepat, bukan tebakan.
+// Tanpa prop ini, komponen bekerja seperti biasa untuk teknisi yang login.
+function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiFetch, _apiHeaders, notifyOwnerWA, appSettings,
+  asTeknisi, asTeknisiId, asDate, asAdmin }) {
+  const mewakili = !!asTeknisi;
+  const myName = asTeknisi || currentUser?.name || "";
+  const date = asDate || todayJkt();
   const confirmMode = appSettings?.material_confirm_deduct_enabled === "true";  // Opsi A
   const [materials, setMaterials] = useState([]);   // [{code,name,kategori,unit,stock}]
   const [units, setUnits] = useState([]);           // inventory_units terlihat teknisi (pipa/kabel/freon)
@@ -233,9 +239,15 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
     setBusy(session);
     try {
       const payload = {
-        teknisi_name: myName, teknisi_id: currentUser?.id || null, checkout_date: date,
+        teknisi_name: myName,
+        teknisi_id: (mewakili ? asTeknisiId : currentUser?.id) || null,
+        checkout_date: date,
         session_type: session, items, notes: sess.notes || null,
-        source: "app", created_by_name: myName, updated_at: new Date().toISOString(),
+        // source 'admin' (migrasi 151) supaya sesi yang diisi admin tetap bisa
+        // dibedakan saat audit — siapa yang benar-benar mengisi tidak boleh hilang.
+        source: mewakili ? "admin" : "app",
+        created_by_name: mewakili ? (asAdmin || "admin") : myName,
+        updated_at: new Date().toISOString(),
         photo_urls: photoUrls,
       };
       if (photoUrls.length) payload.photo_url = photoUrls[0];  // kompat reader lama / WA
@@ -493,6 +505,13 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
       <div style={{ marginBottom: 14 }}>
         <div style={{ fontSize: 20, fontWeight: 800, color: cs.text }}>📥 Material Harian</div>
         <div style={{ fontSize: 13, color: cs.muted }}>{myName} · {date}</div>
+        {mewakili && (
+          <div style={{ fontSize: 12.5, color: cs.yellow, marginTop: 8, background: cs.yellow + "14", border: "1px solid " + cs.yellow + "44", borderRadius: 8, padding: "9px 12px", lineHeight: 1.5 }}>
+            ✍️ Anda mengisi <b>mewakili {myName}</b> untuk tanggal <b>{date}</b>.
+            Tersimpan atas nama {myName}, dengan catatan bahwa yang mengisi adalah {asAdmin || "admin"}.
+            Stok tetap baru berkurang setelah dikonfirmasi di tab Konfirmasi Material.
+          </div>
+        )}
         {/* Banner arah satu-pintu: input utama kini per-job lewat kartu jadwal (Fase 3) */}
         <div style={{ fontSize: 12, color: cs.accent, marginTop: 8, background: cs.accent + "12", border: "1px solid " + cs.accent + "44", borderRadius: 8, padding: "9px 12px", lineHeight: 1.5 }}>
           💡 <b>Cara baru:</b> input material sekarang lewat tombol <b>"📝 Laporan & Material"</b> di

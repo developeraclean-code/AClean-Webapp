@@ -1,7 +1,11 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, lazy, Suspense } from "react";
 import { cs } from "../theme/cs.js";
 import { computeDayDeduct, applyAdminOverrides, lineKey, buildReversalRow, reversalByUnit } from "../lib/materialDeduct.js";
 import { defaultSplit, splitRemainder, belumTerbagi, splitToAllocations } from "../lib/materialSplit.js";
+import { isiUnitOtomatis } from "../lib/tebakUnit.js";
+
+// Layar Material Harian teknisi, dipakai ulang apa adanya untuk mode "mewakili".
+const MaterialCheckoutView = lazy(() => import("./MaterialCheckoutView.jsx"));
 import { isFreonItem } from "../lib/inventory.js";
 import { shiftDateStr, shortDateID, getLocalDate } from "../lib/dateTime.js";
 
@@ -22,7 +26,7 @@ function classifyMat(inv) {
 // Dua model:
 //  - sesi 'pulang' → terpakai = dibawa − sisa (per unit, dari app Material Harian).
 //  - sesi 'pakai'  → DRAFT AI (foto+teks grup): qty pemakaian per baris, owner pilih job+unit lalu confirm.
-function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUnits, setInvUnitsData, setInventoryData, addAgentLog }) {
+function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUnits, setInvUnitsData, setInventoryData, addAgentLog, appSettings, fotoSrc }) {
   const [rows, setRows] = useState([]);        // entri 'pulang' {pulang, pagi, jobs, lines}
   const [pakai, setPakai] = useState([]);      // entri 'pakai' {row, jobOptions, unitsByType}
   const [loading, setLoading] = useState(true);
@@ -35,6 +39,7 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
   const [tekList, setTekList] = useState([]);
   const [mewakiliTek, setMewakiliTek] = useState("");
   const [mewakiliTgl, setMewakiliTgl] = useState(getLocalDate());
+  const [mewakiliAktif, setMewakiliAktif] = useState(null); // { nama, id, tgl }
   const [view, setView] = useState("PENDING"); // PENDING | CONFIRMED
   // Seberapa jauh ke belakang job boleh dipilih untuk ditautkan ke material.
   // Dulu terkunci di tanggal sesi itu saja, jadi material yang baru dilaporkan
@@ -117,7 +122,14 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
         const t = classifyMat(codeMeta[u.inventory_code]);
         if (unitsByType[t]) unitsByType[t].push({ id: u.id, inventory_code: u.inventory_code, unit_label: u.unit_label, stock: Number(u.stock) });
       }
-      pakEntries = pakRows.map((row) => ({ row, jobOptions: jobOptionsFor(row), unitsByType, jobMap }));
+      // Isi tabung/roll otomatis untuk kasus yang sudah jelas (satu kandidat, atau
+      // laporan menyebut kata pembedanya). Yang ambigu tetap dikosongkan — admin
+      // yang memilih. Hasil tebakan ditandai di kartu supaya bisa dikoreksi.
+      pakEntries = pakRows.map((row) => {
+        const teks = [row.notes, row.ai_detected?.usage].filter(Boolean).join(" ");
+        const { lines, terisi } = isiUnitOtomatis(row.items, unitsByType, teks);
+        return { row: { ...row, items: lines }, jobOptions: jobOptionsFor(row), unitsByType, jobMap, unitTerisi: terisi };
+      });
     }
     setPakai(pakEntries);
     setLoading(false);
@@ -275,36 +287,22 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
     }
   };
 
-  const buatSesiMewakili = async () => {
+  // Buka layar Material Harian milik teknisi itu, apa adanya — lengkap dengan
+  // pemilih tabung/roll. Admin mengarahkan unit yang benar, bukan menebak lewat
+  // draft kosong seperti versi sebelumnya.
+  const bukaLayarMewakili = () => {
     if (!mewakiliTek) { showNotif("Pilih teknisi dulu"); return; }
-    setBusy("mewakili");
-    try {
-      const prof = tekList.find((u) => u.name === mewakiliTek);
-      // Kalau sudah ada draft PENDING untuk teknisi+tanggal itu, jangan bikin
-      // yang kedua — nanti malah jadi dua kartu untuk hari yang sama.
-      const { data: ada } = await supabase.from("teknisi_material_checkout")
-        .select("id").eq("teknisi_name", mewakiliTek).eq("checkout_date", mewakiliTgl)
-        .eq("session_type", "pakai").eq("confirm_status", "PENDING").limit(1);
-      if (ada && ada.length) {
-        showNotif("Sudah ada draft untuk teknisi & tanggal itu — isi kartunya saja.");
-        setMewakiliOpen(false); setView("PENDING"); await load(); return;
-      }
-      const { error } = await supabase.from("teknisi_material_checkout").insert({
-        teknisi_name: mewakiliTek, teknisi_id: prof?.id || null,
-        checkout_date: mewakiliTgl, session_type: "pakai", items: [], job_ids: [],
-        confirm_status: "PENDING", source: "admin", draft_source: "admin_manual",
-        needs_unit_pick: true, created_by: currentUser?.id || null,
-        created_by_name: currentUser?.name || "",
-        notes: `Diisi ${currentUser?.name || "admin"} mewakili ${mewakiliTek}`,
-      });
-      if (error) throw error;
-      addAgentLog?.("MATERIAL_INPUT_MEWAKILI",
-        `${currentUser?.name || "?"} buat sesi material mewakili ${mewakiliTek} tgl ${mewakiliTgl}`, "INFO");
-      showNotif("✅ Draft dibuat — tambahkan barisnya di kartu bawah");
-      setMewakiliOpen(false); setView("PENDING");
-      await load();
-    } catch (e) { showNotif("❌ Gagal: " + (e?.message || e)); }
-    finally { setBusy(""); }
+    const prof = tekList.find((u) => u.name === mewakiliTek);
+    addAgentLog?.("MATERIAL_INPUT_MEWAKILI",
+      `${currentUser?.name || "?"} buka Material Harian mewakili ${mewakiliTek} tgl ${mewakiliTgl}`, "INFO");
+    setMewakiliAktif({ nama: mewakiliTek, id: prof?.id || null, tgl: mewakiliTgl });
+    setMewakiliOpen(false);
+  };
+
+  const tutupLayarMewakili = async () => {
+    setMewakiliAktif(null);
+    setView("PENDING");
+    await load();
   };
 
   const reject = async (row) => {
@@ -412,8 +410,10 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
             style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 14, padding: 18, width: "100%", maxWidth: 420, display: "grid", gap: 12 }}>
             <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>Input Material Mewakili Teknisi</div>
             <div style={{ fontSize: 12, color: cs.muted }}>
-              Dipakai saat teknisi lupa mengisi Material Harian. Sesinya tetap masuk antrean
-              konfirmasi yang sama — stok baru berkurang setelah Anda tekan Confirm.
+              Dipakai saat teknisi lupa mengisi Material Harian. Anda akan membuka layar
+              miliknya apa adanya — termasuk pemilih tabung/roll — supaya unit yang dibawa
+              bisa diarahkan tepat. Sesinya tetap masuk antrean konfirmasi yang sama;
+              stok baru berkurang setelah Anda tekan Confirm.
             </div>
             <label style={{ display: "grid", gap: 4, fontSize: 12, color: cs.muted }}>
               Teknisi / Helper
@@ -431,10 +431,30 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
               <button onClick={() => setMewakiliOpen(false)}
                 style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, padding: 10, borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Batal</button>
-              <button disabled={busy === "mewakili" || !mewakiliTek} onClick={buatSesiMewakili}
-                style={{ background: (busy === "mewakili" || !mewakiliTek) ? cs.border : "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", color: "#fff", padding: 10, borderRadius: 9, cursor: (busy === "mewakili" || !mewakiliTek) ? "not-allowed" : "pointer", fontWeight: 800, fontSize: 13 }}>
-                {busy === "mewakili" ? "Membuat…" : "Buat Draft"}
+              <button disabled={!mewakiliTek} onClick={bukaLayarMewakili}
+                style={{ background: !mewakiliTek ? cs.border : "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", color: "#fff", padding: 10, borderRadius: 9, cursor: !mewakiliTek ? "not-allowed" : "pointer", fontWeight: 800, fontSize: 13 }}>
+                Buka Material Harian
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {mewakiliAktif && (
+        <div style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 700, overflowY: "auto", padding: "16px 8px" }}>
+          <div style={{ maxWidth: 680, margin: "0 auto" }}>
+            <button onClick={tutupLayarMewakili}
+              style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, borderRadius: 9, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", marginBottom: 10 }}>
+              ← Selesai & kembali ke Konfirmasi
+            </button>
+            <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 14, padding: 14 }}>
+              <Suspense fallback={<div style={{ padding: 20, textAlign: "center", color: cs.muted }}>Memuat layar teknisi…</div>}>
+                <MaterialCheckoutView
+                  supabase={supabase} currentUser={currentUser} showNotif={showNotif}
+                  appSettings={appSettings} fotoSrc={fotoSrc}
+                  asTeknisi={mewakiliAktif.nama} asTeknisiId={mewakiliAktif.id}
+                  asDate={mewakiliAktif.tgl} asAdmin={currentUser?.name || "admin"} />
+              </Suspense>
             </div>
           </div>
         </div>
@@ -641,7 +661,7 @@ function PulangCard({ entry, view, busy, photos, onConfirm, onReject, onBukaKore
 
 // Kartu draft AI (sesi 'pakai') — baris editable: qty, job (nama customer), tabung/roll.
 function PakaiCard({ entry, view, busy, onConfirm, onReject, onBukaKoreksi }) {
-  const { row, jobOptions, unitsByType } = entry;
+  const { row, jobOptions, unitsByType, unitTerisi = [] } = entry;
   // Job hari yang sama tetap didahulukan; job hari sebelumnya dipisah ke grup
   // tersendiri lengkap dgn tanggal, supaya admin tidak salah tempel material.
   const jobHariSama = jobOptions.filter((o) => o.date === row.checkout_date);
@@ -668,6 +688,11 @@ function PakaiCard({ entry, view, busy, onConfirm, onReject, onBukaKoreksi }) {
         {view === "CONFIRMED" && <span style={{ fontSize: 11, color: cs.green, fontWeight: 700 }}>✓ {row.deduct_tx_ids?.length || 0} dipotong</span>}
       </div>
 
+      {view === "PENDING" && unitTerisi.length > 0 && (
+        <div style={{ fontSize: 11.5, color: cs.accent, background: cs.accent + "14", border: "1px solid " + cs.accent + "33", borderRadius: 8, padding: "6px 9px", marginBottom: 8 }}>
+          🎯 Tabung/roll diisi otomatis: {unitTerisi.map((t) => `${t.label} → ${t.unit_label}`).join(", ")}. Cek dulu, ganti kalau salah.
+        </div>
+      )}
       {row.photo_url && (
         <div style={{ marginBottom: 8 }}><img src={row.photo_url} alt="bukti" style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 6, border: "1px solid " + cs.border }} /></div>
       )}
@@ -735,8 +760,8 @@ function PakaiCard({ entry, view, busy, onConfirm, onReject, onBukaKoreksi }) {
                       <select value={l.unit_id || ""} onChange={(e) => {
                         const uid = e.target.value || null;
                         const u = units.find((x) => x.id === uid);
-                        setLine(i, { unit_id: uid, inventory_code: u?.inventory_code || l.inventory_code || null });
-                      }} style={{ background: cs.card, border: "1px solid " + (l.unit_id ? cs.border : cs.yellow), borderRadius: 6, padding: "6px 8px", color: cs.text, fontSize: 12.5 }}>
+                        setLine(i, { unit_id: uid, inventory_code: u?.inventory_code || l.inventory_code || null, _unitTebakan: false });
+                      }} style={{ background: cs.card, border: "1px solid " + (l._unitTebakan ? cs.accent : l.unit_id ? cs.border : cs.yellow), borderRadius: 6, padding: "6px 8px", color: cs.text, fontSize: 12.5 }}>
                         <option value="">— pilih unit stok —</option>
                         {units.map((u) => <option key={u.id} value={u.id}>{u.unit_label} · {u.inventory_code} (stok {u.stock})</option>)}
                       </select>

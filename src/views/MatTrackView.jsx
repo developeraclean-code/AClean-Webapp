@@ -1015,7 +1015,7 @@ return (
     {mainTab === "konfirmasi" && isOwnerAdmin && (
       <MaterialConfirmTab supabase={supabase} currentUser={currentUser} showNotif={showNotif}
         fetchInventoryUnits={fetchInventoryUnits} setInvUnitsData={setInvUnitsData} setInventoryData={setInventoryData}
-        addAgentLog={addAgentLog} />
+        addAgentLog={addAgentLog} appSettings={appSettings} fotoSrc={fotoSrc} />
     )}
 
     {mainTab === "recon" && isOwnerAdmin && (
