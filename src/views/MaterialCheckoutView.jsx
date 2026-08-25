@@ -216,6 +216,17 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
   const saveSession = async (session) => {
     const sess = session === "pagi" ? pagi : pulang;
     const saved = session === "pagi" ? savedPagi : savedPulang;
+    // Sesi yang sudah dikonfirmasi Owner/Admin dikunci di database (migrasi 147):
+    // update dari sini akan diabaikan TANPA error, jadi kalau tidak dicegat di sini
+    // teknisi akan melihat "✅ tersimpan" padahal tidak ada yang tersimpan.
+    if (saved?.confirm_status === "CONFIRMED") {
+      showNotif("🔒 Sesi ini sudah dikonfirmasi Owner/Admin — hubungi admin bila ada koreksi");
+      return;
+    }
+    if (session === "pagi" && savedPulang?.confirm_status === "CONFIRMED") {
+      showNotif("🔒 Material pagi terkunci — pemakaian hari ini sudah dikonfirmasi Owner/Admin");
+      return;
+    }
     const items = buildItems(sess, materials);
     if (items.length === 0) { showNotif("⚠️ Belum ada material diinput"); return; }
     const photoUrls = sess.photos.map((p) => p.url).filter(Boolean);
@@ -233,10 +244,19 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
         // Opsi A: pulang baru/diubah → PENDING confirm Owner. (Jangan reset kalau sudah CONFIRMED.)
         if (confirmMode && saved?.confirm_status !== "CONFIRMED") payload.confirm_status = "PENDING";
       }
-      let err;
-      if (saved?.id) ({ error: err } = await supabase.from("teknisi_material_checkout").update(payload).eq("id", saved.id));
-      else ({ error: err } = await supabase.from("teknisi_material_checkout").insert(payload));
+      let err, tersimpan = 1;
+      if (saved?.id) {
+        // .select() dipakai supaya jumlah baris yang benar-benar tertulis terbaca —
+        // penjaga terakhir kalau aturan DB menolak diam-diam (0 baris, tanpa error).
+        const res = await supabase.from("teknisi_material_checkout").update(payload).eq("id", saved.id).select("id");
+        err = res.error; tersimpan = res.data?.length ?? 0;
+      } else ({ error: err } = await supabase.from("teknisi_material_checkout").insert(payload));
       if (err) throw err;
+      if (!tersimpan) {
+        showNotif("🔒 Tidak tersimpan — sesi ini terkunci. Hubungi admin bila ada koreksi.");
+        await load();
+        return;
+      }
       showNotif(`✅ Material ${session} tersimpan` + (session === "pulang" && confirmMode ? " — menunggu konfirmasi Owner" : ""));
       await load();
       // Recon vs laporan hanya relevan di mode cross-check (Opsi B). Di Opsi A laporan tak deduct.
