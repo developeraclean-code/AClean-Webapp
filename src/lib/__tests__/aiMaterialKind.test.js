@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { detectKind, qtyEfektif, cocokkanKePagi } from "../aiMaterialKind.js";
+import { detectKind, qtyEfektif, cocokkanKePagi, bolehLinkKeJob, pisahkanItemLink, namaItem } from "../aiMaterialKind.js";
 
 // Caption NYATA dari grup WA (ai_extractions, Agu 2026).
 describe("detectKind — caption nyata", () => {
@@ -78,5 +78,59 @@ describe("cocokkanKePagi", () => {
   });
   it("aman untuk input kosong", () => {
     expect(cocokkanKePagi({ type: "pipa" }, null)).toBe(null);
+  });
+});
+
+describe("bolehLinkKeJob — hanya pipa AC / kabel / freon", () => {
+  it("meloloskan material inti", () => {
+    expect(bolehLinkKeJob({ type: "pipa", size: "A4" })).toBe(true);
+    expect(bolehLinkKeJob({ type: "kabel", size: "3x1.5" })).toBe(true);
+    expect(bolehLinkKeJob({ type: "freon", size: "R32" })).toBe(true);
+  });
+
+  it("menolak ALAT yang ikut terfoto", () => {
+    expect(bolehLinkKeJob({ type: "lain", brand: "Manifold" })).toBe(false);
+    expect(bolehLinkKeJob({ type: "lain", brand: "VALUE", size: "vakum" })).toBe(false);
+    expect(bolehLinkKeJob({ type: "lain", brand: "Markita" })).toBe(false);
+  });
+
+  it("menolak barang yang tidak dilacak per unit", () => {
+    expect(bolehLinkKeJob({ type: "lain", brand: "Duct Tape" })).toBe(false);
+    expect(bolehLinkKeJob({ type: "lain", brand: "lakban" })).toBe(false);
+  });
+
+  it("paralon ditolak walau AI menandainya pipa", () => {
+    expect(bolehLinkKeJob({ type: "pipa", brand: "paralon" })).toBe(false);
+    expect(bolehLinkKeJob({ type: "lain", brand: "Paralon 3 inch" })).toBe(false);
+  });
+
+  it("material inti yang salah masuk tipe 'lain' tetap lolos lewat namanya", () => {
+    expect(bolehLinkKeJob({ type: "lain", brand: "Pipa AC 1/4" })).toBe(true);
+    expect(bolehLinkKeJob({ type: "lain", size: "R410" })).toBe(true);
+  });
+
+  it("caption yang menyebut alat menahan baris 'lain' yang ambigu", () => {
+    expect(bolehLinkKeJob({ type: "lain", brand: "kabel" }, "manifold dibawa")).toBe(false);
+  });
+
+  it("aman untuk input kosong", () => {
+    expect(bolehLinkKeJob({})).toBe(false);
+    expect(bolehLinkKeJob(null)).toBe(false);
+  });
+});
+
+describe("pisahkanItemLink", () => {
+  it("memisahkan material inti dari alat dalam satu foto", () => {
+    const { boleh, tolak } = pisahkanItemLink([
+      { type: "pipa", size: "A4", qty: 7 },
+      { type: "lain", brand: "Manifold", qty: 1 },
+      { type: "freon", size: "R32", qty: 4.8 },
+      { type: "lain", brand: "Duct Tape", qty: 2 },
+    ]);
+    expect(boleh.map(namaItem)).toEqual(["pipa A4", "freon R32"]);
+    expect(tolak.map(namaItem)).toEqual(["lain Manifold", "lain Duct Tape"]);
+  });
+  it("aman untuk input kosong", () => {
+    expect(pisahkanItemLink(null).boleh).toEqual([]);
   });
 });

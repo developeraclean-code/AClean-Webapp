@@ -68,3 +68,46 @@ export function cocokkanKePagi(item, pagiItems) {
     .filter((p) => String(p?.material_type || "").toLowerCase() === tipe);
   return kandidat.length === 1 ? kandidat[0] : null;
 }
+
+// ── Saringan: item mana yang boleh ditautkan ke job ─────────────────────────
+// AI menandai apa pun yang terlihat di foto sebagai "material", termasuk ALAT
+// (manifold, vakum, bor) dan barang habis pakai yang tidak dilacak per unit
+// (duct tape, paralon). Kalau semuanya boleh di-link, rekap material job jadi
+// tercampur alat dan angkanya tak berarti.
+//
+// Aturan Owner (25 Agu 2026): hanya PIPA AC, KABEL, FREON yang boleh ditautkan.
+// Alat & barang lain tetap tersimpan sebagai catatan di antrean — tinggal
+// ditandai "Sudah Tercatat", bukan dipaksa masuk rekap material job.
+const RE_KECUALIKAN = /\b(paralon|vacum|vakum|vaccum|vacuum|manifold|duct\s*tape|ducttape|lakban|bor|gerinda|tangga|obeng|tang|kunci\s*inggris)\b/i;
+const RE_MATERIAL_INTI = /\b(pipa\s*ac|pipa|kabel|freon|r-?22|r-?32|r-?410)\b/i;
+const TIPE_INTI = ["pipa", "kabel", "freon"];
+
+// Semua teks yang menempel pada satu baris AI — jenis, merek, ukuran.
+const teksItem = (item) =>
+  [item?.type, item?.brand, item?.size, item?.name, item?.label].filter(Boolean).join(" ");
+
+export function bolehLinkKeJob(item, caption) {
+  const teks = teksItem(item);
+  // Kata terlarang menang duluan: "paralon" bisa saja ditandai AI sebagai pipa,
+  // dan manifold/vakum kadang ikut tertulis di caption baris yang sama.
+  if (RE_KECUALIKAN.test(teks)) return false;
+  const tipe = String(item?.type || "").toLowerCase();
+  if (TIPE_INTI.includes(tipe)) return true;
+  // Tipe "lain" masih boleh lolos kalau namanya jelas menyebut material inti,
+  // karena AI sering salah menaruh pipa/kabel ke "lain".
+  if (RE_KECUALIKAN.test(String(caption || ""))) return false;
+  return RE_MATERIAL_INTI.test(teks);
+}
+
+// Pisahkan baris yang boleh di-link dari yang hanya jadi catatan.
+export function pisahkanItemLink(items, caption) {
+  const boleh = [], tolak = [];
+  for (const it of (Array.isArray(items) ? items : [])) {
+    (bolehLinkKeJob(it, caption) ? boleh : tolak).push(it);
+  }
+  return { boleh, tolak };
+}
+
+// Label pendek untuk pesan ke admin ("manifold", "pipa A4").
+export const namaItem = (item) =>
+  [item?.type, item?.brand, item?.size].filter(Boolean).join(" ").trim() || "item";

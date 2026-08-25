@@ -4,7 +4,7 @@ import { useAppContext } from "../context/AppContext.js";
 import { displayStock, computeStockStatus } from "../lib/inventory.js";
 import { reconcileDay, sumReportedUsage, reconStatus } from "../lib/materialRecon.js";
 import { shiftDateStr } from "../lib/dateTime.js";
-import { detectKind, KIND_META, qtyEfektif, cocokkanKePagi } from "../lib/aiMaterialKind.js";
+import { detectKind, KIND_META, qtyEfektif, cocokkanKePagi, pisahkanItemLink, namaItem } from "../lib/aiMaterialKind.js";
 import MaterialConfirmTab from "./MaterialConfirmTab.jsx";
 import MaterialBroughtRecapTab from "./MaterialBroughtRecapTab.jsx";
 
@@ -83,8 +83,14 @@ function PendingAiMaterialTab({ supabase, showNotif, currentUser, addAgentLog })
     if (!orderId) return;
     setBusyId(row.id);
     try {
-      const items = Array.isArray(row.extracted?.items) ? row.extracted.items : [];
-      if (items.length === 0) throw new Error("AI tidak extract item");
+      const semuaItem = Array.isArray(row.extracted?.items) ? row.extracted.items : [];
+      if (semuaItem.length === 0) throw new Error("AI tidak extract item");
+      // Hanya pipa AC / kabel / freon yang boleh masuk rekap material job.
+      // Alat (manifold, vakum, bor) & barang tak terlacak (duct tape, paralon)
+      // tetap jadi catatan di antrean, tidak dipaksa jadi baris material.
+      const { boleh: items, tolak } = pisahkanItemLink(semuaItem, row.message_text);
+      if (items.length === 0)
+        throw new Error(`Tidak ada material inti di foto ini (${semuaItem.map(namaItem).join(", ")}). Hanya pipa AC/kabel/freon yang bisa di-link — pakai "Sudah Tercatat".`);
 
       // Cegah dobel-catat: job ini mungkin sudah punya material dari teknisi
       // (modal "Bawa Material") atau dari link sebelumnya. Tidak diblokir —
@@ -132,7 +138,10 @@ function PendingAiMaterialTab({ supabase, showNotif, currentUser, addAgentLog })
       await supabase.from("ai_extractions").update({
         status: "linked", linked_table: "job_materials_brought", linked_id: orderId,
       }).eq("id", row.id);
-      showNotif?.(`✓ ${matRows.length} material linked ke job ${orderId}`, "success");
+      showNotif?.(
+        `✓ ${matRows.length} material linked ke job ${orderId}` +
+        (tolak.length ? ` · ${tolak.length} dilewati (bukan material inti): ${tolak.map(namaItem).join(", ")}` : ""),
+        "success");
       setRows(prev => prev.filter(r => r.id !== row.id));
       setPickerOpen(null);
     } catch (e) {
@@ -273,6 +282,8 @@ function PendingAiMaterialTab({ supabase, showNotif, currentUser, addAgentLog })
         const arah = detectKind(items[0] || {}, r.message_text);
         const arahMeta = KIND_META[arah] || KIND_META.dibawa;
         const sisaJalur = arah === "sisa" || arah === "campuran";
+        const { boleh: itemInti, tolak: itemBukanInti } = pisahkanItemLink(items, r.message_text);
+        const adaInti = itemInti.length > 0;
         const photo = fotoSrc(r.r2_url || r.image_url);
         return (
           <div key={r.id} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: 12, display: "grid", gridTemplateColumns: photo ? "160px 1fr" : "1fr", gap: 12 }}>
@@ -293,6 +304,12 @@ function PendingAiMaterialTab({ supabase, showNotif, currentUser, addAgentLog })
               {items.length > 0 && (
                 <div style={{ fontSize: 12, color: cs.text }}>
                   📦 {items.map((it, i) => <span key={i}>{i > 0 ? ", " : ""}<b>{it.type || "?"}</b>{it.brand ? " " + it.brand : ""}{it.size ? " " + it.size : ""}{it.qty ? ` (${it.qty}${typeof it.qty === "number" ? "kg" : ""})` : ""}</span>)}
+                </div>
+              )}
+              {itemBukanInti.length > 0 && (
+                <div style={{ fontSize: 11.5, color: cs.muted }}>
+                  🚫 Tidak masuk rekap material job: <b>{itemBukanInti.map(namaItem).join(", ")}</b>
+                  {adaInti ? " (item lain tetap bisa di-link)" : " — hanya pipa AC / kabel / freon yang bisa di-link"}
                 </div>
               )}
               {arah !== "dibawa" && (
@@ -344,9 +361,11 @@ function PendingAiMaterialTab({ supabase, showNotif, currentUser, addAgentLog })
                         📥 Isi Sisa ke Sesi Pulang
                       </button>
                     )}
-                    <button onClick={() => setPickerOpen(r.id)} disabled={busyId === r.id}
-                      title={sisaJalur ? "HATI-HATI: ini mencatat barang KELUAR ke job — kebalikan dari laporan sisa" : "Catat sebagai barang dibawa ke job"}
-                      style={{ background: sisaJalur ? "transparent" : "#10b98122", border: "1px solid " + (sisaJalur ? cs.border : "#10b98155"), color: sisaJalur ? cs.muted : "#10b981", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                    <button onClick={() => setPickerOpen(r.id)} disabled={busyId === r.id || !adaInti}
+                      title={!adaInti ? "Tidak ada pipa AC/kabel/freon di foto ini — alat & barang lain tidak masuk rekap material job"
+                        : sisaJalur ? "HATI-HATI: ini mencatat barang KELUAR ke job — kebalikan dari laporan sisa"
+                        : "Catat sebagai barang dibawa ke job"}
+                      style={{ background: (!adaInti || sisaJalur) ? "transparent" : "#10b98122", border: "1px solid " + ((!adaInti || sisaJalur) ? cs.border : "#10b98155"), color: (!adaInti || sisaJalur) ? cs.muted : "#10b981", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: adaInti ? "pointer" : "not-allowed", opacity: adaInti ? 1 : 0.55 }}>
                       ✓ Link ke Job{sisaJalur ? " (dibawa)" : ""}
                     </button>
                     <button onClick={() => handleSudahTercatat(r)} disabled={busyId === r.id}
