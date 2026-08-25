@@ -9,10 +9,14 @@ function unitEntries(item) {
   if (!item || !item.material_type) return [];
   const cat = item.material_type;
   let arr;
-  if (Array.isArray(item.units)) arr = item.units.map((u) => ({ unit_id: u.unit_id || null, qty: Number(u.qty) || 0 }));
-  else if (cat === "freon" && Array.isArray(item.weight_kg)) arr = item.weight_kg.map((u) => ({ unit_id: u.unit_id || null, qty: Number(u.kg) || 0 }));
-  else arr = [{ unit_id: null, qty: Number(item.qty) || 0 }];  // legacy: agregat tanpa unit
-  return arr.map((u) => ({ unit_id: u.unit_id, qty: u.qty, inventory_code: item.inventory_code || null, label: item.label || cat, material_type: cat }));
+  if (Array.isArray(item.units)) arr = item.units.map((u) => ({ unit_id: u.unit_id || null, qty: Number(u.qty) || 0, unit_label: u.label || null }));
+  else if (cat === "freon" && Array.isArray(item.weight_kg)) arr = item.weight_kg.map((u) => ({ unit_id: u.unit_id || null, qty: Number(u.kg) || 0, unit_label: u.label || null }));
+  else arr = [{ unit_id: null, qty: Number(item.qty) || 0, unit_label: null }];  // legacy: agregat tanpa unit
+  // unit_label = nama tabung/roll fisiknya ("Tabung R32 - K"), BEDA dari label
+  // material ("Freon R-32"). Wajib ikut terbawa: teknisi bisa membawa dua roll
+  // dari material yang sama, dan tanpa ini keduanya tampil sebagai baris kembar
+  // yang tak terbedakan — sekaligus bikin unit_label di transaksi stok salah isi.
+  return arr.map((u) => ({ unit_id: u.unit_id, qty: u.qty, unit_label: u.unit_label, inventory_code: item.inventory_code || null, label: item.label || cat, material_type: cat }));
 }
 
 const keyOf = (e) => (e.unit_id ? "u:" + e.unit_id : "c:" + (e.inventory_code || e.label));
@@ -27,7 +31,7 @@ export function computeDayDeduct(pagiItems, pulangItems) {
     for (const e of unitEntries(it)) {
       const k = keyOf(e);
       brought.set(k, (brought.get(k) || 0) + e.qty);
-      if (!meta.has(k)) meta.set(k, { unit_id: e.unit_id, inventory_code: e.inventory_code, label: e.label, material_type: e.material_type });
+      if (!meta.has(k)) meta.set(k, { unit_id: e.unit_id, inventory_code: e.inventory_code, label: e.label, unit_label: e.unit_label, material_type: e.material_type });
     }
   }
   const returned = new Map();

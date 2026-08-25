@@ -174,7 +174,7 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
             teknisi_name: row.teknisi_name,
             job_date: a.job_date || row.checkout_date,
             order_id: a.job_id || null,
-            unit_id: l.unit_id || null, unit_label: l.unit_id ? l.label : null,
+            unit_id: l.unit_id || null, unit_label: l.unit_id ? (l.unit_label || l.label) : null,
             notes: catatan,
             customer_name: a.customer || null,
             created_by: currentUser?.id || null, created_by_name: currentUser?.name || "",
@@ -531,7 +531,7 @@ function PulangCard({ entry, view, busy, photos, onConfirm, onReject, onBukaKore
             terpakai.length === 0 ? <div style={{ fontSize: 12, color: cs.muted }}>Tidak ada material terpakai (semua dikembalikan).</div>
               : terpakai.map((l, i) => (
                 <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, padding: "3px 0", borderTop: i ? "1px solid " + cs.border : "none" }}>
-                  <span style={{ color: cs.text }}>{l.material_type === "freon" ? "🛢" : "📦"} {l.label}</span>
+                  <span style={{ color: cs.text }}>{l.material_type === "freon" ? "🛢" : "📦"} {l.label}{l.unit_label && l.unit_label !== l.label ? " · " + l.unit_label : ""}</span>
                   <span style={{ color: cs.muted }}>bawa {fmt(l.brought)} · sisa {fmt(l.returned)} · <b style={{ color: cs.accent }}>terpakai {fmt(l.used)}</b></span>
                 </div>
               ))
@@ -543,6 +543,10 @@ function PulangCard({ entry, view, busy, photos, onConfirm, onReject, onBukaKore
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <span style={{ color: cs.text, fontSize: 12.5, fontWeight: 700 }}>
                     {l.material_type === "freon" ? "🛢" : "📦"} {l.label}
+                    {l.unit_label && l.unit_label !== l.label &&
+                      <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 600, color: cs.accent }}>· {l.unit_label}</span>}
+                    {!l.unit_id &&
+                      <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: cs.yellow }}>tanpa unit</span>}
                     {berubah && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 800, color: cs.yellow }}>dikoreksi</span>}
                   </span>
                   <span style={{ color: cs.muted, fontSize: 11.5 }}>bawa {fmt(l.brought)} · sisa {fmt(l.returned)}</span>
