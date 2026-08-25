@@ -28,18 +28,19 @@ const ikon = (t) => {
   return "📦";
 };
 
-function MaterialBroughtRecapTab({ supabase, showNotif }) {
+function MaterialBroughtRecapTab({ supabase, showNotif, currentUser, addAgentLog }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [hari, setHari] = useState(30);
   const [filterStatus, setFilterStatus] = useState("SEMUA");
+  const [busy, setBusy] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const dari = shiftDateStr(getLocalDate(), -Number(hari)) + "T00:00:00Z";
       const { data, error } = await supabase.from("job_materials_brought")
-        .select("id,job_id,material_type,inventory_name,unit_label,qty_estimate,brought_by,brought_at,status,notes,orders:job_id(customer,date,teknisi,helper)")
+        .select("id,job_id,material_type,inventory_name,unit_label,qty_estimate,brought_by,brought_at,status,notes,source_extraction_id,orders:job_id(customer,date,teknisi,helper)")
         .gte("brought_at", dari)
         .order("brought_at", { ascending: false })
         .limit(500);
@@ -49,6 +50,45 @@ function MaterialBroughtRecapTab({ supabase, showNotif }) {
     finally { setLoading(false); }
   }, [supabase, hari, showNotif]);
   useEffect(() => { load(); }, [load]);
+
+  // Batalkan salah-link. Sengaja TIDAK menghapus baris: statusnya dijadikan
+  // CANCELLED (semua pembaca lain memang menyaring status <> 'CANCELLED'), jadi
+  // jejak siapa membatalkan & alasannya tetap tersimpan. Kalau barisnya berasal
+  // dari foto WA, extraction-nya dikembalikan ke antrean supaya bisa di-link
+  // ulang ke job yang benar — bukan hilang selamanya.
+  const batalkan = async (r) => {
+    if (r.status === "USED") {
+      showNotif?.("Baris ini sudah terpakai di laporan teknisi — koreksi lewat laporannya, bukan di sini.");
+      return;
+    }
+    const alasan = window.prompt(
+      `Batalkan "${r.inventory_name || r.material_type}" dari job ${r.orders?.customer || r.job_id}?\n\n` +
+      (r.source_extraction_id ? "Foto WA-nya akan kembali ke antrean Pending AI Material.\n\n" : "") +
+      "Alasan (wajib, min 5 huruf):", "");
+    if (alasan === null) return;
+    if (alasan.trim().length < 5) { showNotif?.("Alasan terlalu pendek — pembatalan dibatalkan."); return; }
+    setBusy(r.id);
+    try {
+      const { error } = await supabase.from("job_materials_brought").update({
+        status: "CANCELLED",
+        updated_at: new Date().toISOString(),
+        notes: `${r.notes || ""} | DIBATALKAN ${currentUser?.name || "?"}: ${alasan.trim()}`.trim(),
+      }).eq("id", r.id).neq("status", "USED");
+      if (error) throw error;
+      if (r.source_extraction_id) {
+        await supabase.from("ai_extractions")
+          .update({ status: "pending", linked_table: null, linked_id: null })
+          .eq("id", r.source_extraction_id);
+      }
+      addAgentLog?.("MATERIAL_LINK_BATAL",
+        `${currentUser?.name || "?"} batalkan material "${r.inventory_name || r.material_type}" ${r.qty_estimate} dari job ${r.job_id}`
+        + (r.source_extraction_id ? " (foto dikembalikan ke antrean)" : "") + ` | alasan: ${alasan.trim()}`,
+        "WARNING");
+      showNotif?.("↩︎ Dibatalkan" + (r.source_extraction_id ? " — foto kembali ke antrean Pending AI" : ""));
+      await load();
+    } catch (e) { showNotif?.("Gagal batalkan: " + (e?.message || e)); }
+    finally { setBusy(null); }
+  };
 
   const terpakai = filterStatus === "SEMUA" ? rows : rows.filter((r) => r.status === filterStatus);
 
@@ -131,6 +171,20 @@ function MaterialBroughtRecapTab({ supabase, showNotif }) {
                   {String(r.notes || "").includes("auto-returned") && (
                     <div style={{ fontSize: 11.5, color: cs.yellow }}>
                       ⚠️ Ditandai kembali otomatis — belum pernah masuk laporan teknisi dalam 24 jam.
+                    </div>
+                  )}
+                  {String(r.notes || "").includes("DIBATALKAN") && (
+                    <div style={{ fontSize: 11.5, color: cs.red }}>
+                      ↩︎ {String(r.notes).split("DIBATALKAN")[1]?.trim()}
+                    </div>
+                  )}
+                  {r.status !== "CANCELLED" && r.status !== "USED" && (
+                    <div>
+                      <button onClick={() => batalkan(r)} disabled={busy === r.id}
+                        title="Salah job? Batalkan — foto WA-nya kembali ke antrean untuk di-link ulang"
+                        style={{ background: "transparent", border: "1px solid " + cs.red + "55", color: cs.red, borderRadius: 8, padding: "4px 10px", fontSize: 11.5, fontWeight: 700, cursor: busy === r.id ? "wait" : "pointer" }}>
+                        {busy === r.id ? "…" : "↩︎ Batalkan / salah job"}
+                      </button>
                     </div>
                   )}
                 </div>

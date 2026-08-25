@@ -22,7 +22,7 @@ function fotoSrc(url) {
   return url;
 }
 
-function PendingAiMaterialTab({ supabase, showNotif, currentUser }) {
+function PendingAiMaterialTab({ supabase, showNotif, currentUser, addAgentLog }) {
   const [rows, setRows] = useState([]);
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -59,12 +59,50 @@ function PendingAiMaterialTab({ supabase, showNotif, currentUser }) {
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [jobDays]);
 
+  // Tandai extraction sudah tertangani TANPA menulis baris baru — dipakai kalau
+  // teknisi ternyata sudah mencatat sendiri lewat tombol "Bawa Material" di job.
+  // Aturannya: catatan teknisi yang duluan = yang dipakai; foto WA cuma cadangan.
+  const handleSudahTercatat = async (row) => {
+    if (!window.confirm("Tandai sudah tercatat? Foto ini keluar dari antrean dan TIDAK menambah baris material baru.")) return;
+    setBusyId(row.id);
+    try {
+      const { error } = await supabase.from("ai_extractions").update({
+        status: "duplicate",
+        notes: `[duplikat] sudah dicatat teknisi sendiri — ditandai ${currentUser?.name || "?"}`,
+      }).eq("id", row.id);
+      if (error) throw error;
+      addAgentLog?.("MATERIAL_AI_DUPLIKAT", `${currentUser?.name || "?"} tandai extraction #${row.id} (${row.sender_name}) sebagai duplikat`, "INFO");
+      showNotif?.("✓ Ditandai sudah tercatat", "success");
+      setRows(prev => prev.filter(r => r.id !== row.id));
+    } catch (e) { showNotif?.("Gagal: " + e.message, "error"); }
+    finally { setBusyId(null); }
+  };
+
   const handleLink = async (row, orderId) => {
     if (!orderId) return;
     setBusyId(row.id);
     try {
       const items = Array.isArray(row.extracted?.items) ? row.extracted.items : [];
       if (items.length === 0) throw new Error("AI tidak extract item");
+
+      // Cegah dobel-catat: job ini mungkin sudah punya material dari teknisi
+      // (modal "Bawa Material") atau dari link sebelumnya. Tidak diblokir —
+      // Owner/Admin tetap boleh menimpa keputusan — tapi wajib sadar.
+      const { data: sudahAda } = await supabase.from("job_materials_brought")
+        .select("inventory_name,material_type,qty_estimate,brought_by,status")
+        .eq("job_id", orderId).neq("status", "CANCELLED");
+      const jenisBaru = new Set(items.map(it => String(it.type || "lain").toLowerCase()));
+      const bentrok = (sudahAda || []).filter(x => jenisBaru.has(String(x.material_type || "").toLowerCase()));
+      if (bentrok.length > 0) {
+        const daftar = bentrok.map(x => `• ${x.inventory_name || x.material_type} ${x.qty_estimate} (${x.brought_by || "?"}, ${x.status})`).join("\n");
+        const lanjut = window.confirm(
+          `Job ini SUDAH punya ${bentrok.length} catatan material sejenis:\n\n${daftar}\n\n` +
+          `Kalau teknisi sudah mencatat sendiri, jangan ditambah — pilih Batal, lalu pakai tombol "Sudah Tercatat".\n\n` +
+          `Tetap tambahkan sebagai baris baru?`
+        );
+        if (!lanjut) { setBusyId(null); return; }
+      }
+
       const matRows = items.map(it => ({
         job_id: orderId,
         material_type: String(it.type || "lain").toLowerCase(),
@@ -76,6 +114,7 @@ function PendingAiMaterialTab({ supabase, showNotif, currentUser }) {
         // cadangan kalau caption tidak menyebut siapa pun.
         brought_by: row.extracted?._candidates?.carrier_hint || row.sender_name,
         status: "BROUGHT",
+        source_extraction_id: row.id,   // jejak balik → tombol Batalkan (migrasi 148)
         notes: `[AI vision approved] ${row.notes || ""}`.trim(),
       }));
       const { error } = await supabase.from("job_materials_brought").insert(matRows);
@@ -196,6 +235,11 @@ function PendingAiMaterialTab({ supabase, showNotif, currentUser }) {
                     <button onClick={() => setPickerOpen(r.id)} disabled={busyId === r.id}
                       style={{ background: "#10b98122", border: "1px solid #10b98155", color: "#10b981", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
                       ✓ Link ke Job
+                    </button>
+                    <button onClick={() => handleSudahTercatat(r)} disabled={busyId === r.id}
+                      title="Teknisi sudah mencatat sendiri lewat tombol Bawa Material di job — jangan tambah baris baru"
+                      style={{ background: cs.surface, border: "1px solid " + cs.border, color: cs.muted, borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                      ⏭ Sudah Tercatat
                     </button>
                     <button onClick={() => handleReject(r)} disabled={busyId === r.id}
                       style={{ background: "#ef444422", border: "1px solid #ef444455", color: "#ef4444", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
@@ -823,14 +867,14 @@ return (
         TAB: PENDING AI MATERIAL — manual approve
         ═══════════════════════════════════════════════ */}
     {mainTab === "pending_ai" && isOwnerAdmin && (
-      <PendingAiMaterialTab supabase={supabase} showNotif={showNotif} currentUser={currentUser} />
+      <PendingAiMaterialTab supabase={supabase} showNotif={showNotif} currentUser={currentUser} addAgentLog={addAgentLog} />
     )}
 
     {/* ═══════════════════════════════════════════════
         TAB: MATERIAL DIBAWA — rekap job_materials_brought lintas job
         ═══════════════════════════════════════════════ */}
     {mainTab === "dibawa" && isOwnerAdmin && (
-      <MaterialBroughtRecapTab supabase={supabase} showNotif={showNotif} />
+      <MaterialBroughtRecapTab supabase={supabase} showNotif={showNotif} currentUser={currentUser} addAgentLog={addAgentLog} />
     )}
 
     {/* ═══════════════════════════════════════════════
