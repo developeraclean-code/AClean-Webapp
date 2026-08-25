@@ -52,8 +52,16 @@ Untuk fitur besar/ambigu: tanya user dulu, jangan mengarang requirement.
    agen apply sendiri lewat MCP `apply_migration` kalau user minta "jangan manual". Catatan: MCP
    `execute_sql` untuk menulis data prod bisa diblok classifier, `apply_migration` lolos (21 Agu 2026,
    migrasi 133-136). Selalu verifikasi dengan SELECT sesudahnya — jangan percaya `{"success":true}` saja.
-4. Setelah applied: update daftar migrasi di CLAUDE.md.
-5. Kolom baru dipakai frontend? Cek daftar kolom di `reads.js`/`writes.js` (mis. `INVOICE_COLS`) —
+4. **Kunci RLS wajib DISIMULASIKAN sebagai sesi asli, bukan dibaca saja** — di dalam
+   `BEGIN; set local role authenticated; set local request.jwt.claims = '{"sub":"<uuid>"}'; ... ROLLBACK;`
+   Uji DUA sisi: serangan (harus ditolak) DAN kerja normal (harus tetap lolos), lalu SELECT
+   ulang untuk membuktikan rollback bersih. 25 Agu 2026 simulasi ini menangkap cacat rancangan
+   sendiri: `WITH CHECK` yang memaksa nilai akhir (`confirm_status = 'PENDING'`) menolak UPDATE
+   yang memang tidak menyertakan kolom itu di payload — teknisi jadi tak bisa menyunting barisnya
+   sendiri. Aturan turunannya: **`WITH CHECK` untuk menyaring BARIS, arah perpindahan nilai
+   diserahkan ke trigger** (trigger bisa banding OLD vs NEW, `WITH CHECK` tidak).
+5. Setelah applied: update daftar migrasi di CLAUDE.md.
+6. Kolom baru dipakai frontend? Cek daftar kolom di `reads.js`/`writes.js` (mis. `INVOICE_COLS`) —
    lupa menambah kolom di sana = fitur silent broken (pernah terjadi: badge quotation_id).
 
 ### B. Cron task / fitur WhatsApp baru
@@ -138,6 +146,9 @@ di satu jalur WAJIB dicerminkan di jalur satunya, lalu tes KEDUA jalur.
 | Update status order hanya by `job_id` tanpa cross-check | `job_id` dari state form/invoice bisa stale/salah → status order lain ikut salah sasaran (lihat §D, insiden 03 Agu 2026) |
 | Buat klien maintenance tanpa mengisi `customer_id` | `withMaintenanceLink()` menautkan order ke kontrak HANYA lewat `customers.id` (bukan HP/nama) → klien yatim = order & invoice-nya tak pernah masuk rekap kontrak, dan admin cenderung membuat customer duplikat. Audit 21 Agu 2026: 6 dari 16 klien ber-`customer_id` NULL → 3 order yatim + 1 customer ganda (CUST678/CUST784, migrasi 133-135). Saat onboarding klien, isi `customer_id` DAN `address` — alamat yang dipakai memilih site benar saat 1 nomor HP menunjuk banyak lokasi |
 | Gabung/hapus baris `customers` tanpa cek referensi | Kolom `customer_id` tersebar di 4 tabel (`orders`, `ac_units`, `payment_logs`, `maintenance_clients`) — enumerasi dulu via `information_schema.columns WHERE column_name='customer_id'`, pindahkan semuanya, DELETE paling akhir (contoh: migrasi 135) |
+| Filter `.in("status", [...])` / enum lain dengan nilai hasil TEBAKAN | `orders.status` dkk tidak punya CHECK constraint — nilai karangan tidak error, cuma mengembalikan 0 baris SELAMANYA. Insiden 25 Agu 2026: dropdown "Link ke Job" & kandidat job AI vision memakai `SCHEDULED/IN_PROGRESS/ON_SITE/WORKING/DONE` — kelimanya TIDAK PERNAH ADA (0 baris sepanjang riwayat), jadi fitur mati sejak lahir & terbaca sebagai "tidak ada data". Nilai nyata: `PENDING, CONFIRMED, REPORT_SUBMITTED, INVOICE_APPROVED, COMPLETED, PAID, CANCELLED`. Sebelum menulis whitelist: `SELECT status, count(*) FROM <tabel> GROUP BY 1` — dan lebih aman pakai blacklist (`.neq("status","CANCELLED")`) daripada whitelist |
+| Menentukan KATEGORI dari nama (`classifyMaterial(nama)`) di jalur stok/uang | Nama tidak selalu menyebut jenisnya → salah kategori = lolos gerbang. Insiden 25 Agu 2026: baris hasil Link-ke-Job bernama `"A4"` (aslinya pipa) → `classifyMaterial("A4") === "lain"` → lolos `dropHarian` → nyaris dipotong DUA KALI (sekali lewat laporan, sekali lewat Konfirmasi Material). Selamat cuma karena "A4" kebetulan tak cocok nama inventory mana pun. Pakai `isHarianManagedItem()` (`materialRecon.js`) yang **mendahulukan `material_type` eksplisit**, tebakan nama hanya cadangan; dan saat menulis baris baru, isi nama yang menyebut jenisnya ("Pipa A4") |
+| Atribusi entity pakai `array[0]` (mis. `order_id: row.job_ids[0]`) | Diam-diam benar saat isinya 1, diam-diam SALAH saat 0 atau >1 — tanpa error. Audit 25 Agu 2026: 16 dari 38 sesi material memotong stok dengan `job_ids` KOSONG → `order_id` NULL (42% potongan tanpa keterangan job), sisanya menempel ke 1 job padahal teknisi rata-rata 2,33 job/hari. Kalau relasinya jamak, minta pembagian eksplisit (lihat `src/lib/materialSplit.js`) dan tulis satu baris per relasi |
 | Edit unit laporan hanya di SATU kolom (`units` atau `units_json`) | `service_reports` simpan unit di DUA kolom: `units` (jsonb, dibaca UI — `r.units` di LaporanDetailModal/LaporanTimView) & `units_json` (text, dibaca autolog `api/_handlers/portal.js:965`). Update satu saja → UI tampil unit basi ATAU autolog nge-log unit salah. Insiden nyata (14 Agu 2026): reconcile install Waskito cuma update `units_json`, UI tetap tampil 4 unit lama pasca-refresh. Update KEDUANYA dgn nilai identik |
 
 ## Fase Akhir — Destilasi Pelajaran (loop self-learning)

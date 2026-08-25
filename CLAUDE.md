@@ -101,6 +101,16 @@ Role hierarchy: **Owner > Admin > Teknisi > Helper**. Enforced in `canAccess()` 
 - `cron_jobs` JSON di `app_settings` adalah sumber utama. Toggle di Settings UI harus sync KEDUANYA (standalone key + cron_jobs JSON)
 - Jika hanya sync salah satu → WA bisa bocor meski toggle OFF
 
+**Material & Stok (berlaku sejak 26 Agu 2026):**
+- **Stok pipa/kabel/freon HANYA berkurang di satu tempat**: Stok Material → Konfirmasi Material →
+  Confirm (`MaterialConfirmTab`). Laporan teknisi hanya memotong kategori "lain" selama
+  `material_confirm_deduct_enabled = "true"` (gerbang `isHarianManagedItem`, `materialRecon.js`).
+- `job_materials_brought` (tab "Material Dibawa") **tidak pernah memotong stok** — murni jejak
+  barang keluar ke job. Baris kembar di sana = rekap dobel, BUKAN stok dobel.
+- Saat Confirm, qty terpakai **wajib dibagi per job** (`materialSplit.js`) → satu transaksi stok
+  per job. Sesi terkonfirmasi bisa dibuka lagi ("Buka Koreksi") → potongan dibalik dgn transaksi
+  `adjustment`, sesi kembali PENDING. Admin bisa membuat sesi mewakili teknisi yang lupa mengisi.
+
 **Customer:**
 - UNIQUE constraint: `(phone, name)` — 1 nomor HP boleh punya banyak customer asal nama beda (multi-lokasi)
 - Phone selalu di-normalize ke format `628xxx`
@@ -218,29 +228,29 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
 130       # Applied — maintenance unit group
 131       # Applied — quotations PPh23
 132       # Applied — fungsi audit integritas maintenance
-133       # Applied 21 Agu 2026 — tautkan CUST1310 ↔ klien maintenance PT Sarana Catur
-          #   Tirtakelola + backfill customer_id 2 order
-134       # Applied 21 Agu 2026 — tautkan klien Eka Jaya (CUST959, fix nama
-          #   INTERNASIONAL) & Jaya Kreasi Spectra (CUST1022 + alamat)
-135       # Applied 21 Agu 2026 — gabung customer duplikat Jaya Kreasi Alam Sutera:
-          #   CUST784 → CUST678, CUST784 dihapus
-136       # Applied 21 Agu 2026 — cap kontrak 2 job Multiguna dikembalikan dari
-          #   Spectra → Alam Sutera (order + invoice)
-137       # Applied 22 Agu 2026 — 48 antrean PENDING MatTrack s/d 21 Agu ditutup
-          #   sbg REJECTED (tanpa potong stok); mulai bersih dari 22 Agu
-138       # Applied 22 Agu 2026 — deteksi bonus Freon cukup kata "freon" (buang
-          #   syarat "kuras vacum"); keyword ber-logika DAN, jangan ditambah
-139       # Applied 22 Agu 2026 — deteksi bonus Kapasitor cukup kata "kapasitor"
-140       # Applied 22 Agu 2026 — arsip unit stok = Owner only (trigger DB
-          #   trg_guard_inventory_unit_archive) + kolom archived_by
-141       # Applied 22 Agu 2026 — RLS inventory_units berjenjang (baca semua, tulis
-          #   Owner/Admin, hapus Owner) + tabel inventory_unit_stock_log (trigger)
-142       # Applied 22 Agu 2026 — pelaku audit diambil dari JWT (anti-palsu) + cabut
-          #   EXECUTE anon/PUBLIC pada RPC admin & fungsi trigger + search_path
+133-136   # Applied 21 Agu 2026 — rapikan tautan customer↔klien maintenance:
+          #   CUST1310 (Sarana Catur), Eka Jaya + Jaya Kreasi Spectra, gabung
+          #   CUST784→CUST678, cap kontrak Multiguna → Alam Sutera
+137       # Applied 22 Agu 2026 — 48 antrean PENDING MatTrack ditutup REJECTED
+138-139   # Applied 22 Agu 2026 — deteksi bonus cukup kata "freon" / "kapasitor"
+          #   (keyword ber-logika DAN — menambah keyword MEMPERSEMPIT, jangan)
+140-141   # Applied 22 Agu 2026 — arsip unit stok Owner-only (trigger) + RLS
+          #   inventory_units berjenjang + tabel inventory_unit_stock_log
+142       # Applied 22 Agu 2026 — pelaku audit dari JWT (anti-palsu) + cabut EXECUTE
+          #   anon/PUBLIC pada RPC admin & fungsi trigger + search_path
 143       # Applied 23 Agu 2026 — hapus 3 tabel backup lama (isi diringkas di header
-          #   file migrasi sbg rekam jejak; tidak ada rollback)
+          #   file migrasi; tidak ada rollback)
 144       # Applied 24 Agu 2026 — sesi 'pakai' di teknisi_material_checkout (draft
           #   pemakaian AI foto+teks grup) + kolom draft_source/needs_unit_pick
+145       # Applied 25 Agu 2026 — fix nomor HP CUST420 + sambungkan bukti bayar NW17V
+146       # Applied 25 Agu 2026 — kolom admin_adjustments (jejak koreksi admin atas
+          #   qty terpakai sebelum potong stok)
+147       # Applied 25 Agu 2026 — RLS teknisi_material_checkout berjenjang + trigger
+          #   trg_guard_tmc_teknisi (teknisi tak bisa loloskan/ubah kolom konfirmasi)
+148       # Applied 25 Agu 2026 — job_materials_brought.source_extraction_id (tautan
+          #   balik ke ai_extractions → tombol Batalkan salah-link)
+149       # Applied 25 Agu 2026 — GARIS MULAI metode material baru: 766 antrean AI
+          #   → 'closed_baseline', 2 baris dibawa menggantung → RETURNED (stok utuh)
 ```
 
 > Daftar di atas pernah tertinggal jauh (berhenti di 126 padahal file sudah 132).
