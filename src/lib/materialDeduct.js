@@ -103,3 +103,44 @@ export function applyAdminOverrides(baseLines, overrides) {
   });
   return { lines, changes };
 }
+
+// ── Pembalikan potongan stok (buka koreksi sesi yang sudah dikonfirmasi) ─────
+// Owner/Admin perlu bisa membuka sesi beberapa hari lalu untuk membetulkan qty
+// aktual & pembagian jobnya. Alih-alih menyunting transaksi lama (yang merusak
+// jejak), potongannya DIBALIK dengan transaksi lawan bertipe 'adjustment', lalu
+// sesinya kembali PENDING sehingga admin mengonfirmasi ulang lewat jalur normal.
+// Pola yang sama dipakai saat laporan dihapus (LaporanTimView) — sudah terbukti.
+export function buildReversalRow(tx, { oleh, alasan } = {}) {
+  if (!tx) return null;
+  const qty = Math.abs(Number(tx.qty) || 0);
+  if (!(qty > 0)) return null;
+  return {
+    inventory_code: tx.inventory_code,
+    inventory_name: tx.inventory_name,
+    order_id: tx.order_id || null,
+    report_id: tx.report_id || null,
+    unit_id: tx.unit_id || null,
+    unit_label: tx.unit_label || null,
+    qty,
+    qty_actual: Math.abs(Number(tx.qty_actual ?? tx.qty) || 0),
+    type: "adjustment",
+    teknisi_name: tx.teknisi_name || null,
+    customer_name: tx.customer_name || null,
+    job_date: tx.job_date || null,
+    notes: `Buka koreksi Material Harian — stok dikembalikan${oleh ? " oleh " + oleh : ""}${alasan ? " (" + alasan + ")" : ""}`,
+    created_by_name: oleh || "",
+  };
+}
+
+// Berapa yang harus dikembalikan ke tiap unit fisik (tabung/roll) saat dibalik.
+// → { [unit_id]: qty }
+export function reversalByUnit(txs) {
+  const m = {};
+  for (const tx of (txs || [])) {
+    if (!tx?.unit_id) continue;
+    const qty = Math.abs(Number(tx.qty) || 0);
+    if (!(qty > 0)) continue;
+    m[tx.unit_id] = round2((m[tx.unit_id] || 0) + qty);
+  }
+  return m;
+}
