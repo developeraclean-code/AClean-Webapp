@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { cs } from "../theme/cs.js";
-import { computeDayDeduct, deductLines } from "../lib/materialDeduct.js";
+import { computeDayDeduct, applyAdminOverrides, lineKey } from "../lib/materialDeduct.js";
 import { isFreonItem } from "../lib/inventory.js";
 import { shiftDateStr, shortDateID } from "../lib/dateTime.js";
 
@@ -21,7 +21,7 @@ function classifyMat(inv) {
 // Dua model:
 //  - sesi 'pulang' → terpakai = dibawa − sisa (per unit, dari app Material Harian).
 //  - sesi 'pakai'  → DRAFT AI (foto+teks grup): qty pemakaian per baris, owner pilih job+unit lalu confirm.
-function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUnits, setInvUnitsData, setInventoryData }) {
+function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUnits, setInvUnitsData, setInventoryData, addAgentLog }) {
   const [rows, setRows] = useState([]);        // entri 'pulang' {pulang, pagi, jobs, lines}
   const [pakai, setPakai] = useState([]);      // entri 'pakai' {row, jobOptions, unitsByType}
   const [loading, setLoading] = useState(true);
@@ -111,7 +111,8 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
   };
 
   // ── CONFIRM PULANG (bawa−sisa) ──
-  const confirm = async (entry) => {
+  // overrides = koreksi admin { [lineKey]: qtyTerpakai }, alasan = wajib bila ada koreksi.
+  const confirm = async (entry, overrides = {}, alasan = "") => {
     const row = entry.pulang;
     setBusy(row.id);
     try {
@@ -124,16 +125,23 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
       if (!claimed || claimed.length === 0) { showNotif("Sudah dikonfirmasi (oleh proses lain)"); await load(); return; }
       const fresh = claimed[0];
       const { data: pg } = await supabase.from("teknisi_material_checkout").select("items").eq("teknisi_name", row.teknisi_name).eq("checkout_date", row.checkout_date).eq("session_type", "pagi").maybeSingle();
-      const lines = deductLines(pg?.items || [], fresh.items || []);
+      // Sengaja dihitung ulang dari data SEGAR (bukan dari state kartu) supaya
+      // koreksi admin ditempel di atas angka terbaru, bukan angka basi di layar.
+      const base = computeDayDeduct(pg?.items || [], fresh.items || []);
+      const { lines: adjusted, changes } = applyAdminOverrides(base, overrides);
+      const lines = adjusted.filter((l) => l.used > 0);
+      const koreksiMap = Object.fromEntries(changes.map((c) => [c.key, c]));
       const txIds = [];
       for (const l of lines) {
+        const c = koreksiMap[lineKey(l)];
         const { data: ins } = await supabase.from("inventory_transactions").insert({
           inventory_code: l.inventory_code, inventory_name: l.label,
           qty: -l.used, qty_actual: -l.used, type: "usage",
           teknisi_name: row.teknisi_name, job_date: row.checkout_date,
           order_id: (row.job_ids && row.job_ids[0]) || null,
           unit_id: l.unit_id || null, unit_label: l.unit_id ? l.label : null,
-          notes: "Material Harian confirm oleh " + (currentUser?.name || ""),
+          notes: "Material Harian confirm oleh " + (currentUser?.name || "")
+            + (c ? ` · DIKOREKSI ADMIN ${c.dari} → ${c.jadi}${alasan ? " (" + alasan + ")" : ""}` : ""),
           customer_name: entry.jobs[0]?.customer || null,
           created_by: currentUser?.id || null, created_by_name: currentUser?.name || "",
         }).select("id").single();
@@ -143,8 +151,22 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
           if (u) await supabase.from("inventory_units").update({ stock: Math.max(0, Number(u.stock) - l.used), updated_at: new Date().toISOString() }).eq("id", l.unit_id);
         }
       }
-      await supabase.from("teknisi_material_checkout").update({ deduct_tx_ids: txIds }).eq("id", row.id);
-      showNotif(`✅ Dikonfirmasi — ${lines.length} unit dipotong dari stok`);
+      // Jejak koreksi: kolom terpisah + confirm_notes + agent log. Kolom `items`
+      // (laporan asli teknisi) sengaja TIDAK disentuh supaya bisa dibandingkan.
+      const patch = { deduct_tx_ids: txIds };
+      if (changes.length) {
+        const stamp = new Date().toISOString();
+        patch.admin_adjustments = changes.map((c) => ({ ...c, oleh: currentUser?.name || "?", pada: stamp, alasan }));
+        patch.confirm_notes = alasan;
+      }
+      await supabase.from("teknisi_material_checkout").update(patch).eq("id", row.id);
+      if (changes.length) {
+        addAgentLog?.("MATERIAL_KOREKSI_ADMIN",
+          `${currentUser?.name || "?"} koreksi material ${row.teknisi_name} ${row.checkout_date}: `
+          + changes.map((c) => `${c.label} ${c.dari}→${c.jadi}`).join(", ") + ` | alasan: ${alasan}`,
+          "WARNING");
+      }
+      showNotif(`✅ Dikonfirmasi — ${lines.length} unit dipotong${changes.length ? ` (${changes.length} dikoreksi)` : ""}`);
       await refreshStock();
       await load();
     } catch (e) { showNotif("❌ Gagal potong stok (row sudah CONFIRMED — cek stok manual): " + (e?.message || e)); }
@@ -249,49 +271,128 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
               onConfirm={confirmPakai} onReject={() => reject(entry.row)} />
           ))}
 
-          {/* PULANG (bawa−sisa) */}
-          {rows.map((entry) => {
-            const r = entry.pulang;
-            const used = entry.lines.filter((l) => l.used > 0);
-            const photos = photosOf(entry);
+          {/* PULANG (bawa−sisa) — qty terpakai bisa dikoreksi admin sebelum potong stok */}
+          {rows.map((entry) => (
+            <PulangCard key={entry.pulang.id} entry={entry} view={view} busy={busy}
+              photos={photosOf(entry)} onConfirm={confirm} onReject={() => reject(entry.pulang)} />
+          ))}
+        </>}
+    </div>
+  );
+}
+
+// Kartu sesi 'pulang' (model bawa−sisa). Qty terpakai dihitung otomatis dari
+// selisih laporan teknisi, tapi admin boleh mengoreksinya sebagai double-check
+// sebelum stok dipotong — wajib beralasan, dan setiap koreksi ditinggalkan
+// jejaknya (lihat migrasi 146).
+function PulangCard({ entry, view, busy, photos, onConfirm, onReject }) {
+  const r = entry.pulang;
+  const [edit, setEdit] = useState({});     // { [lineKey]: string dari input }
+  const [alasan, setAlasan] = useState("");
+
+  // Hanya baris yang benar-benar dibawa yang relevan. Baris terpakai 0 tetap
+  // ditampilkan saat PENDING supaya admin bisa MENAIKKAN kalau teknisi lupa catat.
+  const baris = entry.lines.filter((l) => Number(l.brought) > 0);
+  const overrides = Object.fromEntries(
+    Object.entries(edit).filter(([, v]) => v !== "" && v != null).map(([k, v]) => [k, Number(v)])
+  );
+  const { lines: hasil, changes } = applyAdminOverrides(baris, overrides);
+  const terpakai = hasil.filter((l) => l.used > 0);
+  const adaKoreksi = changes.length > 0;
+  const alasanKurang = adaKoreksi && alasan.trim().length < 5;
+
+  const fmt = (n) => Number(n).toLocaleString("id-ID");
+
+  return (
+    <div style={{ background: cs.card, border: "1px solid " + (adaKoreksi ? cs.yellow + "88" : cs.border), borderRadius: 12, padding: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 800, color: cs.text }}>{r.teknisi_name}</div>
+          <div style={{ fontSize: 12, color: cs.muted }}>{r.checkout_date}{r.confirmed_by ? " · oleh " + r.confirmed_by : ""}</div>
+        </div>
+        {view === "CONFIRMED" && <span style={{ fontSize: 11, color: cs.green, fontWeight: 700 }}>✓ {r.deduct_tx_ids?.length || 0} unit dipotong</span>}
+      </div>
+
+      {entry.jobs.length > 0 && (
+        <div style={{ fontSize: 12, color: cs.muted, marginBottom: 8 }}>📋 Job: {entry.jobs.map((j) => j.customer).join(", ")}</div>
+      )}
+
+      {/* Riwayat koreksi yang sudah tersimpan (tab Selesai) */}
+      {Array.isArray(r.admin_adjustments) && r.admin_adjustments.length > 0 && (
+        <div style={{ background: cs.yellow + "14", border: "1px solid " + cs.yellow + "44", borderRadius: 8, padding: 10, marginBottom: 8 }}>
+          <div style={{ fontSize: 11.5, fontWeight: 800, color: cs.yellow, marginBottom: 4 }}>✏️ Dikoreksi admin</div>
+          {r.admin_adjustments.map((a, i) => (
+            <div key={i} style={{ fontSize: 12, color: cs.text }}>{a.label}: {fmt(a.dari)} → <b>{fmt(a.jadi)}</b> <span style={{ color: cs.muted }}>· {a.oleh}</span></div>
+          ))}
+          {r.confirm_notes && <div style={{ fontSize: 11.5, color: cs.muted, marginTop: 4 }}>Alasan: {r.confirm_notes}</div>}
+        </div>
+      )}
+
+      <div style={{ background: cs.surface, borderRadius: 8, padding: 10, marginBottom: 8 }}>
+        {baris.length === 0 ? <div style={{ fontSize: 12, color: cs.muted }}>Tidak ada material dibawa hari ini.</div>
+          : view !== "PENDING" ? (
+            terpakai.length === 0 ? <div style={{ fontSize: 12, color: cs.muted }}>Tidak ada material terpakai (semua dikembalikan).</div>
+              : terpakai.map((l, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, padding: "3px 0", borderTop: i ? "1px solid " + cs.border : "none" }}>
+                  <span style={{ color: cs.text }}>{l.material_type === "freon" ? "🛢" : "📦"} {l.label}</span>
+                  <span style={{ color: cs.muted }}>bawa {fmt(l.brought)} · sisa {fmt(l.returned)} · <b style={{ color: cs.accent }}>terpakai {fmt(l.used)}</b></span>
+                </div>
+              ))
+          ) : hasil.map((l, i) => {
+            const k = lineKey(l);
+            const berubah = l.dikoreksi;
             return (
-              <div key={r.id} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: 14 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
-                  <div>
-                    <div style={{ fontSize: 14, fontWeight: 800, color: cs.text }}>{r.teknisi_name}</div>
-                    <div style={{ fontSize: 12, color: cs.muted }}>{r.checkout_date}{r.confirmed_by ? " · oleh " + r.confirmed_by : ""}</div>
-                  </div>
-                  {view === "CONFIRMED" && <span style={{ fontSize: 11, color: cs.green, fontWeight: 700 }}>✓ {r.deduct_tx_ids?.length || 0} unit dipotong</span>}
+              <div key={k} style={{ padding: "7px 0", borderTop: i ? "1px solid " + cs.border : "none" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ color: cs.text, fontSize: 12.5, fontWeight: 700 }}>
+                    {l.material_type === "freon" ? "🛢" : "📦"} {l.label}
+                    {berubah && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 800, color: cs.yellow }}>dikoreksi</span>}
+                  </span>
+                  <span style={{ color: cs.muted, fontSize: 11.5 }}>bawa {fmt(l.brought)} · sisa {fmt(l.returned)}</span>
                 </div>
-                {entry.jobs.length > 0 && (
-                  <div style={{ fontSize: 12, color: cs.muted, marginBottom: 8 }}>📋 Job: {entry.jobs.map((j) => j.customer).join(", ")}</div>
-                )}
-                <div style={{ background: cs.surface, borderRadius: 8, padding: 10, marginBottom: 8 }}>
-                  {used.length === 0 ? <div style={{ fontSize: 12, color: cs.muted }}>Tidak ada material terpakai (semua dikembalikan).</div>
-                    : used.map((l, i) => (
-                      <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, padding: "3px 0", borderTop: i ? "1px solid " + cs.border : "none" }}>
-                        <span style={{ color: cs.text }}>{l.material_type === "freon" ? "🛢" : "📦"} {l.label}</span>
-                        <span style={{ color: cs.muted }}>bawa {l.brought} · sisa {l.returned} · <b style={{ color: cs.accent }}>terpakai {l.used}</b></span>
-                      </div>
-                    ))}
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 5 }}>
+                  <span style={{ fontSize: 11, color: cs.muted }}>Terpakai</span>
+                  <input type="number" step="0.1" min="0" max={l.brought}
+                    value={edit[k] ?? String(l.used ?? 0)}
+                    onChange={(e) => setEdit((p) => ({ ...p, [k]: e.target.value }))}
+                    style={{ background: cs.card, border: "1px solid " + (berubah ? cs.yellow : cs.border), borderRadius: 6, padding: "5px 8px", color: berubah ? cs.yellow : cs.text, fontSize: 13, fontWeight: 700, width: 92 }} />
+                  {berubah && <span style={{ fontSize: 11, color: cs.muted }}>asli {fmt(l.used_asli)}</span>}
+                  {edit[k] != null && Number(edit[k]) > Number(l.brought) &&
+                    <span style={{ fontSize: 11, color: cs.red }}>maks {fmt(l.brought)} (tak boleh lebih dari yang dibawa)</span>}
                 </div>
-                {photos.length > 0 && (
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
-                    {photos.map((u, i) => <img key={i} src={u} alt="bukti" style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 6, border: "1px solid " + cs.border }} />)}
-                  </div>
-                )}
-                {view === "PENDING" && (
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 8 }}>
-                    <button disabled={busy === r.id} onClick={() => reject(r)} style={{ background: cs.card, border: "1px solid " + cs.red + "55", color: cs.red, padding: 10, borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Tolak</button>
-                    <button disabled={busy === r.id} onClick={() => confirm(entry)} style={{ background: busy === r.id ? cs.border : "linear-gradient(135deg,#10b981,#059669)", border: "none", color: "#fff", padding: 10, borderRadius: 9, cursor: "pointer", fontWeight: 800, fontSize: 13 }}>
-                      {busy === r.id ? "Memproses…" : `✓ Confirm & Potong Stok (${used.length} unit)`}
-                    </button>
-                  </div>
-                )}
               </div>
             );
           })}
-        </>}
+      </div>
+
+      {photos.length > 0 && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+          {photos.map((u, i) => <img key={i} src={u} alt="bukti" style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 6, border: "1px solid " + cs.border }} />)}
+        </div>
+      )}
+
+      {view === "PENDING" && adaKoreksi && (
+        <div style={{ background: cs.yellow + "14", border: "1px solid " + cs.yellow + "44", borderRadius: 8, padding: 10, marginBottom: 8 }}>
+          <div style={{ fontSize: 11.5, color: cs.yellow, fontWeight: 700, marginBottom: 5 }}>
+            {changes.length} baris dikoreksi — alasan wajib diisi (tersimpan sebagai jejak audit)
+          </div>
+          <input value={alasan} onChange={(e) => setAlasan(e.target.value)}
+            placeholder="Contoh: sisa roll salah ukur, dicek ulang di gudang"
+            style={{ width: "100%", background: cs.card, border: "1px solid " + (alasanKurang ? cs.red : cs.border), borderRadius: 6, padding: "7px 9px", color: cs.text, fontSize: 12.5 }} />
+        </div>
+      )}
+
+      {view === "PENDING" && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 8 }}>
+          <button disabled={busy === r.id} onClick={onReject}
+            style={{ background: cs.card, border: "1px solid " + cs.red + "55", color: cs.red, padding: 10, borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Tolak</button>
+          <button disabled={busy === r.id || alasanKurang}
+            onClick={() => onConfirm(entry, overrides, alasan.trim())}
+            style={{ background: (busy === r.id || alasanKurang) ? cs.border : "linear-gradient(135deg,#10b981,#059669)", border: "none", color: "#fff", padding: 10, borderRadius: 9, cursor: (busy === r.id || alasanKurang) ? "not-allowed" : "pointer", fontWeight: 800, fontSize: 13 }}>
+            {busy === r.id ? "Memproses…" : alasanKurang ? "Isi alasan koreksi dulu" : `✓ Confirm & Potong Stok (${terpakai.length} unit)`}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

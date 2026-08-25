@@ -61,3 +61,45 @@ export function usedByCode(pagiItems, pulangItems) {
   }
   return m;
 }
+
+// ── Koreksi admin atas hasil bawa−sisa ──────────────────────────────────────
+// Angka "terpakai" dihitung otomatis dari selisih bawa−sisa yang dilaporkan
+// teknisi. Kadang laporannya meleset (sisa salah ukur / lupa dicatat), jadi
+// Admin/Owner boleh mengoreksi sebelum stok dipotong — dengan jejak audit.
+// Lihat MaterialConfirmTab + migrasi 146 (kolom admin_adjustments).
+
+export const lineKey = (l) => (l?.unit_id ? "u:" + l.unit_id : "c:" + (l?.inventory_code || l?.label));
+
+// Batas aman: tidak boleh minus, dan tidak boleh melebihi yang dibawa —
+// mustahil memakai lebih banyak dari isi roll/tabung yang dibawa hari itu.
+export function clampUsed(nilai, brought) {
+  const n = Number(nilai);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  const maks = Number(brought);
+  if (Number.isFinite(maks) && maks >= 0 && n > maks) return round2(maks);
+  return round2(n);
+}
+
+// Terapkan koreksi admin ke baris hasil computeDayDeduct.
+// overrides = { [lineKey]: qtyTerpakaiBaru }
+// → { lines, changes } — changes hanya berisi baris yang benar-benar berubah,
+//   dipakai untuk catatan audit & isi kolom admin_adjustments.
+export function applyAdminOverrides(baseLines, overrides) {
+  const ov = overrides || {};
+  const changes = [];
+  const lines = (Array.isArray(baseLines) ? baseLines : []).map((l) => {
+    const k = lineKey(l);
+    if (!Object.prototype.hasOwnProperty.call(ov, k)) return l;
+    const semula = round2(l.used);
+    const jadi = clampUsed(ov[k], l.brought);
+    if (jadi === semula) return l;
+    changes.push({
+      key: k, unit_id: l.unit_id || null, label: l.label,
+      inventory_code: l.inventory_code || null,
+      brought: round2(l.brought), returned: round2(l.returned),
+      dari: semula, jadi,
+    });
+    return { ...l, used: jadi, used_asli: semula, dikoreksi: true };
+  });
+  return { lines, changes };
+}

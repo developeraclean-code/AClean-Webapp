@@ -799,7 +799,8 @@ return (
         ═══════════════════════════════════════════════ */}
     {mainTab === "konfirmasi" && isOwnerAdmin && (
       <MaterialConfirmTab supabase={supabase} currentUser={currentUser} showNotif={showNotif}
-        fetchInventoryUnits={fetchInventoryUnits} setInvUnitsData={setInvUnitsData} setInventoryData={setInventoryData} />
+        fetchInventoryUnits={fetchInventoryUnits} setInvUnitsData={setInvUnitsData} setInventoryData={setInventoryData}
+        addAgentLog={addAgentLog} />
     )}
 
     {mainTab === "recon" && isOwnerAdmin && (
