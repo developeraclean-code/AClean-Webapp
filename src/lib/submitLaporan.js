@@ -2,6 +2,8 @@
 // material+jasa), potong stok, link multi-hari/project, seed registry AC, update
 // order & state. Diekstrak dari App.jsx (Fase 3, pola ctx). 67 dependency via ctx.
 // Body verbatim (behavior-preserving). JALUR UANG — test ketat.
+import { isHarianManagedItem } from "./materialRecon.js";
+
 export async function submitLaporan({
   INSTALL_ITEMS, _apiHeaders, addAgentLog, appSettings, auditUserName, buildInvoiceDetail,
   checkInvoiceConsistency, classifyMaterial, currentUser, customersData, deductInventory,
@@ -440,7 +442,9 @@ export async function submitLaporan({
     // Opsi A: kalau material_confirm_deduct ON, stok pipa/kabel/freon dipotong lewat Material Harian (confirm Owner),
     // BUKAN dari submit laporan. Jadi keluarkan kategori itu dari deduct laporan (cegah dobel).
     const confirmDeductOn = appSettings?.material_confirm_deduct_enabled === "true";
-    const isHarianManaged = (m) => ["pipa", "kabel", "freon"].includes(classifyMaterial(m?.nama || ""));
+    // Gerbang bersama (src/lib/materialRecon.js) — mendahulukan jenis eksplisit
+    // daripada tebakan dari nama. Lihat catatan di sana soal kasus "A4".
+    const isHarianManaged = (m) => isHarianManagedItem(m);
     const dropHarian = (arr) => confirmDeductOn ? (arr || []).filter((m) => !isHarianManaged(m)) : (arr || []);
     const materialsForSync = dropHarian(isInstall ? effectiveMaterials : laporanMaterials);
     await syncTrackedStock(

@@ -103,10 +103,18 @@ function PendingAiMaterialTab({ supabase, showNotif, currentUser, addAgentLog })
         if (!lanjut) { setBusyId(null); return; }
       }
 
-      const matRows = items.map(it => ({
+      // Nama HARUS menyebut jenisnya. AI sering hanya menangkap ukuran/merek ("A4",
+      // "Markita"), dan beberapa jalur hilir masih menebak kategori dari nama —
+      // "A4" tertebak "lain" padahal pipa, dan itu jalan masuk dobel-potong.
+      // Jenis eksplisit tetap disimpan di material_type sebagai sumber utama.
+      const LBL_TIPE = { pipa: "Pipa", kabel: "Kabel", freon: "Freon" };
+      const matRows = items.map(it => {
+        const tipe = String(it.type || "lain").toLowerCase();
+        const detail = [it.brand, it.size].filter(Boolean).join(" ");
+        return {
         job_id: orderId,
-        material_type: String(it.type || "lain").toLowerCase(),
-        inventory_name: [it.brand, it.size].filter(Boolean).join(" ") || `${it.type || "material"} (AI)`,
+        material_type: tipe,
+        inventory_name: [LBL_TIPE[tipe] || "", detail].filter(Boolean).join(" ") || `${tipe} (AI)`,
         qty_estimate: Number(it.qty) || 1,
         brought_at: new Date().toISOString(),
         // Pembawa ≠ pengirim foto. Caption "dibawa pak eri" sudah diurai jadi
@@ -116,7 +124,8 @@ function PendingAiMaterialTab({ supabase, showNotif, currentUser, addAgentLog })
         status: "BROUGHT",
         source_extraction_id: row.id,   // jejak balik → tombol Batalkan (migrasi 148)
         notes: `[AI vision approved] ${row.notes || ""}`.trim(),
-      }));
+        };
+      });
       const { error } = await supabase.from("job_materials_brought").insert(matRows);
       if (error) throw error;
       await supabase.from("ai_extractions").update({

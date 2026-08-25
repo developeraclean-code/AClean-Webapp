@@ -57,14 +57,14 @@ function MaterialBroughtRecapTab({ supabase, showNotif, currentUser, addAgentLog
   // dari foto WA, extraction-nya dikembalikan ke antrean supaya bisa di-link
   // ulang ke job yang benar — bukan hilang selamanya.
   const batalkan = async (r) => {
-    if (r.status === "USED") {
-      showNotif?.("Baris ini sudah terpakai di laporan teknisi — koreksi lewat laporannya, bukan di sini.");
-      return;
-    }
     const alasan = window.prompt(
       `Batalkan "${r.inventory_name || r.material_type}" dari job ${r.orders?.customer || r.job_id}?\n\n` +
-      (r.source_extraction_id ? "Foto WA-nya akan kembali ke antrean Pending AI Material.\n\n" : "") +
-      "Alasan (wajib, min 5 huruf):", "");
+      "Ini hanya menghapus CATATAN dibawa. Stok tidak berubah — tabel ini memang tidak pernah memotong stok.\n" +
+      (r.status === "USED"
+        ? "Baris ini sudah ditandai terpakai di laporan teknisi; angka di laporan & invoice TIDAK ikut berubah.\n"
+        : "") +
+      (r.source_extraction_id ? "Foto WA-nya akan kembali ke antrean Pending AI Material.\n" : "") +
+      "\nAlasan (wajib, min 5 huruf):", "");
     if (alasan === null) return;
     if (alasan.trim().length < 5) { showNotif?.("Alasan terlalu pendek — pembatalan dibatalkan."); return; }
     setBusy(r.id);
@@ -73,7 +73,7 @@ function MaterialBroughtRecapTab({ supabase, showNotif, currentUser, addAgentLog
         status: "CANCELLED",
         updated_at: new Date().toISOString(),
         notes: `${r.notes || ""} | DIBATALKAN ${currentUser?.name || "?"}: ${alasan.trim()}`.trim(),
-      }).eq("id", r.id).neq("status", "USED");
+      }).eq("id", r.id);
       if (error) throw error;
       if (r.source_extraction_id) {
         await supabase.from("ai_extractions")
@@ -116,6 +116,9 @@ function MaterialBroughtRecapTab({ supabase, showNotif, currentUser, addAgentLog
       <div style={{ background: cs.accent + "14", border: "1px solid " + cs.accent + "44", borderRadius: 10, padding: 12, fontSize: 12.5, color: cs.text }}>
         📥 Semua material yang tercatat <b>dibawa ke job</b> — baik dari tab Pending AI Material,
         maupun yang diinput teknisi lewat tombol &quot;Bawa Material&quot; di job.
+        <br /><b style={{ color: cs.yellow }}>Tab ini CATATAN saja — tidak memotong stok.</b> Stok pipa/kabel/freon
+        hanya berkurang saat Admin menekan Confirm di tab <b>✅ Konfirmasi Material</b>. Jadi baris kembar
+        di sini membuat rekap dobel hitung, tapi <b>tidak</b> membuat stok terpotong dua kali.
         Status <b>Dikembalikan</b> bisa muncul otomatis: baris yang lebih dari 24 jam belum masuk
         laporan teknisi ditandai kembali oleh sistem — datanya tidak hilang, hanya berpindah status.
       </div>
@@ -178,7 +181,7 @@ function MaterialBroughtRecapTab({ supabase, showNotif, currentUser, addAgentLog
                       ↩︎ {String(r.notes).split("DIBATALKAN")[1]?.trim()}
                     </div>
                   )}
-                  {r.status !== "CANCELLED" && r.status !== "USED" && (
+                  {r.status !== "CANCELLED" && (
                     <div>
                       <button onClick={() => batalkan(r)} disabled={busy === r.id}
                         title="Salah job? Batalkan — foto WA-nya kembali ke antrean untuk di-link ulang"

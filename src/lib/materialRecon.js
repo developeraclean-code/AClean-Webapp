@@ -145,3 +145,24 @@ export function reconStatus(lines) {
   if (arr.some(l => l.flag === "MISSING_DATA")) return "WARNING";
   return "OK";
 }
+
+// ── Gerbang tunggal: item ini dikelola Material Harian atau tidak? ───────────
+// Saat material_confirm_deduct_enabled = "true", stok pipa/kabel/freon HANYA
+// dipotong lewat Konfirmasi Material. Kategori itu wajib dikeluarkan dari jalur
+// potong laporan, kalau tidak stoknya berkurang dua kali.
+//
+// classifyMaterial() menebak dari NAMA, dan nama tidak selalu menyebut jenisnya.
+// Kasus nyata 25 Agu 2026: baris hasil Link ke Job dari foto WA bernama "A4"
+// (padahal pipa) dan "Markita". classifyMaterial("A4") = "lain" → lolos gerbang
+// → berpeluang dipotong laporan PADAHAL pipa yang sama juga dipotong lewat
+// Material Harian. Tidak sampai kejadian hanya karena "A4" kebetulan tak cocok
+// dengan nama barang mana pun di inventory — kebetulan, bukan pengaman.
+//
+// Karena itu jenis EKSPLISIT selalu didahulukan bila item membawanya
+// (mis. hasil prefill job_materials_brought yang punya material_type asli),
+// dan tebakan nama hanya dipakai sebagai cadangan.
+export function isHarianManagedItem(m) {
+  const eksplisit = String(m?._matType || m?.material_type || "").toLowerCase();
+  if (eksplisit) return ["pipa", "kabel", "freon"].includes(eksplisit);
+  return ["pipa", "kabel", "freon"].includes(classifyMaterial(m?.nama || m?.inventory_name || ""));
+}

@@ -1,7 +1,7 @@
 import React from "react";
 import { cs } from "../theme/cs.js";
 import { clientCleaningUnitPrice } from "../lib/maintClientPrice.js";
-import { classifyMaterial } from "../lib/materialRecon.js";
+import { isHarianManagedItem } from "../lib/materialRecon.js";
 
 // Detail/Edit Laporan modal — diekstrak dari App.jsx (Tahap 2 refactor, lazy-loaded).
 // Semua dependensi level-komponen dilewatkan via satu prop `ctx` (lihat App.jsx).
@@ -764,7 +764,7 @@ export default function LaporanDetailModal({ ctx }) {
                 // terisi tidak lolos saat disimpan.
                 const stockMatsToDeduct = editStockMats
                   .filter(m => m.nama && parseFloat(m.jumlah) > 0)
-                  .filter(m => !harianGate || classifyMaterial(m.nama) === "lain");
+                  .filter(m => !harianGate || !isHarianManagedItem(m));
                 if (selectedLaporan.id) {
                   await syncTrackedStock(
                     selectedLaporan.id,

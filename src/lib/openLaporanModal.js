@@ -162,6 +162,10 @@ export function openLaporanModal(order, {
               unit_id: b.unit_id,
               unit_label: b.unit_label,
               inv_code: b.inventory_code,
+              // Jenis ASLI dari job_materials_brought. Wajib dibawa: nama seperti
+              // "A4" tidak menyebut "pipa", jadi tebakan-dari-nama akan salah dan
+              // item ini bisa lolos gerbang Material Harian → dobel potong.
+              _matType: b.material_type || null,
               _broughtId: b.id,
               _fromBrought: true,
             };
