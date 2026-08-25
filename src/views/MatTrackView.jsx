@@ -3,6 +3,7 @@ import { cs } from "../theme/cs.js";
 import { useAppContext } from "../context/AppContext.js";
 import { displayStock, computeStockStatus } from "../lib/inventory.js";
 import { reconcileDay, sumReportedUsage, reconStatus } from "../lib/materialRecon.js";
+import { shiftDateStr } from "../lib/dateTime.js";
 import MaterialConfirmTab from "./MaterialConfirmTab.jsx";
 
 // ───────────────────────────────────────────────
@@ -26,6 +27,9 @@ function PendingAiMaterialTab({ supabase, showNotif, currentUser }) {
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState(null);
   const [pickerOpen, setPickerOpen] = useState(null); // extraction id
+  // Seberapa jauh ke belakang job boleh dipilih. Dulu terkunci "hari ini + kemarin"
+  // sehingga material yang baru di-review beberapa hari kemudian tak bisa ditautkan.
+  const [jobDays, setJobDays] = useState(7);
 
   const load = async () => {
     setLoading(true);
@@ -35,19 +39,24 @@ function PendingAiMaterialTab({ supabase, showNotif, currentUser }) {
         .eq("intent", "material").eq("status", "pending")
         .order("created_at", { ascending: false }).limit(100);
       setRows(data || []);
-      // Today + yesterday orders for picker
+      // Order untuk pilihan "Link ke Job".
+      // CATATAN: dulu ada filter .in("status", ["SCHEDULED","IN_PROGRESS","ON_SITE",
+      // "WORKING","DONE"]) — kelima nilai itu TIDAK PERNAH ADA di tabel orders
+      // (status yang dipakai: PENDING, CONFIRMED, REPORT_SUBMITTED, INVOICE_APPROVED,
+      // COMPLETED, PAID, CANCELLED). Akibatnya dropdown selalu kosong sejak awal.
+      // Sekarang hanya CANCELLED yang dibuang.
       const today = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
-      const yesterday = new Date(Date.now() + 7 * 3600_000 - 86400_000).toISOString().slice(0, 10);
       const { data: ord } = await supabase.from("orders")
         .select("id,customer,teknisi,teknisi2,helper,helper2,team_slot,date,status")
-        .in("date", [today, yesterday])
-        .in("status", ["SCHEDULED","IN_PROGRESS","ON_SITE","WORKING","DONE"])
-        .order("date", { ascending: false }).limit(200);
+        .gte("date", shiftDateStr(today, -Number(jobDays || 0)))
+        .lte("date", today)
+        .neq("status", "CANCELLED")
+        .order("date", { ascending: false }).limit(400);
       setOrders(ord || []);
     } catch (e) { showNotif?.("Gagal load: " + e.message, "error"); }
     finally { setLoading(false); }
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [jobDays]);
 
   const handleLink = async (row, orderId) => {
     if (!orderId) return;
@@ -96,11 +105,23 @@ function PendingAiMaterialTab({ supabase, showNotif, currentUser }) {
         Carrier hint di-extract dari caption "dibawa &lt;nama&gt;".
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ fontSize: 12, color: cs.muted }}>{rows.length} pending</div>
+        <div style={{ fontSize: 12, color: cs.muted }}>{rows.length} pending · {orders.length} job bisa dipilih</div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12, color: cs.muted }}>
+          Job sampai
+          <select value={jobDays} onChange={e => setJobDays(Number(e.target.value))}
+            style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "5px 8px", color: cs.text, fontSize: 12, cursor: "pointer" }}>
+            <option value={1}>hari ini & kemarin</option>
+            <option value={7}>7 hari ke belakang</option>
+            <option value={30}>30 hari ke belakang</option>
+            <option value={90}>90 hari ke belakang</option>
+          </select>
+        </label>
         <button onClick={load} disabled={loading}
           style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, borderRadius: 8, padding: "6px 12px", fontSize: 12, cursor: "pointer" }}>
           {loading ? "..." : "↻ Refresh"}
         </button>
+        </div>
       </div>
       {rows.length === 0 && !loading && (
         <div style={{ padding: 24, background: cs.card, borderRadius: 10, textAlign: "center", color: cs.muted, fontSize: 13 }}>
@@ -151,9 +172,15 @@ function PendingAiMaterialTab({ supabase, showNotif, currentUser }) {
                       {suggestedJobs.length > 0 && <optgroup label="🎯 Saran AI">
                         {suggestedJobs.map(j => <option key={j.id} value={j.id}>{j.customer} (#{j.id})</option>)}
                       </optgroup>}
-                      <optgroup label="Semua job hari ini/kemarin">
-                        {orders.map(o => <option key={o.id} value={o.id}>{o.customer} [{o.date}] (#{o.id})</option>)}
-                      </optgroup>
+                      {orders.length === 0
+                        ? <option value="" disabled>(tidak ada job di rentang ini — lebarkan &quot;Job sampai&quot;)</option>
+                        : Object.entries(orders.reduce((acc, o) => {
+                            (acc[o.date] = acc[o.date] || []).push(o); return acc;
+                          }, {})).sort((a, b) => b[0].localeCompare(a[0])).map(([tgl, list]) => (
+                            <optgroup key={tgl} label={tgl}>
+                              {list.map(o => <option key={o.id} value={o.id}>{o.customer} · {o.status} (#{o.id})</option>)}
+                            </optgroup>
+                          ))}
                     </select>
                     <button onClick={() => setPickerOpen(null)} disabled={busyId === r.id}
                       style={{ background: cs.surface, border: "1px solid " + cs.border, color: cs.text, borderRadius: 8, padding: "6px 12px", fontSize: 12, cursor: "pointer" }}>

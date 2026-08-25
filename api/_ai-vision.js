@@ -485,9 +485,18 @@ export async function persistClassification({ SU, SK, classification, sender, gr
       // Owner approve manual via tab "Pending Material" di UI.
       materialPendingForOwner = true;
       const todayJkt = new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10);
+      // CATATAN: dulu difilter status=in.(SCHEDULED,IN_PROGRESS,ON_SITE,WORKING) —
+      // keempat nilai itu TIDAK PERNAH ADA di tabel orders (yang dipakai: PENDING,
+      // CONFIRMED, REPORT_SUBMITTED, INVOICE_APPROVED, COMPLETED, PAID, CANCELLED).
+      // Akibatnya todayOrders selalu kosong, sehingga carrier hint & sender jobs
+      // SELALU melaporkan "no job match" / 0 sejak fitur ini dibuat.
+      // Sekarang hanya CANCELLED yang dibuang. Rentang dilebarkan ke H-1 karena
+      // foto material sering dikirim lewat tengah malam untuk pekerjaan kemarin.
+      const kemarinJkt = new Date(Date.parse(todayJkt + "T00:00:00Z") - 86400000).toISOString().slice(0, 10);
       const orderUrl = SU + "/rest/v1/orders?select=id,customer,teknisi,teknisi2,teknisi3,helper,helper2,helper3,team_slot,date,status"
-        + "&date=eq." + encodeURIComponent(todayJkt)
-        + "&status=in.(SCHEDULED,IN_PROGRESS,ON_SITE,WORKING)&limit=50";
+        + "&date=gte." + encodeURIComponent(kemarinJkt)
+        + "&date=lte." + encodeURIComponent(todayJkt)
+        + "&status=neq.CANCELLED&limit=100";
       let todayOrders = [];
       try {
         const r = await fetch(orderUrl, { headers: { apikey: SK, Authorization: "Bearer " + SK } });
