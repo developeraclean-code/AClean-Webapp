@@ -4,6 +4,7 @@ import { useAppContext } from "../context/AppContext.js";
 import { displayStock, computeStockStatus } from "../lib/inventory.js";
 import { reconcileDay, sumReportedUsage, reconStatus } from "../lib/materialRecon.js";
 import { shiftDateStr } from "../lib/dateTime.js";
+import { detectKind, KIND_META, qtyEfektif, cocokkanKePagi } from "../lib/aiMaterialKind.js";
 import MaterialConfirmTab from "./MaterialConfirmTab.jsx";
 import MaterialBroughtRecapTab from "./MaterialBroughtRecapTab.jsx";
 
@@ -139,6 +140,87 @@ function PendingAiMaterialTab({ supabase, showNotif, currentUser, addAgentLog })
     } finally { setBusyId(null); }
   };
 
+  // ── SISA / KEMBALI KE KANTOR ────────────────────────────────────────────────
+  // Foto sisa TIDAK boleh masuk "material dibawa" — artinya kebalikan dari
+  // kenyataan (barang kembali, bukan keluar). Tempat yang benar adalah sesi
+  // PULANG teknisi hari itu, karena di situlah angka bawa−sisa dihitung.
+  // unit_id tabung/roll tidak pernah diketahui AI → diambil dari sesi PAGI.
+  const handleSisa = async (row) => {
+    const tek = row.extracted?._candidates?.carrier_hint || row.sender_name;
+    const tgl = new Date(new Date(row.created_at).getTime() + 7 * 3600000).toISOString().slice(0, 10);
+    if (!window.confirm(
+      `Isi sisa ini ke sesi PULANG ${tek} tanggal ${tgl}?\n\n` +
+      "Stok TIDAK dipotong sekarang. Angka terpakai dihitung otomatis (dibawa − sisa) " +
+      "dan baru berkurang saat Anda Confirm di tab Konfirmasi Material."
+    )) return;
+    setBusyId(row.id);
+    try {
+      const { data: pagi } = await supabase.from("teknisi_material_checkout")
+        .select("id,items").eq("teknisi_name", tek).eq("checkout_date", tgl)
+        .eq("session_type", "pagi").maybeSingle();
+      if (!pagi || !Array.isArray(pagi.items) || pagi.items.length === 0)
+        throw new Error(`Sesi pagi ${tek} tgl ${tgl} belum ada — sisa tidak bisa dihitung tanpa tahu yang dibawa`);
+
+      const { data: pulang } = await supabase.from("teknisi_material_checkout")
+        .select("id,items,confirm_status").eq("teknisi_name", tek).eq("checkout_date", tgl)
+        .eq("session_type", "pulang").maybeSingle();
+      if (pulang?.confirm_status === "CONFIRMED")
+        throw new Error("Sesi pulang hari itu sudah dikonfirmasi — pakai tombol Buka Koreksi di Konfirmasi Material");
+
+      const items = Array.isArray(pulang?.items) ? [...pulang.items] : [];
+      const gagal = [];
+      let masuk = 0;
+      for (const it of (row.extracted?.items || [])) {
+        const arah = detectKind(it, row.message_text);
+        if (arah !== "sisa" && arah !== "campuran") continue;
+        const src = cocokkanKePagi(it, pagi.items);
+        const qty = qtyEfektif(it);
+        const unitList = Array.isArray(src?.units) && src.units.length ? src.units
+          : (Array.isArray(src?.weight_kg) ? src.weight_kg : []);
+        // Ambigu = jangan menebak: jenis tak ketemu di sesi pagi, angka tak terbaca,
+        // atau teknisi membawa lebih dari satu roll/tabung jenis itu.
+        if (!src || qty == null || unitList.length !== 1) {
+          gagal.push(`${it.type || "?"} ${it.size || ""}`.trim()); continue;
+        }
+        const u = unitList[0];
+        const baru = {
+          qty, label: src.label, satuan: src.satuan || (src.material_type === "freon" ? "kg" : "meter"),
+          material_type: src.material_type, inventory_code: src.inventory_code,
+          units: [{ qty, label: u.label, unit_id: u.unit_id }],
+        };
+        if (src.material_type === "freon") baru.weight_kg = [{ kg: qty, label: u.label, unit_id: u.unit_id }];
+        const idx = items.findIndex((x) => x.inventory_code === baru.inventory_code);
+        if (idx >= 0) items[idx] = baru; else items.push(baru);
+        masuk++;
+      }
+      if (masuk === 0) throw new Error("Tidak ada baris sisa yang bisa dicocokkan ke sesi pagi — isi manual di Material Harian");
+
+      const payload = { items, confirm_status: "PENDING", updated_at: new Date().toISOString() };
+      let pulangId = pulang?.id;
+      if (pulangId) {
+        await supabase.from("teknisi_material_checkout").update(payload).eq("id", pulangId);
+      } else {
+        const { data: ins, error } = await supabase.from("teknisi_material_checkout").insert({
+          teknisi_name: tek, checkout_date: tgl, session_type: "pulang", job_ids: [],
+          source: "admin", created_by_name: currentUser?.name || "",
+          notes: `Sisa diisi ${currentUser?.name || "admin"} dari foto WA`, ...payload,
+        }).select("id").single();
+        if (error) throw error;
+        pulangId = ins?.id;
+      }
+      await supabase.from("ai_extractions").update({
+        status: "linked", linked_table: "teknisi_material_checkout", linked_id: pulangId,
+        notes: `[sisa → sesi pulang ${tek} ${tgl}] oleh ${currentUser?.name || "?"}`,
+      }).eq("id", row.id);
+      showNotif?.(
+        `✓ ${masuk} sisa masuk sesi pulang ${tek} ${tgl}` +
+        (gagal.length ? ` · ${gagal.length} perlu manual: ${gagal.join(", ")}` : "") +
+        " — lanjut Confirm di tab Konfirmasi Material", "success");
+      setRows((prev) => prev.filter((r) => r.id !== row.id));
+    } catch (e) { showNotif?.("Gagal: " + e.message, "error"); }
+    finally { setBusyId(null); }
+  };
+
   const handleReject = async (row) => {
     if (!confirm("Tolak material ini? Status diset rejected (tidak hilang dari audit).")) return;
     setBusyId(row.id);
@@ -187,6 +269,10 @@ function PendingAiMaterialTab({ supabase, showNotif, currentUser, addAgentLog })
         const carrierJobs = cands.carrier_jobs || [];
         const senderJobs = cands.sender_jobs || [];
         const suggestedJobs = carrierJobs.length > 0 ? carrierJobs : senderJobs;
+        // Arah laporan: barang DIBAWA, TERPAKAI, atau SISA yang kembali.
+        const arah = detectKind(items[0] || {}, r.message_text);
+        const arahMeta = KIND_META[arah] || KIND_META.dibawa;
+        const sisaJalur = arah === "sisa" || arah === "campuran";
         const photo = fotoSrc(r.r2_url || r.image_url);
         return (
           <div key={r.id} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: 12, display: "grid", gridTemplateColumns: photo ? "160px 1fr" : "1fr", gap: 12 }}>
@@ -200,12 +286,22 @@ function PendingAiMaterialTab({ supabase, showNotif, currentUser, addAgentLog })
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <span style={{ fontWeight: 700, color: cs.text }}>{r.sender_name}</span>
                 <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 6, background: "#10b98122", color: "#10b981", fontWeight: 700 }}>{r.confidence}</span>
+                <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 6, background: arahMeta.warna + "22", color: arahMeta.warna, fontWeight: 800 }}>{arahMeta.label}</span>
                 <span style={{ fontSize: 11, color: cs.muted }}>{new Date(r.created_at).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })}</span>
               </div>
               {r.message_text && <div style={{ fontSize: 12, color: cs.muted, fontStyle: "italic" }}>"{r.message_text}"</div>}
               {items.length > 0 && (
                 <div style={{ fontSize: 12, color: cs.text }}>
                   📦 {items.map((it, i) => <span key={i}>{i > 0 ? ", " : ""}<b>{it.type || "?"}</b>{it.brand ? " " + it.brand : ""}{it.size ? " " + it.size : ""}{it.qty ? ` (${it.qty}${typeof it.qty === "number" ? "kg" : ""})` : ""}</span>)}
+                </div>
+              )}
+              {arah !== "dibawa" && (
+                <div style={{ fontSize: 11.5, color: arahMeta.warna, background: arahMeta.warna + "14", border: "1px solid " + arahMeta.warna + "33", borderRadius: 6, padding: "5px 8px" }}>
+                  {arah === "terpakai"
+                    ? "Ini laporan PEMAKAIAN. Angka terpakai dihitung otomatis dari dibawa − sisa, jadi foto ini cukup ditandai Sudah Tercatat."
+                    : arah === "campuran"
+                      ? "Caption menyebut pemakaian DAN sisa. Yang perlu dicatat hanya SISA-nya — terpakai dihitung sendiri."
+                      : "Barang KEMBALI ke kantor. Jangan di-Link ke Job (itu artinya keluar) — pakai tombol ungu."}
                 </div>
               )}
               {carrierHint && (
@@ -241,9 +337,17 @@ function PendingAiMaterialTab({ supabase, showNotif, currentUser, addAgentLog })
                   </>
                 ) : (
                   <>
+                    {sisaJalur && (
+                      <button onClick={() => handleSisa(r)} disabled={busyId === r.id}
+                        title="Sisa masuk ke sesi PULANG teknisi — dari situ terpakai dihitung (dibawa − sisa)"
+                        style={{ background: "#a78bfa22", border: "1px solid #a78bfa66", color: "#a78bfa", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                        📥 Isi Sisa ke Sesi Pulang
+                      </button>
+                    )}
                     <button onClick={() => setPickerOpen(r.id)} disabled={busyId === r.id}
-                      style={{ background: "#10b98122", border: "1px solid #10b98155", color: "#10b981", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-                      ✓ Link ke Job
+                      title={sisaJalur ? "HATI-HATI: ini mencatat barang KELUAR ke job — kebalikan dari laporan sisa" : "Catat sebagai barang dibawa ke job"}
+                      style={{ background: sisaJalur ? "transparent" : "#10b98122", border: "1px solid " + (sisaJalur ? cs.border : "#10b98155"), color: sisaJalur ? cs.muted : "#10b981", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                      ✓ Link ke Job{sisaJalur ? " (dibawa)" : ""}
                     </button>
                     <button onClick={() => handleSudahTercatat(r)} disabled={busyId === r.id}
                       title="Teknisi sudah mencatat sendiri lewat tombol Bawa Material di job — jangan tambah baris baru"

@@ -101,7 +101,20 @@ Field per intent:
      bracket, sparepart, alat — pakai "Material Lain". Detail barangnya taruh di item_name.)
   Pilihan category: foto struk bensin SPBU/parkir/perbaikan motor/jajan/makan → "petty_cash".
   Foto nota toko bangunan/pipa/kabel/freon/material → "material_purchase".
-- material: { items: [{ type: "freon"|"pipa"|"kabel"|"lain", brand: string|null, size: string|null, qty: number|null }] }
+- material: { items: [{ type: "freon"|"pipa"|"kabel"|"lain", brand: string|null, size: string|null,
+                        qty: number|null, kind: "dibawa"|"terpakai"|"sisa" }] }
+  ARAH (kind) WAJIB diisi — ini menentukan stok bertambah atau berkurang:
+  - "dibawa"   : barang dibawa dari kantor ke lokasi ("bawa pipa A4 7 meter")
+  - "terpakai" : habis dipakai di pekerjaan ("terpakai 5 meter di ibu cassy")
+  - "sisa"     : kembali ke kantor / tidak jadi dipakai ("sisa 2 meter", "kembali
+                 kantor", "tidak terpakai 4,8kg") — ini KEBALIKAN dari "dibawa",
+                 jangan pernah ditandai "dibawa"
+  Kalau satu caption menyebut pemakaian DAN sisa sekaligus
+  ("pipa A4 7 meter terpakai 5 meter tersisa 2 meter"), buat DUA entri items[]:
+  satu {qty: 5, kind: "terpakai"} dan satu {qty: 2, kind: "sisa"}. Jangan pilih salah satu.
+  qty WAJIB berupa ANGKA murni dan size hanya untuk ukuran/tipe (A4, 1/4, R32).
+  Berat/panjang JANGAN ditaruh di size: "kembali tidak terpakai 4.8kg" →
+  {qty: 4.8, size: "R32", kind: "sisa"}, BUKAN {qty: 1, size: "4.8kg"}.
 - payment: { amount: number, bank: string, transfer_date: "YYYY-MM-DD"|null, sender_name: string|null, reference: string|null }
 
 Aturan confidence:
