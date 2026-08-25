@@ -30,3 +30,25 @@ export const isWorkingHours = () => {
   const timeMinutes = localHour * 60 + localMinute;
   return localDay >= 1 && localDay <= 6 && timeMinutes >= 480 && timeMinutes < 1140;
 };
+
+// Geser tanggal "YYYY-MM-DD" sekian hari (negatif = mundur), hasil tetap "YYYY-MM-DD".
+// Sengaja pakai UTC: string tanggal di DB tidak punya jam, jadi konstruktor Date
+// lokal bisa menggeser sehari saat melewati batas zona waktu.
+export const shiftDateStr = (dateStr, days) => {
+  const s = String(dateStr || "").slice(0, 10);
+  const [y, m, d] = s.split("-").map(Number);
+  if (!y || !m || !d) return dateStr;
+  const t = new Date(Date.UTC(y, m - 1, d));
+  t.setUTCDate(t.getUTCDate() + Number(days || 0));
+  return t.toISOString().slice(0, 10);
+};
+
+// Tampilan ringkas "22 Agu" / "22 Agu 2025" (tahun ditulis hanya bila beda dari acuan).
+export const shortDateID = (dateStr, refDate) => {
+  const s = String(dateStr || "").slice(0, 10);
+  const [y, m, d] = s.split("-").map(Number);
+  if (!y || !m || !d) return s;
+  const bulan = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+  const refY = Number(String(refDate || "").slice(0, 4)) || new Date().getFullYear();
+  return d + " " + bulan[m - 1] + (y === refY ? "" : " " + y);
+};

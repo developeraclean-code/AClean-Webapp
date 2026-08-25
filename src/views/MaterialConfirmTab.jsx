@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { cs } from "../theme/cs.js";
 import { computeDayDeduct, deductLines } from "../lib/materialDeduct.js";
 import { isFreonItem } from "../lib/inventory.js";
+import { shiftDateStr, shortDateID } from "../lib/dateTime.js";
 
 // Klasifikasi jenis material dari baris inventory (utk cocokkan unit picker ke draft AI).
 function classifyMat(inv) {
@@ -26,6 +27,11 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [view, setView] = useState("PENDING"); // PENDING | CONFIRMED
+  // Seberapa jauh ke belakang job boleh dipilih untuk ditautkan ke material.
+  // Dulu terkunci di tanggal sesi itu saja, jadi material yang baru dilaporkan
+  // beberapa hari kemudian tidak bisa ditautkan sama sekali (keluhan admin,
+  // 25 Agu 2026). Job hari yang sama tetap tampil paling atas & terpisah.
+  const [jobDays, setJobDays] = useState(7);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -64,10 +70,13 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
     // Untuk pakai: opsi job (order teknisi di tanggal itu) + unit picker per jenis
     let pakEntries = [];
     if (pakRows.length) {
-      const dates = [...new Set(pakRows.map((p) => p.checkout_date))];
+      const dates = [...new Set(pakRows.map((p) => p.checkout_date))].filter(Boolean).sort();
+      // Ambil order dari (tanggal sesi paling awal − jobDays) s/d tanggal sesi terakhir.
+      const dariTgl = shiftDateStr(dates[0], -Number(jobDays || 0));
+      const sampaiTgl = dates[dates.length - 1];
       const { data: dayOrders } = await supabase.from("orders")
         .select("id,customer,service,date,teknisi,teknisi2,teknisi3,helper,helper2,helper3")
-        .in("date", dates).limit(400);
+        .gte("date", dariTgl).lte("date", sampaiTgl).limit(900);
       const [{ data: inv }, unitsRes] = await Promise.all([
         supabase.from("inventory").select("code,name,material_type,unit"),
         fetchInventoryUnits ? fetchInventoryUnits(supabase) : Promise.resolve({ data: [] }),
@@ -81,15 +90,18 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
       }
       pakEntries = pakRows.map((row) => {
         const tekLower = String(row.teknisi_name || "").toLowerCase();
-        const jobOptions = (dayOrders || []).filter((o) => o.date === row.checkout_date &&
+        const batasAwal = shiftDateStr(row.checkout_date, -Number(jobDays || 0));
+        const jobOptions = (dayOrders || []).filter((o) =>
+          o.date && o.date <= row.checkout_date && o.date >= batasAwal &&
           [o.teknisi, o.teknisi2, o.teknisi3, o.helper, o.helper2, o.helper3].some((s) => s && String(s).toLowerCase() === tekLower))
-          .map((o) => ({ id: o.id, customer: o.customer, service: o.service }));
+          .map((o) => ({ id: o.id, customer: o.customer, service: o.service, date: o.date }))
+          .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(a.customer).localeCompare(String(b.customer)));
         return { row, jobOptions, unitsByType, jobMap };
       });
     }
     setPakai(pakEntries);
     setLoading(false);
-  }, [supabase, view, fetchInventoryUnits]);
+  }, [supabase, view, fetchInventoryUnits, jobDays]);
   useEffect(() => { load(); }, [load]);
 
   const refreshStock = async () => {
@@ -171,7 +183,11 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
         const { data: ins } = await supabase.from("inventory_transactions").insert({
           inventory_code: l.inventory_code, inventory_name: l.label,
           qty: -qty, qty_actual: -qty, type: "usage",
-          teknisi_name: row.teknisi_name, job_date: row.checkout_date,
+          // Tanggal job yang ditautkan — bukan tanggal sesi material. Kalau material
+          // baru dilaporkan beberapa hari setelah pekerjaan, riwayat pemakaian &
+          // biaya per job tetap jatuh di hari pekerjaan yang benar.
+          teknisi_name: row.teknisi_name,
+          job_date: l.per_job?.[0]?.job_date || row.checkout_date,
           order_id: l.per_job?.[0]?.job_id || null,
           unit_id: l.unit_id, unit_label: l.label,
           notes: "Pemakaian (draft AI) confirm oleh " + (currentUser?.name || ""),
@@ -203,10 +219,24 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
     <div style={{ display: "grid", gap: 14 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
         <div style={{ fontSize: 13, color: cs.muted }}>Confirm pemakaian material → <b style={{ color: cs.text }}>potong stok asli</b>. Baris <b>🤖 draft AI</b> = dari foto/laporan grup, pilih job + tabung/roll lalu confirm.</div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        {pakai.length > 0 && (
+          <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12, color: cs.muted }}>
+            Job sampai
+            <select value={jobDays} onChange={(e) => setJobDays(Number(e.target.value))}
+              style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 6, padding: "5px 8px", color: cs.text, fontSize: 12, cursor: "pointer" }}>
+              <option value={0}>hari itu saja</option>
+              <option value={3}>3 hari ke belakang</option>
+              <option value={7}>7 hari ke belakang</option>
+              <option value={30}>30 hari ke belakang</option>
+            </select>
+          </label>
+        )}
         <div style={{ display: "flex", gap: 4, background: cs.surface, borderRadius: 8, padding: 3 }}>
           {["PENDING", "CONFIRMED"].map((v) => (
             <button key={v} onClick={() => setView(v)} style={{ padding: "5px 12px", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer", background: view === v ? cs.accent : "transparent", color: view === v ? "#fff" : cs.muted }}>{v === "PENDING" ? "Menunggu" : "Selesai"}</button>
           ))}
+        </div>
         </div>
       </div>
 
@@ -269,6 +299,10 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
 // Kartu draft AI (sesi 'pakai') — baris editable: qty, job (nama customer), tabung/roll.
 function PakaiCard({ entry, view, busy, onConfirm, onReject }) {
   const { row, jobOptions, unitsByType } = entry;
+  // Job hari yang sama tetap didahulukan; job hari sebelumnya dipisah ke grup
+  // tersendiri lengkap dgn tanggal, supaya admin tidak salah tempel material.
+  const jobHariSama = jobOptions.filter((o) => o.date === row.checkout_date);
+  const jobHariLalu = jobOptions.filter((o) => o.date !== row.checkout_date);
   const [lines, setLines] = useState(() => (Array.isArray(row.items) ? row.items.map((l) => ({ ...l })) : []));
   const setLine = (i, patch) => setLines((ls) => ls.map((l, idx) => idx === i ? { ...l, ...patch } : l));
   const dropLine = (i) => setLines((ls) => ls.filter((_, idx) => idx !== i));
@@ -318,10 +352,20 @@ function PakaiCard({ entry, view, busy, onConfirm, onReject }) {
                     <select value={l.per_job?.[0]?.job_id || ""} onChange={(e) => {
                       const jid = e.target.value || null;
                       const opt = jobOptions.find((o) => o.id === jid);
-                      setLine(i, { per_job: [{ job_id: jid, customer: opt?.customer || l.per_job?.[0]?.customer || null, qty: Number(l.qty) || 0 }] });
+                      setLine(i, { per_job: [{ job_id: jid, customer: opt?.customer || l.per_job?.[0]?.customer || null, job_date: opt?.date || null, qty: Number(l.qty) || 0 }] });
                     }} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 6, padding: "6px 8px", color: cs.text, fontSize: 12.5 }}>
                       <option value="">— pilih customer —{l.per_job?.[0]?.customer && !l.per_job?.[0]?.job_id ? ` (AI: ${l.per_job[0].customer})` : ""}</option>
-                      {jobOptions.map((o) => <option key={o.id} value={o.id}>{o.customer}{o.service ? " · " + o.service : ""}</option>)}
+                      {jobHariSama.length > 0 && (
+                        <optgroup label={`Hari yang sama · ${shortDateID(row.checkout_date)}`}>
+                          {jobHariSama.map((o) => <option key={o.id} value={o.id}>{o.customer}{o.service ? " · " + o.service : ""}</option>)}
+                        </optgroup>
+                      )}
+                      {jobHariLalu.length > 0 && (
+                        <optgroup label="Hari sebelumnya">
+                          {jobHariLalu.map((o) => <option key={o.id} value={o.id}>{shortDateID(o.date, row.checkout_date)} · {o.customer}{o.service ? " · " + o.service : ""}</option>)}
+                        </optgroup>
+                      )}
+                      {jobOptions.length === 0 && <option value="" disabled>(tidak ada job {row.teknisi_name} di rentang ini)</option>}
                     </select>
                   </div>
                   {isTracked && (
