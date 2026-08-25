@@ -1,5 +1,7 @@
 // retroMatchPayment — cari bukti bayar (payment_suggestions) yg cocok utk invoice yg
 // baru di-approve (by phone, 7 hari). Diekstrak dari App.jsx (Fase 3, pola ctx).
+import { findNearPhoneSuggestion } from "./phoneFuzzy.js";
+
 export async function retroMatchPayment(inv, {
   addAgentLog, normalizePhone, sendWA, setInvoicesData, supabase, userAccounts,
 } = {}) {
@@ -20,10 +22,30 @@ export async function retroMatchPayment(inv, {
         .order("created_at", { ascending: false })
         .limit(5);
 
-      if (error || !candidates?.length) return;
+      if (error) return;
 
-      // Ambil kandidat terbaik: yang paling baru
-      const best = candidates[0];
+      // Kandidat terbaik: yang paling baru dari nomor yang SAMA PERSIS.
+      let best = candidates?.[0] || null;
+      let fuzzy = false;
+
+      // Jaring ke-2: nomor customer di DB salah 1 digit (kasus Bapak Ricky,
+      // 22 Agu 2026). Exact match tidak akan pernah ketemu, jadi cari lewat
+      // nominal yang sama persis lalu saring dgn toleransi 1 digit. Kalau
+      // kandidatnya tidak tepat satu, menyerah — biar Owner cocokkan manual.
+      if (!best) {
+        const { data: nearCands } = await supabase
+          .from("payment_suggestions")
+          .select("id, phone, amount, bank, transfer_date, image_url, source, created_at")
+          .is("invoice_id", null)
+          .eq("status", "PENDING")
+          .eq("amount", Number(inv.total) || 0)
+          .gte("created_at", cutoff)
+          .limit(20);
+        const near = findNearPhoneSuggestion(norm, nearCands || [], inv.total);
+        if (near) { best = near; fuzzy = true; }
+      }
+
+      if (!best) return;
       const now = new Date().toISOString();
 
       // Patch payment_suggestion → link ke invoice ini
@@ -31,7 +53,7 @@ export async function retroMatchPayment(inv, {
         invoice_id: inv.id,
         order_id: inv.job_id || null,
         matched_at: now,
-        match_source: "retro",
+        match_source: fuzzy ? "retro_fuzzy_1digit" : "retro",
       }).eq("id", best.id);
 
       // Patch invoice → simpan payment_proof_url jika ada foto
@@ -46,6 +68,10 @@ export async function retroMatchPayment(inv, {
       }
 
       // Cek selisih nominal
+      const fuzzyNote = fuzzy
+        ? `\n⚠️ *Dicocokkan lewat toleransi 1 digit*\nNomor invoice ${norm} vs nomor pengirim ${best.phone} — beda 1 digit, nominal sama persis.\nMohon betulkan nomor customer setelah verifikasi.\n`
+        : "";
+
       const invTotal = Number(inv.total) || 0;
       const paidAmt  = Number(best.amount) || 0;
       const selisih  = Math.abs(invTotal - paidAmt);
@@ -67,6 +93,7 @@ export async function retroMatchPayment(inv, {
           `Selisih: Rp${selisih.toLocaleString("id-ID")}\n` +
           `Tgl Bukti: ${tglBukti} · Tgl Invoice: ${tglInvoice}\n` +
           (best.bank ? `Bank: ${best.bank}\n` : "") +
+          fuzzyNote +
           `\n🔍 Cek manual di menu Invoice → ${inv.id}`;
         ownerAccs.forEach(u => sendWA(u.phone, warnMsg));
         addAgentLog("RETRO_MATCH_WARN", `Retro-match ${inv.id} ← ${best.id} | selisih Rp${selisih.toLocaleString("id-ID")}`, "WARNING");
@@ -79,9 +106,10 @@ export async function retroMatchPayment(inv, {
           (paidAmt > 0 ? `Nominal: Rp${paidAmt.toLocaleString("id-ID")}\n` : `Nominal: tidak terbaca dari bukti\n`) +
           `Tgl Bukti: ${tglBukti} · Tgl Invoice: ${tglInvoice}\n` +
           (best.bank ? `Bank: ${best.bank}\n` : "") +
+          fuzzyNote +
           `\n📋 Cek & konfirmasi PAID di menu Invoice → ${inv.id}`;
         ownerAccs.forEach(u => sendWA(u.phone, okMsg));
-        addAgentLog("RETRO_MATCH_OK", `Retro-match ${inv.id} ← ${best.id}${paidAmt > 0 ? " | Rp" + paidAmt.toLocaleString("id-ID") : " | nominal ?"}`, "SUCCESS");
+        addAgentLog(fuzzy ? "RETRO_MATCH_FUZZY" : "RETRO_MATCH_OK", `Retro-match ${inv.id} ← ${best.id}${paidAmt > 0 ? " | Rp" + paidAmt.toLocaleString("id-ID") : " | nominal ?"}${fuzzy ? " | toleransi 1 digit (" + norm + " vs " + best.phone + ")" : ""}`, fuzzy ? "WARNING" : "SUCCESS");
       }
     } catch (e) {
       console.warn("[RETRO_MATCH] error:", e.message);

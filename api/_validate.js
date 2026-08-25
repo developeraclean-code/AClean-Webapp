@@ -40,6 +40,55 @@ export function buildPhoneVariants(normalized) {
   ];
 }
 
+// ── Jaring pengaman: cocokkan nomor yang beda SATU digit ────────────────────
+// MIRROR dari src/lib/phoneFuzzy.js (backend Vercel tidak import lintas folder
+// src/). Parity dijaga test src/lib/__tests__/phoneFuzzy.test.js — kalau ubah
+// di sini, ubah juga di sana.
+//
+// Kasus nyata: bukti bayar Bapak Ricky tidak pernah nyambung ke invoice karena
+// nomor di DB kehilangan 1 digit (628121047006 → 62812047006). buildPhoneVariants
+// hanya menangani beda format, bukan beda digit.
+const NEAR_PHONE_MIN_LEN = 10;
+
+export function isNearPhone(a, b) {
+  const x = String(a || "").replace(/[^\d]/g, "");
+  const y = String(b || "").replace(/[^\d]/g, "");
+  if (!x || !y || x === y) return false;
+  if (x.length < NEAR_PHONE_MIN_LEN || y.length < NEAR_PHONE_MIN_LEN) return false;
+  if (!x.startsWith("62") || !y.startsWith("62")) return false;
+
+  const diff = x.length - y.length;
+  if (Math.abs(diff) > 1) return false;
+
+  if (diff === 0) {
+    let salah = 0;
+    for (let i = 0; i < x.length; i++) {
+      if (x[i] !== y[i] && ++salah > 1) return false;
+    }
+    return salah === 1;
+  }
+
+  const [panjang, pendek] = diff > 0 ? [x, y] : [y, x];
+  let i = 0, j = 0, dibuang = 0;
+  while (i < panjang.length && j < pendek.length) {
+    if (panjang[i] === pendek[j]) { i++; j++; continue; }
+    if (++dibuang > 1) return false;
+    i++;
+  }
+  return true;
+}
+
+// Aman dipakai otomatis HANYA karena tiga syarat sekaligus: nominal sama persis,
+// nomor beda maks 1 digit, dan kandidatnya tepat satu (2+ → menyerah, biar manual).
+export function findNearPhoneInvoice(senderPhone, invoices, amount) {
+  const nominal = Number(amount) || 0;
+  if (!nominal || !senderPhone || !Array.isArray(invoices)) return null;
+  const cocok = invoices.filter(inv =>
+    Number(inv?.total) === nominal && isNearPhone(senderPhone, inv?.phone)
+  );
+  return cocok.length === 1 ? cocok[0] : null;
+}
+
 export function validateMessage(msg, maxLen = 4096) {
   if (!msg || typeof msg !== "string") return null;
   const trimmed = msg.trim();

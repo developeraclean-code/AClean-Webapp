@@ -3,7 +3,7 @@
 // receive-wa = webhook Fonnte (jalur paling panas) — di-dispatch oleh router,
 // PUBLIC_ROUTES & CORS tetap di router.
 import { checkRateLimit } from "../_auth.js";
-import { validateAndNormalizePhone, buildPhoneVariants, validateMessage, sanitizeName } from "../_validate.js";
+import { validateAndNormalizePhone, buildPhoneVariants, validateMessage, sanitizeName, findNearPhoneInvoice } from "../_validate.js";
 import { criticalFetch, sentryCatch } from "../_report.js";
 import { classifyImage, persistClassification, safeDateStr } from "../_ai-vision.js";
 import { analyzeToolBagPhoto } from "../_tool-bag-vision.js";
@@ -2033,6 +2033,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                   if (payDetectOn && classified && classified.category === "bukti_transfer") {
                     let matchedInvoice = null;
                     let matchedOrderId = null;
+                    let matchedFuzzy = false; // true = ketemu lewat toleransi 1 digit, WAJIB diverifikasi Owner
                     try {
                       // Fix Bug 1: cari semua format phone yang mungkin (628xxx, 08xxx, +628xxx)
                       const phoneVariants = buildPhoneVariants(sender);
@@ -2071,6 +2072,31 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                           }
                         }
                       }
+                      // Jaring ke-3: nomor customer di DB salah SATU digit (kasus Bapak
+                      // Ricky, 22 Agu 2026 — 628121047006 tersimpan 62812047006). Exact
+                      // match mustahil ketemu, jadi cari lewat nominal dulu baru saring
+                      // dgn toleransi 1 digit. Hanya dipakai kalau kandidatnya TEPAT SATU,
+                      // dan hasilnya ditandai matchedFuzzy supaya Owner tetap verifikasi.
+                      if (!matchedInvoice && classified.amount) {
+                        const sejak = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
+                        const nearRes = await fetch(
+                          SU + "/rest/v1/invoices?select=id,job_id,total,status,phone" +
+                          "&total=eq." + encodeURIComponent(Number(classified.amount)) +
+                          "&status=in.(UNPAID,OVERDUE,PARTIAL_PAID)" +
+                          "&created_at=gte." + encodeURIComponent(sejak) +
+                          "&order=created_at.desc&limit=20",
+                          { headers: { apikey: SK, Authorization: "Bearer " + SK } }
+                        );
+                        if (nearRes.ok) {
+                          const near = findNearPhoneInvoice(sender, await nearRes.json(), classified.amount);
+                          if (near) {
+                            matchedInvoice = near;
+                            matchedOrderId = near.job_id || null;
+                            matchedFuzzy = true;
+                            console.warn("[PAY_NEAR_PHONE] cocok toleransi 1 digit:", sender, "->", near.phone, near.id);
+                          }
+                        }
+                      }
                       if (!matchedOrderId && ordRes.ok) {
                         const ords = await ordRes.json();
                         if (ords?.length > 0) matchedOrderId = ords[0].id;
@@ -2103,6 +2129,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                           amount: classified.amount || null, bank: classified.bank || null,
                           transfer_date: safeDateStr(classified.transfer_date),
                           invoice_id: matchedInvoiceId, order_id: matchedOrderId,
+                          match_source: matchedFuzzy ? "fuzzy_1digit" : null,
                           status: "PENDING", source: "image",
                           image_url: savedImageUrl || mediaUrl, created_at: nowIso
                         })
@@ -2155,6 +2182,10 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                         + (classified.amount ? "Nominal: Rp" + Number(classified.amount).toLocaleString("id-ID") + "\n" : "Nominal: tidak terbaca\n")
                         + (classified.bank ? "Bank: " + classified.bank + "\n" : "")
                         + (matchedInvoiceId ? "Invoice: " + matchedInvoiceId + " (" + (matchedInvoice?.status || "UNPAID") + ")\n" : "⚠️ Invoice tidak ditemukan\n")
+                        + (matchedFuzzy
+                            ? "\n⚠️ *Dicocokkan lewat toleransi 1 digit.*\nNomor WA " + sender + " vs nomor invoice " + (matchedInvoice?.phone || "?")
+                              + " — beda 1 digit. Nominal sama persis.\nMohon cek benar ini invoice yang tepat, lalu betulkan nomor customer-nya.\n"
+                            : "")
                         + "\n📷 Foto bukti tersimpan otomatis.\n✅ Cek & klik *Paid* manual di menu Invoice.";
                       fetch("https://api.fonnte.com/send", {
                         method: "POST",
