@@ -5,6 +5,7 @@ import { displayStock, computeStockStatus } from "../lib/inventory.js";
 import { reconcileDay, sumReportedUsage, reconStatus } from "../lib/materialRecon.js";
 import { shiftDateStr } from "../lib/dateTime.js";
 import MaterialConfirmTab from "./MaterialConfirmTab.jsx";
+import MaterialBroughtRecapTab from "./MaterialBroughtRecapTab.jsx";
 
 // ───────────────────────────────────────────────
 // Pending AI Material — manual approve only (no auto-insert)
@@ -70,7 +71,10 @@ function PendingAiMaterialTab({ supabase, showNotif, currentUser }) {
         inventory_name: [it.brand, it.size].filter(Boolean).join(" ") || `${it.type || "material"} (AI)`,
         qty_estimate: Number(it.qty) || 1,
         brought_at: new Date().toISOString(),
-        brought_by: row.sender_name,
+        // Pembawa ≠ pengirim foto. Caption "dibawa pak eri" sudah diurai jadi
+        // carrier_hint, dan itu yang lebih benar untuk kolom ini; sender hanya
+        // cadangan kalau caption tidak menyebut siapa pun.
+        brought_by: row.extracted?._candidates?.carrier_hint || row.sender_name,
         status: "BROUGHT",
         notes: `[AI vision approved] ${row.notes || ""}`.trim(),
       }));
@@ -798,6 +802,7 @@ return (
         {[
           { id: "stok",           label: "📦 Stok & Tracking" },
           { id: "pending_ai",     label: "🤖 Pending AI Material" },
+          { id: "dibawa",         label: "📥 Material Dibawa" },
           { id: "laporan_freon",  label: "❄️ Laporan Freon" },
           { id: "laporan_pipa",   label: "🔧 Laporan Pipa" },
           { id: "laporan_kabel",  label: "⚡ Laporan Kabel" },
@@ -819,6 +824,13 @@ return (
         ═══════════════════════════════════════════════ */}
     {mainTab === "pending_ai" && isOwnerAdmin && (
       <PendingAiMaterialTab supabase={supabase} showNotif={showNotif} currentUser={currentUser} />
+    )}
+
+    {/* ═══════════════════════════════════════════════
+        TAB: MATERIAL DIBAWA — rekap job_materials_brought lintas job
+        ═══════════════════════════════════════════════ */}
+    {mainTab === "dibawa" && isOwnerAdmin && (
+      <MaterialBroughtRecapTab supabase={supabase} showNotif={showNotif} />
     )}
 
     {/* ═══════════════════════════════════════════════
