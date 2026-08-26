@@ -204,7 +204,7 @@ if (role === "Teknisi" || role === "Helper") {
 
 // ── OWNER / ADMIN DASHBOARD ────────────────────────────────
 // Tanggal pengerjaan = order.date (bukan paid_at). Fallback ke created_at invoice.
-const orderDateMap = Object.fromEntries(ordersData.map(o => [o.id, o.date]));
+const orderDateMap = Object.fromEntries((finOrders || ordersData).map(o => [o.id, o.date]));
 // Teknisi utama job = dari ORDER (selalu terisi), bukan invoice.teknisi yang mayoritas NULL.
 // invoice.teknisi cuma fallback bila job_id tak ketemu (order terhapus).
 const orderTeknisiMap = Object.fromEntries(ordersData.filter(o => o.teknisi).map(o => [o.id, o.teknisi]));
@@ -216,7 +216,7 @@ const todayOrders = ordersData.filter(o => o.date === TODAY);
 const unpaidCount = invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length;
 // Passthrough unit AC: ac_unit_sale & quotation_converted (keduanya jual unit AC, harga unit tidak masuk omset AClean)
 const isAcSaleInvoice = (i) => i.invoice_type === "ac_unit_sale" || i.invoice_type === "quotation_converted";
-const totalRevBulanIni = invoicesData.filter(i => i.status === "PAID" && jobDate(i).startsWith(bulanIni)).reduce((a, b) => {
+const totalRevBulanIni = (finInvoices || invoicesData).filter(i => i.status === "PAID" && jobDate(i).startsWith(bulanIni)).reduce((a, b) => {
   const passthrough = isAcSaleInvoice(b) ? (b.unit_ac_amount || 0) : 0;
   return a + (b.total || 0) - passthrough;
 }, 0);
@@ -341,7 +341,7 @@ return (
       };
 
       // Pendapatan berdasarkan tanggal PENGERJAAN (order.date), bukan tanggal bayar
-      const paidInvoices = invoicesData.filter(i => i.status === "PAID" && jobDate(i));
+      const paidInvoices = (finInvoices || invoicesData).filter(i => i.status === "PAID" && jobDate(i));
 
       // Helper: revenue efektif AClean — skip unit_ac_amount (passthrough) untuk ac_unit_sale & quotation_converted
       const effRev = (i) => (i.total || 0) - (isAcSaleInvoice(i) ? (i.unit_ac_amount || 0) : 0);

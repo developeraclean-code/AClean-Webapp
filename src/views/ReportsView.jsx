@@ -118,7 +118,12 @@ const inRange = (tgl) => {
   }
   return true; // tanpa filter
 };
-const filterInvByPeriod = (inv) => inRange(String(inv.paid_at || inv.created_at || ""));
+// Basis periode invoice = TANGGAL JOB/ORDER (bukan paid_at) — konsisten dgn Dashboard
+// "Pendapatan Bln Ini" (DashboardView.jobDate). Fallback created_at bila order terhapus.
+// Sebelumnya pakai paid_at → Statistik & Dashboard beda angka utk bulan yg sama.
+const orderDateMap = Object.fromEntries(ordersData.filter(o => o.date).map(o => [o.id, o.date]));
+const invJobDate = (inv) => orderDateMap[inv.job_id] || String(inv.created_at || "").slice(0, 10) || "";
+const filterInvByPeriod = (inv) => inRange(invJobDate(inv));
 const filterOrderByPeriod = (o) => inRange(String(o.date || ""));
 
 // ── Revenue & Invoice ──
