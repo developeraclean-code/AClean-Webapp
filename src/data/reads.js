@@ -276,6 +276,24 @@ export const fetchExpenses = (supabase) =>
     .is("deleted_at", null)
     .order("date", { ascending: false }).limit(2000);
 
+// Semua expense tanpa cap (paginate .range() — PostgREST batas 1000/request; limit(2000)
+// di atas diam-diam ter-cut ke 1000). Untuk total finansial all-time/bulanan yang akurat.
+export const fetchAllExpenses = async (supabase) => {
+  let all = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase.from("expenses")
+      .select("id,date,amount,category,subcategory,description,teknisi_name,item_name,freon_type,created_at")
+      .is("deleted_at", null)
+      .order("date", { ascending: false }).range(from, from + FULL_FETCH_PAGE - 1);
+    if (error) return { data: all, error };
+    all = all.concat(data || []);
+    if (!data || data.length < FULL_FETCH_PAGE) break;
+    from += FULL_FETCH_PAGE;
+  }
+  return { data: all, error: null };
+};
+
 // Recycle bin — expenses yang sudah di-soft-delete (untuk tab "Dihapus")
 export const fetchDeletedExpenses = (supabase) =>
   supabase.from("expenses")

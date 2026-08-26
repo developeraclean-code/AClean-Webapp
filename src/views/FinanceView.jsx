@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { cs } from "../theme/cs.js";
 import { getLocalDate } from "../lib/dateTime.js";
+import { fetchAllInvoices, fetchAllExpenses } from "../data/reads.js";
 import { GajiTab } from "./TeknisiAdminView.jsx";
 
 // WIB offset helper — konsisten dengan getLocalDate dari dateTime.js
@@ -568,6 +569,28 @@ export default function FinanceView({ currentUser, ordersData, invoicesData, exp
   const [paymentProofModal, setPaymentProofModal] = useState(null);
   const [dateOffset, setDateOffset] = useState(0);
 
+  // Prop invoicesData(cap 300)/expensesData(cap 1000) TIDAK cukup untuk total finansial
+  // all-time & bulanan (1922 invoice / 1509 expense) → angka undercount parah. Fetch penuh
+  // (paginated) sekali saat buka Finance. Fallback ke prop capped selama loading.
+  const [finAllInv, setFinAllInv] = useState(null);
+  const [finAllExp, setFinAllExp] = useState(null);
+  useEffect(() => {
+    if (!supabase) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [{ data: inv }, { data: exp }] = await Promise.all([
+          fetchAllInvoices(supabase), fetchAllExpenses(supabase),
+        ]);
+        if (cancelled) return;
+        setFinAllInv(inv || []); setFinAllExp(exp || []);
+      } catch (e) { console.warn("[FINANCE] gagal muat data penuh:", e?.message || e); }
+    })();
+    return () => { cancelled = true; };
+  }, [supabase]);
+  const allInv = finAllInv || invoicesData;
+  const allExp = finAllExp || expensesData;
+
   // Gunakan WIB helper — bukan toISOString() mentah yang UTC
   const todayStr = useMemo(() => getWIBDateStr(dateOffset), [dateOffset]);
   const currentDate = useMemo(() => getWIBDateLabel(dateOffset), [dateOffset]);
@@ -595,8 +618,8 @@ export default function FinanceView({ currentUser, ordersData, invoicesData, exp
           </div>
         </div>
         <div style={{ fontSize: 11, color: cs.muted, textAlign: "right" }}>
-          {(invoicesData || []).filter(i => i.status === "PAID").length} invoice PAID
-          {" · "}{(invoicesData || []).filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length} belum lunas
+          {(allInv || []).filter(i => i.status === "PAID").length} invoice PAID
+          {" · "}{(allInv || []).filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length} belum lunas
         </div>
       </div>
 
@@ -622,7 +645,7 @@ export default function FinanceView({ currentUser, ordersData, invoicesData, exp
         <DashboardTab
           ordersData={filteredOrders}
           invoicesData={filteredInvoices}
-          allInvoices={invoicesData}
+          allInvoices={allInv}
           todayStr={todayStr}
           currentDate={currentDate}
           onPrevDay={() => setDateOffset(d => d - 1)}
@@ -635,8 +658,8 @@ export default function FinanceView({ currentUser, ordersData, invoicesData, exp
       )}
       {activeTab === "planning" && (
         <PlanningTab
-          allInvoices={invoicesData}
-          allExpenses={expensesData}
+          allInvoices={allInv}
+          allExpenses={allExp}
         />
       )}
 
