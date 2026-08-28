@@ -1704,13 +1704,17 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
 // Disimpan ke app_settings.bonus_categories (JSON). Owner only.
 // ═══════════════════════════════════════════════════════════════
 function BonusSettingPanel({ bonusCategories, setBonusCategories, supabase, showNotif, showConfirm }) {
-  const [rows, setRows]     = useState(() => bonusCategories.map(c => ({ ...c, detection_keywords: [...(c.detection_keywords || [])] })));
+  const [rows, setRows]     = useState(() => bonusCategories.map(c => ({
+    ...c,
+    detection_keywords: [...(c.detection_keywords || [])],
+    exclude_keywords:   [...(c.exclude_keywords   || [])],
+  })));
   const [saving, setSaving] = useState(false);
 
   const slugify = (s) => (s || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || ("bonus_" + Date.now());
 
   const updateRow = (idx, field, val) => setRows(prev => prev.map((r, i) => i === idx ? { ...r, [field]: val } : r));
-  const addRow    = () => setRows(prev => [...prev, { id: "", label: "", amount: 0, detection_keywords: "" }]);
+  const addRow    = () => setRows(prev => [...prev, { id: "", label: "", amount: 0, detection_keywords: "", exclude_keywords: "" }]);
   const removeRow = (idx) => setRows(prev => prev.filter((_, i) => i !== idx));
 
   const handleSave = async () => {
@@ -1723,10 +1727,14 @@ function BonusSettingPanel({ bonusCategories, setBonusCategories, supabase, show
       let id = (r.id || "").trim() || slugify(label);
       if (seen.has(id)) { showNotif?.(`❌ ID duplikat: ${id} — pakai label/ID unik`); return; }
       seen.add(id);
-      const keywords = Array.isArray(r.detection_keywords)
-        ? r.detection_keywords
-        : String(r.detection_keywords || "").split(",").map(k => k.trim().toLowerCase()).filter(Boolean);
-      cleaned.push({ id, label, amount: Number(r.amount) || 0, detection_keywords: keywords });
+      // Satu normalisasi untuk kedua kolom: terima array ATAU string mentah dari input.
+      const norm = (v) => (Array.isArray(v) ? v : String(v || "").split(","))
+        .map(k => String(k || "").trim().toLowerCase()).filter(Boolean);
+      cleaned.push({
+        id, label, amount: Number(r.amount) || 0,
+        detection_keywords: norm(r.detection_keywords),
+        exclude_keywords:   norm(r.exclude_keywords),
+      });
     }
     if (cleaned.length === 0) { showNotif?.("❌ Minimal 1 kategori bonus"); return; }
     setSaving(true);
@@ -1735,7 +1743,7 @@ function BonusSettingPanel({ bonusCategories, setBonusCategories, supabase, show
     setSaving(false);
     if (error) { showNotif?.("❌ Gagal simpan: " + error.message); return; }
     setBonusCategories?.(cleaned);
-    setRows(cleaned.map(c => ({ ...c, detection_keywords: [...c.detection_keywords] })));
+    setRows(cleaned.map(c => ({ ...c, detection_keywords: [...c.detection_keywords], exclude_keywords: [...c.exclude_keywords] })));
     showNotif?.("✅ Kategori bonus tersimpan");
   };
 
@@ -1743,7 +1751,7 @@ function BonusSettingPanel({ bonusCategories, setBonusCategories, supabase, show
     showConfirm?.({
       message: "Kembalikan kategori bonus ke setelan bawaan? Klik Simpan setelahnya untuk menyimpan.",
       confirmText: "Ya, Reset",
-      onConfirm: () => setRows(DEFAULT_BONUS_CATEGORIES.map(c => ({ ...c, detection_keywords: [...c.detection_keywords] }))),
+      onConfirm: () => setRows(DEFAULT_BONUS_CATEGORIES.map(c => ({ ...c, detection_keywords: [...c.detection_keywords], exclude_keywords: [...(c.exclude_keywords || [])] }))),
     });
   };
 
@@ -1753,18 +1761,20 @@ function BonusSettingPanel({ bonusCategories, setBonusCategories, supabase, show
     <div style={{ background: cs.surface, borderRadius: 12, padding: 16, border: "1px solid " + cs.border }}>
       <div style={{ fontWeight: 800, fontSize: 14, color: cs.text, marginBottom: 4 }}>⚙️ Setting Kategori Bonus</div>
       <div style={{ fontSize: 12, color: cs.muted, marginBottom: 14 }}>
-        Atur tipe bonus, nominal default per tim, dan keyword auto-deteksi dari invoice.
-        Keyword pisahkan dengan koma (AND-logic: semua keyword harus muncul di nama item). Kosongkan keyword untuk kategori yang ditentukan manual/threshold (margin, install).
+        Atur tipe bonus, nominal default per tim, dan keyword auto-deteksi dari invoice. Pisahkan dengan koma.
+        <br /><b>Keyword Deteksi</b> = logika <b>DAN</b> — semua kata harus muncul di nama item, jadi menambah kata justru <b>mempersempit</b>.
+        <br /><b>Kecuali</b> = logika <b>ATAU</b> — satu kata cocok, item langsung dibuang. Pakai ini kalau mau mempersempit.
+        <br />Kosongkan keduanya untuk kategori yang ditentukan manual/threshold (margin, install).
       </div>
 
       {/* Header kolom */}
-      <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1.6fr 36px", gap: 8, fontSize: 11, color: cs.muted, fontWeight: 700, marginBottom: 6, padding: "0 2px" }}>
-        <div>Label</div><div>Nominal/tim (Rp)</div><div>Keyword Deteksi (koma)</div><div></div>
+      <div style={{ display: "grid", gridTemplateColumns: "1.3fr 0.9fr 1.5fr 1.2fr 36px", gap: 8, fontSize: 11, color: cs.muted, fontWeight: 700, marginBottom: 6, padding: "0 2px" }}>
+        <div>Label</div><div>Nominal/tim (Rp)</div><div>Keyword Deteksi (DAN)</div><div>Kecuali (ATAU)</div><div></div>
       </div>
 
       <div style={{ display: "grid", gap: 8 }}>
         {rows.map((r, idx) => (
-          <div key={idx} style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1.6fr 36px", gap: 8, alignItems: "center" }}>
+          <div key={idx} style={{ display: "grid", gridTemplateColumns: "1.3fr 0.9fr 1.5fr 1.2fr 36px", gap: 8, alignItems: "center" }}>
             <input value={r.label} placeholder="cth: Isi Freon" onChange={e => updateRow(idx, "label", e.target.value)} style={inputStyle} />
             <input type="number" value={r.amount} placeholder="0" onChange={e => updateRow(idx, "amount", e.target.value)} style={inputStyle} />
             <input
@@ -1773,6 +1783,12 @@ function BonusSettingPanel({ bonusCategories, setBonusCategories, supabase, show
               // Simpan string MENTAH saat mengetik — biar spasi & koma tidak "dimakan".
               // Normalisasi (split koma → trim → lowercase) dilakukan sekali saat handleSave.
               onChange={e => updateRow(idx, "detection_keywords", e.target.value)}
+              style={inputStyle}
+            />
+            <input
+              value={Array.isArray(r.exclude_keywords) ? r.exclude_keywords.join(", ") : (r.exclude_keywords || "")}
+              placeholder="cth: pengisian"
+              onChange={e => updateRow(idx, "exclude_keywords", e.target.value)}
               style={inputStyle}
             />
             <button onClick={() => removeRow(idx)} title="Hapus" style={{ padding: "7px 0", borderRadius: 6, background: cs.card, border: "1px solid " + cs.red + "66", color: cs.red, cursor: "pointer", fontSize: 13 }}>🗑</button>

@@ -9,14 +9,26 @@ export const SPECIAL_BONUS_IDS = ["freon", "kapasitor", "thermis"];
 export const OMSET_THRESHOLD_DEFAULT = 1000000;
 export const OMSET_THRESHOLD_INSTALL = 1500000;
 
-// Deteksi kategori bonus dari materials_detail invoice (AND-logic per keyword kategori).
+// Normalisasi daftar keyword dari app_settings: boleh array ATAU string dipisah koma
+// (kolom di UI Setting Bonus menyimpan teks). Selalu lowercase + trim + buang yang kosong.
+function normKeywords(v) {
+  const arr = Array.isArray(v) ? v : String(v || "").split(",");
+  return arr.map(k => String(k || "").toLowerCase().trim()).filter(Boolean);
+}
+
+// Deteksi kategori bonus dari materials_detail invoice.
+//   detection_keywords → logika DAN: SEMUA kata harus ada. Menambah kata MEMPERSEMPIT.
+//   exclude_keywords   → logika ATAU: SATU kata saja cocok, item langsung dibuang.
+// Pemisahan ini disengaja: memperluas cakupan = kurangi include; mempersempit = tambah exclude.
+// Contoh (keputusan Owner 26 Agu 2026, skema insentif 2025): kategori "freon" memakai
+// include ["freon"] + exclude ["pengisian"], supaya "Jasa Pengisian Freon" (freon milik
+// customer, teknisi hanya jasa isi) tidak ikut dapat bonus.
 // Return { detected: [categoryId], names: { categoryId: [namaItem] } }
 export function detectBonusFromInvoice(materialsDetail, orderService = "", bonusCategories = []) {
   const keywordMap = {};
   bonusCategories.forEach(cat => {
-    if (cat.detection_keywords && Array.isArray(cat.detection_keywords) && cat.detection_keywords.length > 0) {
-      keywordMap[cat.id] = cat.detection_keywords;
-    }
+    const include = normKeywords(cat.detection_keywords);
+    if (include.length > 0) keywordMap[cat.id] = { include, exclude: normKeywords(cat.exclude_keywords) };
   });
 
   const result = { detected: [], names: {} };
@@ -24,14 +36,13 @@ export function detectBonusFromInvoice(materialsDetail, orderService = "", bonus
     const items = JSON.parse(materialsDetail || "[]");
     for (const item of items) {
       const nama = (item.nama || "").toLowerCase().trim();
-      for (const [categoryId, keywords] of Object.entries(keywordMap)) {
-        if (keywords.length === 0) continue;
+      for (const [categoryId, { include, exclude }] of Object.entries(keywordMap)) {
         // SEMUA keyword harus ada di nama item (AND logic)
-        const allMatch = keywords.every(kw => nama.includes(kw.toLowerCase().trim()));
-        if (allMatch) {
-          if (!result.detected.includes(categoryId)) result.detected.push(categoryId);
-          (result.names[categoryId] = result.names[categoryId] || []).push(item.nama);
-        }
+        if (!include.every(kw => nama.includes(kw))) continue;
+        // SATU keyword pengecualian sudah cukup untuk membatalkan (OR logic)
+        if (exclude.some(kw => nama.includes(kw))) continue;
+        if (!result.detected.includes(categoryId)) result.detected.push(categoryId);
+        (result.names[categoryId] = result.names[categoryId] || []).push(item.nama);
       }
     }
   } catch (err) { console.error("Material detection error:", err); }
