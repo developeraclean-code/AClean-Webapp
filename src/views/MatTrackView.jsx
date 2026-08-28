@@ -29,6 +29,7 @@ function PendingAiMaterialTab({ supabase, showNotif, currentUser, addAgentLog })
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState(null);
   const [pickerOpen, setPickerOpen] = useState(null); // extraction id
+  const [search, setSearch] = useState("");
   // Seberapa jauh ke belakang job boleh dipilih. Dulu terkunci "hari ini + kemarin"
   // sehingga material yang baru di-review beberapa hari kemudian tak bisa ditautkan.
   const [jobDays, setJobDays] = useState(7);
@@ -241,14 +242,28 @@ function PendingAiMaterialTab({ supabase, showNotif, currentUser, addAgentLog })
     finally { setBusyId(null); }
   };
 
+  const shownRows = (() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(r => {
+      const items = Array.isArray(r.extracted?.items) ? r.extracted.items : [];
+      const itemTxt = items.map(it => `${it.type || ""} ${it.brand || ""} ${it.size || ""}`).join(" ");
+      return [r.sender_name, r.teknisi, r.message_text, r.phone, r.notes, itemTxt]
+        .some(v => String(v || "").toLowerCase().includes(q));
+    });
+  })();
+
   return (
     <div style={{ display: "grid", gap: 12 }}>
       <div style={{ padding: 10, background: "#3b82f622", border: "1px solid #3b82f655", borderRadius: 8, fontSize: 12, color: cs.text }}>
         🤖 Foto material dari teknisi (AI vision). <b>Tidak auto-link</b> ke job — owner pilih manual: Link ke job, atau Reject.
         Carrier hint di-extract dari caption "dibawa &lt;nama&gt;".
       </div>
+      <input value={search} onChange={e => setSearch(e.target.value)}
+        placeholder="🔍 Cari pengirim, teknisi, isi pesan, material..."
+        style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 12px", color: cs.text, fontSize: 13, outline: "none", width: "100%" }} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ fontSize: 12, color: cs.muted }}>{rows.length} pending · {orders.length} job bisa dipilih</div>
+        <div style={{ fontSize: 12, color: cs.muted }}>{shownRows.length}{search.trim() ? " / " + rows.length : ""} pending · {orders.length} job bisa dipilih</div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12, color: cs.muted }}>
           Job sampai
@@ -271,7 +286,12 @@ function PendingAiMaterialTab({ supabase, showNotif, currentUser, addAgentLog })
           Tidak ada material pending. 🎉
         </div>
       )}
-      {rows.map(r => {
+      {rows.length > 0 && shownRows.length === 0 && (
+        <div style={{ padding: 24, background: cs.card, borderRadius: 10, textAlign: "center", color: cs.muted, fontSize: 13 }}>
+          Tidak ada hasil untuk "{search}".
+        </div>
+      )}
+      {shownRows.map(r => {
         const items = Array.isArray(r.extracted?.items) ? r.extracted.items : [];
         const cands = r.extracted?._candidates || {};
         const carrierHint = cands.carrier_hint;
@@ -405,6 +425,7 @@ function MaterialReconTab({ supabase, appSettings }) {
   const [rows, setRows] = useState([]);        // teknisi_material_checkout
   const [tx, setTx] = useState([]);            // inventory_transactions usage
   const [loading, setLoading] = useState(false);
+  const [search, setSearch] = useState("");
 
   const tolerances = useMemo(() => {
     try { return appSettings?.material_recon_tolerances ? JSON.parse(appSettings.material_recon_tolerances) : undefined; }
@@ -439,20 +460,31 @@ function MaterialReconTab({ supabase, appSettings }) {
     });
   }, [rows, tx, tolerances]);
 
+  const q = search.trim().toLowerCase();
+  const shown = q
+    ? byTeknisi.filter(g => `${g.teknisi} ${(g.lines || []).map(l => l.label).join(" ")}`.toLowerCase().includes(q))
+    : byTeknisi;
+
   return (
     <div style={{ display: "grid", gap: 14 }}>
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <span style={{ fontSize: 12, color: cs.muted, fontWeight: 600 }}>Tanggal:</span>
         <input type="date" value={date} onChange={e => setDate(e.target.value)}
           style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "7px 11px", color: cs.text, fontSize: 13 }} />
+        <input value={search} onChange={e => setSearch(e.target.value)}
+          placeholder="🔍 Cari teknisi / material..."
+          style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "7px 11px", color: cs.text, fontSize: 13, outline: "none", flex: "1 1 180px", minWidth: 140 }} />
         {loading && <span style={{ fontSize: 12, color: cs.muted }}>memuat…</span>}
       </div>
 
       {byTeknisi.length === 0 && !loading && (
         <div style={{ padding: 24, textAlign: "center", color: cs.muted, fontSize: 13 }}>Belum ada catatan material harian untuk tanggal ini.</div>
       )}
+      {byTeknisi.length > 0 && shown.length === 0 && (
+        <div style={{ padding: 24, textAlign: "center", color: cs.muted, fontSize: 13 }}>Tidak ada hasil untuk "{search}".</div>
+      )}
 
-      {byTeknisi.map(g => (
+      {shown.map(g => (
         <div key={g.teknisi} style={{ background: cs.panel, border: "1px solid " + cs.border, borderRadius: 12, padding: 14 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
             <div style={{ fontSize: 14, fontWeight: 800, color: cs.text }}>👷 {g.teknisi}</div>

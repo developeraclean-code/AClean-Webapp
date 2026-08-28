@@ -42,6 +42,7 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
   const [mewakiliTgl, setMewakiliTgl] = useState(getLocalDate());
   const [mewakiliAktif, setMewakiliAktif] = useState(null); // { nama, id, tgl }
   const [view, setView] = useState("PENDING"); // PENDING | CONFIRMED
+  const [search, setSearch] = useState("");
   const [lastLoaded, setLastLoaded] = useState(0); // jejak kesegaran (tab tak realtime)
   // Seberapa jauh ke belakang job boleh dipilih untuk ditautkan ke material.
   // Dulu terkunci di tanggal sesi itu saja, jadi material yang baru dilaporkan
@@ -423,7 +424,30 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
     return [...a, ...b];
   };
 
-  const empty = rows.length === 0 && pakai.length === 0;
+  // Filter pencarian — cocokkan teknisi, customer/job, material, tanggal.
+  const q = search.trim().toLowerCase();
+  const matchPulang = (entry) => {
+    if (!q) return true;
+    const hay = [
+      entry.pulang?.teknisi_name, entry.pulang?.checkout_date,
+      ...(entry.jobs || []).map((j) => j.customer),
+      ...(entry.lines || []).map((l) => `${l.label} ${l.material_type}`),
+    ].join(" ").toLowerCase();
+    return hay.includes(q);
+  };
+  const matchPakai = (entry) => {
+    if (!q) return true;
+    const hay = [
+      entry.row?.teknisi_name, entry.row?.checkout_date,
+      ...(entry.row?.items || []).map((it) => `${it.label} ${it.material_type} ${(it.per_job || []).map((p) => p.customer).join(" ")}`),
+      ...(entry.jobOptions || []).map((j) => j.customer),
+    ].join(" ").toLowerCase();
+    return hay.includes(q);
+  };
+  const shownRows = rows.filter(matchPulang);
+  const shownPakai = pakai.filter(matchPakai);
+  const empty = shownRows.length === 0 && shownPakai.length === 0;
+  const emptyAll = rows.length === 0 && pakai.length === 0;
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
@@ -459,6 +483,12 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
         </div>
         </div>
       </div>
+
+      {!emptyAll && (
+        <input value={search} onChange={(e) => setSearch(e.target.value)}
+          placeholder="🔍 Cari teknisi, customer, material..."
+          style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 12px", color: cs.text, fontSize: 13, outline: "none", width: "100%" }} />
+      )}
 
       {mewakiliOpen && (
         <div onClick={() => setMewakiliOpen(false)}
@@ -518,17 +548,17 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
       )}
 
       {loading ? <div style={{ color: cs.muted, fontSize: 13, padding: 16 }}>Memuat…</div>
-        : empty ? <div style={{ color: cs.muted, fontSize: 13, padding: 16, textAlign: "center", background: cs.card, border: "1px solid " + cs.border, borderRadius: 12 }}>{view === "PENDING" ? "Tidak ada yang menunggu konfirmasi." : "Belum ada yang dikonfirmasi."}</div>
+        : empty ? <div style={{ color: cs.muted, fontSize: 13, padding: 16, textAlign: "center", background: cs.card, border: "1px solid " + cs.border, borderRadius: 12 }}>{q ? `Tidak ada hasil untuk "${search}".` : view === "PENDING" ? "Tidak ada yang menunggu konfirmasi." : "Belum ada yang dikonfirmasi."}</div>
         : <>
           {/* DRAFT AI (pakai) — di atas biar cepat terlihat */}
-          {pakai.map((entry) => (
+          {shownPakai.map((entry) => (
             <PakaiCard key={entry.row.id} entry={entry} view={view} busy={busy}
               onConfirm={confirmPakai} onReject={() => reject(entry.row)}
               onBukaKoreksi={bukaKoreksi} />
           ))}
 
           {/* PULANG (bawa−sisa) — qty terpakai bisa dikoreksi admin sebelum potong stok */}
-          {rows.map((entry) => (
+          {shownRows.map((entry) => (
             <PulangCard key={entry.pulang.id} entry={entry} view={view} busy={busy}
               photos={photosOf(entry)} onConfirm={confirm} onReject={() => reject(entry.pulang)}
               onBukaKoreksi={bukaKoreksi} />
