@@ -183,7 +183,11 @@ SEBELUM mengakhiri sesi. Aturan:
 1. `npm run build` harus lolos; unit test `src/lib/__tests__/` kalau menyentuh lib.
 2. Perubahan non-trivial → skill `verify` (exercise flow nyata, bukan cuma typecheck).
 3. Setelah commit: `git show --stat` untuk konfirmasi isi commit sesuai niat.
-4. Setelah push ke prod: cek `health.version` — webhook deploy Vercel pernah terlewat.
+4. Setelah push ke prod: cek `curl -s <prod>/api/health | jq -r .version` dan **bandingkan
+   dengan `git rev-parse --short HEAD`** — webhook deploy Vercel pernah terlewat. Menunggu
+   endpoint membalas `200` TIDAK membuktikan apa-apa: deploy lama tetap melayani 200 selama
+   build berjalan (kejadian 28 Agu 2026 — loop `until 200` berhenti seketika dan sempat
+   melaporkan versi lama sebagai "sudah live"). Yang ditunggu = `version` berubah.
 5. Commit hanya kalau diminta user. Pesan commit pola repo: `feat(scope): ...` / `fix(scope): ...`
    (bahasa Indonesia, lihat `git log`).
 
