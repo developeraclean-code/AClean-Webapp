@@ -220,9 +220,12 @@ export default function MaterialFormModal({
                 </select>
               </div>
               <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Harga/Unit (Rp)</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Harga JUAL/Unit (Rp)</div>
                 <input type="number" min="0" placeholder="0" value={form.price || ""}
                   onChange={e => setForm(f => ({ ...f, price: e.target.value }))} style={inp} />
+                <div style={{ fontSize: 10, color: cs.muted, marginTop: 3 }}>
+                  Harga <b>beli</b> (HPP) diisi di tab 💵 Harga Beli, bukan di sini.
+                </div>
               </div>
             </div>
 
@@ -276,7 +279,7 @@ export default function MaterialFormModal({
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Harga/Unit</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Harga JUAL/Unit</div>
                 <input type="number" value={form.price ?? editItem.price}
                   onChange={e => setForm(f => ({ ...f, price: e.target.value }))} style={inp} />
               </div>

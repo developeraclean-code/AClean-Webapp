@@ -59,6 +59,7 @@ function InventoryView({
     (item.unit || "").toLowerCase().includes(searchInventory.toLowerCase()) ||
     (item.status || "").toLowerCase().includes(searchInventory.toLowerCase()) ||
     String(item.price ?? "").includes(searchInventory) ||
+    String(item.purchase_price ?? "").includes(searchInventory) ||
     String(item.stock ?? "").includes(searchInventory)
   );
   const totPgInv = Math.ceil(filteredInvt.length / INV_PAGE_SIZE) || 1;
@@ -86,7 +87,7 @@ function InventoryView({
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ background: cs.surface, borderBottom: "1px solid " + cs.border }}>
-              {["Kode", "Nama Material", "Satuan", "Harga/Unit", "Stok", "Reorder", "Status", "Aksi"].map(h => (
+              {["Kode", "Nama Material", "Satuan", "HPP (Beli)", "Stok", "Reorder", "Status", "Aksi"].map(h => (
                 <th key={h} style={{ padding: "10px 12px", textAlign: "left", fontSize: 11, fontWeight: 700, color: cs.muted, textTransform: "uppercase", letterSpacing: "0.5px" }}>{h}</th>
               ))}
             </tr>
@@ -99,7 +100,17 @@ function InventoryView({
                   <td style={{ padding: "9px 12px", fontFamily: "monospace", fontSize: 11, color: cs.muted }}>{item.code}</td>
                   <td style={{ padding: "9px 12px", fontSize: 13, fontWeight: 600, color: cs.text }}>{item.name}</td>
                   <td style={{ padding: "9px 12px", fontSize: 12, color: cs.muted }}>{item.unit}</td>
-                  <td style={{ padding: "9px 12px", fontSize: 12, color: cs.muted, fontFamily: "monospace" }}>{fmt(item.price)}</td>
+                  {/* HPP = harga BELI (purchase_price). item.price adalah harga JUAL dan nilainya
+                      0 di seluruh item — dulu kolom ini menampilkannya sehingga semua tampak Rp 0.
+                      Harga jual kini hanya muncul kalau memang diisi. */}
+                  <td style={{ padding: "9px 12px", fontSize: 12, fontFamily: "monospace" }}>
+                    {Number(item.purchase_price) > 0
+                      ? <span style={{ color: cs.text }}>{fmt(item.purchase_price)}</span>
+                      : <span style={{ color: cs.red, fontFamily: "inherit", fontSize: 11 }}>belum diisi</span>}
+                    {Number(item.price) > 0 && (
+                      <div style={{ fontSize: 10, color: cs.muted }}>jual {fmt(item.price)}</div>
+                    )}
+                  </td>
                   <td style={{ padding: "9px 12px", fontSize: 13, fontWeight: 700, color: stC }}>{displayStock(item)}</td>
                   <td style={{ padding: "9px 12px", fontSize: 12, color: cs.muted }}>{item.reorder}</td>
                   <td style={{ padding: "9px 12px" }}>
