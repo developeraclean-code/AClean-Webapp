@@ -152,7 +152,7 @@ export const lookupCustomersByPhone = (supabase, normalizedPhone) =>
 
 export const fetchInventory = (supabase) =>
   supabase.from("inventory")
-    .select("id,code,name,unit,price,stock,reorder,status,min_alert,material_type,freon_type")
+    .select("id,code,name,unit,price,stock,reorder,status,min_alert,material_type,freon_type,purchase_price,purchase_price_updated_at,purchase_price_source,purchase_price_last,pack_size,pack_unit")
     .order("code").limit(500);
 
 // Catatan perf: units_json & materials_json (TEXT) DIBUANG dari kolom ini — keduanya
@@ -262,8 +262,30 @@ export const fetchDispatchLogsDetailed = (supabase, { since, limit = 100 } = {})
 
 export const fetchInventoryTransactions = (supabase) =>
   supabase.from("inventory_transactions")
-    .select("id,inventory_code,inventory_name,qty,qty_actual,type,order_id,report_id,notes,created_at,customer_name,teknisi_name,job_date,unit_label,unit_id")
+    .select("id,inventory_code,inventory_name,qty,qty_actual,type,order_id,report_id,notes,created_at,customer_name,teknisi_name,job_date,unit_label,unit_id,unit_cost,total_cost,expense_id")
     .order("created_at", { ascending: false }).limit(500);
+
+// Sumber biaya material SATU job — untuk autosum "Biaya Material Aktual" di modal Komisi.
+// Sengaja query langsung per job (bukan menyaring state global): state inventory/expenses
+// di App.jsx di-cap baris terbaru, sedangkan bonus sering dinilai untuk job bulan lalu.
+export const fetchJobMaterialSources = async (supabase, orderId) => {
+  const [txRes, expRes, invRes] = await Promise.all([
+    supabase.from("inventory_transactions")
+      .select("inventory_code,inventory_name,qty,qty_actual,type,unit_cost,total_cost")
+      .eq("order_id", orderId).limit(500),
+    supabase.from("expenses")
+      .select("id,date,amount,item_name,description,qty,unit,unit_cost,inventory_code,stock_linked_at")
+      .eq("order_id", orderId).is("deleted_at", null).limit(200),
+    supabase.from("inventory")
+      .select("code,name,unit,purchase_price").limit(500),
+  ]);
+  return {
+    txs: txRes.data || [],
+    expenses: expRes.data || [],
+    inventory: invRes.data || [],
+    error: txRes.error || expRes.error || invRes.error || null,
+  };
+};
 
 export const fetchInventoryUnits = (supabase) =>
   supabase.from("inventory_units")
@@ -272,7 +294,7 @@ export const fetchInventoryUnits = (supabase) =>
 
 export const fetchExpenses = (supabase) =>
   supabase.from("expenses")
-    .select("id,date,amount,category,subcategory,description,teknisi_name,item_name,freon_type,created_at")
+    .select("id,date,amount,category,subcategory,description,teknisi_name,item_name,freon_type,created_at,inventory_code,qty,unit,unit_cost,order_id,stock_linked_at,stock_linked_by")
     .is("deleted_at", null)
     .order("date", { ascending: false }).limit(2000);
 
@@ -283,7 +305,7 @@ export const fetchAllExpenses = async (supabase) => {
   let from = 0;
   for (;;) {
     const { data, error } = await supabase.from("expenses")
-      .select("id,date,amount,category,subcategory,description,teknisi_name,item_name,freon_type,created_at")
+      .select("id,date,amount,category,subcategory,description,teknisi_name,item_name,freon_type,created_at,inventory_code,qty,unit,unit_cost,order_id,stock_linked_at,stock_linked_by")
       .is("deleted_at", null)
       .order("date", { ascending: false }).range(from, from + FULL_FETCH_PAGE - 1);
     if (error) return { data: all, error };

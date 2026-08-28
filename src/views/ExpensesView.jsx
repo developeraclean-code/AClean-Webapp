@@ -4,6 +4,7 @@ import { useAppContext } from "../context/AppContext.js";
 import { fetchDeletedExpenses } from "../data/reads.js";
 import { restoreExpense, purgeExpense } from "../data/writes.js";
 import ExpenseFormModal, { BudgetModal } from "./ExpenseFormModal.jsx";
+import TautkanStokModal from "./TautkanStokModal.jsx";
 
 // ── Kasbon Section (Owner/Admin) — approve request → otomatis masuk ke Biaya ──
 function KasbonSection({ currentUser, kasbonRequests, approveKasbon, rejectKasbon }) {
@@ -85,9 +86,13 @@ function KasbonSection({ currentUser, kasbonRequests, approveKasbon, rejectKasbo
   );
 }
 
-function ExpensesView({ expensesData, setExpensesData, expenseTab, setExpenseTab, expenseFilter, setExpenseFilter, expenseDateFrom, setExpenseDateFrom, expenseDateTo, setExpenseDateTo, expenseSearch, setExpenseSearch, expensePage, setExpensePage, modalExpense, setModalExpense, editExpenseItem, setEditExpenseItem, newExpenseForm, setNewExpenseForm, insertExpense, updateExpense, deleteExpense, setAuditModal, EXPENSE_PAGE_SIZE, appSettings, setAppSettings, teknisiData, userAccounts, kasbonRequests, approveKasbon, rejectKasbon }) {
+function ExpensesView({ expensesData, setExpensesData, expenseTab, setExpenseTab, expenseFilter, setExpenseFilter, expenseDateFrom, setExpenseDateFrom, expenseDateTo, setExpenseDateTo, expenseSearch, setExpenseSearch, expensePage, setExpensePage, modalExpense, setModalExpense, editExpenseItem, setEditExpenseItem, newExpenseForm, setNewExpenseForm, insertExpense, updateExpense, deleteExpense, setAuditModal, EXPENSE_PAGE_SIZE, appSettings, setAppSettings, teknisiData, userAccounts, kasbonRequests, approveKasbon, rejectKasbon, inventoryData = [], setInventoryData, addAgentLog, ordersData = [] }) {
   // Fase 1: primitif global dari AppContext.
   const { currentUser, supabase, auditUserName, TODAY, fmt, showNotif, showConfirm } = useAppContext();
+
+  // Nota material → stok (Tahap 1 HPP). Manual by design: AI nota bisa salah baca dan
+  // banyak barang langsung dipakai di job, bukan masuk gudang.
+  const [linkExpense, setLinkExpense] = useState(null);
 const isOwnerAdmin = currentUser?.role === "Owner" || currentUser?.role === "Admin" || currentUser?.role === "Finance";
 const isOwner = currentUser?.role === "Owner";
 
@@ -296,7 +301,7 @@ const fmtDayLong = (d) => new Date(d + "T00:00:00").toLocaleDateString("id-ID", 
 const resetForm = () => {
   setNewExpenseForm({
     category: expenseTab === "material_purchase" ? "material_purchase" : "petty_cash",
-    subcategory: "", amount: "", date: TODAY, description: "", teknisi_name: "", item_name: "", freon_type: ""
+    subcategory: "", amount: "", date: TODAY, description: "", teknisi_name: "", item_name: "", freon_type: "", order_id: ""
   });
   setEditExpenseItem(null);
 };
@@ -307,7 +312,7 @@ const openEdit = (item) => {
   setNewExpenseForm({
     category: item.category, subcategory: item.subcategory, amount: String(item.amount || ""),
     date: item.date || TODAY, description: item.description || "", teknisi_name: item.teknisi_name || "",
-    item_name: item.item_name || "", freon_type: item.freon_type || ""
+    item_name: item.item_name || "", freon_type: item.freon_type || "", order_id: item.order_id || ""
   });
   setModalExpense(true);
 };
@@ -575,7 +580,7 @@ return (
                     setNewExpenseForm({
                       category: item.category, subcategory: item.subcategory, amount: String(item.amount || ""),
                       date: item.date || TODAY, description: item.description || "", teknisi_name: item.teknisi_name || "",
-                      item_name: item.item_name || "", freon_type: item.freon_type || ""
+                      item_name: item.item_name || "", freon_type: item.freon_type || "", order_id: item.order_id || ""
                     });
                     setModalExpense(true);
                   }}
@@ -722,6 +727,12 @@ return (
               {item.description && <div style={{ fontSize: 11, color: cs.muted }}>{item.description}</div>}
               {item.teknisi_name && <div style={{ fontSize: 11, color: cs.accent }}>👤 {item.teknisi_name}</div>}
               {item.item_name && <div style={{ fontSize: 11, color: cs.muted }}>📦 {item.item_name}{item.freon_type ? " (" + item.freon_type + ")" : ""}</div>}
+              {item.stock_linked_at && (
+                <div style={{ fontSize: 10, color: cs.green, marginTop: 2 }}>
+                  🔗 Sudah jadi stok: {item.qty} {item.unit} @ Rp{Number(item.unit_cost || 0).toLocaleString("id-ID")}
+                </div>
+              )}
+              {item.order_id && <div style={{ fontSize: 10, color: cs.accent, marginTop: 2 }}>🧾 Biaya job {item.order_id}</div>}
               {isTrash && item.deleted_at && (
                 <div style={{ fontSize: 10, color: cs.red, marginTop: 2 }}>
                   🗑️ Dihapus {new Date(item.deleted_at).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}{item.deleted_by ? " oleh " + item.deleted_by : ""}
@@ -746,6 +757,17 @@ return (
               </div>
             ) : isOwnerAdmin && (
               <div style={{ display: "flex", gap: 6 }}>
+                {/* Owner/Admin saja: trigger trg_guard_inventory_price (migrasi 154) menolak
+                    perubahan HPP dari role lain — Finance yang mengklik akan menandai nota &
+                    menulis ledger tapi gagal di update stok, meninggalkan data setengah jalan. */}
+                {item.category === "material_purchase" && !item.stock_linked_at
+                  && (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
+                  <button onClick={() => setLinkExpense(item)} title="Jadikan restock: stok bertambah & harga beli item ter-update"
+                    style={{
+                      background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green,
+                      borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: 12, fontWeight: 700
+                    }}>🔗 Stok</button>
+                )}
                 <button onClick={() => openEdit(item)}
                   style={{
                     background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent,
@@ -805,6 +827,23 @@ return (
       setExpensesData={setExpensesData}
       setPendingAi={setPendingAi}
       fmt={fmt}
+      ordersData={ordersData}
+    />
+
+    {/* Nota material → restock + update HPP */}
+    <TautkanStokModal
+      open={!!linkExpense}
+      expense={linkExpense}
+      inventoryData={inventoryData}
+      onClose={() => setLinkExpense(null)}
+      onLinked={({ expensePatch, inventoryPatch }) => {
+        setExpensesData(prev => prev.map(x => x.id === linkExpense.id ? { ...x, ...expensePatch } : x));
+        setInventoryData?.(prev => prev.map(i => i.code === inventoryPatch.code ? { ...i, ...inventoryPatch } : i));
+      }}
+      supabase={supabase}
+      currentUser={currentUser}
+      showNotif={showNotif}
+      addAgentLog={addAgentLog}
     />
   </div>
 );

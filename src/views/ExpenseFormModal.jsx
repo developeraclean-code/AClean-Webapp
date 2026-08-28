@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { cs } from "../theme/cs.js";
 
 const PETTY_CASH_SUBS = ["Bensin Motor", "Perbaikan Motor", "Parkir", "Kasbon Karyawan", "Lembur", "Bonus", "Lain-lain"];
@@ -25,7 +25,7 @@ export default function ExpenseFormModal({
   auditUserName,
   showNotif, TODAY,
   setExpensesData, setPendingAi,
-  fmt,
+  fmt, ordersData,
 }) {
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
@@ -36,6 +36,17 @@ export default function ExpenseFormModal({
     setSaving(false);
   }, [open]);
 
+  // Job untuk dropdown "Job Terkait" — 90 hari terakhir saja. ordersData memang di-cap 500
+  // baris terbaru (reads.js), dan itu memadai: nota selalu ditautkan ke job yang baru jalan.
+  const jobOptions = useMemo(() => {
+    const batas = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+    return (ordersData || [])
+      .filter(o => o?.id && (o.date || "") >= batas)
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+      .slice(0, 300)
+      .map(o => ({ id: o.id, date: o.date, customer: o.customer || "—" }));
+  }, [ordersData]);
+
   if (!open) return null;
 
   const set = (key, val) => {
@@ -45,6 +56,7 @@ export default function ExpenseFormModal({
 
   const subs = newExpenseForm.category === "material_purchase" ? MATERIAL_SUBS : PETTY_CASH_SUBS;
   const isKasbonLemburBonus = newExpenseForm.category === "petty_cash" && ["Kasbon Karyawan", "Lembur", "Bonus"].includes(newExpenseForm.subcategory);
+
   const isPendingAiItem = editExpenseItem?.validation_status === "PENDING_AI";
   const ai = editExpenseItem?.ai_extractions || {};
   const confColor = ai.confidence === "HIGH" ? cs.green : ai.confidence === "MEDIUM" ? cs.yellow : cs.red;
@@ -78,6 +90,10 @@ export default function ExpenseFormModal({
         teknisi_name: f.teknisi_name ? f.teknisi_name.trim() : null,
         item_name: f.item_name || null,
         freon_type: f.freon_type || null,
+        // Nota yang jelas untuk satu job (mis. "BAPAK JOFINO - REY") ditautkan ke job-nya.
+        // Tautan ini yang membuat biaya material job bisa dijumlah otomatis untuk bonus margin
+        // TANPA harus lewat stok — banyak barang dibeli & langsung dipakai di lokasi.
+        order_id: f.category === "material_purchase" ? (f.order_id || null) : null,
         created_by: currentUser?.name || currentUser?.email || "unknown",
       };
       if (editExpenseItem) {
@@ -215,6 +231,23 @@ export default function ExpenseFormModal({
                       placeholder="misal: Pipa 3/8 × 5/8 — 15m"
                       style={inp(false)}
                     />
+                  </div>
+                  <div>
+                    <label style={lbl}>Job Terkait (opsional)</label>
+                    <select
+                      value={newExpenseForm.order_id || ""}
+                      onChange={e => set("order_id", e.target.value)}
+                      style={inp(false)}
+                    >
+                      <option value="">— tidak terkait job tertentu —</option>
+                      {jobOptions.map(o => (
+                        <option key={o.id} value={o.id}>{o.date} · {o.customer} · {o.id}</option>
+                      ))}
+                    </select>
+                    <div style={{ fontSize: 10, color: cs.muted, marginTop: 3 }}>
+                      Isi kalau barang ini dibeli untuk satu job — biayanya ikut terhitung
+                      otomatis saat menilai bonus margin job tsb.
+                    </div>
                   </div>
                   {newExpenseForm.subcategory === "Freon" && (
                     <div>

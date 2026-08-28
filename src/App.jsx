@@ -4024,7 +4024,9 @@ export default function ACleanWebApp() {
       setAuditModal={setAuditModal} EXPENSE_PAGE_SIZE={EXPENSE_PAGE_SIZE}
       appSettings={appSettings} setAppSettings={setAppSettings}
       teknisiData={teknisiData} userAccounts={userAccounts}
-      kasbonRequests={kasbonRequests} approveKasbon={approveKasbon} rejectKasbon={rejectKasbon} />
+      kasbonRequests={kasbonRequests} approveKasbon={approveKasbon} rejectKasbon={rejectKasbon}
+      inventoryData={inventoryData} setInventoryData={setInventoryData} addAgentLog={addAgentLog}
+      ordersData={ordersData} />
   );
 
   // ============================================================

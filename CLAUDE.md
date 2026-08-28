@@ -111,6 +111,18 @@ Role hierarchy: **Owner > Admin > Teknisi > Helper**. Enforced in `canAccess()` 
   per job. Sesi terkonfirmasi bisa dibuka lagi ("Buka Koreksi") → potongan dibalik dgn transaksi
   `adjustment`, sesi kembali PENDING. Admin bisa membuat sesi mewakili teknisi yang lupa mengisi.
 
+**HPP Material (berlaku sejak 28 Agu 2026, migrasi 153-154):**
+- `inventory.price` = harga **JUAL** (fallback material ke invoice, `pricing.js`).
+  `inventory.purchase_price` = harga **BELI** per satuan dasar (HPP). Jangan tertukar.
+- HPP diperbarui dengan **rata-rata bergerak tertimbang** (`src/lib/hpp.js`) di 2 jalur
+  pembelian: Restock & Biaya → "🔗 Stok". Isi/koreksi langsung hanya via Inventori →
+  💵 Harga Beli. Harga beli 0/kosong TIDAK pernah menimpa HPP.
+- Nota di menu Biaya **tidak otomatis** menambah stok — harus ditautkan manual.
+  `expenses.stock_linked_at` terisi = sudah jadi stok (anti dobel-restock DAN penanda agar
+  autosum biaya material melewatinya).
+- Pemakaian bersih per job = **Σ `qty`**, bukan `qty_actual`: koreksi timbang freon menulis
+  dua baris (baris asli + `adjustment`), jadi `qty_actual` terhitung dua kali.
+
 **Customer:**
 - UNIQUE constraint: `(phone, name)` — 1 nomor HP boleh punya banyak customer asal nama beda (multi-lokasi)
 - Phone selalu di-normalize ke format `628xxx`
@@ -212,45 +224,33 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
 037       # Applied — Daikin price list seed
 038       # Applied — normalize phone, sync customers dari orders, fix DEFAULT id (lpad bug)
 039–116   # Applied — fitur & fix berkelanjutan (lihat file di migrations/)
-117       # Applied — RLS helpers (get_my_role/get_my_name/is_my_job) + hardening fungsi SECURITY DEFINER
-118       # Applied — user_profiles lockdown (anti privilege-escalation via trigger guard) + weekly_payroll role-based
-119       # Applied — RLS role-tier tabel finansial (invoices*, payment*, quotations, order_bonuses, kasbon, price list)
-120       # Applied — DELETE guard server-side (orders/service_reports = Owner/Admin, customers = Owner)
-121       # Applied — exclusion constraint ts_no_overlap_active (anti dobel-book technician_schedule, btree_gist)
-122       # Applied — project_daily_reports RLS authenticated + website_content (CATATAN: nomor 122 dobel, 2 file)
-123       # Applied — website_content fix anon read
-124       # report_card_sent_columns (belum commit ke git — cek status Applied sebelum pakai kolomnya)
-125       # Applied — maintenance_log measurements
-126       # Applied — followup→order link (kolom order_id)
-127       # Applied — team slot 8 anggota + standby
-128       # Applied — team guidelines
-129       # Applied — maintenance_units drop unique code
-130       # Applied — maintenance unit group
-131       # Applied — quotations PPh23
-132       # Applied — fungsi audit integritas maintenance
-133-136   # Applied 21 Agu 2026 — rapikan tautan customer↔klien maintenance:
-          #   CUST1310 (Sarana Catur), Eka Jaya + Jaya Kreasi Spectra, gabung
-          #   CUST784→CUST678, cap kontrak Multiguna → Alam Sutera
+117-120   # Applied — RLS helpers (get_my_role/get_my_name/is_my_job) + user_profiles lockdown +
+          #   role-tier tabel finansial + DELETE guard server-side (lihat § RLS di bawah)
+121       # Applied — exclusion constraint ts_no_overlap_active (anti dobel-book, btree_gist)
+122-123   # Applied — project_daily_reports RLS + website_content (CATATAN: 122 dobel, 2 file)
+124       # report_card_sent_columns (belum commit ke git — cek status Applied sebelum pakai)
+125-132   # Applied — maintenance: log measurements, followup→order, team slot 8 + standby,
+          #   team guidelines, drop unique code, unit group, quotations PPh23, audit integritas
+133-136   # Applied 21 Agu 2026 — rapikan tautan customer↔klien maintenance (gabung
+          #   CUST784→CUST678, cap kontrak Multiguna → Alam Sutera, dll)
 137       # Applied 22 Agu 2026 — 48 antrean PENDING MatTrack ditutup REJECTED
 138-139   # Applied 22 Agu 2026 — deteksi bonus cukup kata "freon" / "kapasitor"
           #   (keyword ber-logika DAN — menambah keyword MEMPERSEMPIT, jangan)
-140-141   # Applied 22 Agu 2026 — arsip unit stok Owner-only (trigger) + RLS
-          #   inventory_units berjenjang + tabel inventory_unit_stock_log
-142       # Applied 22 Agu 2026 — pelaku audit dari JWT (anti-palsu) + cabut EXECUTE
-          #   anon/PUBLIC pada RPC admin & fungsi trigger + search_path
-143       # Applied 23 Agu 2026 — hapus 3 tabel backup lama (isi diringkas di header
-          #   file migrasi; tidak ada rollback)
-144       # Applied 24 Agu 2026 — sesi 'pakai' di teknisi_material_checkout (draft
-          #   pemakaian AI foto+teks grup) + kolom draft_source/needs_unit_pick
-145       # Applied 25 Agu 2026 — fix nomor HP CUST420 + sambungkan bukti bayar NW17V
-146       # Applied 25 Agu 2026 — kolom admin_adjustments (jejak koreksi admin atas
-          #   qty terpakai sebelum potong stok)
-147       # Applied 25 Agu 2026 — RLS teknisi_material_checkout berjenjang + trigger
-          #   trg_guard_tmc_teknisi (teknisi tak bisa loloskan/ubah kolom konfirmasi)
-148       # Applied 25 Agu 2026 — job_materials_brought.source_extraction_id (tautan
-          #   balik ke ai_extractions → tombol Batalkan salah-link)
+140-142   # Applied 22 Agu 2026 — arsip unit stok Owner-only + RLS inventory_units
+          #   berjenjang + inventory_unit_stock_log + pelaku audit dari JWT (anti-palsu)
+143       # Applied 23 Agu 2026 — hapus 3 tabel backup lama (tidak ada rollback)
+144-148   # Applied 24-25 Agu 2026 — sesi 'pakai' TMC (draft AI) + RLS/trigger
+          #   trg_guard_tmc_teknisi + admin_adjustments + source_extraction_id + fix data
 149       # Applied 25 Agu 2026 — GARIS MULAI metode material baru: 766 antrean AI
           #   → 'closed_baseline', 2 baris dibawa menggantung → RETURNED (stok utuh)
+150-152   # Applied 26-27 Agu 2026 — label unit transaksi, sumber admin TMC, stok tak minus
+153       # Applied 28 Agu 2026 — HPP material: inventory (purchase_price_* / pack_size /
+          #   pack_unit), inventory_transactions (unit_cost/total_cost/expense_id),
+          #   expenses (inventory_code/qty/unit/unit_cost/order_id/stock_linked_*),
+          #   order_bonuses.material_cost_source. Murni aditif, tanpa RLS baru.
+154       # Applied 28 Agu 2026 — trigger trg_guard_inventory_price: hanya Owner/Admin boleh
+          #   ubah price/purchase_price/pack_* (policy `inventory_all` blanket authenticated
+          #   — teknisi TERBUKTI bisa menulis; stok tetap bebas agar potong stok jalan)
 ```
 
 > Daftar di atas pernah tertinggal jauh (berhenti di 126 padahal file sudah 132).

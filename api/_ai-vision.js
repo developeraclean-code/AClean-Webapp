@@ -82,6 +82,9 @@ Field per intent:
       amount: number,           // nominal BARIS INI saja, bukan total nota
       item_name: string,        // nama barang/jasa singkat apa adanya dari nota/caption,
                                 // mis "Kapasitor 15uF", "Duct Tape lem 1 roll", "Bensin", "Parkir"
+      qty: number|null,         // JUMLAH barang baris ini kalau tertulis di nota. ANGKA MURNI.
+      unit: string|null,        // satuan qty apa adanya dari nota: "meter","kg","roll","tabung","pcs","set"
+      unit_price: number|null,  // harga SATUAN kalau nota mencantumkannya terpisah dari total
       category: "petty_cash"|"material_purchase",
       subcategory: string       // WAJIB salah satu nilai exact dibawah, tidak boleh nilai lain
     }]
@@ -92,6 +95,14 @@ Field per intent:
   Kalau beberapa baris nota adalah barang sejenis dalam satu pembelian
   (contoh nota toko: pipa + duct tape + bracket), boleh digabung jadi 1 entri
   dengan amount = total nota dan item_name berisi ringkasan barangnya.
+
+  qty/unit/unit_price PENTING untuk material — tanpa qty, nota "Kabel 3x1,5 Rp 255.000"
+  tidak bisa diturunkan jadi harga per meter dan biaya material job jadi tak terhitung.
+  Isi qty HANYA kalau benar-benar tertulis/terbaca (angka di kolom qty, atau "2 roll",
+  "33 mtr", "1,0 PCS"). JANGAN mengarang qty — null lebih baik daripada tebakan.
+  Kalau nota menyebut harga satuan DAN total, isi unit_price dari harga satuan dan
+  amount dari total baris itu. Kalau satu entri menggabungkan beberapa barang berbeda,
+  biarkan qty/unit/unit_price null.
 
   Aturan subcategory wajib salah satu:
   - Kalau category="petty_cash": "Bensin Motor", "Perbaikan Motor", "Parkir", "Lain-lain"
@@ -318,6 +329,16 @@ export async function persistClassification({ SU, SK, classification, sender, gr
       return digits ? parseInt(digits, 10) : 0;
     };
 
+    // Qty TIDAK boleh lewat parseAmt: parseAmt membuang semua non-digit, jadi "4,8 kg"
+    // jadi 48 dan "1,0 PCS" jadi 10 — qty material justru sering pecahan (freon 0,7 kg,
+    // pipa 7,5 m). Koma desimal ala Indonesia dinormalkan ke titik.
+    const parseQty = (v) => {
+      if (typeof v === "number" && Number.isFinite(v)) return Math.abs(v);
+      const m = String(v || "").replace(/\./g, "").replace(/,/g, ".").match(/\d+(\.\d+)?/);
+      const n = m ? parseFloat(m[0]) : 0;
+      return Number.isFinite(n) ? n : 0;
+    };
+
     // Date guard: AI bisa salah baca tanggal struk (mis. tahun 2025, atau DD-MM tertukar
     // jadi MM-DD). Toleransi 30 hari ke BELAKANG saja — struk tidak mungkin dari masa
     // depan, jadi tanggal > hari ini SELALU fallback ke today. (Bug nyata 10 Agu 2026:
@@ -349,6 +370,13 @@ export async function persistClassification({ SU, SK, classification, sender, gr
       const aiAmount = parseAmt(it?.amount);
       if (!aiAmount) continue; // baris tanpa nominal tidak berguna sebagai biaya
       const itemName = String(it?.item_name || "").trim().slice(0, 120) || null;
+      // qty/unit/unit_price hanya berguna untuk material — dipakai modal "Tautkan ke Stok"
+      // sebagai prefill, BUKAN untuk menambah stok otomatis (keputusan Owner 28 Agu 2026:
+      // AI nota bisa salah baca, & banyak barang langsung dipakai di job, bukan masuk gudang).
+      const qtyNum = cat === "material_purchase" ? parseQty(it?.qty) : 0;
+      const unitStr = cat === "material_purchase" && it?.unit
+        ? String(it.unit).trim().slice(0, 20) : null;
+      const unitPriceAI = cat === "material_purchase" ? parseAmt(it?.unit_price) : 0;
 
       const descParts = [`[AI] ${d.merchant || "Foto struk"}`];
       if (itemName) descParts.push(itemName);
@@ -371,6 +399,11 @@ export async function persistClassification({ SU, SK, classification, sender, gr
         item_name: itemName,
         description: descParts.join(" — "),
         amount: aiAmount,
+        qty: qtyNum > 0 ? qtyNum : null,
+        unit: unitStr,
+        // Harga satuan: pakai yang tertulis di nota; kalau tidak ada tapi qty terbaca,
+        // turunkan dari total ÷ qty. Nol tetap disimpan null — jangan mengaku tahu harga.
+        unit_cost: unitPriceAI > 0 ? unitPriceAI : (qtyNum > 0 ? Math.round((aiAmount / qtyNum) * 100) / 100 : null),
         teknisi_name: sender.name,
         created_by: "wa_group_ai",
         validation_status: "PENDING_AI",

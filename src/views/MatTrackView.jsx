@@ -592,7 +592,9 @@ const freonReport = useMemo(() => {
   const priceMap = {};
   inventoryData.forEach(item => {
     if (isFreonTx({ inventory_name: item.name, inventory_code: item.code })) {
-      priceMap[item.code] = item.price || 0;
+      // HPP (purchase_price), BUKAN item.price — price adalah harga JUAL & nilainya 0
+      // di seluruh item, itu sebabnya Total Cost laporan ini selalu Rp 0 sebelum 28 Agu 2026.
+      priceMap[item.code] = item.purchase_price || 0;
     }
   });
 
@@ -642,7 +644,7 @@ function buildMatReport(type, month, year) {
 
   const priceMap = {};
   inventoryData.forEach(item => {
-    if (item.material_type === type) priceMap[item.code] = item.price || 0;
+    if (item.material_type === type) priceMap[item.code] = item.purchase_price || 0;
   });
 
   const unitMap = {};
@@ -796,7 +798,7 @@ async function saveActualQty(tx) {
           .select("id,total,status").eq("job_id", tx.order_id)
           .neq("status", "CANCELLED").limit(1).maybeSingle();
         if (inv) {
-          const pricePerKg = (inventoryData.find(i => i.code === tx.inventory_code)?.price) || 0;
+          const pricePerKg = (inventoryData.find(i => i.code === tx.inventory_code)?.purchase_price) || 0;
           const deltaRp = Math.round(diff * pricePerKg);
           const rpStr = (deltaRp >= 0 ? "+" : "-") + "Rp" + Math.abs(deltaRp).toLocaleString("id-ID");
           await supabase.from("agent_logs").insert({

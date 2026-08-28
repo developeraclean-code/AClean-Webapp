@@ -5,6 +5,7 @@ import { useAppContext } from "../context/AppContext.js";
 
 const ToolBagView = lazy(() => import("./ToolBagView.jsx"));
 const OfficeToolsView = lazy(() => import("./OfficeToolsView.jsx"));
+const HargaBeliTab = lazy(() => import("./HargaBeliTab.jsx"));
 
 const INV_PAGE_SIZE = 15;
 
@@ -24,6 +25,17 @@ function InventoryView({
         <InventoryTabs activeTab={activeTab} setActiveTab={setActiveTab} />
         <Suspense fallback={<div style={{ padding: 24, color: cs.muted, fontSize: 13 }}>Loading Tas Teknisi...</div>}>
           <ToolBagView supabase={supabase} currentUser={currentUser} showNotif={showNotif} showConfirm={showConfirm} />
+        </Suspense>
+      </div>
+    );
+  }
+
+  if (activeTab === "hpp") {
+    return (
+      <div style={{ display: "grid", gap: 16 }}>
+        <InventoryTabs activeTab={activeTab} setActiveTab={setActiveTab} />
+        <Suspense fallback={<div style={{ padding: 24, color: cs.muted, fontSize: 13 }}>Loading Harga Beli...</div>}>
+          <HargaBeliTab inventoryData={inventoryData} setInventoryData={setInventoryData} />
         </Suspense>
       </div>
     );
@@ -143,6 +155,7 @@ function InventoryView({
 function InventoryTabs({ activeTab, setActiveTab }) {
   const tabs = [
     { id: "material", label: "📦 Inventori Material" },
+    { id: "hpp",      label: "💵 Harga Beli" },
     { id: "toolbag",  label: "🎒 Tas Teknisi" },
     { id: "alat",     label: "🛠 Alat Kantor" }
   ];

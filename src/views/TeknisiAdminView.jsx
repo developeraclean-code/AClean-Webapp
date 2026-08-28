@@ -10,6 +10,7 @@ import {
   daysSinceBonusDate as daysSinceDate, effBonusStatus,
 } from "../lib/bonus.js";
 import { buildBonusRekap } from "../lib/bonusRekap.js";
+import { jobMaterialCost } from "../lib/hpp.js";
 import BonusRekapPanel from "./BonusRekapPanel.jsx";
 import {
   localDateStr, getMondayOf, getSaturdayOf, addWeeks,
@@ -18,7 +19,7 @@ import {
 import {
   fetchWeeklyPayroll, fetchDaysWorkedFromOrders, fetchKasbonByPeriod, fetchAllKasbonByPeriod,
   fetchOrderBonusesByPeriod, fetchOrdersWithoutBonus, fetchAvailabilityByUserPeriod,
-  fetchAssignedDaysFromSlots, fetchWeekAbsences,
+  fetchAssignedDaysFromSlots, fetchWeekAbsences, fetchJobMaterialSources,
 } from "../data/reads.js";
 import {
   updateUserDailyRate, upsertWeeklyPayroll, updateWeeklyPayroll,
@@ -904,6 +905,7 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
         bonus_type:    e.bonus_type,
         gross_revenue: e.gross_revenue || null,
         material_cost: e.material_cost || null,
+        material_cost_source: e.material_cost_source || null,
         team_members:  teamMembers,
         total_amount:  e.total_amount,
         note:          e.note || null,
@@ -1613,7 +1615,12 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                     </div>
                     {b.profit != null && (
                       <div style={{ fontSize: 12, color: cs.muted }}>
-                        Omset: {fmtRp(b.gross_revenue)} · Material: {fmtRp(b.material_cost)} · Profit: <strong style={{ color: cs.green }}>{fmtRp(b.profit)}</strong>
+                        Omset: {fmtRp(b.gross_revenue)} · Material: {fmtRp(b.material_cost)}
+                        {b.material_cost_source && (
+                          <span style={{ color: b.material_cost_source === "manual" ? cs.muted : cs.accent }}>
+                            {" "}({b.material_cost_source === "auto" ? "auto" : b.material_cost_source === "auto_edited" ? "auto, diubah" : "manual"})
+                          </span>
+                        )} · Profit: <strong style={{ color: cs.green }}>{fmtRp(b.profit)}</strong>
                       </div>
                     )}
                     {b.note && <div style={{ fontSize: 11, color: cs.muted, fontStyle: "italic", marginTop: 2 }}>{b.note}</div>}
@@ -1834,6 +1841,29 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
   const [grossRevenue, setGrossRevenue] = useState(inv?.total ? String(inv.total) : "");
   const [materialCost, setMaterialCost] = useState("");
   const [marginOn, setMarginOn]         = useState(false);
+
+  // ── Autosum biaya material (Tahap 3 HPP) ──
+  // Sebelum 28 Agu 2026 field "Biaya Material Aktual" 100% ketik tangan → dari 95 baris
+  // order_bonuses cuma 18 yang terisi. Sekarang dihitung dari data nyata: stok terpakai
+  // × HPP + nota yang ditautkan ke job. Tetap bisa dioverride — angka auto hanya usulan.
+  const { supabase: sb } = useAppContext();
+  const [matAuto, setMatAuto]       = useState(null);
+  const [matLoading, setMatLoading] = useState(false);
+  const [pakaiAuto, setPakaiAuto]   = useState(false);
+
+  useEffect(() => {
+    if (!marginOn || matAuto || matLoading || !orderRow?.id) return;
+    let batal = false;
+    setMatLoading(true);
+    (async () => {
+      const { txs, expenses, inventory } = await fetchJobMaterialSources(sb, orderRow.id);
+      if (batal) return;
+      setMatAuto(jobMaterialCost({ txs, expenses, inventory }));
+      setMatLoading(false);
+    })();
+    return () => { batal = true; };
+  }, [marginOn, matAuto, matLoading, orderRow?.id, sb]);
+
   const [manualOn, setManualOn]         = useState(isComplain);
   const [customAmount, setCustomAmount] = useState("");
   const [manualLabel, setManualLabel]   = useState("");
@@ -1854,8 +1884,13 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
   fixedCats.forEach(c => { if (enabled[c.id] && amounts[c.id] > 0) entries.push({ bonus_type: c.id, total_amount: amounts[c.id], gross_revenue: null, material_cost: null }); });
   if (installInfo?.tier && enabled[installInfo.tier] && amounts[installInfo.tier] > 0)
     entries.push({ bonus_type: installInfo.tier, total_amount: amounts[installInfo.tier], gross_revenue: null, material_cost: null });
+  // Jejak asal angka: 'auto' (dipakai apa adanya), 'auto_edited' (auto lalu diubah),
+  // 'manual' (diketik dari nol) — supaya rekap bonus bisa diaudit belakangan.
+  const matSource = !materialCost ? null
+    : (matAuto && Number(materialCost) === matAuto.total) ? "auto"
+    : pakaiAuto ? "auto_edited" : "manual";
   if (marginOn && marginTier && marginAmount > 0)
-    entries.push({ bonus_type: marginTier, total_amount: marginAmount, gross_revenue: grossRevenue || null, material_cost: materialCost || null });
+    entries.push({ bonus_type: marginTier, total_amount: marginAmount, gross_revenue: grossRevenue || null, material_cost: materialCost || null, material_cost_source: matSource });
   if (manualOn && Number(customAmount) > 0)
     entries.push({ bonus_type: "manual", total_amount: Number(customAmount), gross_revenue: null, material_cost: null, note: manualLabel || null });
 
@@ -1943,9 +1978,62 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
               style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid " + (inv?.total ? "#3b82f6" : "#334155"), background: "#1e293b", color: "#e2e8f0", fontSize: 13, boxSizing: "border-box" }} />
           </div>
           <div>
-            <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>Biaya Material Aktual (Rp)</div>
+            <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>
+              Biaya Material Aktual (Rp)
+              {matAuto && matAuto.total > 0 && <span style={{ color: "#3b82f6" }}> · ada usulan</span>}
+            </div>
             <input type="number" value={materialCost} onChange={e => setMaterialCost(e.target.value)}
               placeholder="yg AClean bayar ke supplier" style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #334155", background: "#1e293b", color: "#e2e8f0", fontSize: 13, boxSizing: "border-box" }} />
+          </div>
+
+          {/* Rincian biaya material dari data nyata — stok terpakai × HPP + nota tertaut job */}
+          <div style={{ gridColumn: "1/-1", background: "#0f172a", border: "1px solid #1e293b", borderRadius: 8, padding: "8px 10px" }}>
+            {matLoading && <div style={{ fontSize: 11, color: "#64748b" }}>Menghitung biaya material job…</div>}
+
+            {!matLoading && matAuto && matAuto.lines.length === 0 && (
+              <div style={{ fontSize: 11, color: "#64748b" }}>
+                Tidak ada pemakaian stok maupun nota yang tertaut ke job ini — isi manual.
+                (Nota bisa ditautkan ke job lewat menu Biaya → Edit → "Job Terkait".)
+              </div>
+            )}
+
+            {!matLoading && matAuto && matAuto.lines.length > 0 && (
+              <>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8" }}>Hitungan sistem</span>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: "#22c55e", fontFamily: "monospace" }}>
+                    Rp {fmt(matAuto.total)}
+                  </span>
+                  <button type="button" onClick={() => { setMaterialCost(String(matAuto.total)); setPakaiAuto(true); }}
+                    style={{ marginLeft: "auto", padding: "4px 10px", borderRadius: 6, border: "1px solid #3b82f6", background: "#3b82f622", color: "#93c5fd", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
+                    Pakai angka ini
+                  </button>
+                </div>
+
+                <div style={{ display: "grid", gap: 2 }}>
+                  {matAuto.lines.map((l, idx) => (
+                    <div key={idx} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 11, color: "#94a3b8" }}>
+                      <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {l.source === "nota" ? "🧾" : "📦"} {l.name}
+                        {l.qty ? ` · ${l.qty} ${l.unit}` : ""}
+                        {l.unit_cost ? ` × Rp${Number(l.unit_cost).toLocaleString("id-ID")}` : ""}
+                        {l.estimated ? " (HPP kini)" : ""}
+                      </span>
+                      <span style={{ fontFamily: "monospace", color: l.subtotal > 0 ? "#e2e8f0" : "#ef4444", whiteSpace: "nowrap" }}>
+                        Rp {fmt(l.subtotal)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                {matAuto.missing.length > 0 && (
+                  <div style={{ marginTop: 6, padding: "5px 8px", borderRadius: 6, background: "#3f1515", fontSize: 10, color: "#fca5a5" }}>
+                    ⚠️ {matAuto.missing.length} item belum ada harga beli ({matAuto.missing.map(m => m.name).join(", ")})
+                    — angka di atas KURANG hitung. Isi dulu di Inventori → Harga Beli.
+                  </div>
+                )}
+              </>
+            )}
           </div>
           {profit !== null && (
             <div style={{ gridColumn: "1/-1", padding: "6px 10px", borderRadius: 6, background: profit >= 1000000 ? "#052e16" : "#3f1515", fontSize: 13, fontWeight: 700, color: profit >= 1000000 ? "#22c55e" : "#fca5a5" }}>
