@@ -42,6 +42,7 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
   const [mewakiliTgl, setMewakiliTgl] = useState(getLocalDate());
   const [mewakiliAktif, setMewakiliAktif] = useState(null); // { nama, id, tgl }
   const [view, setView] = useState("PENDING"); // PENDING | CONFIRMED
+  const [lastLoaded, setLastLoaded] = useState(0); // jejak kesegaran (tab tak realtime)
   // Seberapa jauh ke belakang job boleh dipilih untuk ditautkan ke material.
   // Dulu terkunci di tanggal sesi itu saja, jadi material yang baru dilaporkan
   // beberapa hari kemudian tidak bisa ditautkan sama sekali (keluhan admin,
@@ -133,9 +134,25 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
       });
     }
     setPakai(pakEntries);
+    setLastLoaded(Date.now());
     setLoading(false);
   }, [supabase, view, fetchInventoryUnits, jobDays]);
   useEffect(() => { load(); }, [load]);
+
+  // Live-ish refresh: tabel ini TIDAK di realtime publication, jadi tanpa ini daftar
+  // Owner "stuck" walau Admin (perangkat lain) sudah confirm — data lama terus tampak
+  // seolah berulang. Refetch saat tab kembali fokus + poll ringan 60s selama terlihat.
+  useEffect(() => {
+    const refetch = () => { if (document.visibilityState === "visible") load(); };
+    document.addEventListener("visibilitychange", refetch);
+    window.addEventListener("focus", refetch);
+    const iv = setInterval(refetch, 60000);
+    return () => {
+      document.removeEventListener("visibilitychange", refetch);
+      window.removeEventListener("focus", refetch);
+      clearInterval(iv);
+    };
+  }, [load]);
 
   // Stok per tabung/roll SEKARANG — dibaca segar dari DB, bukan dari layar, karena
   // stok bisa berubah oleh proses lain sejak kartu dimuat.
@@ -430,6 +447,11 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
             </select>
           </label>
         )}
+        <button onClick={() => load()} disabled={loading} title="Ambil data terbaru — tab ini tidak update otomatis antar-perangkat"
+          style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "5px 10px", color: loading ? cs.muted : cs.text, fontSize: 12, fontWeight: 600, cursor: loading ? "default" : "pointer", display: "flex", alignItems: "center", gap: 5 }}>
+          {loading ? "⏳" : "🔄"} Segarkan
+          {lastLoaded ? <span style={{ color: cs.muted, fontWeight: 400 }}>· {new Date(lastLoaded).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}</span> : null}
+        </button>
         <div style={{ display: "flex", gap: 4, background: cs.surface, borderRadius: 8, padding: 3 }}>
           {["PENDING", "CONFIRMED"].map((v) => (
             <button key={v} onClick={() => setView(v)} style={{ padding: "5px 12px", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer", background: view === v ? cs.accent : "transparent", color: view === v ? "#fff" : cs.muted }}>{v === "PENDING" ? "Menunggu" : "Selesai"}</button>
