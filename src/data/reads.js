@@ -363,9 +363,14 @@ export const fetchPriceList = (supabase) =>
 export const fetchAraBrain = (supabase) =>
   supabase.from("ara_brain").select("key,value").limit(50);
 
+// Bukti bayar WA yang belum ditutup — dipakai picker "Lampirkan Bukti" di InvoiceView.
+// Batasnya dulu 20 (audit 29 Agu 2026): dengan antrean 341 baris, bukti yang lebih tua
+// dari ±10 hari tidak pernah masuk daftar dan jadi tak bisa dipilih walau datanya ada.
+// 200 memberi ruang berbulan-bulan pada volume nyata (13-22 bukti/hari, mayoritas
+// langsung tertutup saat invoicenya dilunasi).
 export const fetchPendingPaymentSuggestions = (supabase) =>
   supabase.from("payment_suggestions").select("*").eq("status","PENDING")
-    .order("created_at",{ascending:false}).limit(20);
+    .order("created_at",{ascending:false}).limit(200);
 
 // Kehadiran teknisi — ambil 14 hari ke depan dari today
 export const fetchTechAvailability = (supabase, fromDate) =>

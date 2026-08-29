@@ -1,6 +1,9 @@
 // markPaid — tandai invoice LUNAS (update DB + orders.status=PAID + log bayar +
 // notif customer + retro-match bukti bayar). Diekstrak dari App.jsx (Fase 2, pola
 // ctx). ctx = param ke-6 (setelah arg posisi bawaan). Body verbatim (behavior sama).
+import { closeSuggestionsForInvoice } from "./paymentSuggestionClose.js";
+import { samePhone } from "./phone.js";
+
 export async function markPaid(inv, method = "transfer", notes = "", sendCustNotif = null, paymentProofUrl = null, {
   addAgentLog, appSettings, auditUserName, fmt, getLocalISOString, markInvoicePaid,
   ordersData, reportError, retroMatchPayment, sendWA, setAuditUser, setInvoicesData,
@@ -120,4 +123,13 @@ export async function markPaid(inv, method = "transfer", notes = "", sendCustNot
     if (!paymentProofUrl) {
       retroMatchPayment({ ...inv, status: "PAID" }).catch(e => console.warn("[RETRO_MATCH] markPaid error:", e.message));
     }
+    // Tutup sisa bukti PENDING milik invoice ini. Perlu terpisah dari retro-match karena
+    // retro-match DILEWATI saat buktinya sudah ditempel duluan oleh webhook — persis jalur
+    // paling sering, dan itu yang membuat antrean menumpuk. Syaratnya ketat (HP + nominal),
+    // best-effort, dan tidak pernah menghapus baris.
+    closeSuggestionsForInvoice(inv, {
+      supabase, samePhone, actorName: auditUserName ? auditUserName() : "Sistem",
+    }).then(n => {
+      if (n > 0) addAgentLog("PAYMENT_SUGGESTION_CLOSED", `Invoice ${inv.id} lunas — ${n} bukti bayar pending ditutup`, "INFO");
+    }).catch(() => {});
 }

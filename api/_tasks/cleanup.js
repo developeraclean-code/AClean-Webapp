@@ -34,10 +34,15 @@ export async function taskCleanup() {
   if (dispDelErr) console.error("[CLEANUP_DISPATCH_LOGS]", dispDelErr.message);
   else result.dispatch_logs = dispCount || 0;
 
-  // 4. Cleanup payment_suggestions RESOLVED/REJECTED > 30 hari
+  // 4. Cleanup payment_suggestions yang SUDAH selesai > 30 hari.
+  //    Nilai status sebelumnya ditulis "RESOLVED"/"REJECTED" — keduanya TIDAK PERNAH ADA
+  //    di tabel ini (nilai nyata: CONFIRMED / PENDING / DISMISSED), jadi sejak lahir cron
+  //    ini menghapus 0 baris sambil tetap melapor sukses (audit 29 Agu 2026).
+  //    PENDING sengaja TIDAK ikut dihapus: baris itu bisa jadi satu-satunya jejak bukti
+  //    bayar yang belum ditinjau — menghapusnya = memusnahkan barang bukti.
   const { error: suggDelErr, count: suggCount } = await sb.from("payment_suggestions")
     .delete({ count: "exact" })
-    .in("status", ["RESOLVED", "REJECTED"])
+    .in("status", ["CONFIRMED", "DISMISSED"])
     .lt("created_at", cutoff30);
   if (suggDelErr) console.error("[CLEANUP_PAYMENT_SUGGESTIONS]", suggDelErr.message);
   else result.payment_suggestions = suggCount || 0;

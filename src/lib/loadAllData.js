@@ -65,7 +65,7 @@ export async function loadAllData({
         const _pPL = Promise.resolve(fetchPriceList(supabase));
         const _pBrain = Promise.resolve(fetchAraBrain(supabase));
         const _pPS = _isOwnerAdmin
-          ? Promise.resolve(supabase.from("payment_suggestions").select("*").eq("status", "PENDING").order("created_at", { ascending: false }).limit(20))
+          ? Promise.resolve(supabase.from("payment_suggestions").select("*").eq("status", "PENDING").order("created_at", { ascending: false }).limit(200))
           : Promise.resolve({ data: null });
 
         // GAP 3: Load payments summary & dispatch recent (untuk dashboard)

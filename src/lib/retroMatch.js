@@ -48,12 +48,18 @@ export async function retroMatchPayment(inv, {
       if (!best) return;
       const now = new Date().toISOString();
 
-      // Patch payment_suggestion → link ke invoice ini
+      // Patch payment_suggestion → link ke invoice ini DAN tutup statusnya.
+      // `status` dulu tidak ikut di-set (audit 29 Agu 2026): baris yang sudah berhasil
+      // dicocokkan tetap PENDING selamanya, jadi antrean tinjauan menumpuk sampai 341
+      // baris & bukti baru tenggelam. Menutupnya di sini bukan menghapus — jejaknya utuh.
       await supabase.from("payment_suggestions").update({
         invoice_id: inv.id,
         order_id: inv.job_id || null,
         matched_at: now,
         match_source: fuzzy ? "retro_fuzzy_1digit" : "retro",
+        status: "CONFIRMED",
+        resolved_at: now,
+        resolved_by: "retro-match",
       }).eq("id", best.id);
 
       // Patch invoice → simpan payment_proof_url jika ada foto
