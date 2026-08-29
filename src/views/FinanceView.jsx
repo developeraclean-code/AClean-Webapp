@@ -371,7 +371,7 @@ const PlanningTab = ({ allInvoices, allExpenses }) => {
     [paidThisMonth]);
 
   const expensesBulanIni = useMemo(() =>
-    (allExpenses || []).filter(e => (e.date || e.created_at || "").slice(0, 7) === bulanIni),
+    (allExpenses || []).filter(e => e.approval_status !== "PENDING_APPROVAL" && (e.date || e.created_at || "").slice(0, 7) === bulanIni),
     [allExpenses, bulanIni]);
 
   const totalOut = useMemo(() =>
@@ -383,7 +383,7 @@ const PlanningTab = ({ allInvoices, allExpenses }) => {
     [allInvoices]);
 
   const totalOutAll = useMemo(() =>
-    (allExpenses || []).reduce((s, e) => s + (e.amount || 0), 0),
+    (allExpenses || []).reduce((s, e) => s + (e.approval_status === "PENDING_APPROVAL" ? 0 : (e.amount || 0)), 0),
     [allExpenses]);
 
   const netProfit = totalIn - totalOut;

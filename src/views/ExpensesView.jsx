@@ -134,6 +134,7 @@ const thisMonthPrefix = `${nowDate.getFullYear()}-${String(nowDate.getMonth() + 
 const spendThisMonth = useMemo(() => {
   const map = {};
   expensesData.forEach(e => {
+    if (e.approval_status === "PENDING_APPROVAL") return;   // belum disetujui → belum dihitung
     if (!(e.date || "").startsWith(thisMonthPrefix)) return;
     const catKey = budgetKey(e.category, null);
     map[catKey] = (map[catKey] || 0) + Number(e.amount || 0);
@@ -284,7 +285,10 @@ const filtered = (isTrash ? deletedData : expensesData).filter(e => {
 
 const totalPage = Math.ceil(filtered.length / EXPENSE_PAGE_SIZE) || 1;
 const pageData = filtered.slice((expensePage - 1) * EXPENSE_PAGE_SIZE, expensePage * EXPENSE_PAGE_SIZE);
-const grandTotal = filtered.reduce((s, e) => s + Number(e.amount || 0), 0);
+// Total tidak menghitung biaya PENDING_APPROVAL (belum disetujui Owner).
+const grandTotal = filtered.reduce((s, e) => s + (e.approval_status === "PENDING_APPROVAL" ? 0 : Number(e.amount || 0)), 0);
+const pendingApprovals = (expensesData || []).filter(e => e.approval_status === "PENDING_APPROVAL" && !e.deleted_at);
+const pendingApprovalSum = pendingApprovals.reduce((s, e) => s + Number(e.amount || 0), 0);
 
 // ── Navigasi per-hari (geser slide, seperti Dashboard) ──
 const dayMode = !!expenseDateFrom && expenseDateFrom === expenseDateTo;
@@ -344,10 +348,16 @@ const saveExpense = async () => {
     }
     showNotif?.(`✅ Biaya ${payload.subcategory} (${fmt(payload.amount)}) diperbarui`);
   } else {
+    // Anti-fraud: biaya yang dibuat ADMIN & ≥ Rp 500.000 → PENDING_APPROVAL (belum dihitung
+    // di total/laporan sampai Owner/Finance menyetujui). Owner/Finance atau < 500rb → langsung APPROVED.
+    const needApproval = currentUser?.role === "Admin" && Number(f.amount) >= 500000;
+    payload.approval_status = needApproval ? "PENDING_APPROVAL" : "APPROVED";
     const { data, error } = await insertExpense(supabase, { ...payload, last_changed_by: auditUserName() });
     if (error) { showNotif?.("❌ Gagal simpan biaya: " + error.message); return; }
     setExpensesData(prev => [data, ...prev]);
-    showNotif?.(`✅ Biaya ${payload.subcategory} (${fmt(payload.amount)}) tersimpan`);
+    showNotif?.(needApproval
+      ? `⏳ Biaya ${payload.subcategory} (${fmt(payload.amount)}) MENUNGGU persetujuan Owner (≥ Rp 500rb).`
+      : `✅ Biaya ${payload.subcategory} (${fmt(payload.amount)}) tersimpan`);
   }
   setModalExpense(false);
   resetForm();
@@ -363,6 +373,27 @@ const handleDeleteExpense = async (item) => {
   if (error) { showNotif?.("❌ Gagal hapus biaya: " + error.message); return; }
   setExpensesData(prev => prev.filter(x => x.id !== item.id));
   showNotif?.(`🗑️ Biaya ${item.subcategory} dipindah ke Dihapus (bisa dipulihkan)`);
+};
+
+// ── Approval biaya Admin (≥500rb) — Owner/Finance ──
+const bolehApprove = currentUser?.role === "Owner" || currentUser?.role === "Finance";
+const approveExpense = async (item) => {
+  const { error } = await updateExpense(supabase, item.id,
+    { approval_status: "APPROVED", approved_by: auditUserName(), approved_at: new Date().toISOString() }, auditUserName());
+  if (error) { showNotif?.("❌ Gagal setujui: " + error.message); return; }
+  setExpensesData(prev => prev.map(x => x.id === item.id ? { ...x, approval_status: "APPROVED" } : x));
+  showNotif?.(`✅ Biaya ${item.subcategory} (${fmt(item.amount)}) disetujui — kini terhitung`);
+};
+const rejectExpense = async (item) => {
+  const ok = showConfirm
+    ? await showConfirm({ icon: "❌", title: "Tolak Biaya?", danger: true,
+        message: `Tolak & hapus biaya "${item.subcategory}" ${fmt(item.amount)}? (masuk ke Dihapus)`, confirmText: "Ya, Tolak" })
+    : window.confirm("Tolak biaya ini?");
+  if (!ok) return;
+  const { error } = await deleteExpense(supabase, item.id, auditUserName());
+  if (error) { showNotif?.("❌ Gagal tolak: " + error.message); return; }
+  setExpensesData(prev => prev.filter(x => x.id !== item.id));
+  showNotif?.(`❌ Biaya ${item.subcategory} ditolak`);
 };
 
 // ── Recycle bin: restore & purge (Owner only) ──
@@ -680,6 +711,13 @@ return (
       )}
     </div>
 
+    {/* Banner approval biaya Admin (≥500rb) — Owner/Finance */}
+    {!isTrash && bolehApprove && pendingApprovals.length > 0 && (
+      <div style={{ background: "#78350f", border: "2px solid #f59e0b", borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "#fde68a", fontWeight: 700 }}>
+        ⏳ {pendingApprovals.length} biaya Admin menunggu persetujuan (Rp {pendingApprovalSum.toLocaleString("id-ID")}) — belum dihitung di total. Setujui/Tolak di daftar (bertanda ⏳).
+      </div>
+    )}
+
     {/* Search + date range */}
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
       <input value={expenseSearch} onChange={e => { setExpenseSearch(e.target.value); setExpensePage(1); }}
@@ -739,9 +777,20 @@ return (
                 </div>
               )}
             </div>
-            <div style={{ fontWeight: 700, fontSize: 14, color: cs.red, whiteSpace: "nowrap" }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: cs.red, whiteSpace: "nowrap", textAlign: "right" }}>
               Rp {Number(item.amount || 0).toLocaleString("id-ID")}
+              {item.approval_status === "PENDING_APPROVAL" && (
+                <div style={{ fontSize: 9, fontWeight: 800, color: "#f59e0b", marginTop: 2 }}>⏳ MENUNGGU APPROVAL</div>
+              )}
             </div>
+            {!isTrash && item.approval_status === "PENDING_APPROVAL" && bolehApprove && (
+              <div style={{ display: "flex", gap: 6 }}>
+                <button onClick={() => approveExpense(item)} title="Setujui — biaya mulai dihitung"
+                  style={{ background: cs.green, border: "none", color: "#fff", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>✅ Setujui</button>
+                <button onClick={() => rejectExpense(item)} title="Tolak & hapus"
+                  style={{ background: "transparent", border: "1px solid " + cs.red, color: cs.red, borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: 12 }}>❌ Tolak</button>
+              </div>
+            )}
             {isTrash ? (
               <div style={{ display: "flex", gap: 6 }}>
                 <button onClick={() => handleRestoreExpense(item)}
