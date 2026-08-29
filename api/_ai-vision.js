@@ -4,6 +4,7 @@
 // sesuai intent yang dideteksi.
 
 import { expenseDuplicateExists, buildExpenseDedupKey } from "./_expense-dedup.js";
+import { calcAiCost } from "./_logger.js";
 import * as Sentry from "@sentry/node";
 
 // Helper: ganti `.catch(() => {})` agar exception ke-track di Sentry
@@ -14,9 +15,7 @@ const sentryCatch = (op, extra) => (e) => {
 const ANTHROPIC_MODEL = "claude-haiku-4-5";
 const ANTHROPIC_API = "https://api.anthropic.com/v1/messages";
 
-// Pricing (per 1M tokens, USD) — claude-haiku-4-5
-const PRICE_IN_PER_MTOK  = 1.00;
-const PRICE_OUT_PER_MTOK = 5.00;
+// Harga diambil dari tabel tunggal di _logger.js (dulu diduplikasi di sini → rawan drift).
 
 // Gating confidence — draft (expense/payment) hanya dibuat bila confidence >= ambang.
 const CONF_RANK = { LOW: 1, MEDIUM: 2, HIGH: 3 };
@@ -37,45 +36,52 @@ export function safeDateStr(v) {
 }
 
 function buildPrompt(groupCfg) {
-  const enabled = [];
-  if (groupCfg.ai_expense_enabled)   enabled.push('"expense" — foto struk / nota / kwitansi belanja operasional');
-  if (groupCfg.ai_material_enabled)  enabled.push('"material" — foto material yang dibawa teknisi (tabung freon, gulungan pipa, gulungan kabel)');
-  if (groupCfg.ai_payment_enabled)   enabled.push('"payment" — bukti transfer / screenshot mutasi bank / setor tunai');
+  // Prompt disusun HANYA dari intent yang aktif di grup ini. Blok aturan & spesifikasi
+  // field untuk intent yang OFF tidak ikut dikirim — dulu seluruh 90 baris dikirim
+  // apa pun togglenya, padahal hasil intent yang OFF tetap dibuang oleh gate
+  // `groupCfg.ai_*_enabled` di persistClassification(). Itu murni token terbakar.
+  const onExp = !!groupCfg.ai_expense_enabled;
+  const onMat = !!groupCfg.ai_material_enabled;
+  const onPay = !!groupCfg.ai_payment_enabled;
 
+  const enabled = [];
+  if (onExp) enabled.push('"expense" — foto struk / nota / kwitansi belanja operasional');
+  if (onMat) enabled.push('"material" — foto material yang dibawa teknisi (tabung freon, gulungan pipa, gulungan kabel)');
+  if (onPay) enabled.push('"payment" — bukti transfer / screenshot mutasi bank / setor tunai');
   const intentList = enabled.length > 0 ? enabled.join("\n") : '(tidak ada AI intent aktif untuk grup ini)';
 
-  return `Kamu adalah AI klasifikasi foto WhatsApp bisnis AC service di Indonesia.
-Klasifikasikan foto ini ke salah satu intent berikut:
-${intentList}
-"unknown" — bukan salah satu di atas
+  // Enum intent di output JSON ikut menyempit → model tidak bisa memilih intent mati.
+  const intentEnum = [
+    ...(onExp ? ['"expense"'] : []),
+    ...(onMat ? ['"material"'] : []),
+    ...(onPay ? ['"payment"'] : []),
+    '"unknown"',
+  ].join(" | ");
 
-ATURAN PRIORITAS INTENT (penting, urutan menentukan):
-0. Kalau "payment" ADA di daftar intent aktif di atas DAN foto = bukti pembayaran MASUK
-   ke kita (screenshot transfer BERHASIL / mutasi bank bertanda kredit-masuk / bukti setor
-   tunai — umumnya customer membayar tagihan) → "payment". Ini UANG MASUK, bukan pembelian.
-   Ciri: tampilan m-banking/e-wallet "Transfer Berhasil/Sukses", ada nominal + bank/tujuan,
-   TIDAK ada daftar barang yang dibeli. Aturan 1 (expense) di bawah TIDAK berlaku untuk ini.
-1. Selain payment di atas: ada NOMINAL RUPIAH, atau kata beli/pembelian/bayar/transfer/tf/
+  // ── Aturan prioritas — hanya yang relevan, dinomori ulang otomatis ──
+  const rules = [];
+  if (onPay) rules.push(`Kalau foto = bukti pembayaran MASUK ke kita (screenshot transfer BERHASIL /
+   mutasi bank bertanda kredit-masuk / bukti setor tunai — umumnya customer membayar
+   tagihan) → "payment". Ini UANG MASUK, bukan pembelian. Ciri: tampilan m-banking/e-wallet
+   "Transfer Berhasil/Sukses", ada nominal + bank/tujuan, TIDAK ada daftar barang yang dibeli.${onExp ? '\n   Aturan expense di bawah TIDAK berlaku untuk ini.' : ''}`);
+  if (onExp) rules.push(`${onPay ? "Selain payment di atas: ada" : "Ada"} NOMINAL RUPIAH, atau kata beli/pembelian/bayar/transfer/tf/
    harga/nota/bon/faktur/kwitansi/struk untuk UANG KELUAR (tim membeli barang/jasa)
-   → "expense". Ini berlaku WALAUPUN barangnya material
+   → "expense".${onMat ? ` Ini berlaku WALAUPUN barangnya material
    (pipa/kabel/freon/plastik/sparepart) — pembelian material tetap UANG KELUAR.
-   Contoh: "mohon diproses pembelian plastic cuci senilai 882.000" → expense, bukan material.
-2. "material" HANYA untuk laporan STOK MURNI tanpa nominal apa pun — barang dibawa,
+   Contoh: "mohon diproses pembelian plastic cuci senilai 882.000" → expense, bukan material.` : ""}`);
+  if (onMat) rules.push(`"material" HANYA untuk laporan STOK MURNI tanpa nominal apa pun — barang dibawa,
    dipakai, sisa, atau dikembalikan ke kantor.
-   Contoh: "pipa A16 sisa 5m kembali kantor", "freon R32 sisa 3,1kg terpakai 500gram".
-3. Kalau ragu antara expense dan material, dan ada angka yang tampak seperti rupiah
-   → pilih "expense" (lebih aman: uang tidak boleh hilang dari pencatatan).
+   Contoh: "pipa A16 sisa 5m kembali kantor", "freon R32 sisa 3,1kg terpakai 500gram".`);
+  if (onExp && onMat) rules.push(`Kalau ragu antara expense dan material, dan ada angka yang tampak seperti rupiah
+   → pilih "expense" (lebih aman: uang tidak boleh hilang dari pencatatan).`);
+  const rulesText = rules.length
+    ? "ATURAN PRIORITAS INTENT (penting, urutan menentukan):\n" +
+      rules.map((r, i) => `${i + 1}. ${r}`).join("\n") + "\n\n"
+    : "";
 
-Output WAJIB JSON valid (tidak ada prefix/suffix lain), struktur:
-{
-  "intent": "expense" | "material" | "payment" | "unknown",
-  "confidence": "HIGH" | "MEDIUM" | "LOW",
-  "data": { ...field sesuai intent... },
-  "reasoning": "1-2 kalimat alasan singkat"
-}
-
-Field per intent:
-- expense: {
+  // ── Spesifikasi field — hanya intent aktif ──
+  const fields = [];
+  if (onExp) fields.push(`- expense: {
     merchant: string,
     date: "YYYY-MM-DD"|null,   // tanggal STRUK. Jangan mengarang — null kalau tidak terbaca.
     items: [{                   // satu entri per pengeluaran. Nota 1 barang → 1 entri.
@@ -111,8 +117,8 @@ Field per intent:
     (HANYA 4 nilai itu. Barang apa pun di luar pipa/kabel/freon — kapasitor, duct tape,
      bracket, sparepart, alat — pakai "Material Lain". Detail barangnya taruh di item_name.)
   Pilihan category: foto struk bensin SPBU/parkir/perbaikan motor/jajan/makan → "petty_cash".
-  Foto nota toko bangunan/pipa/kabel/freon/material → "material_purchase".
-- material: { items: [{ type: "freon"|"pipa"|"kabel"|"lain", brand: string|null, size: string|null,
+  Foto nota toko bangunan/pipa/kabel/freon/material → "material_purchase".`);
+  if (onMat) fields.push(`- material: { items: [{ type: "freon"|"pipa"|"kabel"|"lain", brand: string|null, size: string|null,
                         qty: number|null, kind: "dibawa"|"terpakai"|"sisa" }] }
   ARAH (kind) WAJIB diisi — ini menentukan stok bertambah atau berkurang:
   - "dibawa"   : barang dibawa dari kantor ke lokasi ("bawa pipa A4 7 meter")
@@ -125,10 +131,24 @@ Field per intent:
   satu {qty: 5, kind: "terpakai"} dan satu {qty: 2, kind: "sisa"}. Jangan pilih salah satu.
   qty WAJIB berupa ANGKA murni dan size hanya untuk ukuran/tipe (A4, 1/4, R32).
   Berat/panjang JANGAN ditaruh di size: "kembali tidak terpakai 4.8kg" →
-  {qty: 4.8, size: "R32", kind: "sisa"}, BUKAN {qty: 1, size: "4.8kg"}.
-- payment: { amount: number, bank: string, transfer_date: "YYYY-MM-DD"|null, sender_name: string|null, reference: string|null }
+  {qty: 4.8, size: "R32", kind: "sisa"}, BUKAN {qty: 1, size: "4.8kg"}.`);
+  if (onPay) fields.push(`- payment: { amount: number, bank: string, transfer_date: "YYYY-MM-DD"|null, sender_name: string|null, reference: string|null }`);
+  const fieldsText = fields.length ? "Field per intent:\n" + fields.join("\n") + "\n\n" : "";
 
-Aturan confidence:
+  return `Kamu adalah AI klasifikasi foto WhatsApp bisnis AC service di Indonesia.
+Klasifikasikan foto ini ke salah satu intent berikut:
+${intentList}
+"unknown" — bukan salah satu di atas
+
+${rulesText}Output WAJIB JSON valid (tidak ada prefix/suffix lain), struktur:
+{
+  "intent": ${intentEnum},
+  "confidence": "HIGH" | "MEDIUM" | "LOW",
+  "data": { ...field sesuai intent... },
+  "reasoning": "1-2 kalimat alasan singkat"
+}
+
+${fieldsText}Aturan confidence:
 - HIGH: semua field terbaca jelas, struk/bukti tidak blur, nominal jelas
 - MEDIUM: 1-2 field tidak jelas atau perlu inference
 - LOW: foto blur, partial, atau ambigu
@@ -186,7 +206,7 @@ export async function classifyImage({ imageUrl, imageBase64, mimeType, groupCfg,
 
   const tokensIn  = response?.usage?.input_tokens  || 0;
   const tokensOut = response?.usage?.output_tokens || 0;
-  const costUsd   = (tokensIn / 1_000_000) * PRICE_IN_PER_MTOK + (tokensOut / 1_000_000) * PRICE_OUT_PER_MTOK;
+  const costUsd   = calcAiCost({ model: ANTHROPIC_MODEL, input_tokens: tokensIn, output_tokens: tokensOut });
 
   // Log cost ke ai_usage SEKARANG (sebelum parse) — tetap track meski hasil parse fail
   const SU0 = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;

@@ -6,12 +6,22 @@ import { checkRateLimit } from "../_auth.js";
 import { validateAndNormalizePhone, buildPhoneVariants, validateMessage, sanitizeName, findNearPhoneInvoice } from "../_validate.js";
 import { criticalFetch, sentryCatch } from "../_report.js";
 import { classifyImage, persistClassification, safeDateStr } from "../_ai-vision.js";
+import { logAiUsageRest } from "../_logger.js";
 import { analyzeToolBagPhoto } from "../_tool-bag-vision.js";
 import { classifyText, matchSelesaiToOrder, persistTextClassification, extractMaterialUsage, resolveUsageJobs, looksLikeMaterialUsage } from "../_ai-text.js";
 import { uploadBufferToR2, downloadToBuffer, hasR2Config } from "../_r2-upload.js";
 import { md5Buffer, checkImageDuplicate } from "../_image-dedup.js";
 import { parseKasbonText, matchKasbonName, isKasbonApprovalMessage, isKasbonRevisionMessage, resolveKasbonEntry, KASBON_APPROVER_PHONES } from "../_kasbon-parser.js";
 import { parseCarrierFromCaption, matchCarrierName, parseLaporanTeam, matchLaporanToOrder, parseBiayaExtended } from "../_shadow-parsers.js";
+
+// Pencatat biaya AI untuk panggilan Anthropic yang di-fetch langsung di file ini.
+// Sebelumnya 4 titik di bawah TIDAK tercatat sama sekali di ai_usage → biaya "gelap"
+// (tidak terlihat di Monitoring). Fail-silent & fire-and-forget: tidak memblok webhook.
+const logAi = (feature, model, data, extra = {}) => logAiUsageRest({
+  SU: process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL,
+  SK: process.env.SUPABASE_SERVICE_KEY,
+  provider: "claude", model, feature, usage: data?.usage, ...extra,
+});
 import { expenseDuplicateExists, buildExpenseDedupKey } from "../_expense-dedup.js";
 import * as Sentry from "@sentry/node";
 
@@ -1396,6 +1406,7 @@ export async function receiveWa(req, res) {
               });
               if (extractRes.ok) {
                 const extractData = await extractRes.json();
+                logAi("wa-payment-text", "claude-haiku-4-5", extractData);
                 const rawText = ((extractData.content||[])[0]?.text || "").trim();
                 const jsonMatch = rawText.match(/\{[\s\S]*\}/);
                 if (jsonMatch) {
@@ -1809,6 +1820,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                 });
                 if (visionRes.ok) {
                   const vd = await visionRes.json();
+                  logAi("wa-material-vision", "claude-haiku-4-5", vd);
                   const rawText = (vd.content || []).map(c => c.text || "").join("").trim();
                   const jm = rawText.match(/\{[\s\S]*\}/);
                   if (jm) { try { aiDetected = JSON.parse(jm[0]); } catch (_) {} }
@@ -1954,6 +1966,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
               let savedImageUrl = null;
               if (classifyRes.ok) {
                 const classifyData = await classifyRes.json();
+                logAi("wa-personal-vision", "claude-haiku-4-5", classifyData);
                 const rawClassify = (classifyData.content||[]).map(c=>c.text||"").join("").trim();
                 const jsonMatchC = rawClassify.match(/\{[\s\S]*\}/);
                 if (jsonMatchC) {
@@ -2296,6 +2309,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
             });
             if (araRes.ok) {
               const araData = await araRes.json();
+              logAi("wa-ara-customer", "claude-haiku-4-5", araData, { user_name: typeof sender === "string" ? sender : null });
               reply = (araData.content||[]).map(c=>c.text||"").join("").trim() || null;
               if (reply && FT) {
                 fetch("https://api.fonnte.com/send", {

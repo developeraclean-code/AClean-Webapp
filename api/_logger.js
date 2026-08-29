@@ -10,10 +10,16 @@
 // ============================================================
 
 // ── Pricing per 1M tokens (USD). Update kalau provider rilis harga baru ──
-// Sumber: pricing page masing-masing provider (Q2 2026 snapshot).
+// Sumber: docs.anthropic.com/en/docs/about-claude/pricing (snapshot 29 Agu 2026).
+// CATATAN: model yang TIDAK ada di sini jatuh ke "_default" ($1/$5) dan biayanya
+// tercatat SALAH tanpa error apa pun — tambahkan entri baru sebelum memakai model baru.
 const AI_PRICING = {
   // Anthropic
-  "claude-opus-4-7":     { input: 15.00, output: 75.00 },
+  "claude-opus-5":       {  input: 5.00, output: 25.00 },
+  "claude-opus-4-8":     {  input: 5.00, output: 25.00 },
+  "claude-opus-4-7":     {  input: 5.00, output: 25.00 },
+  "claude-opus-4-6":     {  input: 5.00, output: 25.00 },
+  "claude-sonnet-5":     {  input: 2.00, output: 10.00 },
   "claude-sonnet-4-6":   {  input: 3.00, output: 15.00 },
   "claude-haiku-4-5":    {  input: 1.00, output:  5.00 },
   "claude-haiku-4-5-20251001": { input: 1.00, output: 5.00 },
@@ -210,4 +216,54 @@ export function extractOpenAIUsage(response) {
     input_tokens: Number(usage.prompt_tokens) || 0,
     output_tokens: Number(usage.completion_tokens) || 0,
   };
+}
+
+// ── 4. ai_usage insert via REST (tanpa klien Supabase) ──
+// Dipakai di jalur webhook/handler yang cuma punya SUPABASE_URL + SERVICE_KEY mentah
+// (api/_handlers/wa.js, _tool-bag-vision.js, _ai-vision.js) — di sana tidak ada objek `sb`.
+// Fire-and-forget & fail-silent: logging biaya TIDAK boleh memblok balasan webhook,
+// dan kegagalan log tidak boleh menggagalkan fitur.
+//
+// `usage` menerima langsung objek usage dari Anthropic ({input_tokens, output_tokens}).
+export function logAiUsageRest({
+  SU, SK,
+  provider = "claude",
+  model,
+  feature,
+  usage = null,
+  input_tokens = 0,
+  output_tokens = 0,
+  cost_usd = null,
+  user_name = null,
+  duration_ms = null,
+  error = null,
+  metadata = null,
+}) {
+  try {
+    if (!SU || !SK || !feature) return;
+    const tin  = Number(usage?.input_tokens  ?? input_tokens)  || 0;
+    const tout = Number(usage?.output_tokens ?? output_tokens) || 0;
+    const finalCost = cost_usd !== null && cost_usd !== undefined
+      ? cost_usd
+      : calcAiCost({ model, input_tokens: tin, output_tokens: tout });
+    fetch(SU + "/rest/v1/ai_usage", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal",
+      },
+      body: JSON.stringify({
+        provider,
+        model: model ? String(model).slice(0, 100) : null,
+        feature,
+        input_tokens: tin,
+        output_tokens: tout,
+        cost_usd: finalCost,
+        user_name: user_name ? String(user_name).slice(0, 120) : null,
+        duration_ms: duration_ms ? Number(duration_ms) : null,
+        error: error ? String(error).slice(0, 300) : null,
+        metadata,
+      }),
+    }).catch(() => {});
+  } catch (_) { /* fail-silent */ }
 }

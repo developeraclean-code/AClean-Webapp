@@ -4,6 +4,7 @@
 // Satu sumber prompt & parsing supaya kedua jalur tidak divergen.
 
 import { sanitizeForPrompt } from "./_validate.js";
+import { logAiUsageRest } from "./_logger.js";
 
 const TOOL_VISUAL_GUIDE = `
 PANDUAN VISUAL ALAT (gunakan untuk identifikasi):
@@ -95,6 +96,13 @@ export async function analyzeToolBagPhoto({ imageBase64, mimeType, checklist }) 
   if (!visionRes.ok) throw new Error("AI vision HTTP " + visionRes.status);
 
   const visionData = await visionRes.json();
+  // Catat biaya — sebelumnya jalur tool-bag tidak pernah masuk ai_usage.
+  logAiUsageRest({
+    SU: process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL,
+    SK: process.env.SUPABASE_SERVICE_KEY,
+    provider: "claude", model: "claude-haiku-4-5", feature: "tool-bag-vision",
+    usage: visionData?.usage,
+  });
   const rawText = (visionData.content || []).map(c => c.text || "").join("").trim();
   let analysisResult = null;
   const jsonMatch = rawText.match(/\{[\s\S]*\}/);

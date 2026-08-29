@@ -1,5 +1,6 @@
 // api/_handlers/misc.js — ara-chat (proxy LLM legacy) & cron-reminder legacy
 // (Batch 4 pemecahan router, Jul 2026). Dipindah APA ADANYA dari api/[route].js.
+import { logAiUsageRest } from "../_logger.js";
 
     // ── ARA-CHAT ──
 export async function araChat(req, res) {
@@ -16,7 +17,7 @@ export async function araChat(req, res) {
       if (prov === "claude" || prov === "anthropic") {
         const AK = (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY || "").trim();
         if (!AK) return res.status(500).json({ error: "LLM_API_KEY belum diset di Vercel Environment Variables" });
-        const mdl = model || process.env.LLM_MODEL || "claude-sonnet-4-6";
+        const mdl = model || process.env.LLM_MODEL || "claude-haiku-4-5";
         const cMsgs = messages.map((m, i) => {
           const c = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
           if (i === messages.length-1 && imageData && m.role === "user")
@@ -29,6 +30,11 @@ export async function araChat(req, res) {
           body: JSON.stringify({ model: mdl, max_tokens: 2048, system: sysP, messages: cMsgs })
         });
         const cd = await cr.json();
+        logAiUsageRest({
+          SU: process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL,
+          SK: process.env.SUPABASE_SERVICE_KEY,
+          provider: "claude", model: mdl, feature: "ara-chat-router", usage: cd?.usage,
+        });
         if (!cr.ok) return res.status(502).json({ error: (cd.error && cd.error.message) || "Claude API error" });
         return res.status(200).json({ reply: (cd.content||[]).map(c => c.text||"").join(""), model: mdl, provider: "claude" });
       }
