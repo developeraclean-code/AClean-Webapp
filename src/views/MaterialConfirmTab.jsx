@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, lazy, Suspense } from "react";
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import { cs } from "../theme/cs.js";
 import { computeDayDeduct, applyAdminOverrides, lineKey, buildReversalRow, reversalByUnit,
   hitungKekuranganStok, pesanKekuranganStok } from "../lib/materialDeduct.js";
@@ -50,8 +50,15 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
   // 25 Agu 2026). Job hari yang sama tetap tampil paling atas & terpisah.
   const [jobDays, setJobDays] = useState(7);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  // Anti-race: tiap load() dapat nomor urut. Hasil load yang sudah kadaluarsa (mis. load
+  // untuk view "Selesai" yang selesai belakangan setelah user balik ke "Menunggu") DIBUANG,
+  // supaya baris CONFIRMED tak pernah menimpa daftar PENDING → cegah glitch "kotak isian
+  // muncul lagi". `silent` = refresh latar (poll) tanpa mengosongkan daftar jadi "Memuat…".
+  const loadSeq = useRef(0);
+  const load = useCallback(async (opts) => {
+    const silent = opts?.silent === true;
+    const myId = ++loadSeq.current;
+    if (!silent) setLoading(true);
     // ── PULANG (model bawa−sisa) ──
     const { data: puls } = await supabase.from("teknisi_material_checkout")
       .select("*").eq("session_type", "pulang").eq("confirm_status", view)
@@ -104,12 +111,12 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
         .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(a.customer).localeCompare(String(b.customer)));
     };
 
-    setRows(pulRows.map((p) => ({
+    const mappedRows = pulRows.map((p) => ({
       pulang: p, pagi: pagiMap[p.id],
       jobs: (p.job_ids || []).map((id) => jobMap[id] || { id, customer: id }),
       jobOptions: jobOptionsFor(p),
       lines: computeDayDeduct(pagiMap[p.id]?.items || [], p.items || []),
-    })));
+    }));
 
     // Untuk pakai: unit picker per jenis
     let pakEntries = [];
@@ -134,9 +141,13 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
         return { row: { ...row, items: lines }, jobOptions: jobOptionsFor(row), unitsByType, jobMap, unitTerisi: terisi };
       });
     }
-    setPakai(pakEntries);
-    setLastLoaded(Date.now());
-    setLoading(false);
+    // Terapkan HANYA bila ini load terbaru (bukan hasil basi yang balapan).
+    if (myId === loadSeq.current) {
+      setRows(mappedRows);
+      setPakai(pakEntries);
+      setLastLoaded(Date.now());
+    }
+    if (!silent) setLoading(false);
   }, [supabase, view, fetchInventoryUnits, jobDays]);
   useEffect(() => { load(); }, [load]);
 
@@ -144,7 +155,7 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
   // Owner "stuck" walau Admin (perangkat lain) sudah confirm — data lama terus tampak
   // seolah berulang. Refetch saat tab kembali fokus + poll ringan 60s selama terlihat.
   useEffect(() => {
-    const refetch = () => { if (document.visibilityState === "visible") load(); };
+    const refetch = () => { if (document.visibilityState === "visible") load({ silent: true }); };
     document.addEventListener("visibilitychange", refetch);
     window.addEventListener("focus", refetch);
     const iv = setInterval(refetch, 60000);
