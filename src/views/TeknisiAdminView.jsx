@@ -10,7 +10,7 @@ import {
   daysSinceBonusDate as daysSinceDate, effBonusStatus,
 } from "../lib/bonus.js";
 import { buildBonusRekap } from "../lib/bonusRekap.js";
-import { jobMaterialCost } from "../lib/hpp.js";
+import { invoiceMaterialCostHPP } from "../lib/hpp.js";
 import BonusRekapPanel from "./BonusRekapPanel.jsx";
 import {
   localDateStr, getMondayOf, getSaturdayOf, addWeeks,
@@ -19,7 +19,7 @@ import {
 import {
   fetchWeeklyPayroll, fetchDaysWorkedFromOrders, fetchKasbonByPeriod, fetchAllKasbonByPeriod,
   fetchOrderBonusesByPeriod, fetchOrdersWithoutBonus, fetchKomplainSekitarPeriode, fetchAvailabilityByUserPeriod,
-  fetchAssignedDaysFromSlots, fetchWeekAbsences, fetchJobMaterialSources,
+  fetchAssignedDaysFromSlots, fetchWeekAbsences,
 } from "../data/reads.js";
 import {
   updateUserDailyRate, upsertWeeklyPayroll, updateWeeklyPayroll,
@@ -1898,9 +1898,11 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
     setMatLoading(true);
     (async () => {
       try {
-        const { txs, expenses, inventory } = await fetchJobMaterialSources(sb, orderRow.id);
+        // Quick count: biaya material = rincian INVOICE (materials_detail) × HPP.
+        // Tak bergantung ke stok tertaut job — rincian invoice selalu lengkap.
+        const { data: invRows } = await sb.from("inventory").select("name,purchase_price").limit(500);
         if (batal) return;
-        const hasil = jobMaterialCost({ txs, expenses, inventory });
+        const hasil = invoiceMaterialCostHPP({ materialsDetail: inv?.materials_detail, inventory: invRows || [] });
         setMatAuto(hasil);
         // Auto-isi biaya material dari HPP (Σ qty×HPP + nota tertaut) supaya Owner tak
         // hitung manual. Termasuk Rp 0 bila job tanpa material → seluruh omset jadi margin.
@@ -2049,8 +2051,7 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
 
             {!matLoading && matAuto && !matAuto.error && matAuto.lines.length === 0 && (
               <div style={{ fontSize: 11, color: "#64748b" }}>
-                ✅ Tidak ada pemakaian stok / nota tertaut ke job ini → biaya material otomatis <b style={{ color: "#22c55e" }}>Rp 0</b> (seluruh omset jadi margin).
-                <br />Nota material bisa ditautkan ke job lewat menu Biaya → Edit → "Job Terkait".
+                ✅ Invoice ini tak menagih material (hanya jasa) → biaya material otomatis <b style={{ color: "#22c55e" }}>Rp 0</b> (seluruh omset jadi margin).
               </div>
             )}
 

@@ -164,3 +164,56 @@ export function jobMaterialCost({ txs = [], expenses = [], inventory = [] } = {}
   const total = round2(lines.reduce((s, l) => s + num(l.subtotal), 0));
   return { total, lines, missing };
 }
+
+const normName = (s) => String(s || "").trim().toLowerCase();
+
+// Parse materials_detail invoice (bisa jsonb array, string JSON, atau null) → array baris.
+function parseMaterialsDetail(md) {
+  if (Array.isArray(md)) return md;
+  if (typeof md === "string" && md.trim()) {
+    try { const p = JSON.parse(md); return Array.isArray(p) ? p : []; } catch { return []; }
+  }
+  return [];
+}
+
+/**
+ * Biaya material "quick count" untuk Bonus Margin — dihitung dari RINCIAN INVOICE
+ * (materials_detail) × HPP, BUKAN dari stok yang tertaut ke job. Ini basis bonus, bukan
+ * laporan keuangan presisi (keputusan Owner 29 Agu 2026).
+ *
+ * Aturan:
+ *   - Tiap baris material yang DITAGIH (category != "LABOR") dinilai qty × HPP (purchase_price),
+ *     dicocokkan ke inventory by nama (case-insensitive).
+ *   - LABOR/jasa → dilewati (tak punya modal).
+ *   - Material tanpa HPP → biaya 0 (skip → jadi margin), dicatat di `missing` untuk badge UI.
+ *
+ * Keunggulan vs jalur stok-tertaut: rincian invoice SELALU ada & lengkap → tak under-count
+ * gara-gara tagging stok yang kurang. Return { total, lines[], missing[] } (bentuk sama
+ * dengan jobMaterialCost supaya UI modal tidak berubah).
+ */
+export function invoiceMaterialCostHPP({ materialsDetail, inventory = [] } = {}) {
+  const hppByName = {};
+  for (const it of inventory) if (it?.name) hppByName[normName(it.name)] = num(it.purchase_price);
+
+  const lines = [];
+  const missing = [];
+  for (const l of parseMaterialsDetail(materialsDetail)) {
+    if (String(l?.category || "").toUpperCase() === "LABOR") continue;  // jasa tak punya modal
+    const nama = l?.nama || l?.name || "";
+    const qty = num(l?.jumlah ?? l?.qty ?? 1) || 1;
+    const hpp = hppByName[normName(nama)] || 0;
+    const line = {
+      source: "invoice",
+      name: nama || "Material",
+      qty,
+      unit: l?.satuan || l?.unit || "",
+      unit_cost: hpp,
+      subtotal: round2(qty * hpp),
+      estimated: true,   // pakai HPP kini (perkiraan), bukan harga transaksi historis
+    };
+    lines.push(line);
+    if (!(hpp > 0)) missing.push(line);
+  }
+  const total = round2(lines.reduce((s, l) => s + num(l.subtotal), 0));
+  return { total, lines, missing };
+}

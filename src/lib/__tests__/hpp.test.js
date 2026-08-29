@@ -8,6 +8,7 @@ import {
   isHppStale,
   netUsageByItem,
   jobMaterialCost,
+  invoiceMaterialCostHPP,
 } from "../hpp.js";
 
 const usage = (code, qty, extra = {}) => ({
@@ -175,5 +176,64 @@ describe("jobMaterialCost — autosum biaya material satu job", () => {
 
   it("job tanpa material sama sekali → nol, bukan error", () => {
     expect(jobMaterialCost().total).toBe(0);
+  });
+});
+
+describe("invoiceMaterialCostHPP (quick count invoice × HPP)", () => {
+  const inventory = [
+    { name: "Pipa AC Hoda 1PK", purchase_price: 95000 },
+    { name: "Pipa AC Hoda 2PK", purchase_price: 120000 },
+    { name: "Kabel Listrik 3x1,5", purchase_price: 17000 },
+    { name: "Kabel Listrik 3x2,5", purchase_price: 25000 },
+    { name: "Breket Outdoor Inc Dinabolt", purchase_price: 80000 },
+  ];
+  const md = [
+    { nama: "Pemasangan AC Baru", jumlah: 1, category: "LABOR", subtotal: 400000 },
+    { nama: "Pipa AC Hoda 1PK", jumlah: 4, category: "PART" },
+    { nama: "Pipa AC Hoda 2PK", jumlah: 7, category: "PART" },
+    { nama: "Kabel Listrik 3x1,5", jumlah: 4, category: "PART" },
+    { nama: "Kabel Listrik 3x2,5", jumlah: 7, category: "PART" },
+    { nama: "Breket Outdoor Inc Dinabolt", jumlah: 2, category: "PART" },
+  ];
+
+  it("jumlahkan PART × HPP, LABOR dilewati", () => {
+    // 4×95k + 7×120k + 4×17k + 7×25k + 2×80k = 380+840+68+175+160 rb = 1.623.000
+    const { total } = invoiceMaterialCostHPP({ materialsDetail: md, inventory });
+    expect(total).toBe(1623000);
+  });
+
+  it("material tanpa HPP → biaya 0 & masuk missing (skip jadi margin)", () => {
+    const r = invoiceMaterialCostHPP({
+      materialsDetail: [{ nama: "Barang Tanpa HPP", jumlah: 3, category: "PART" }],
+      inventory,
+    });
+    expect(r.total).toBe(0);
+    expect(r.missing).toHaveLength(1);
+  });
+
+  it("terima materials_detail berupa string JSON", () => {
+    const { total } = invoiceMaterialCostHPP({ materialsDetail: JSON.stringify(md), inventory });
+    expect(total).toBe(1623000);
+  });
+
+  it("invoice hanya jasa (semua LABOR) → 0", () => {
+    const { total, lines } = invoiceMaterialCostHPP({
+      materialsDetail: [{ nama: "Jasa", jumlah: 1, category: "LABOR" }], inventory,
+    });
+    expect(total).toBe(0);
+    expect(lines).toHaveLength(0);
+  });
+
+  it("cocokkan nama case-insensitive", () => {
+    const { total } = invoiceMaterialCostHPP({
+      materialsDetail: [{ nama: "  breket outdoor inc dinabolt ", jumlah: 1, category: "PART" }],
+      inventory,
+    });
+    expect(total).toBe(80000);
+  });
+
+  it("materialsDetail kosong/null → 0, bukan error", () => {
+    expect(invoiceMaterialCostHPP().total).toBe(0);
+    expect(invoiceMaterialCostHPP({ materialsDetail: null, inventory }).total).toBe(0);
   });
 });
