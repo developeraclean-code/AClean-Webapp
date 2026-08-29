@@ -23,7 +23,9 @@ const rp = (n) => "Rp" + Number(n || 0).toLocaleString("id-ID", { maximumFractio
 
 export default function HargaBeliTab({ inventoryData, setInventoryData }) {
   const { currentUser, supabase, showNotif } = useAppContext();
-  const bolehEdit = currentUser?.role === "Owner" || currentUser?.role === "Admin";
+  // HPP mengubah dasar Bonus Margin & biaya material → edit manual = Owner only (anti-fraud).
+  // HPP tetap terupdate otomatis dari Restock/Tautkan Stok (harga beli nyata, teraudit).
+  const bolehEdit = currentUser?.role === "Owner";
 
   const [editCode, setEditCode] = useState(null);
   const [form, setForm] = useState({ harga: "", perPack: false, packSize: "", packUnit: "" });
@@ -170,7 +172,7 @@ export default function HargaBeliTab({ inventoryData, setInventoryData }) {
                             style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "4px 10px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
                             {sedangEdit ? "Tutup" : hpp > 0 ? "✏️ Ubah" : "+ Isi Harga"}
                           </button>
-                        : <span style={{ fontSize: 10, color: cs.muted, fontStyle: "italic" }}>—</span>}
+                        : <span style={{ fontSize: 10, color: cs.muted, border: "1px dashed " + cs.border, borderRadius: 6, padding: "3px 8px", whiteSpace: "nowrap" }} title="Ubah harga beli (HPP) hanya bisa Owner — anti-fraud">🔒 Owner</span>}
                     </td>
                   </tr>
 

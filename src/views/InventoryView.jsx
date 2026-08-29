@@ -126,7 +126,11 @@ function InventoryView({
                         }} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "4px 9px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
                           📥 Restock
                         </button>
-                        <button onClick={() => { setEditStokItem({ ...item }); setModalEditStok(true); }} style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "4px 9px", borderRadius: 6, cursor: "pointer", fontSize: 11 }}>✏️</button>
+                        {/* Ubah stok/harga langsung = Owner only (anti-fraud). Admin tetap bisa
+                            📥 Restock untuk menambah stok, tapi tak bisa ubah qty/harga sembarang. */}
+                        {currentUser?.role === "Owner"
+                          ? <button onClick={() => { setEditStokItem({ ...item }); setModalEditStok(true); }} style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "4px 9px", borderRadius: 6, cursor: "pointer", fontSize: 11 }}>✏️</button>
+                          : <span title="Ubah stok/harga hanya Owner — untuk menambah stok pakai 📥 Restock" style={{ fontSize: 11, color: cs.muted, border: "1px dashed " + cs.border, borderRadius: 6, padding: "3px 8px" }}>🔒</span>}
                         {currentUser?.role === "Owner" && <button onClick={async () => {
                           if (!await showConfirm({ icon: "🗑️", title: "Hapus Material?", danger: true, message: "Hapus material " + item.name + "? Tidak bisa dibatalkan.", confirmText: "Hapus" })) return;
                           const delQuery = item.id && !String(item.id).startsWith("INV")
