@@ -224,7 +224,17 @@ export async function classifyImage({ imageUrl, imageBase64, mimeType, groupCfg,
         output_tokens: tokensOut,
         cost_usd: costUsd,
         user_name: sender?.name || null,
-        metadata: { group_id: groupCfg?.group_id, ...extra },
+        // caption_len / has_caption: dipakai menilai apakah pre-filter "lewati foto
+        // tanpa caption" aman. Intent `unknown` TIDAK pernah masuk ai_extractions
+        // (di-skip di _handlers/wa.js:1053) — tanpa jejak di sini, 30% belanja yang
+        // terbuang itu tak bisa dianalisa sama sekali. Sengaja HANYA panjang + boolean,
+        // isi pesannya tidak disalin ke sini.
+        metadata: {
+          group_id: groupCfg?.group_id,
+          has_caption: !!(messageText && String(messageText).trim()),
+          caption_len: messageText ? String(messageText).trim().length : 0,
+          ...extra,
+        },
       }),
     }).catch(sentryCatch("ai_usage_log", { feature: "wa-group-vision" }));
   };
