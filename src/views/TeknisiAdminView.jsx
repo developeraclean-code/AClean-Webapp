@@ -1897,10 +1897,20 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
     let batal = false;
     setMatLoading(true);
     (async () => {
-      const { txs, expenses, inventory } = await fetchJobMaterialSources(sb, orderRow.id);
-      if (batal) return;
-      setMatAuto(jobMaterialCost({ txs, expenses, inventory }));
-      setMatLoading(false);
+      try {
+        const { txs, expenses, inventory } = await fetchJobMaterialSources(sb, orderRow.id);
+        if (batal) return;
+        const hasil = jobMaterialCost({ txs, expenses, inventory });
+        setMatAuto(hasil);
+        // Auto-isi biaya material dari HPP (Σ qty×HPP + nota tertaut) supaya Owner tak
+        // hitung manual. Termasuk Rp 0 bila job tanpa material → seluruh omset jadi margin.
+        // Hanya mengisi bila field masih kosong (jangan timpa angka yang sudah diketik).
+        setMaterialCost((prev) => (prev === "" ? String(hasil.total) : prev));
+      } catch (e) {
+        if (!batal) setMatAuto({ total: 0, lines: [], missing: [], error: e?.message || "gagal memuat" });
+      } finally {
+        if (!batal) setMatLoading(false);
+      }
     })();
     return () => { batal = true; };
   }, [marginOn, matAuto, matLoading, orderRow?.id, sb]);
@@ -2021,7 +2031,7 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
           <div>
             <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>
               Biaya Material Aktual (Rp)
-              {matAuto && matAuto.total > 0 && <span style={{ color: "#3b82f6" }}> · ada usulan</span>}
+              {matAuto && !matAuto.error && <span style={{ color: "#3b82f6" }}> · auto dari HPP (bisa diubah)</span>}
             </div>
             <input type="number" value={materialCost} onChange={e => setMaterialCost(e.target.value)}
               placeholder="yg AClean bayar ke supplier" style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #334155", background: "#1e293b", color: "#e2e8f0", fontSize: 13, boxSizing: "border-box" }} />
@@ -2031,10 +2041,16 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
           <div style={{ gridColumn: "1/-1", background: "#0f172a", border: "1px solid #1e293b", borderRadius: 8, padding: "8px 10px" }}>
             {matLoading && <div style={{ fontSize: 11, color: "#64748b" }}>Menghitung biaya material job…</div>}
 
-            {!matLoading && matAuto && matAuto.lines.length === 0 && (
+            {!matLoading && matAuto?.error && (
+              <div style={{ fontSize: 11, color: "#fca5a5" }}>
+                ⚠️ Gagal menghitung biaya material otomatis ({matAuto.error}) — isi manual.
+              </div>
+            )}
+
+            {!matLoading && matAuto && !matAuto.error && matAuto.lines.length === 0 && (
               <div style={{ fontSize: 11, color: "#64748b" }}>
-                Tidak ada pemakaian stok maupun nota yang tertaut ke job ini — isi manual.
-                (Nota bisa ditautkan ke job lewat menu Biaya → Edit → "Job Terkait".)
+                ✅ Tidak ada pemakaian stok / nota tertaut ke job ini → biaya material otomatis <b style={{ color: "#22c55e" }}>Rp 0</b> (seluruh omset jadi margin).
+                <br />Nota material bisa ditautkan ke job lewat menu Biaya → Edit → "Job Terkait".
               </div>
             )}
 
