@@ -1891,6 +1891,7 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
   const [matAuto, setMatAuto]       = useState(null);
   const [matLoading, setMatLoading] = useState(false);
   const [pakaiAuto, setPakaiAuto]   = useState(false);
+  const [confirmMissing, setConfirmMissing] = useState(false); // (A) gate simpan saat ada item tanpa HPP
 
   // PENTING: JANGAN taruh matLoading/matAuto di deps. Dulu begitu → setMatLoading(true)
   // memicu effect jalan ulang → cleanup menandai batal=true → async membatalkan dirinya
@@ -1958,12 +1959,19 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
 
   const totalTim = entries.reduce((s, e) => s + Number(e.total_amount || 0), 0);
   const marginInvalid = marginOn && marginTier === null;   // dicentang tapi profit belum ≥1jt / belum diisi
-  const canSave = entries.length > 0 && selectedTeam.length > 0 && !marginInvalid;
+  // (C) marginInvalid TIDAK lagi memblok simpan — margin sekadar dilewati; bonus lain tetap tersimpan.
+  const canSave = entries.length > 0 && selectedTeam.length > 0;
+  // (A) material tanpa HPP saat margin disimpan → wajib konfirmasi (profit bisa terlalu tinggi → tier kelebihan).
+  const missingHppItems = (marginOn && marginTier && matAuto && !matAuto.error) ? (matAuto.missing || []) : [];
 
-  const handleSubmit = () => {
-    if (!canSave) return;
+  const doSave = () => {
     const finalEntries = entries.map(e => ({ ...e, note: e.note ?? (note || null) }));
     onSave(orderRow, finalEntries, selectedTeam);
+  };
+  const handleSubmit = () => {
+    if (!canSave) return;
+    if (missingHppItems.length > 0 && !confirmMissing) { setConfirmMissing(true); return; }
+    doSave();
   };
 
   const rowStyle = (on) => ({ display: "flex", alignItems: "center", gap: 10, padding: "7px 9px", borderRadius: 7, background: on ? "#0c2d4a" : "#1e293b", border: "1px solid " + (on ? "#3b82f6" : "#334155"), marginBottom: 6 });
@@ -2021,6 +2029,11 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
             <span style={{ fontSize: 9, background: "#422006", color: "#fcd34d", borderRadius: 4, padding: "1px 5px" }}>{installInfo.totalUnits} unit/hari</span>
           </label>
           {amtInput(installInfo.tier, !!enabled[installInfo.tier])}
+        </div>
+      )}
+      {installInfo?.tier && (installInfo.orderIds?.length || 0) > 1 && (
+        <div style={{ background: "#422006", border: "1px solid #a16207", borderRadius: 7, padding: "6px 10px", fontSize: 11, color: "#fcd34d", marginBottom: 8 }}>
+          ⚠️ Tier Install ini dihitung dari <b>{installInfo.totalUnits} unit di {installInfo.orderIds.length} order</b> tim ini hari yang sama. Input bonus Install <b>HANYA di 1 order</b> agar tidak dobel.
         </div>
       )}
 
@@ -2094,9 +2107,10 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
                 </div>
 
                 {matAuto.missing.length > 0 && (
-                  <div style={{ marginTop: 6, padding: "5px 8px", borderRadius: 6, background: "#3f1515", fontSize: 10, color: "#fca5a5" }}>
-                    ⚠️ {matAuto.missing.length} item belum ada harga beli ({matAuto.missing.map(m => m.name).join(", ")})
-                    — angka di atas KURANG hitung. Isi dulu di Inventori → Harga Beli.
+                  <div style={{ marginTop: 8, padding: "9px 12px", borderRadius: 8, background: "#78350f", border: "2px solid #f59e0b", fontSize: 12, color: "#fde68a", fontWeight: 600 }}>
+                    ⚠️ <b>{matAuto.missing.length} material belum ada HPP</b> — biayanya dihitung <b>Rp 0</b>, jadi <b>profit bisa terlalu tinggi → tier kelebihan bayar</b>.
+                    <div style={{ marginTop: 3, fontWeight: 400, color: "#fcd34d" }}>{matAuto.missing.map(m => m.name).join(", ")}</div>
+                    <div style={{ marginTop: 3, fontWeight: 400, fontSize: 11, color: "#fbbf24" }}>Isi HPP-nya dulu di <b>Inventori → Harga Beli</b> agar hitungan akurat.</div>
                   </div>
                 )}
               </>
@@ -2174,8 +2188,25 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
       </div>
 
       {marginInvalid && (
-        <div style={{ background: "#3f1515", border: "1px solid #ef4444", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#fca5a5", marginBottom: 10 }}>
-          ⚠️ Bonus margin dicentang tapi <strong>profit belum ≥ Rp 1jt</strong>. {profit === null ? "Isi Omset & Biaya Material dulu." : "Profit belum mencapai Rp 1jt."} Hilangkan centang Margin atau perbaiki nilainya untuk bisa simpan.
+        entries.length > 0 ? (
+          <div style={{ background: "#422006", border: "1px solid #a16207", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#fcd34d", marginBottom: 10 }}>
+            ℹ️ Bonus Margin belum memenuhi syarat ({profit === null ? "Omset/Biaya Material belum diisi" : "profit belum ≥ Rp 1jt"}) → <b>margin akan DILEWATI</b>. {entries.length} bonus lain tetap bisa disimpan.
+          </div>
+        ) : (
+          <div style={{ background: "#3f1515", border: "1px solid #ef4444", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#fca5a5", marginBottom: 10 }}>
+            ⚠️ Bonus margin dicentang tapi <strong>profit belum ≥ Rp 1jt</strong>. {profit === null ? "Isi Omset & Biaya Material dulu." : "Profit belum mencapai Rp 1jt."} Belum ada bonus valid untuk disimpan.
+          </div>
+        )
+      )}
+      {confirmMissing && missingHppItems.length > 0 && (
+        <div style={{ background: "#78350f", border: "2px solid #f59e0b", borderRadius: 8, padding: "10px 12px", marginBottom: 10 }}>
+          <div style={{ fontSize: 12, color: "#fde68a", fontWeight: 700, marginBottom: 6 }}>
+            ⚠️ {missingHppItems.length} material tanpa HPP dihitung Rp 0 → profit (Rp {fmt(profit)}) bisa TERLALU TINGGI. Yakin simpan bonus ini?
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={doSave} style={{ padding: "6px 14px", borderRadius: 6, background: "#f59e0b", border: "none", color: "#1a1a1a", cursor: "pointer", fontWeight: 800, fontSize: 12 }}>Ya, tetap simpan</button>
+            <button onClick={() => setConfirmMissing(false)} style={{ padding: "6px 14px", borderRadius: 6, background: "transparent", border: "1px solid #a16207", color: "#fcd34d", cursor: "pointer", fontWeight: 700, fontSize: 12 }}>Batal, cek dulu</button>
+          </div>
         </div>
       )}
       <div style={{ display: "flex", gap: 8 }}>

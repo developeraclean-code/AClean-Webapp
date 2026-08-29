@@ -236,4 +236,27 @@ describe("invoiceMaterialCostHPP (quick count invoice × HPP)", () => {
     expect(invoiceMaterialCostHPP().total).toBe(0);
     expect(invoiceMaterialCostHPP({ materialsDetail: null, inventory }).total).toBe(0);
   });
+
+  it("jasa/keuntungan salah-kategori PART → di-skip (bukan missing, bukan biaya)", () => {
+    const r = invoiceMaterialCostHPP({
+      materialsDetail: [
+        { nama: "Jasa Vacum AC 0,5PK - 2,5PK", jumlah: 2, category: "PART" },
+        { nama: "keuntungan unit ac panasonic", jumlah: 1, category: "PART" },
+        { nama: "Pemasangan AC Baru 0,5PK - 1PK", jumlah: 1, category: "PART" },
+        { nama: "Breket Outdoor Inc Dinabolt", jumlah: 1, category: "PART" },
+      ],
+      inventory,
+    });
+    expect(r.total).toBe(80000);     // hanya breket yang terhitung
+    expect(r.lines).toHaveLength(1);
+    expect(r.missing).toHaveLength(0); // jasa/markup tak dianggap "belum ada HPP"
+  });
+
+  it("normalisasi spasi ganda pada nama", () => {
+    const { total } = invoiceMaterialCostHPP({
+      materialsDetail: [{ nama: "Breket  Outdoor   Inc  Dinabolt", jumlah: 1, category: "PART" }],
+      inventory,
+    });
+    expect(total).toBe(80000);
+  });
 });

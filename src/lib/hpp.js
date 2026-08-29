@@ -165,7 +165,12 @@ export function jobMaterialCost({ txs = [], expenses = [], inventory = [] } = {}
   return { total, lines, missing };
 }
 
-const normName = (s) => String(s || "").trim().toLowerCase();
+const normName = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
+
+// Baris yang BUKAN material meski kategori "PART" (jasa/markup sering salah kategori di
+// invoice). Ini di-skip total: tak dihitung biaya DAN tak masuk daftar "missing HPP" (agar
+// badge peringatan tidak teriak palsu untuk jasa). Cost 0 memang benar untuk jasa/markup.
+const NON_MATERIAL_HINT = /(jasa|pemasangan|pasang\b|cleaning|bongkar|vacum|vakum|instalasi|bobok|penarikan|pergantian|keuntungan|ongkos|survey|pengecek)/i;
 
 // Parse materials_detail invoice (bisa jsonb array, string JSON, atau null) → array baris.
 function parseMaterialsDetail(md) {
@@ -200,6 +205,7 @@ export function invoiceMaterialCostHPP({ materialsDetail, inventory = [] } = {})
   for (const l of parseMaterialsDetail(materialsDetail)) {
     if (String(l?.category || "").toUpperCase() === "LABOR") continue;  // jasa tak punya modal
     const nama = l?.nama || l?.name || "";
+    if (NON_MATERIAL_HINT.test(nama)) continue;  // jasa/markup salah-kategori PART → skip (bukan material)
     const qty = num(l?.jumlah ?? l?.qty ?? 1) || 1;
     const hpp = hppByName[normName(nama)] || 0;
     const line = {
