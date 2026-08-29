@@ -1702,10 +1702,19 @@ return (
                           style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: historyUnitId === unit.id ? cs.accent + "33" : cs.accent + "15", border: "1px solid " + cs.accent + "44", color: cs.accent, cursor: "pointer", fontWeight: historyUnitId === unit.id ? 700 : 400 }}>
                           {historyUnitId === unit.id ? "✕" : "Riwayat"}
                         </button>
-                        <button onClick={() => { setEditUnitId(isEditingThis ? null : unit.id); setEditUnitVal(String(unit.stock)); }}
-                          style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: isEditingThis ? cs.red + "22" : cs.yellow + "18", border: "1px solid " + (isEditingThis ? cs.red : cs.yellow) + "44", color: isEditingThis ? cs.red : cs.yellow, cursor: "pointer" }}>
-                          {isEditingThis ? "✕" : "Ubah"}
-                        </button>
+                        {/* Ubah qty stok BERJALAN = Owner only (anti-fraud). Admin tetap bisa
+                            "+ Tambah Unit" untuk menambah stok, tapi tak bisa ubah qty sembarang. */}
+                        {isOwner ? (
+                          <button onClick={() => { setEditUnitId(isEditingThis ? null : unit.id); setEditUnitVal(String(unit.stock)); }}
+                            style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: isEditingThis ? cs.red + "22" : cs.yellow + "18", border: "1px solid " + (isEditingThis ? cs.red : cs.yellow) + "44", color: isEditingThis ? cs.red : cs.yellow, cursor: "pointer" }}>
+                            {isEditingThis ? "✕" : "Ubah"}
+                          </button>
+                        ) : (
+                          <span style={{ fontSize: 10, color: cs.muted, border: "1px dashed " + cs.border, borderRadius: 6, padding: "3px 8px", whiteSpace: "nowrap" }}
+                            title="Ubah qty stok berjalan hanya bisa Owner. Untuk menambah stok, pakai '+ Tambah Unit'.">
+                            🔒 Ubah: Owner
+                          </span>
+                        )}
                         <button onClick={() => toggleUnit(unit.id, !unit.is_active)}
                           style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: unit.is_active ? cs.red + "18" : cs.green + "18", border: "1px solid " + (unit.is_active ? cs.red : cs.green) + "44", color: unit.is_active ? cs.red : cs.green, cursor: "pointer" }}>
                           {unit.is_active ? "Nonaktif" : "Aktifkan"}
@@ -1751,8 +1760,8 @@ return (
                           </div>
                         </div>
                       )}
-                      {/* ── Inline edit stok ── */}
-                      {isEditingThis && (
+                      {/* ── Inline edit stok (Owner only) ── */}
+                      {isEditingThis && isOwner && (
                         <div style={{ padding: "10px 14px", background: cs.yellow + "08", borderTop: "1px solid " + cs.yellow + "22", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                           <span style={{ fontSize: 12, color: cs.muted }}>Stok baru ({item.unit}):</span>
                           <input type="number" min="0" step="0.1" value={editUnitVal} onChange={e => setEditUnitVal(e.target.value)} autoFocus
