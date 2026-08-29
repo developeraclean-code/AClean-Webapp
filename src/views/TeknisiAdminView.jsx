@@ -1892,8 +1892,12 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
   const [matLoading, setMatLoading] = useState(false);
   const [pakaiAuto, setPakaiAuto]   = useState(false);
 
+  // PENTING: JANGAN taruh matLoading/matAuto di deps. Dulu begitu → setMatLoading(true)
+  // memicu effect jalan ulang → cleanup menandai batal=true → async membatalkan dirinya
+  // sendiri sebelum setMatLoading(false) → "Menghitung…" nyangkut selamanya. Cukup depend
+  // ke marginOn + identitas job/invoice; effect jalan sekali tiap Bonus Margin dicentang.
   useEffect(() => {
-    if (!marginOn || matAuto || matLoading || !orderRow?.id) return;
+    if (!marginOn || !orderRow?.id) return;
     let batal = false;
     setMatLoading(true);
     (async () => {
@@ -1904,9 +1908,8 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
         if (batal) return;
         const hasil = invoiceMaterialCostHPP({ materialsDetail: inv?.materials_detail, inventory: invRows || [] });
         setMatAuto(hasil);
-        // Auto-isi biaya material dari HPP (Σ qty×HPP + nota tertaut) supaya Owner tak
-        // hitung manual. Termasuk Rp 0 bila job tanpa material → seluruh omset jadi margin.
-        // Hanya mengisi bila field masih kosong (jangan timpa angka yang sudah diketik).
+        // Auto-isi biaya material dari HPP supaya Owner tak hitung manual. Termasuk Rp 0 bila
+        // invoice tak menagih material. Hanya mengisi bila field masih kosong (jaga edit manual).
         setMaterialCost((prev) => (prev === "" ? String(hasil.total) : prev));
       } catch (e) {
         if (!batal) setMatAuto({ total: 0, lines: [], missing: [], error: e?.message || "gagal memuat" });
@@ -1915,7 +1918,7 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
       }
     })();
     return () => { batal = true; };
-  }, [marginOn, matAuto, matLoading, orderRow?.id, sb]);
+  }, [marginOn, orderRow?.id, sb, inv?.materials_detail]);
 
   // Uncheck Bonus Margin → reset cache hitung, supaya saat dicentang lagi ia menghitung
   // ULANG & mengisi otomatis. Nilai materialCost yang sudah ada TIDAK dihapus (jaga edit manual).
