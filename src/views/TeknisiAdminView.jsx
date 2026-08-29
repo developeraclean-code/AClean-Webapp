@@ -1917,6 +1917,12 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
     return () => { batal = true; };
   }, [marginOn, matAuto, matLoading, orderRow?.id, sb]);
 
+  // Uncheck Bonus Margin → reset cache hitung, supaya saat dicentang lagi ia menghitung
+  // ULANG & mengisi otomatis. Nilai materialCost yang sudah ada TIDAK dihapus (jaga edit manual).
+  useEffect(() => {
+    if (!marginOn) { setMatAuto(null); setMatLoading(false); }
+  }, [marginOn]);
+
   const [manualOn, setManualOn]         = useState(isComplain);
   const [customAmount, setCustomAmount] = useState("");
   const [manualLabel, setManualLabel]   = useState("");
