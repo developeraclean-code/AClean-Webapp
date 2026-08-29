@@ -549,6 +549,10 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
   const [bonusFilter, setBonusFilter]   = useState("ALL"); // ALL|PENDING|ELIGIBLE|PAID|VOID
 
   const isOwner = currentUser?.role === "Owner";
+  // Uang keluar (mark gaji/komisi dibayar) & pembatalan (void) = Admin DIBLOK (anti-fraud).
+  // Owner & Finance tetap boleh (peran keuangan sah). Admin lihat penanda 🔒.
+  const bolehBayar = currentUser?.role === "Owner" || currentUser?.role === "Finance";
+  const lockChip = { fontSize: 11, color: cs.muted, border: "1px dashed " + cs.border, borderRadius: 7, padding: "6px 12px", whiteSpace: "nowrap" };
 
   // ── Load payroll ──
   const loadPayroll = useCallback(async () => {
@@ -1431,9 +1435,13 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                         {slipPreview === row.user_id ? "▲ Tutup Preview" : "👁 Preview Slip"}
                       </button>
                       {!row.is_paid ? (
-                        <button onClick={() => handlePaid(row)} style={{ padding: "7px 14px", borderRadius: 8, background: cs.green, border: "none", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
-                          ✓ Tandai Dibayar
-                        </button>
+                        bolehBayar ? (
+                          <button onClick={() => handlePaid(row)} style={{ padding: "7px 14px", borderRadius: 8, background: cs.green, border: "none", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+                            ✓ Tandai Dibayar
+                          </button>
+                        ) : (
+                          <span title="Tandai gaji dibayar hanya Owner/Finance (anti-fraud)" style={lockChip}>🔒 Bayar: Owner</span>
+                        )
                       ) : isOwner && (
                         <button onClick={() => handleUnlock(row)} style={{ padding: "7px 14px", borderRadius: 8, background: cs.surface, border: "1px solid " + cs.yellow, color: cs.yellow, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
                           🔓 Buka Kunci
@@ -1663,22 +1671,32 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                 {(est === "PENDING" || est === "ELIGIBLE") && (
                   <div style={{ display: "flex", gap: 8, marginTop: 10, borderTop: "1px solid " + cs.border, paddingTop: 10, alignItems: "center" }}>
                     {est === "ELIGIBLE" && (
-                      <button onClick={() => handleMarkBonusPaid(b)} style={{ padding: "6px 14px", borderRadius: 7, background: cs.green, border: "none", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
-                        ✓ Tandai Dibayar
-                      </button>
+                      bolehBayar ? (
+                        <button onClick={() => handleMarkBonusPaid(b)} style={{ padding: "6px 14px", borderRadius: 7, background: cs.green, border: "none", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+                          ✓ Tandai Dibayar
+                        </button>
+                      ) : (
+                        <span title="Cairkan komisi hanya Owner/Finance (anti-fraud)" style={lockChip}>🔒 Cair: Owner</span>
+                      )
                     )}
                     {est === "PENDING" && <span style={{ fontSize: 11, color: cs.yellow, padding: "6px 0" }}>⏳ Warranty — siap cair {30 - daysSinceDate(b.order_date)} hari lagi</span>}
-                    <button onClick={() => setVoidForm({ id: b.id, reason: "" })} style={{ padding: "6px 14px", borderRadius: 7, background: "transparent", border: "1px solid " + cs.red, color: cs.red, cursor: "pointer", fontSize: 12 }}>
-                      🚫 Void
-                    </button>
+                    {bolehBayar ? (
+                      <button onClick={() => setVoidForm({ id: b.id, reason: "" })} style={{ padding: "6px 14px", borderRadius: 7, background: "transparent", border: "1px solid " + cs.red, color: cs.red, cursor: "pointer", fontSize: 12 }}>
+                        🚫 Void
+                      </button>
+                    ) : (
+                      <span title="Void komisi hanya Owner/Finance (anti-fraud)" style={lockChip}>🔒 Void: Owner</span>
+                    )}
                   </div>
                 )}
                 {est === "PAID" && (
                   <div style={{ display: "flex", gap: 8, marginTop: 6, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
                     <div style={{ fontSize: 11, color: cs.muted }}>Dibayar oleh {b.paid_by} · {b.paid_at ? new Date(b.paid_at).toLocaleString("id-ID") : "-"}</div>
-                    <button onClick={() => setVoidForm({ id: b.id, reason: "", wasPaid: true })} style={{ padding: "5px 12px", borderRadius: 7, background: "transparent", border: "1px solid " + cs.red, color: cs.red, cursor: "pointer", fontSize: 11 }}>
-                      🚫 Void (klaim balik)
-                    </button>
+                    {bolehBayar && (
+                      <button onClick={() => setVoidForm({ id: b.id, reason: "", wasPaid: true })} style={{ padding: "5px 12px", borderRadius: 7, background: "transparent", border: "1px solid " + cs.red, color: cs.red, cursor: "pointer", fontSize: 11 }}>
+                        🚫 Void (klaim balik)
+                      </button>
+                    )}
                   </div>
                 )}
                 {est === "VOID" && b.bonus_type === "dismissed" && (
