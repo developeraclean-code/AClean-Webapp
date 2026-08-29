@@ -18,7 +18,7 @@ import {
 } from "../lib/payroll.js";
 import {
   fetchWeeklyPayroll, fetchDaysWorkedFromOrders, fetchKasbonByPeriod, fetchAllKasbonByPeriod,
-  fetchOrderBonusesByPeriod, fetchOrdersWithoutBonus, fetchAvailabilityByUserPeriod,
+  fetchOrderBonusesByPeriod, fetchOrdersWithoutBonus, fetchKomplainSekitarPeriode, fetchAvailabilityByUserPeriod,
   fetchAssignedDaysFromSlots, fetchWeekAbsences, fetchJobMaterialSources,
 } from "../data/reads.js";
 import {
@@ -540,6 +540,8 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
   const [ordersNoBonus, setOrdersNoBonus] = useState([]);
   const [periodInvMap, setPeriodInvMap] = useState({}); // { invoiceId: { id, total, materials_detail } }
   const [periodOrders, setPeriodOrders] = useState([]);  // SEMUA order selesai bulan itu — sumber rekap cetak
+  // Order Complain periode + 30 hari sesudahnya — bahan peringatan "ada komplain setelah job".
+  const [periodKomplain, setPeriodKomplain] = useState([]);
   const [loadingBonus, setLoadingBonus] = useState(false);
   const [openBonusIds, setOpenBonusIds] = useState(() => new Set()); // order2 yg panel input bonusnya terbuka (multi, inline)
   const [voidForm, setVoidForm]         = useState(null); // { id, reason }
@@ -595,10 +597,13 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
   // ── Load bonuses (periode BULANAN) ──
   const loadBonuses = useCallback(async () => {
     setLoadingBonus(true);
-    const [bonRes, ordRes] = await Promise.all([
+    const [bonRes, ordRes, kompRes] = await Promise.all([
       fetchOrderBonusesByPeriod(supabase, bonusStart, bonusEnd),
       fetchOrdersWithoutBonus(supabase, bonusStart, bonusEnd),
+      fetchKomplainSekitarPeriode(supabase, bonusStart, bonusEnd),
     ]);
+    const komplain = kompRes.data || [];
+    setPeriodKomplain(komplain);
     setBonuses(bonRes.data || []);
 
     const orders = ordRes.data || [];
@@ -617,11 +622,13 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
     const existingOrderIds = new Set((bonRes.data || []).map(b => b.order_id));
     // Kriteria layak bonus (omset besar / install multi-unit / material khusus) → lib/bonus.js
     // supaya panel review dan rekap cetak tidak pernah beda hitungan.
+    // Konteks untuk aturan lintas-hari & komplain: order periode + order Complain sesudahnya.
+    const konteks = [...orders, ...komplain];
     const eligible = orders.filter(o => {
       if (existingOrderIds.has(o.id)) return false;
       const inv = fetchedInvMap[o.invoice_id];
       const det = detectBonusFromInvoice(inv?.materials_detail, o.service, bonusCategories);
-      return bonusCandidateInfo(o, Number(inv?.total || 0), det.detected).eligible;
+      return bonusCandidateInfo(o, Number(inv?.total || 0), det.detected, konteks).eligible;
     });
     setPeriodInvMap(fetchedInvMap);
     setPeriodOrders(orders);
@@ -1518,6 +1525,8 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                                          (o.service === "Install" && invTotal >= 1500000);
                     const isInstallMulti = o.service === "Install" && Number(o.units) >= 2;
                     const isOpen = openBonusIds.has(o.id);
+                    // Peringatan (bukan penghalang): komplain 30 hari & kemungkinan job bersambung.
+                    const cand = bonusCandidateInfo(o, invTotal, detected.detected, [...periodOrders, ...periodKomplain]);
                     return (
                       <div key={o.id} style={{ background: cs.card, borderRadius: 8, padding: "10px 12px", border: "1px solid " + (isOpen ? cs.accent : (isComplain ? cs.red + "66" : cs.border)) }}>
                         <div style={{ display: "flex", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
@@ -1535,6 +1544,22 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                               {isOmsetBesar && <span style={{ fontSize: 10, background: "#14532d", color: "#86efac", borderRadius: 4, padding: "1px 6px" }}>💰 Omset {o.service === "Install" ? "≥1,5jt" : "≥1jt"}</span>}
                               {isInstallMulti && <span style={{ fontSize: 10, background: "#422006", color: "#fcd34d", borderRadius: 4, padding: "1px 6px" }}>🔩 Install {o.units} unit</span>}
                             </div>
+                            {cand.warnings.length > 0 && (
+                              <div style={{ display: "grid", gap: 4, marginTop: 6 }}>
+                                {cand.komplain.length > 0 && (
+                                  <div style={{ fontSize: 11, color: "#fca5a5", background: "#3f1515", border: "1px solid " + cs.red + "66", borderRadius: 6, padding: "5px 8px" }}>
+                                    ⚠️ <b>Komplain {cand.komplain[0].jarakHari} hari setelah job</b> ({fmtDate(cand.komplain[0].date)}
+                                    {cand.komplain.length > 1 ? ` +${cand.komplain.length - 1} lagi` : ""}) — periksa dulu sebelum bayar.
+                                    Pakai 🚫 Tidak Ada Bonus kalau memang tidak layak.
+                                  </div>
+                                )}
+                                {cand.bersambung.length > 0 && (
+                                  <div style={{ fontSize: 11, color: "#fcd34d", background: "#422006", border: "1px solid #a16207", borderRadius: 6, padding: "5px 8px" }}>
+                                    ⚠️ Pelanggan sama ada job di {cand.bersambung.map(b => fmtDate(b.date)).join(", ")} — pastikan ini bukan satu pekerjaan bersambung (job lintas hari tidak dapat bonus).
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
                           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                             <button onClick={() => toggleBonusCard(o.id)} style={{ padding: "6px 14px", borderRadius: 7, background: isOpen ? cs.surface : (isComplain ? "#6b7280" : cs.accent), border: isOpen ? "1px solid " + cs.border : "none", color: isOpen ? cs.muted : "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>

@@ -153,7 +153,7 @@ export function buildBonusRekap({ month, bonuses = [], orders = [], invMap = {},
     if (orderIdsWithBonus.has(o.id)) continue;
     const inv  = invOf(o);
     const det  = detectBonusFromInvoice(inv?.materials_detail, o.service, bonusCategories);
-    const cand = bonusCandidateInfo(o, Number(inv?.total || 0), det.detected);
+    const cand = bonusCandidateInfo(o, Number(inv?.total || 0), det.detected, orders);
     const dis  = dismissedMap[o.id];
     // Sudah tercatat lewat baris VOID di atas? (dismissed sentinel ditangani terpisah)
     if (excluded.some(e => e.orderId === o.id && e.kategori === "VOID")) continue;
@@ -167,12 +167,15 @@ export function buildBonusRekap({ month, bonuses = [], orders = [], invMap = {},
       teknisi:  orderTeknisi(o).join(", ") || "-",
       helper:   orderHelper(o).join(", ") || "-",
       nilai:    Number(inv?.total || 0),
-      kategori: dis ? "DISMISSED" : (cand.eligible ? "BELUM_INPUT" : "NO_CRITERIA"),
+      kategori: dis ? "DISMISSED" : (cand.eligible ? "BELUM_INPUT" : (cand.multiDay ? "MULTI_HARI" : "NO_CRITERIA")),
       alasan:   dis
         ? (dis.void_reason || dis.note || "Ditandai manual tidak dapat bonus")
         : (cand.eligible
             ? "Memenuhi: " + cand.reasons.join(", ") + " — belum diinput admin"
-            : "Omset " + rp(inv?.total || 0) + (o.service === "Install" ? ` · Install ${o.units || 0} unit` : "") + " · tanpa material bonus"),
+            // Job lintas hari gugur lebih dulu dari kriteria apa pun — jangan sampai
+            // dilaporkan sebagai "tanpa material bonus", karena sebabnya beda.
+            : (cand.blockedReason
+                || "Omset " + rp(inv?.total || 0) + (o.service === "Install" ? ` · Install ${o.units || 0} unit` : "") + " · tanpa material bonus")),
       nilaiBonusBatal: 0,
     });
   }

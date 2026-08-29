@@ -49,10 +49,64 @@ export function detectBonusFromInvoice(materialsDetail, orderService = "", bonus
   return result;
 }
 
+// Jendela komplain yang membatalkan bonus (keputusan Owner 26 Agu 2026).
+export const KOMPLAIN_VOID_HARI = 30;
+
+// Job lintas hari TIDAK dapat bonus (keputusan Owner 26 Agu 2026): bonus hanya untuk
+// pekerjaan yang selesai di hari yang sama. Ketiga penanda diperiksa karena diisi oleh
+// jalur yang berbeda — is_multi_day di form Planning Order, parent_job_id/day_number saat
+// job hari berikutnya dibuat. Cukup satu terisi untuk menggugurkan.
+export function isMultiDayJob(order) {
+  return Boolean(order?.is_multi_day) ||
+         Boolean(order?.parent_job_id) ||
+         Number(order?.day_number || 1) > 1;
+}
+
+// Dua order dianggap milik pelanggan yang sama. customer_id adalah pencocokan utama
+// (tahan ganti nama); nama dipakai hanya untuk data lama yang belum punya customer_id.
+function samaPelanggan(a, b) {
+  if (a?.customer_id && b?.customer_id) return a.customer_id === b.customer_id;
+  const na = String(a?.customer || "").trim().toUpperCase();
+  const nb = String(b?.customer || "").trim().toUpperCase();
+  return Boolean(na) && na === nb;
+}
+
+const hariAntara = (d1, d2) =>
+  Math.round((new Date(d2 + "T00:00:00") - new Date(d1 + "T00:00:00")) / 86400000);
+
+// Komplain pelanggan yang sama dalam 30 hari SESUDAH job. Hanya PERINGATAN — tidak
+// membatalkan otomatis (keputusan Owner: order Complain tidak mencatat unit AC mana yang
+// bermasalah, jadi pencocokan per-unit belum mungkin dan void otomatis bisa salah sasaran
+// untuk pelanggan banyak unit). Owner/admin yang memutuskan void lewat tombol yang ada.
+export function cariKomplain30Hari(order, semuaOrder = []) {
+  if (!order?.date) return [];
+  return semuaOrder
+    .filter(c => c?.service === "Complain" && c.id !== order.id && c.date > order.date &&
+                 hariAntara(order.date, c.date) <= KOMPLAIN_VOID_HARI && samaPelanggan(c, order))
+    .map(c => ({ id: c.id, date: c.date, jarakHari: hariAntara(order.date, c.date) }))
+    .sort((a, b) => a.jarakHari - b.jarakHari);
+}
+
+// Pelanggan yang sama muncul di hari berdampingan padahal TIDAK bertanda multi-hari —
+// kemungkinan satu pekerjaan bersambung yang terlanjur dicatat sebagai dua job.
+// Peringatan saja; penanda resmi tetap yang menentukan gugur/tidaknya.
+export function cariJobBersambung(order, semuaOrder = []) {
+  if (!order?.date || isMultiDayJob(order)) return [];
+  return semuaOrder
+    // Complain sengaja dikecualikan: kunjungan komplain di hari berikutnya BUKAN pekerjaan
+    // bersambung, dan sudah punya peringatannya sendiri — kalau ikut, satu kartu dapat dua
+    // peringatan untuk kejadian yang sama.
+    .filter(o => o?.id !== order.id && o?.service !== "Complain" && samaPelanggan(o, order) &&
+                 Math.abs(hariAntara(order.date, o.date)) === 1)
+    .map(o => ({ id: o.id, date: o.date, service: o.service }));
+}
+
 // Apakah order layak masuk daftar review bonus? Return alasan juga supaya rekap cetak
 // bisa menjelaskan "kenapa job ini TIDAK termasuk".
-// 3 kriteria (OR): omset besar, install multi-unit, atau ada material bonus khusus.
-export function bonusCandidateInfo(order, invTotal, detected = []) {
+// Syarat gugur (mutlak): job lintas hari.
+// Syarat layak (OR): omset besar, install multi-unit, atau ada material bonus khusus.
+export function bonusCandidateInfo(order, invTotal, detected = [], semuaOrder = []) {
+  const multiDay = isMultiDayJob(order);
   const total = Number(invTotal || 0);
   const isInstall = order?.service === "Install";
   const isOmsetBesar   = (!isInstall && total >= OMSET_THRESHOLD_DEFAULT) ||
@@ -65,7 +119,21 @@ export function bonusCandidateInfo(order, invTotal, detected = []) {
   if (isInstallMulti) reasons.push(`Install ${Number(order?.units) || 0} unit`);
   if (special.length) reasons.push("Material: " + special.join(", "));
 
-  return { eligible: reasons.length > 0, reasons, isOmsetBesar, isInstallMulti, special };
+  const komplain   = cariKomplain30Hari(order, semuaOrder);
+  const bersambung = cariJobBersambung(order, semuaOrder);
+  const warnings = [];
+  if (komplain.length)
+    warnings.push(`Komplain ${komplain[0].jarakHari} hari setelah job — periksa sebelum bayar`);
+  if (bersambung.length)
+    warnings.push("Pelanggan sama di hari berdampingan — pastikan bukan job bersambung");
+
+  return {
+    eligible: !multiDay && reasons.length > 0,
+    reasons, warnings, komplain, bersambung, multiDay,
+    // Alasan gugur ditulis eksplisit supaya rekap cetak bisa menjelaskannya.
+    blockedReason: multiDay ? "Job lintas hari — bonus hanya untuk pekerjaan selesai 1 hari" : null,
+    isOmsetBesar, isInstallMulti, special,
+  };
 }
 
 // Nama tim lengkap dari kolom order (teknisi1-3 / helper1-3).

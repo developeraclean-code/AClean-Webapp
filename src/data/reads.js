@@ -486,10 +486,27 @@ export const fetchMyBonuses = (supabase, userName, limit = 50) =>
 // Orders minggu ini yang belum punya bonus entry (untuk admin review).
 // Status "selesai" mencakup pekerjaan yang sudah kelar tapi invoice belum PAID —
 // kalau cuma COMPLETED/PAID, order di INVOICE_APPROVED/REPORT_SUBMITTED hilang dari review komisi.
+// customer_id + penanda multi-hari WAJIB ikut: bonusCandidateInfo() memakainya untuk
+// menggugurkan job lintas hari dan mencocokkan komplain per pelanggan.
 export const fetchOrdersWithoutBonus = (supabase, periodStart, periodEnd) =>
   supabase.from("orders")
-    .select("id,date,customer,service,units,teknisi,teknisi2,teknisi3,helper,helper2,helper3,invoice_id,status")
+    .select("id,date,customer,customer_id,service,units,teknisi,teknisi2,teknisi3,helper,helper2,helper3,invoice_id,status,is_multi_day,parent_job_id,day_number")
     .gte("date", periodStart)
     .lte("date", periodEnd)
     .in("status", ORDER_DONE_STATUSES)
     .order("date");
+
+// Order Complain di sekitar periode — dipakai untuk memperingatkan bonus yang diikuti
+// komplain dalam 30 hari. Jendelanya sengaja melewati periodEnd sebanyak KOMPLAIN_VOID_HARI,
+// karena komplain atas job akhir bulan baru muncul di bulan berikutnya.
+// TIDAK disaring status: komplain yang masih PENDING pun tetap sinyal yang perlu dilihat.
+export const fetchKomplainSekitarPeriode = (supabase, periodStart, periodEnd, hari = 30) => {
+  const akhir = new Date(periodEnd + "T00:00:00");
+  akhir.setDate(akhir.getDate() + hari);
+  return supabase.from("orders")
+    .select("id,date,customer,customer_id,service")
+    .eq("service", "Complain")
+    .gte("date", periodStart)
+    .lte("date", akhir.toISOString().slice(0, 10))
+    .order("date");
+};
