@@ -46,7 +46,7 @@ function buildPrompt(groupCfg) {
 
   const enabled = [];
   if (onExp) enabled.push('"expense" — foto struk / nota / kwitansi belanja operasional');
-  if (onMat) enabled.push('"material" — foto material yang dibawa teknisi (tabung freon, gulungan pipa, gulungan kabel)');
+  if (onMat) enabled.push('"material" — foto FISIK material/alat yang dibawa teknisi. HANYA 5 barang: (1) TABUNG/silinder freon, (2) gulungan/roll pipa AC, (3) gulungan/roll kabel listrik, (4) BOR listrik, (5) mesin VACUM. BUKAN unit AC / stiker spesifikasi / manifold (lihat aturan)');
   if (onPay) enabled.push('"payment" — bukti transfer / screenshot mutasi bank / setor tunai');
   const intentList = enabled.length > 0 ? enabled.join("\n") : '(tidak ada AI intent aktif untuk grup ini)';
 
@@ -69,9 +69,19 @@ function buildPrompt(groupCfg) {
    → "expense".${onMat ? ` Ini berlaku WALAUPUN barangnya material
    (pipa/kabel/freon/plastik/sparepart) — pembelian material tetap UANG KELUAR.
    Contoh: "mohon diproses pembelian plastic cuci senilai 882.000" → expense, bukan material.` : ""}`);
-  if (onMat) rules.push(`"material" HANYA untuk laporan STOK MURNI tanpa nominal apa pun — barang dibawa,
-   dipakai, sisa, atau dikembalikan ke kantor.
-   Contoh: "pipa A16 sisa 5m kembali kantor", "freon R32 sisa 3,1kg terpakai 500gram".`);
+  if (onMat) rules.push(`"material" HANYA laporan STOK MURNI (tanpa nominal rupiah) dan foto/caption jelas menunjukkan
+   SALAH SATU dari 5 barang berikut — selain ini WAJIB "unknown":
+   (1) TABUNG/SILINDER FREON — tabung logam bertekanan (ada kran/valve di atas, badan silinder), BUKAN stiker.
+   (2) GULUNGAN/ROLL PIPA AC (pipa tembaga tergulung).
+   (3) GULUNGAN/ROLL KABEL LISTRIK.
+   (4) BOR listrik.  (5) MESIN VACUM / pompa vakum.
+   BUKAN "material" → pilih "unknown", MESKIPUN foto/stiker menyebut R32/freon/gram/kg:
+   - UNIT AC apa pun: indoor/outdoor, kardus/dus, cover/casing, DAN STIKER/LABEL SPESIFIKASI di badan/kardus unit
+     (mis. "Refrigerant R32 710g / 0,71kg / GAS R32 500g" tertera pada label unit) — itu spek gas BAWAAN UNIT,
+     BUKAN tabung freon terpisah. Stiker/barcode/label kemasan unit AC = unit AC, BUKAN material.
+   - MANIFOLD / alat ukur tekanan / gauge / selang manifold (alat, bukan material).
+   - Foto lokasi kerja / orang / dokumen lain.
+   Contoh material benar: "bawa pipa A16 7m", "freon R32 tabung sisa 3,1kg", foto tabung freon berdiri.`);
   if (onExp && onMat) rules.push(`Kalau ragu antara expense dan material, dan ada angka yang tampak seperti rupiah
    → pilih "expense" (lebih aman: uang tidak boleh hilang dari pencatatan).`);
   const rulesText = rules.length
@@ -118,8 +128,11 @@ function buildPrompt(groupCfg) {
      bracket, sparepart, alat — pakai "Material Lain". Detail barangnya taruh di item_name.)
   Pilihan category: foto struk bensin SPBU/parkir/perbaikan motor/jajan/makan → "petty_cash".
   Foto nota toko bangunan/pipa/kabel/freon/material → "material_purchase".`);
-  if (onMat) fields.push(`- material: { items: [{ type: "freon"|"pipa"|"kabel"|"lain", brand: string|null, size: string|null,
+  if (onMat) fields.push(`- material: { items: [{ type: "freon"|"pipa"|"kabel"|"alat"|"lain", brand: string|null, size: string|null,
                         qty: number|null, kind: "dibawa"|"terpakai"|"sisa" }] }
+  type: "freon" HANYA untuk TABUNG/silinder freon fisik (bukan stiker spek unit AC). "pipa"=gulungan pipa AC,
+  "kabel"=gulungan kabel, "alat"=BOR atau VACUM, "lain"=material AC lain yang jelas dibawa. Kalau foto ternyata
+  unit AC / stiker spesifikasi / manifold / gauge → JANGAN buat item material, set intent "unknown".
   ARAH (kind) WAJIB diisi — ini menentukan stok bertambah atau berkurang:
   - "dibawa"   : barang dibawa dari kantor ke lokasi ("bawa pipa A4 7 meter")
   - "terpakai" : habis dipakai di pekerjaan ("terpakai 5 meter di ibu cassy")
