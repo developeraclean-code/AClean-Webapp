@@ -370,8 +370,9 @@ const PlanningTab = ({ allInvoices, allExpenses }) => {
     paidThisMonth.reduce((s, i) => s + cashReceived(i), 0),
     [paidThisMonth]);
 
+  // Biaya sah = bukan menunggu approval Admin (≥500rb) & bukan draft AI belum di-review.
   const expensesBulanIni = useMemo(() =>
-    (allExpenses || []).filter(e => e.approval_status !== "PENDING_APPROVAL" && (e.date || e.created_at || "").slice(0, 7) === bulanIni),
+    (allExpenses || []).filter(e => e.approval_status !== "PENDING_APPROVAL" && e.validation_status !== "PENDING_AI" && (e.date || e.created_at || "").slice(0, 7) === bulanIni),
     [allExpenses, bulanIni]);
 
   const totalOut = useMemo(() =>
@@ -383,7 +384,7 @@ const PlanningTab = ({ allInvoices, allExpenses }) => {
     [allInvoices]);
 
   const totalOutAll = useMemo(() =>
-    (allExpenses || []).reduce((s, e) => s + (e.approval_status === "PENDING_APPROVAL" ? 0 : (e.amount || 0)), 0),
+    (allExpenses || []).reduce((s, e) => s + ((e.approval_status === "PENDING_APPROVAL" || e.validation_status === "PENDING_AI") ? 0 : (e.amount || 0)), 0),
     [allExpenses]);
 
   const netProfit = totalIn - totalOut;

@@ -294,7 +294,7 @@ export const fetchInventoryUnits = (supabase) =>
 
 export const fetchExpenses = (supabase) =>
   supabase.from("expenses")
-    .select("id,date,amount,category,subcategory,description,teknisi_name,item_name,freon_type,created_at,inventory_code,qty,unit,unit_cost,order_id,stock_linked_at,stock_linked_by,approval_status,created_by")
+    .select("id,date,amount,category,subcategory,description,teknisi_name,item_name,freon_type,created_at,inventory_code,qty,unit,unit_cost,order_id,stock_linked_at,stock_linked_by,approval_status,validation_status,created_by")
     .is("deleted_at", null)
     .order("date", { ascending: false }).limit(2000);
 
@@ -305,7 +305,7 @@ export const fetchAllExpenses = async (supabase) => {
   let from = 0;
   for (;;) {
     const { data, error } = await supabase.from("expenses")
-      .select("id,date,amount,category,subcategory,description,teknisi_name,item_name,freon_type,created_at,inventory_code,qty,unit,unit_cost,order_id,stock_linked_at,stock_linked_by,approval_status,created_by")
+      .select("id,date,amount,category,subcategory,description,teknisi_name,item_name,freon_type,created_at,inventory_code,qty,unit,unit_cost,order_id,stock_linked_at,stock_linked_by,approval_status,validation_status,created_by")
       .is("deleted_at", null)
       .order("date", { ascending: false }).range(from, from + FULL_FETCH_PAGE - 1);
     if (error) return { data: all, error };

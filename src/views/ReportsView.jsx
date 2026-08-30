@@ -145,7 +145,9 @@ const totalRevenue = paidInv.reduce((a, b) => {
 const totalLabor = paidInv.reduce((a, b) => a + (b.labor || 0), 0);
 const totalMaterial = paidInv.reduce((a, b) => a + (b.material || 0), 0);
 const totalDiscount = paidInv.reduce((a, b) => a + (b.discount || 0) + (b.trade_in ? (b.trade_in_amount || 0) : 0), 0);
-const totalExpenses = (expensesData || []).filter(e => e.approval_status !== "PENDING_APPROVAL" && inRange(String(e.date || e.created_at || ""))).reduce((a, b) => a + (b.amount || 0), 0);
+// Biaya dihitung hanya bila SUDAH final: bukan menunggu approval Admin (≥500rb) dan bukan
+// draft AI yang belum di-review (PENDING_AI). Keduanya belum sah jadi pengeluaran.
+const totalExpenses = (expensesData || []).filter(e => e.approval_status !== "PENDING_APPROVAL" && e.validation_status !== "PENDING_AI" && inRange(String(e.date || e.created_at || ""))).reduce((a, b) => a + (b.amount || 0), 0);
 const totalAR = unpaidInv.reduce((a, b) => a + (b.total || 0), 0)
   + overdueInv.reduce((a, b) => a + (b.total || 0), 0);
 const totalPending = pendingInv.reduce((a, b) => a + (b.total || 0), 0);

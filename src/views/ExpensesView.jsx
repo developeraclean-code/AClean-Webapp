@@ -134,7 +134,8 @@ const thisMonthPrefix = `${nowDate.getFullYear()}-${String(nowDate.getMonth() + 
 const spendThisMonth = useMemo(() => {
   const map = {};
   expensesData.forEach(e => {
-    if (e.approval_status === "PENDING_APPROVAL") return;   // belum disetujui → belum dihitung
+    if (e.approval_status === "PENDING_APPROVAL") return;   // belum disetujui Owner → belum dihitung
+    if (e.validation_status === "PENDING_AI") return;       // draft AI belum di-review → belum dihitung
     if (!(e.date || "").startsWith(thisMonthPrefix)) return;
     const catKey = budgetKey(e.category, null);
     map[catKey] = (map[catKey] || 0) + Number(e.amount || 0);

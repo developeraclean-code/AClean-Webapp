@@ -6,6 +6,11 @@ import { displayStock } from "../lib/inventory.js";
 import AbsenBanner from "./AbsenBanner.jsx";
 import { useAppContext } from "../context/AppContext.js";
 
+// Biaya dihitung ke total/chart HANYA bila sudah final: bukan menunggu approval Admin
+// (≥500rb) dan bukan draft AI belum di-review (PENDING_AI). Konsisten dgn ExpensesView,
+// FinanceView, ReportsView — kalau tidak, angka Dashboard tak sinkron dgn menu lain.
+const countsAsExpense = (e) => e?.approval_status !== "PENDING_APPROVAL" && e?.validation_status !== "PENDING_AI";
+
 // ── Rekap Jenis Pekerjaan (Dashboard) ──────────────────────────────
 const toISOLocal = (d) => { const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return z.toISOString().slice(0, 10); };
 const fmtDayMon = (d) => d.toLocaleDateString("id-ID", { day: "numeric", month: "short" });
@@ -1045,7 +1050,7 @@ return (
       });
 
       const revenueByMonth = months.map(m => {
-        const expLain = (expensesData || []).filter(e => (e.date || "").startsWith(m.prefix)).reduce((s, e) => s + (e.amount || 0), 0);
+        const expLain = (expensesData || []).filter(e => countsAsExpense(e) && (e.date || "").startsWith(m.prefix)).reduce((s, e) => s + (e.amount || 0), 0);
         const gaji = payrollByMonth[m.prefix] || 0;
         return {
           ...m,
@@ -1098,7 +1103,7 @@ return (
               { label: "Pengeluaran Bln Ini", value: fmt(expThisM), color: cs.yellow, icon: "🧾",
                 sub: gajiThisM > 0
                   ? "Termasuk gaji tim " + fmt(gajiThisM)
-                  : "Dari " + (expensesData || []).filter(e => (e.date || "").startsWith(thisMPrefix)).length + " transaksi",
+                  : "Dari " + (expensesData || []).filter(e => countsAsExpense(e) && (e.date || "").startsWith(thisMPrefix)).length + " transaksi",
                 subColor: cs.muted },
               { label: "Estimasi Profit", value: fmt(profitThisM), color: profitThisM >= 0 ? cs.green : cs.red, icon: "📈", sub: expThisM > 0 && revThisM > 0 ? "Margin " + Math.round(profitThisM / revThisM * 100) + "%" : "Belum ada pengeluaran", subColor: cs.muted },
               { label: "Outstanding Unpaid", value: fmt(unpaidTotal), color: cs.yellow, icon: "⏳", sub: unpaidList.length + " invoice belum lunas", subColor: cs.muted },
@@ -1179,7 +1184,7 @@ return (
                 other:             { label: "Lainnya", icon: "📋", color: "#8b5cf6" },
               };
 
-              const allExpThisM = (expensesData || []).filter(e => (e.date || e.created_at || "").startsWith(thisMPrefix));
+              const allExpThisM = (expensesData || []).filter(e => countsAsExpense(e) && (e.date || e.created_at || "").startsWith(thisMPrefix));
               const byCategory = {};
               allExpThisM.forEach(e => {
                 const cat = e.category || "other";

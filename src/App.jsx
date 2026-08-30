@@ -39,7 +39,7 @@ import {
   fetchServiceReports, fetchInventoryTransactions,
   fetchInvoicesSince, fetchServiceReportsSince, fetchOrdersSince,
   searchInvoicesServer, searchOrdersServer, searchServiceReportsServer, searchCustomersServer,
-  fetchInventoryUnits, fetchExpenses, fetchPayments, fetchDispatchLogs,
+  fetchInventoryUnits, fetchAllExpenses, fetchPayments, fetchDispatchLogs,
   fetchAppSettings, fetchUserProfiles, fetchUserAccounts,
   fetchWaConversations, fetchPriceList, fetchAraBrain,
   lookupCustomersByPhone, fetchKasbonRequests, fetchInvoiceById, fetchInvoicesByIds,
@@ -4080,8 +4080,14 @@ export default function ACleanWebApp() {
   // (agent_logs kini diakses lewat Monitoring → tab Audit Log, server-side)
   useEffect(() => {
     if (!currentUser) return;
+    // Biaya penuh (uncapped): Statistik & Dashboard menjumlah biaya lintas bulan. fetchExpenses
+    // (limit 2000 → dipotong PostgREST ke 1000) membuang 500+ baris terlama → biaya bulan lama
+    // undercount & profit overstated. fetchAllExpenses mem-paginate agar lengkap. "reports"
+    // ikut memuat supaya Statistik tidak menampilkan biaya 0 saat dibuka langsung.
+    if (activeMenu === "biaya" || activeMenu === "dashboard" || activeMenu === "reports") {
+      fetchAllExpenses(supabase).then(({ data, error }) => { if (!error && data) setExpensesData(data); }).catch(() => {});
+    }
     if (activeMenu === "biaya" || activeMenu === "dashboard") {
-      fetchExpenses(supabase).then(({ data, error }) => { if (!error && data) setExpensesData(data); }).catch(() => {});
       fetchKasbonRequests(supabase).then(({ data, error }) => { if (!error && data) setKasbonRequests(data); }).catch(() => {});
     } else if (activeMenu === "invoice" || activeMenu === "maintenance") {
       supabase.from("quotations").select("*").order("created_at", { ascending: false }).limit(200)
