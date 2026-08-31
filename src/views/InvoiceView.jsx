@@ -4,6 +4,7 @@ import { statusColor, INVOICE_UNPAID_STATUSES } from "../constants/status.js";
 import { smartSearchNormalize, samePhone, formatPhone } from "../lib/phone.js";
 import { useAppContext } from "../context/AppContext.js";
 import { categoryOf, LINE_CATEGORY } from "../lib/invoicing.js";
+import { downloadCsv } from "../lib/exportUtils.js";
 import AcUnitInvoiceModal from "./AcUnitInvoiceModal.jsx";
 import QuotationView from "./QuotationView.jsx";
 import { BlobProvider } from "@react-pdf/renderer";
@@ -244,6 +245,30 @@ function InvoiceView({ invoiceFilterMemo, invoicesData, invoicesDataMerged, setI
   const { currentUser, isMobile, showConfirm, showNotif, addAgentLog, auditUserName, fmt, supabase, TODAY } = useAppContext();
 const { filteredInv, garansiAktif, garansiKritis, unpaidCnt } = invoiceFilterMemo;
 const todayDateStr = getLocalDate();
+
+// ── Export rekap Invoice / AR (CSV) — ikut filter aktif; filteredInv sudah dari data
+// merged (termasuk piutang lama di luar cap 300), jadi rekap AR lengkap. ──
+const exportInvoiceCsv = () => {
+  const list = filteredInv || [];
+  if (list.length === 0) { showNotif("Tidak ada invoice untuk diekspor."); return; }
+  const cashRec = (i) => i.status === "PAID" ? Number(i.total || 0) : i.status === "PARTIAL_PAID" ? Number(i.paid_amount || 0) : 0;
+  const headers = ["No Invoice", "Tanggal", "Customer", "No HP", "Layanan", "Teknisi", "Status", "Total", "Terbayar", "Sisa (Outstanding)", "Umur (hari)", "Garansi s/d", "Job ID"];
+  const rows = list.map(i => {
+    const paid = cashRec(i);
+    const sisa = Math.max(0, Number(i.total || 0) - paid);
+    const isOutstanding = ["UNPAID", "OVERDUE", "PARTIAL_PAID"].includes(i.status);
+    const baseDate = (i.sent || i.created_at || "").slice(0, 10);
+    const umur = isOutstanding && baseDate
+      ? Math.max(0, Math.floor((Date.now() - new Date(baseDate + "T00:00:00").getTime()) / 86400000))
+      : "";
+    return [
+      i.id || "", (i.created_at || "").slice(0, 10), i.customer || "", i.phone || "", i.service || "", i.teknisi || "",
+      i.status || "", Number(i.total || 0), paid, sisa, umur, (i.garansi_expires || "").slice(0, 10), i.job_id || "",
+    ];
+  });
+  downloadCsv(headers, rows, `rekap-invoice_${TODAY}.csv`);
+  showNotif(`✅ CSV ${list.length} invoice diunduh`);
+};
 // Bandingkan total invoice vs penawaran yang ter-link (warning bila selisih > 10%).
 // quotationsData lazy-load (kosong di view Invoice) → ambil total penawaran on-demand.
 const QUO_DIFF_PCT = 0.10;
@@ -1001,6 +1026,11 @@ return (
     {invoiceSubTab === "invoice" && <>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
       <div style={{ fontWeight: 700, fontSize: 18, color: cs.text }}>🧾 Invoice <span style={{ fontSize: 13, color: cs.muted, fontWeight: 400 }}>({filteredInv.length})</span></div>
+      <button onClick={exportInvoiceCsv}
+        title="Unduh CSV daftar invoice sesuai filter aktif (status, total, terbayar, sisa, umur tunggakan) — untuk penagihan & rekonsiliasi"
+        style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, padding: "8px 14px", borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+        ⬇️ CSV / AR
+      </button>
       {currentUser?.role !== "Finance" && (
         <button onClick={() => setShowAcUnitModal(true)} style={{
           background: "#f59e0b22", border: "1px solid #f59e0b55", color: "#f59e0b",

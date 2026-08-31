@@ -5,6 +5,7 @@ import { fetchDeletedExpenses } from "../data/reads.js";
 import { restoreExpense, purgeExpense } from "../data/writes.js";
 import ExpenseFormModal, { BudgetModal } from "./ExpenseFormModal.jsx";
 import TautkanStokModal from "./TautkanStokModal.jsx";
+import { downloadCsv, printDocument, htmlTable, rp, fmtTanggal, escapeHtml } from "../lib/exportUtils.js";
 
 // ── Kasbon Section (Owner/Admin) — approve request → otomatis masuk ke Biaya ──
 function KasbonSection({ currentUser, kasbonRequests, approveKasbon, rejectKasbon }) {
@@ -291,6 +292,67 @@ const grandTotal = filtered.reduce((s, e) => s + (e.approval_status === "PENDING
 const pendingApprovals = (expensesData || []).filter(e => e.approval_status === "PENDING_APPROVAL" && !e.deleted_at);
 const pendingApprovalSum = pendingApprovals.reduce((s, e) => s + Number(e.amount || 0), 0);
 
+// ── Export rekap Biaya (CSV + PDF) — ikut data yang sedang tampil (filter/tab/tanggal) ──
+const catLabel = (c) => c === "material_purchase" ? "Pembelian Material" : c === "petty_cash" ? "Petty Cash" : (c || "-");
+const tabLabel = isTrash ? "Dihapus" : expenseTab === "material_purchase" ? "Pembelian Material" : expenseTab === "petty_cash" ? "Petty Cash" : "Semua";
+const periodLabel = (expenseDateFrom && expenseDateTo)
+  ? (expenseDateFrom === expenseDateTo ? fmtTanggal(expenseDateFrom) : `${fmtTanggal(expenseDateFrom)} – ${fmtTanggal(expenseDateTo)}`)
+  : "Semua tanggal";
+const fileTag = (expenseDateFrom && expenseDateTo)
+  ? (expenseDateFrom === expenseDateTo ? expenseDateFrom : `${expenseDateFrom}_${expenseDateTo}`)
+  : "semua";
+const statusLabelExp = (e) => e.approval_status === "PENDING_APPROVAL" ? "Menunggu Approval" : "OK";
+
+const exportBiayaCsv = () => {
+  if (filtered.length === 0) { showNotif?.("Tidak ada data untuk diekspor."); return; }
+  const headers = ["Tanggal", "Kategori", "Subkategori", "Item", "Keterangan", "Teknisi", "Nominal", "Status", "Tertaut Stok", "Dibuat Oleh"];
+  const rows = filtered.map(e => [
+    e.date || "", catLabel(e.category), e.subcategory || "", e.item_name || "",
+    (e.description || "").replace(/\s+/g, " ").trim(), e.teknisi_name || "",
+    Number(e.amount || 0), statusLabelExp(e), e.stock_linked_at ? "Ya" : "", e.created_by || "",
+  ]);
+  downloadCsv(headers, rows, `rekap-biaya_${fileTag}.csv`);
+  showNotif?.("✅ CSV rekap biaya diunduh");
+};
+
+const exportBiayaPdf = () => {
+  if (filtered.length === 0) { showNotif?.("Tidak ada data untuk diekspor."); return; }
+  // Ringkasan per subkategori (kecualikan PENDING_APPROVAL agar sama dgn total di layar).
+  const sumMap = {};
+  filtered.forEach(e => {
+    if (e.approval_status === "PENDING_APPROVAL") return;
+    const key = `${catLabel(e.category)}||${e.subcategory || "-"}`;
+    if (!sumMap[key]) sumMap[key] = { cat: catLabel(e.category), sub: e.subcategory || "-", total: 0, count: 0 };
+    sumMap[key].total += Number(e.amount || 0);
+    sumMap[key].count++;
+  });
+  const sumRows = Object.values(sumMap).sort((a, b) => b.total - a.total)
+    .map(s => [escapeHtml(s.cat), escapeHtml(s.sub), String(s.count), rp(s.total)]);
+  const summaryTable = htmlTable(
+    ["Kategori", "Subkategori", "Transaksi", "Total"], sumRows,
+    { colClass: ["", "", "c", "r"], footer: ["", "TOTAL", String(filtered.filter(e => e.approval_status !== "PENDING_APPROVAL").length), rp(grandTotal)] }
+  );
+  const detailRows = filtered.map((e, i) => [
+    String(i + 1), fmtTanggal(e.date), escapeHtml(catLabel(e.category)), escapeHtml(e.subcategory || "-"),
+    escapeHtml([e.item_name, (e.description || "").replace(/\s+/g, " ").trim()].filter(Boolean).join(" — ") || "-"),
+    escapeHtml(e.teknisi_name || "-"),
+    e.approval_status === "PENDING_APPROVAL" ? `<span class="muted">${rp(e.amount)} (pending)</span>` : rp(e.amount),
+  ]);
+  const detailTable = htmlTable(
+    ["#", "Tanggal", "Kategori", "Subkategori", "Keterangan", "Teknisi", "Nominal"], detailRows,
+    { colClass: ["no", "", "", "", "", "", "r"] }
+  );
+  printDocument({
+    title: "Rekap Biaya — AClean",
+    subtitle: `${tabLabel} · ${periodLabel} · ${filtered.length} transaksi · Dicetak ${fmtTanggal(new Date())}`,
+    legend: `Total <b>${rp(grandTotal)}</b> (belum termasuk biaya berstatus <i>Menunggu Approval</i>).`,
+    bodyHtml: `<h2 class="sec">Ringkasan per Kategori</h2>${summaryTable}<h2 class="sec">Rincian Transaksi</h2>${detailTable}`,
+    signature: true,
+    showNotif,
+  });
+  showNotif?.("🖨️ Menyiapkan PDF rekap biaya…");
+};
+
 // ── Navigasi per-hari (geser slide, seperti Dashboard) ──
 const dayMode = !!expenseDateFrom && expenseDateFrom === expenseDateTo;
 // Pakai jam 12 siang + komponen LOKAL (bukan toISOString/UTC) — kalau UTC, WIB (UTC+7)
@@ -424,13 +486,25 @@ return (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
       <div style={{ fontWeight: 700, fontSize: 18, color: cs.text }}>💸 Biaya{isTrash ? " — Recycle Bin" : ""}</div>
       {isOwnerAdmin && !isTrash && (
-        <button onClick={openAdd}
-          style={{
-            background: "linear-gradient(135deg," + cs.accent + "," + cs.ara + ")", border: "none", color: "#fff",
-            padding: "9px 18px", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 13
-          }}>
-          + Tambah Biaya
-        </button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button onClick={exportBiayaPdf}
+            title="Cetak / simpan PDF rekap biaya (ringkasan per kategori + rincian) sesuai filter aktif"
+            style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, padding: "9px 14px", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
+            🖨️ PDF
+          </button>
+          <button onClick={exportBiayaCsv}
+            title="Unduh CSV rekap biaya sesuai filter aktif (buka di Excel)"
+            style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, padding: "9px 14px", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
+            ⬇️ CSV
+          </button>
+          <button onClick={openAdd}
+            style={{
+              background: "linear-gradient(135deg," + cs.accent + "," + cs.ara + ")", border: "none", color: "#fff",
+              padding: "9px 18px", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 13
+            }}>
+            + Tambah Biaya
+          </button>
+        </div>
       )}
     </div>
 

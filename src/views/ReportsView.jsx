@@ -3,10 +3,11 @@ import { cs } from "../theme/cs.js";
 import { useAppContext } from "../context/AppContext.js";
 import { ORDER_DONE_STATUSES } from "../constants/status.js";
 import { fetchAllOrders, fetchAllInvoices } from "../data/reads.js";
+import { downloadBlob, buildCsv, printDocument, htmlTable, rp, fmtTanggal, escapeHtml } from "../lib/exportUtils.js";
 
 function ReportsView({ ordersData: ordersDataProp, invoicesData: invoicesDataProp, laporanReports, customersData, teknisiData, inventoryData, statsPeriod, setStatsPeriod, statsMingguOff, setStatsMingguOff, statsBulanOff, setStatsBulanOff, statsDateFrom, setStatsDateFrom, statsDateTo, setStatsDateTo, bulanIni, invoiceReminderWA, getTechColor, expensesData }) {
   // Fase 1: primitif global dari AppContext.
-  const { isMobile, currentUser, fmt, TODAY, supabase } = useAppContext();
+  const { isMobile, currentUser, fmt, TODAY, supabase, showNotif } = useAppContext();
 
 // ── Data historis PENUH, bukan array global yang di-cap (ordersData 500 / invoicesData 300
 // baris terbaru saja — cukup untuk operasional harian tapi bikin Statistik bulan-bulan lama
@@ -215,6 +216,92 @@ const custBaru = customersData.filter(c =>
 const fmtPct = (n, d) => d > 0 ? (n / d * 100).toFixed(1) + "%" : "—";
 const fmtRp = (n) => "Rp " + Math.round(n).toLocaleString("id-ID");
 
+// ── Export rekap Statistik (CSV data + PDF rapi) — ikut periode yang dipilih ──
+const profit = totalRevenue - totalExpenses;
+const marginPct = totalRevenue > 0 ? Math.round(profit / totalRevenue * 100) : 0;
+
+const exportStatistikCsv = () => {
+  const R = [];
+  R.push(["Periode", periodLabel]);
+  R.push(["Dicetak", fmtTanggal(new Date())]);
+  R.push([]);
+  R.push(["RINGKASAN KEUANGAN"]);
+  R.push(["Metrik", "Nilai (Rp)"]);
+  R.push(["Pendapatan (Lunas)", Math.round(totalRevenue)]);
+  R.push(["- Jasa", Math.round(totalLabor)]);
+  R.push(["- Material", Math.round(totalMaterial)]);
+  R.push(["Diskon diberikan", Math.round(totalDiscount)]);
+  R.push(["Biaya Operasional", Math.round(totalExpenses)]);
+  R.push(["Laba (Profit)", Math.round(profit)]);
+  R.push(["Margin (%)", marginPct]);
+  R.push(["Piutang Outstanding (AR)", Math.round(totalAR)]);
+  R.push(["- Belum Bayar", Math.round(totalAR - totalOverdue)]);
+  R.push(["- Terlambat (Overdue)", Math.round(totalOverdue)]);
+  R.push(["Menunggu Approval Invoice", Math.round(totalPending)]);
+  R.push([]);
+  R.push(["OPERASIONAL"]);
+  R.push(["Order Selesai", ordersDone]);
+  R.push(["Total Order", ordersAll]);
+  R.push(["Completion Rate (%)", completionRate]);
+  R.push(["Rata-rata Nilai Order", avgOrderVal]);
+  R.push(["Customer Baru", custBaru]);
+  R.push([]);
+  R.push(["PENDAPATAN PER LAYANAN"]);
+  R.push(["Layanan", "Transaksi", "Pendapatan (Rp)"]);
+  revBreakdown.forEach(([name, rev, , cnt]) => R.push([name, cnt, Math.round(rev)]));
+  R.push([]);
+  R.push(["PERFORMA TIM"]);
+  R.push(["Nama", "Peran", "Selesai", "Total Job", "Pendapatan (Rp)"]);
+  allTeamPerf.forEach(t => R.push([t.name, t.isHelper ? "Helper" : "Teknisi", t.done, t.total, t.rev]));
+  downloadBlob(buildCsv(["LAPORAN STATISTIK ACLEAN"], R), `statistik_${statsPeriod}_${TODAY}.csv`, "text/csv;charset=utf-8");
+  showNotif?.("✅ CSV statistik diunduh");
+};
+
+const exportStatistikPdf = () => {
+  const card = (lbl, val, cls = "") => `<div class="card"><div class="lbl">${escapeHtml(lbl)}</div><div class="val ${cls}">${val}</div></div>`;
+  const cards = `<div class="cards">
+    ${card("Pendapatan", rp(totalRevenue), "pos")}
+    ${card("Biaya Operasional", rp(totalExpenses), "neg")}
+    ${card("Laba (Profit)", rp(profit), profit >= 0 ? "pos" : "neg")}
+    ${card("Margin", marginPct + "%")}
+    ${card("Piutang (AR)", rp(totalAR))}
+  </div>`;
+  const pl = htmlTable(["Komponen", "Jumlah"], [
+    ["Pendapatan (Lunas)", rp(totalRevenue)],
+    ["&nbsp;&nbsp;— Jasa", rp(totalLabor)],
+    ["&nbsp;&nbsp;— Material", rp(totalMaterial)],
+    ["Diskon diberikan", rp(totalDiscount)],
+    ["Biaya Operasional", `<span class="neg">− ${rp(totalExpenses)}</span>`],
+  ], { colClass: ["", "r"], footer: ["Laba (Profit)", `<span class="${profit >= 0 ? "pos" : "neg"}">${rp(profit)}</span>`] });
+  const svc = htmlTable(["Layanan", "Transaksi", "Pendapatan"],
+    revBreakdown.map(([name, rev, , cnt]) => [escapeHtml(name), String(cnt), rp(rev)]),
+    { colClass: ["", "c", "r"], footer: ["TOTAL", String(revBreakdown.reduce((s, [, , , c]) => s + c, 0)), rp(revBreakdown.reduce((s, [, r]) => s + r, 0))] });
+  const ar = htmlTable(["Status Piutang", "Jumlah"], [
+    ["Belum Bayar (Unpaid)", rp(totalAR - totalOverdue)],
+    ["Terlambat (Overdue)", `<span class="neg">${rp(totalOverdue)}</span>`],
+    ["Menunggu Approval Invoice", rp(totalPending)],
+  ], { colClass: ["", "r"], footer: ["Total Outstanding", rp(totalAR)] });
+  const team = allTeamPerf.length === 0 ? "<p class='muted'>Tidak ada aktivitas tim di periode ini.</p>" :
+    htmlTable(["Nama", "Peran", "Selesai", "Total Job", "Pendapatan"],
+      allTeamPerf.map(t => [escapeHtml(t.name), t.isHelper ? "Helper" : "Teknisi", String(t.done), String(t.total), t.isHelper ? "—" : rp(t.rev)]),
+      { colClass: ["", "c", "c", "c", "r"] });
+  const ops = `<div class="cards">
+    ${card("Order Selesai", ordersDone + " / " + ordersAll)}
+    ${card("Completion Rate", completionRate + "%")}
+    ${card("Rata-rata Order", rp(avgOrderVal))}
+    ${card("Customer Baru", String(custBaru))}
+  </div>`;
+  printDocument({
+    title: "Laporan Statistik — AClean",
+    subtitle: `Periode: ${periodLabel} · Dicetak ${fmtTanggal(new Date())}`,
+    legend: "Basis periode = tanggal job/order. Pendapatan dihitung dari invoice berstatus LUNAS.",
+    bodyHtml: `${cards}<h2 class="sec">Laba Rugi (P&amp;L)</h2>${pl}<h2 class="sec">Pendapatan per Layanan</h2>${svc}<h2 class="sec">Piutang (Accounts Receivable)</h2>${ar}<h2 class="sec">Performa Tim</h2>${team}<h2 class="sec">Operasional</h2>${ops}`,
+    signature: true,
+    showNotif,
+  });
+  showNotif?.("🖨️ Menyiapkan PDF statistik…");
+};
+
 return (
   <div style={{ display: "grid", gap: 18 }}>
     {/* Header + Filter */}
@@ -222,6 +309,18 @@ return (
       <div>
         <div style={{ fontWeight: 800, fontSize: 18, color: cs.text }}>📊 Laporan Keuangan &amp; Operasional</div>
         <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>Profit &amp; Loss · Accounts Receivable · Performa Tim</div>
+        <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+          <button onClick={exportStatistikPdf}
+            title="Cetak / simpan PDF laporan statistik periode ini (P&L, AR, per-layanan, performa tim)"
+            style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, padding: "7px 13px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+            🖨️ PDF Laporan
+          </button>
+          <button onClick={exportStatistikCsv}
+            title="Unduh CSV angka statistik periode ini (buka di Excel)"
+            style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, padding: "7px 13px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+            ⬇️ CSV
+          </button>
+        </div>
       </div>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
         {[["hari", "Hari Ini"], ["minggu", "Minggu"], ["bulan", "Bulan Ini"], ["tahun", "Tahun Ini"], ["custom", "Custom"]].map(([v, l]) => (
