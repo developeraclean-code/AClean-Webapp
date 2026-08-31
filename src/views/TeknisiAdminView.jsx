@@ -11,6 +11,7 @@ import {
 } from "../lib/bonus.js";
 import { buildBonusRekap } from "../lib/bonusRekap.js";
 import { invoiceMaterialCostHPP } from "../lib/hpp.js";
+import { downloadCsv, printDocument, htmlTable, rp, fmtTanggal, escapeHtml } from "../lib/exportUtils.js";
 import BonusRekapPanel from "./BonusRekapPanel.jsx";
 import {
   localDateStr, getMondayOf, getSaturdayOf, addWeeks,
@@ -598,6 +599,63 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
     showNotif?.(`🔄 Kasbon ${row.user_name} disinkronkan → ${fmtRp(live)}`);
   };
 
+  // ── Export rekap Payroll Mingguan (CSV + PDF) — periode aktif ──
+  const periodeLabelPay = `${fmtDate(periodStart)} – ${fmtDate(periodEnd)}`;
+  const payComponents = (r) => {
+    const pokok = Number(r.days_worked || 0) * Number(r.daily_rate || 0);
+    const fullWk = r.full_week_bonus ? fullWeekBonusAmt(r.role) : 0;
+    const potTelat = Number(r.late_days || 0) * 10000;
+    const kasbonPot = Number(r.kasbon_deduct || 0);
+    const manual = Number(r.manual_bonus || 0);
+    return { pokok, fullWk, potTelat, kasbonPot, manual, owed: kasbonOwed(r), sisa: kasbonSisa(r), gross: computeGross(r) };
+  };
+  const exportPayrollCsv = () => {
+    if (payrollRows.length === 0) { showNotif?.("Belum ada data payroll periode ini — klik Generate dulu."); return; }
+    const headers = ["Nama", "Role", "Periode", "Hari Masuk", "Rate/Hari", "Gaji Pokok", "Bonus Full Week", "Telat (hari)", "Potongan Telat", "Kasbon Terutang", "Kasbon Dipotong", "Sisa Kasbon", "Bonus Manual", "Total Gaji Bersih", "Status", "Dibayar Oleh", "Dibayar Pada"];
+    const rows = payrollRows.map(r => {
+      const c = payComponents(r);
+      return [
+        r.user_name || "", r.role || "", periodeLabelPay, Number(r.days_worked || 0), Number(r.daily_rate || 0),
+        c.pokok, c.fullWk, Number(r.late_days || 0), c.potTelat, c.owed, c.kasbonPot, c.sisa, c.manual, c.gross,
+        r.is_paid ? "DIBAYAR" : "BELUM", r.paid_by || "", r.paid_at ? String(r.paid_at).slice(0, 10) : "",
+      ];
+    });
+    downloadCsv(headers, rows, `payroll_${periodStart}.csv`);
+    showNotif?.("✅ CSV payroll diunduh");
+  };
+  const exportPayrollPdf = () => {
+    if (payrollRows.length === 0) { showNotif?.("Belum ada data payroll periode ini — klik Generate dulu."); return; }
+    const tot = payrollRows.reduce((a, r) => {
+      const c = payComponents(r);
+      a.pokok += c.pokok; a.fullWk += c.fullWk; a.potTelat += c.potTelat; a.kasbonPot += c.kasbonPot; a.manual += c.manual; a.gross += c.gross;
+      return a;
+    }, { pokok: 0, fullWk: 0, potTelat: 0, kasbonPot: 0, manual: 0, gross: 0 });
+    const rows = payrollRows.map(r => {
+      const c = payComponents(r);
+      return [
+        escapeHtml(r.user_name || "-"), escapeHtml(r.role || "-"), String(r.days_worked || 0),
+        rp(c.pokok), c.fullWk ? rp(c.fullWk) : "—", c.potTelat ? `<span class="neg">− ${rp(c.potTelat)}</span>` : "—",
+        c.kasbonPot ? `<span class="neg">− ${rp(c.kasbonPot)}</span>` : "—", c.manual ? rp(c.manual) : "—",
+        `<b>${rp(c.gross)}</b>`, r.is_paid ? "✅" : "⏳",
+      ];
+    });
+    const table = htmlTable(
+      ["Nama", "Role", "Hari", "Gaji Pokok", "Full Week", "Pot. Telat", "Kasbon", "Bonus Manual", "Gaji Bersih", "Bayar"],
+      rows,
+      { colClass: ["", "", "c", "r", "r", "r", "r", "r", "r", "c"],
+        footer: ["TOTAL", "", "", rp(tot.pokok), rp(tot.fullWk), `− ${rp(tot.potTelat)}`, `− ${rp(tot.kasbonPot)}`, rp(tot.manual), rp(tot.gross), ""] }
+    );
+    printDocument({
+      title: "Rekap Payroll Mingguan — AClean",
+      subtitle: `Periode: ${periodeLabelPay} · ${payrollRows.length} orang · Dicetak ${fmtTanggal(new Date())}`,
+      legend: "Gaji Bersih = Gaji Pokok + Full Week − Potongan Telat − Kasbon Dipotong + Bonus Manual. Komisi order dibayar terpisah (lihat tab Rekap & Cetak).",
+      bodyHtml: `<h2 class="sec">Daftar Gaji Tim</h2>${table}`,
+      signature: true,
+      showNotif,
+    });
+    showNotif?.("🖨️ Menyiapkan PDF payroll…");
+  };
+
   // ── Load bonuses (periode BULANAN) ──
   const loadBonuses = useCallback(async () => {
     setLoadingBonus(true);
@@ -1031,6 +1089,15 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
               <button onClick={() => setPeriodStart(getMondayOf(TODAY))} style={{ padding: "6px 12px", borderRadius: 6, background: cs.surface, border: "1px solid " + cs.border, color: cs.accent, cursor: "pointer", fontSize: 13 }}>Minggu Ini</button>
               <button onClick={handleGenerate} style={{ padding: "6px 16px", borderRadius: 6, background: cs.accent, border: "none", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
                 🔄 Generate / Refresh
+              </button>
+              <span style={{ flex: 1 }} />
+              <button onClick={exportPayrollPdf} title="Cetak / simpan PDF rekap payroll periode ini"
+                style={{ padding: "6px 12px", borderRadius: 6, background: cs.card, border: "1px solid " + cs.border, color: cs.text, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+                🖨️ PDF
+              </button>
+              <button onClick={exportPayrollCsv} title="Unduh CSV rekap payroll periode ini (buka di Excel)"
+                style={{ padding: "6px 12px", borderRadius: 6, background: cs.card, border: "1px solid " + cs.border, color: cs.text, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+                ⬇️ CSV
               </button>
             </div>
 

@@ -7,6 +7,7 @@ import { shiftDateStr } from "../lib/dateTime.js";
 import { detectKind, KIND_META, qtyEfektif, cocokkanKePagi, pisahkanItemLink, namaItem } from "../lib/aiMaterialKind.js";
 import MaterialConfirmTab from "./MaterialConfirmTab.jsx";
 import MaterialBroughtRecapTab from "./MaterialBroughtRecapTab.jsx";
+import { downloadCsv } from "../lib/exportUtils.js";
 
 // ───────────────────────────────────────────────
 // Pending AI Material — manual approve only (no auto-insert)
@@ -990,6 +991,32 @@ const isOwnerAdmin = currentUser?.role === "Owner" || currentUser?.role === "Adm
 // daftar arsip supaya transparan, tapi harus lapor Owner untuk mengarsipkan.
 const isOwner = currentUser?.role === "Owner";
 
+// ── Export CSV — kontekstual: tab Stok = opname unit, tab Laporan = log pemakaian ──
+const exportMaterialCsv = () => {
+  if (mainTab === "stok") {
+    const units = (invUnitsData || []).filter(u => !u.archived);
+    if (units.length === 0) { showNotif?.("Tidak ada unit stok untuk diekspor."); return; }
+    const nameOf = (code) => inventoryData.find(i => i.code === code)?.name || "";
+    const headers = ["Kode", "Nama Material", "Unit/Label", "Stok", "Kapasitas", "Status"];
+    const rows = [...units]
+      .sort((a, b) => (a.inventory_code || "").localeCompare(b.inventory_code || "") || (a.unit_label || "").localeCompare(b.unit_label || ""))
+      .map(u => [u.inventory_code || "", nameOf(u.inventory_code), u.unit_label || "", Number(u.stock || 0), u.capacity ?? "", u.is_active === false ? "Nonaktif" : "Aktif"]);
+    downloadCsv(headers, rows, `stok-material_${new Date().toISOString().slice(0, 10)}.csv`);
+    showNotif?.("✅ CSV stok material diunduh");
+  } else {
+    if (txFiltered.length === 0) { showNotif?.("Tidak ada pemakaian untuk diekspor."); return; }
+    const headers = ["Tanggal", "Material", "Kode", "Unit/Tabung", "Qty Pakai", "Qty Aktual", "Teknisi", "Customer", "Order", "HPP/Satuan", "Total Biaya", "Tipe"];
+    const rows = txFiltered.map(tx => [
+      tx.job_date || (tx.created_at || "").slice(0, 10) || "", tx.inventory_name || "", tx.inventory_code || "", tx.unit_label || "",
+      Math.abs(Number(tx.qty || 0)), tx.qty_actual ?? "", tx.teknisi_name || "", tx.customer_name || "",
+      tx.order_id || "", Number(tx.unit_cost || 0), Number(tx.total_cost || 0), tx.type || "",
+    ]);
+    const tag = matTrackFilter === "Semua" ? "semua" : String(matTrackFilter).toLowerCase();
+    downloadCsv(headers, rows, `pemakaian-material_${tag}.csv`);
+    showNotif?.("✅ CSV pemakaian material diunduh");
+  }
+};
+
 return (
   <div style={{ display: "grid", gap: 16 }}>
     {/* Header */}
@@ -998,11 +1025,22 @@ return (
         <div style={{ fontWeight: 800, fontSize: 18, color: cs.text }}>🧮 Stok & Tracking Material</div>
         <div style={{ fontSize: 12, color: cs.muted }}>Stok per tabung/roll · Auto-deduct dari laporan teknisi</div>
       </div>
-      {mainTab === "stok" && isOwnerAdmin && (
-        <button onClick={() => setModalStok(true)}
-          style={{ background: "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", color: "#fff", padding: "9px 16px", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
-          + Material Baru
-        </button>
+      {isOwnerAdmin && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {(mainTab === "stok" || mainTab === "laporan_freon" || mainTab === "laporan_pipa" || mainTab === "laporan_kabel") && (
+            <button onClick={exportMaterialCsv}
+              title={mainTab === "stok" ? "Unduh CSV stok material (opname unit/tabung/roll)" : "Unduh CSV log pemakaian material sesuai filter aktif"}
+              style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, padding: "9px 14px", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
+              ⬇️ {mainTab === "stok" ? "CSV Stok" : "CSV Pemakaian"}
+            </button>
+          )}
+          {mainTab === "stok" && (
+            <button onClick={() => setModalStok(true)}
+              style={{ background: "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", color: "#fff", padding: "9px 16px", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
+              + Material Baru
+            </button>
+          )}
+        </div>
       )}
     </div>
 

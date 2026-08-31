@@ -3,6 +3,7 @@ import { cs } from "../theme/cs.js";
 import { getLocalDate } from "../lib/dateTime.js";
 import { fetchAllInvoices, fetchAllExpenses } from "../data/reads.js";
 import { GajiTab } from "./TeknisiAdminView.jsx";
+import { downloadBlob, buildCsv, printDocument, htmlTable, rp, fmtTanggal, escapeHtml } from "../lib/exportUtils.js";
 
 // WIB offset helper — konsisten dengan getLocalDate dari dateTime.js
 const OFFSET_MS = 7 * 60 * 60 * 1000;
@@ -344,7 +345,7 @@ const DashboardTab = ({
 };
 
 // ─── Financial Planning Tab ──────────────────────────────────────
-const PlanningTab = ({ allInvoices, allExpenses }) => {
+const PlanningTab = ({ allInvoices, allExpenses, showNotif }) => {
   const [targetBulan, setTargetBulan] = useState(loadTarget);
 
   // bulanIni dalam WIB — reaktif via useMemo bukan top-level const
@@ -407,8 +408,80 @@ const PlanningTab = ({ allInvoices, allExpenses }) => {
     return Object.entries(acc).sort((a, b) => b[1] - a[1]).slice(0, 5);
   }, [expensesBulanIni]);
 
+  // ── Export Arus Kas bulan ini (CSV + PDF) ──
+  const exportArusKasCsv = () => {
+    const R = [];
+    R.push(["Periode", bulanLabel]);
+    R.push(["Dicetak", fmtTanggal(new Date())]);
+    R.push([]);
+    R.push(["RINGKASAN ARUS KAS"]);
+    R.push(["Keterangan", "Nilai (Rp)"]);
+    R.push(["Kas Masuk (PAID bulan ini)", Math.round(totalIn)]);
+    R.push(["Kas Keluar (Biaya bulan ini)", Math.round(totalOut)]);
+    R.push(["Net (Bulan Ini)", Math.round(netProfit)]);
+    R.push(["Net Profit All-Time", Math.round(netProfitAll)]);
+    R.push([]);
+    R.push(["KAS MASUK — RINCIAN"]);
+    R.push(["Tanggal", "Customer", "Layanan", "Status", "Diterima (Rp)"]);
+    [...paidThisMonth].sort((a, b) => (b.paid_at || b.created_at || "").localeCompare(a.paid_at || a.created_at || ""))
+      .forEach(i => R.push([(i.paid_at || i.created_at || "").slice(0, 10), i.customer || "", i.service || "", i.status, cashReceived(i)]));
+    R.push([]);
+    R.push(["KAS KELUAR — RINCIAN"]);
+    R.push(["Tanggal", "Kategori", "Subkategori", "Keterangan", "Nominal (Rp)"]);
+    [...expensesBulanIni].sort((a, b) => (b.date || "").localeCompare(a.date || ""))
+      .forEach(e => R.push([e.date || "", e.category || "", e.subcategory || "", (e.description || "").replace(/\s+/g, " ").trim(), Number(e.amount || 0)]));
+    downloadBlob(buildCsv(["ARUS KAS ACLEAN"], R), `arus-kas_${bulanIni}.csv`, "text/csv;charset=utf-8");
+    showNotif?.("✅ CSV arus kas diunduh");
+  };
+
+  const exportArusKasPdf = () => {
+    const card = (lbl, val, clsv = "") => `<div class="card"><div class="lbl">${escapeHtml(lbl)}</div><div class="val ${clsv}">${val}</div></div>`;
+    const cards = `<div class="cards">
+      ${card("Kas Masuk", rp(totalIn), "pos")}
+      ${card("Kas Keluar", rp(totalOut), "neg")}
+      ${card("Net Bulan Ini", rp(netProfit), netProfit >= 0 ? "pos" : "neg")}
+      ${card("Margin", totalIn > 0 ? ((netProfit / totalIn) * 100).toFixed(1) + "%" : "—")}
+    </div>`;
+    const ringkas = htmlTable(["Keterangan", "Jumlah"], [
+      ["Kas Masuk (PAID bulan ini)", `<span class="pos">${rp(totalIn)}</span>`],
+      ["Kas Keluar (Biaya bulan ini)", `<span class="neg">− ${rp(totalOut)}</span>`],
+      ["Net Profit All-Time", rp(netProfitAll)],
+    ], { colClass: ["", "r"], footer: ["Net (Bulan Ini)", `<span class="${netProfit >= 0 ? "pos" : "neg"}">${rp(netProfit)}</span>`] });
+    const outByCat = {};
+    expensesBulanIni.forEach(e => { const k = e.subcategory || e.category || "Lain-lain"; outByCat[k] = (outByCat[k] || 0) + Number(e.amount || 0); });
+    const outRows = Object.entries(outByCat).sort((a, b) => b[1] - a[1]).map(([k, v]) => [escapeHtml(k), rp(v)]);
+    const outTable = htmlTable(["Kategori Pengeluaran", "Total"], outRows, { colClass: ["", "r"], footer: ["TOTAL KELUAR", rp(totalOut)] });
+    const inRows = [...paidThisMonth].sort((a, b) => (b.paid_at || b.created_at || "").localeCompare(a.paid_at || a.created_at || ""))
+      .map(i => [fmtTanggal(i.paid_at || i.created_at), escapeHtml(i.customer || "-"), escapeHtml(i.service || "-"), escapeHtml(i.status), rp(cashReceived(i))]);
+    const inTable = inRows.length === 0 ? "<p class='muted'>Belum ada kas masuk bulan ini.</p>"
+      : htmlTable(["Tanggal", "Customer", "Layanan", "Status", "Diterima"], inRows, { colClass: ["", "", "", "c", "r"], footer: ["", "", "", "TOTAL MASUK", rp(totalIn)] });
+    printDocument({
+      title: "Laporan Arus Kas — AClean",
+      subtitle: `Periode: ${bulanLabel} · Dicetak ${fmtTanggal(new Date())}`,
+      legend: "Kas masuk = penerimaan invoice LUNAS / PARTIAL bulan ini. Kas keluar = biaya sah (tanpa yang menunggu approval).",
+      bodyHtml: `${cards}<h2 class="sec">Ringkasan</h2>${ringkas}<h2 class="sec">Kas Keluar per Kategori</h2>${outTable}<h2 class="sec">Rincian Kas Masuk (${paidThisMonth.length})</h2>${inTable}`,
+      signature: true,
+      showNotif,
+    });
+    showNotif?.("🖨️ Menyiapkan PDF arus kas…");
+  };
+
   return (
     <div>
+      {/* Toolbar export */}
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+        <button onClick={exportArusKasPdf}
+          title="Cetak / simpan PDF arus kas bulan ini (masuk, keluar, net, rincian)"
+          style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, padding: "8px 14px", borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+          🖨️ PDF Arus Kas
+        </button>
+        <button onClick={exportArusKasCsv}
+          title="Unduh CSV arus kas bulan ini (buka di Excel)"
+          style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, padding: "8px 14px", borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+          ⬇️ CSV
+        </button>
+      </div>
+
       {/* Target Progress */}
       <div style={{ background: "linear-gradient(135deg," + cs.accent + "12," + cs.ara + "08)", border: "1px solid " + cs.accent + "33", borderRadius: 12, padding: 18, marginBottom: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10, flexWrap: "wrap", gap: 10 }}>
@@ -661,6 +734,7 @@ export default function FinanceView({ currentUser, ordersData, invoicesData, exp
         <PlanningTab
           allInvoices={allInv}
           allExpenses={allExp}
+          showNotif={showNotif}
         />
       )}
 

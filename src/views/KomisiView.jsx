@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { cs } from "../theme/cs.js";
 import { fetchWeeklyPayrollByUser, fetchMyBonuses } from "../data/reads.js";
-import { kasbonOwed, kasbonSisa } from "../lib/payroll.js";
+import { kasbonOwed, kasbonSisa, computeGross } from "../lib/payroll.js";
 import { fmtTenure } from "../lib/employment.js";
+import { downloadCsv } from "../lib/exportUtils.js";
 
 const STATUS_COLORS  = { PENDING: "#f59e0b", ELIGIBLE: "#3b82f6", PAID: "#22c55e", VOID: "#6b7280" };
 const STATUS_LABELS  = { PENDING: "Dalam Warranty", ELIGIBLE: "Siap Cair", PAID: "Sudah Dibayar", VOID: "Void" };
@@ -84,6 +85,29 @@ export default function KomisiView({ currentUser, supabase, bonusCategories = []
   const totalPending  = bonuses.filter(b => effStatus(b) === "PENDING").reduce((s, b) => s + Number(b.amount_per_person || 0), 0);
 
   const latestPayroll = payrolls[0];
+
+  // ── Export CSV pribadi (komisi / riwayat gaji sendiri) ──
+  const exportMineCsv = () => {
+    if (tab === "komisi") {
+      if (filteredBonuses.length === 0) { return; }
+      const headers = ["Tanggal", "Order", "Jenis Komisi", "Tim", "Bagian Saya (Rp)", "Total (Rp)", "Status", "Catatan"];
+      const rows = filteredBonuses.map(b => [
+        b.order_date || "", b.order_id || "", BONUS_LABELS[b.bonus_type] || b.bonus_type || "",
+        (b.team_members || []).join(", "), Number(b.amount_per_person || 0), Number(b.total_amount || 0),
+        STATUS_LABELS[effStatus(b)] || effStatus(b), b.note || b.void_reason || "",
+      ]);
+      downloadCsv(headers, rows, `komisi-saya_${(userName || "teknisi").replace(/\s+/g, "-")}.csv`);
+    } else {
+      if (payrolls.length === 0) { return; }
+      const headers = ["Periode Mulai", "Periode Selesai", "Hari Masuk", "Rate/Hari", "Gaji Pokok", "Kasbon Dipotong", "Bonus Manual", "Total Gaji Bersih", "Status"];
+      const rows = payrolls.map(p => [
+        p.period_start || "", p.period_end || "", Number(p.days_worked || 0), Number(p.daily_rate || 0),
+        Number(p.days_worked || 0) * Number(p.daily_rate || 0), Number(p.kasbon_deduct || 0),
+        Number(p.manual_bonus || 0), Number(p.gross_salary ?? computeGross(p)), p.is_paid ? "DIBAYAR" : "BELUM",
+      ]);
+      downloadCsv(headers, rows, `gaji-saya_${(userName || "teknisi").replace(/\s+/g, "-")}.csv`);
+    }
+  };
 
   // ── Kasbon: sisa terutang (carryover model) dari periode terakhir ──
   const kOwed   = latestPayroll ? kasbonOwed(latestPayroll) : 0;           // total terutang periode ini (baru + sisa lalu)
@@ -249,6 +273,16 @@ export default function KomisiView({ currentUser, supabase, bonusCategories = []
           }}>{t.l}</button>
         ))}
       </div>
+
+      {!loading && ((tab === "komisi" && filteredBonuses.length > 0) || (tab === "payroll" && payrolls.length > 0)) && (
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+          <button onClick={exportMineCsv}
+            title={tab === "komisi" ? "Unduh CSV komisi saya" : "Unduh CSV riwayat gaji saya"}
+            style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+            ⬇️ Unduh CSV
+          </button>
+        </div>
+      )}
 
       {loading && <div style={{ color: cs.muted, fontSize: 13, textAlign: "center", padding: 24 }}>Memuat data...</div>}
 
