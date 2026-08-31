@@ -27,6 +27,8 @@ function ToolBagView({ supabase, currentUser, showNotif, showConfirm }) {
   const [selectedBag, setSelectedBag] = useState(null);
   const [bagChecklist, setBagChecklist] = useState([]); // checklist khusus tas yang dipilih
   const [bagToolCounts, setBagToolCounts] = useState({}); // { "Tas 1": 24, "Tas 2": 26, ... }
+  const [allChecklists, setAllChecklists] = useState({}); // { "Tas 1": [{name,is_priority,qty_min}], ... } — untuk export semua tas
+  const [exporting, setExporting] = useState(false);
 
   const isOwnerAdmin = currentUser?.role === "Owner" || currentUser?.role === "Admin";
 
@@ -78,8 +80,27 @@ function ToolBagView({ supabase, currentUser, showNotif, showConfirm }) {
     }
   }, [supabase]);
 
+  // Checklist SEMUA tas (untuk export/audit 10 tas) — sekali di mount, checklist tak bergantung minggu.
+  // Sekaligus mengisi bagToolCounts agar badge "X alat" tampil walau belum ada tas dipilih.
+  const loadAllChecklists = useCallback(async () => {
+    const { data, error } = await supabase.from("tool_bag_checklist")
+      .select("bag_id,tool_name,is_priority,qty_min");
+    if (error || !data) return;
+    const map = {}; const counts = {};
+    data.forEach(r => {
+      (map[r.bag_id] ||= []).push({ name: r.tool_name, is_priority: r.is_priority, qty_min: r.qty_min });
+      counts[r.bag_id] = (counts[r.bag_id] || 0) + 1;
+    });
+    // Urutkan tiap tas: prioritas dulu, lalu alfabet — konsisten dgn tampilan detail.
+    Object.values(map).forEach(arr => arr.sort((a, b) =>
+      (b.is_priority ? 1 : 0) - (a.is_priority ? 1 : 0) || a.name.localeCompare(b.name)));
+    setAllChecklists(map);
+    setBagToolCounts(counts);
+  }, [supabase]);
+
   useEffect(() => { loadChecks(); }, [loadChecks]);
   useEffect(() => { loadChecklistData(selectedBag); }, [selectedBag, loadChecklistData]);
+  useEffect(() => { loadAllChecklists(); }, [loadAllChecklists]);
 
   // Hitung status per tas untuk minggu ini
   const bagSummary = BAGS.map(bagId => {
@@ -112,6 +133,144 @@ function ToolBagView({ supabase, currentUser, showNotif, showConfirm }) {
   const totalThisWeek = checks.length;
   const issuesThisWeek = checks.filter(c => c.status === "CRITICAL" || c.status === "WARNING").length;
 
+  // ── Export/Audit semua tas ──────────────────────────────────────────────
+  // Bangun status tiap alat per tas dari foto AI vision minggu ini (tools_found/tools_missing).
+  const buildAudit = () => {
+    const fmtDT = (d) => new Date(d).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+    const bags = BAGS.map(bagId => {
+      const tools = allChecklists[bagId] || [];
+      const bagChecks = checks.filter(c => c.bag_id === bagId);
+      const toolRows = tools.map(tool => {
+        let foundCount = 0, missingCount = 0, lastFound = null;
+        bagChecks.forEach(c => {
+          const nm = tool.name.toLowerCase();
+          const f = (Array.isArray(c.tools_found) ? c.tools_found : []).some(t => (t.name || "").toLowerCase() === nm);
+          const m = (Array.isArray(c.tools_missing) ? c.tools_missing : []).some(t => (t.name || "").toLowerCase() === nm);
+          if (f) { foundCount++; if (!lastFound || new Date(c.checked_at) > new Date(lastFound)) lastFound = c.checked_at; }
+          if (m) missingCount++;
+        });
+        const knownAbsent = (tool.qty_min ?? 1) === 0;
+        const status = knownAbsent ? "Tidak ada di tas"
+          : foundCount > 0 ? "Terdeteksi AI"
+          : missingCount > 0 ? "Tidak terdeteksi"
+          : bagChecks.length > 0 ? "Tak terbaca AI"
+          : "Belum ada check";
+        return { name: tool.name, is_priority: tool.is_priority, qty_min: tool.qty_min ?? 1, foundCount, missingCount, lastFound, status, knownAbsent };
+      });
+      return { bagId, checkCount: bagChecks.length, lastCheckAt: bagChecks[0]?.checked_at || null, tools: toolRows };
+    });
+    return { generatedAt: new Date(), weekLabel, bags, fmtDT };
+  };
+
+  const triggerDownload = (blob, filename) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  };
+
+  const downloadCsv = () => {
+    const audit = buildAudit();
+    const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const rows = [["Tas", "Alat", "Wajib", "Qty Diharapkan", "Status AI Vision", "Kali Terdeteksi", "Kali Kurang", "Terakhir Terdeteksi", "Audit Manual (Ada/Tidak)", "Catatan"]];
+    audit.bags.forEach(b => {
+      if (b.tools.length === 0) { rows.push([b.bagId, "(belum ada checklist alat)", "", "", "", "", "", "", "", ""]); return; }
+      b.tools.forEach(t => rows.push([
+        b.bagId, t.name, t.is_priority ? "WAJIB" : "", t.knownAbsent ? "0 (tidak ada)" : t.qty_min,
+        t.status, t.foundCount, t.missingCount, t.lastFound ? audit.fmtDT(t.lastFound) : "", "", "",
+      ]));
+    });
+    const csv = "﻿" + rows.map(r => r.map(esc).join(",")).join("\r\n");
+    triggerDownload(new Blob([csv], { type: "text/csv;charset=utf-8" }), `audit-tas-teknisi_${weekKey}.csv`);
+    showNotif?.("✅ CSV audit 10 tas diunduh");
+  };
+
+  const printChecklist = () => {
+    const audit = buildAudit();
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+    const statusText = (t) => t.knownAbsent ? '<span class="na">—</span>'
+      : t.foundCount > 0 ? `<span class="ok">✓ AI (${t.foundCount}×)</span>`
+      : t.missingCount > 0 ? '<span class="bad">✗ tidak terdeteksi</span>'
+      : '<span class="none">belum ada check</span>';
+    const bagSection = (b) => `
+      <section class="bag">
+        <h2>🎒 ${esc(b.bagId)}
+          <span class="meta">${b.checkCount > 0 ? `${b.checkCount}× foto minggu ini · terakhir ${audit.fmtDT(b.lastCheckAt)}` : "belum ada foto check minggu ini"}</span>
+        </h2>
+        <table>
+          <thead><tr>
+            <th class="no">#</th><th>Alat</th><th class="c">Wajib</th><th class="c">Qty</th>
+            <th>Status Foto AI</th><th class="c">Cek Fisik</th><th>Catatan</th>
+          </tr></thead>
+          <tbody>
+            ${b.tools.length === 0 ? `<tr><td colspan="7" class="empty">Belum ada checklist alat untuk tas ini</td></tr>` :
+              b.tools.map((t, i) => `<tr class="${t.knownAbsent ? "dim" : ""}">
+                <td class="no">${i + 1}</td>
+                <td>${t.is_priority ? "🔴 " : ""}${esc(t.name)}${t.knownAbsent ? ' <span class="tag">tidak ada</span>' : ""}</td>
+                <td class="c">${t.is_priority ? "WAJIB" : ""}</td>
+                <td class="c">${t.knownAbsent ? "0" : t.qty_min}</td>
+                <td>${statusText(t)}</td>
+                <td class="c">${t.knownAbsent ? "—" : "☐ Ada&nbsp;&nbsp;☐ Kurang"}</td>
+                <td class="note"></td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+      </section>`;
+    const html = `<!doctype html><html lang="id"><head><meta charset="utf-8">
+      <title>Audit Tas Teknisi — ${esc(audit.weekLabel)}</title>
+      <style>
+        * { box-sizing: border-box; }
+        body { font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; color: #111; margin: 24px; font-size: 12px; }
+        .head { border-bottom: 2px solid #111; padding-bottom: 10px; margin-bottom: 16px; }
+        .head h1 { margin: 0 0 2px; font-size: 20px; }
+        .head .sub { color: #555; font-size: 12px; }
+        .legend { margin: 6px 0 0; font-size: 11px; color: #555; }
+        section.bag { margin-bottom: 22px; page-break-inside: avoid; }
+        section.bag h2 { font-size: 15px; margin: 0 0 6px; background: #f1f1f1; padding: 6px 10px; border-radius: 6px; }
+        section.bag h2 .meta { font-weight: 400; font-size: 10px; color: #666; margin-left: 8px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border: 1px solid #bbb; padding: 5px 7px; text-align: left; vertical-align: top; }
+        th { background: #eee; font-size: 10px; text-transform: uppercase; letter-spacing: .3px; }
+        td.c, th.c { text-align: center; white-space: nowrap; }
+        td.no, th.no { width: 26px; text-align: center; color: #888; }
+        td.note { width: 22%; }
+        .ok { color: #0a7f2e; font-weight: 700; }
+        .bad { color: #c01818; font-weight: 700; }
+        .none { color: #b8860b; }
+        .na { color: #999; }
+        tr.dim td { color: #999; background: #fafafa; }
+        .tag { font-size: 9px; background: #eee; color: #777; padding: 1px 5px; border-radius: 4px; text-decoration: line-through; }
+        td.empty { text-align: center; color: #999; font-style: italic; }
+        .sign { margin-top: 10px; display: flex; gap: 40px; font-size: 11px; color: #333; }
+        .sign div { flex: 1; border-top: 1px solid #999; padding-top: 4px; margin-top: 34px; }
+        @media print { body { margin: 12mm; } .noprint { display: none; } }
+      </style></head><body>
+      <div class="head">
+        <h1>🎒 Audit Tas Teknisi — AClean</h1>
+        <div class="sub">Minggu ${esc(audit.weekLabel)} · Dicetak ${audit.fmtDT(audit.generatedAt)}</div>
+        <div class="legend">Status Foto AI = hasil deteksi foto WA (Pagi/Pulang) minggu ini. <b>Cek Fisik</b> diisi manual saat audit tas langsung. 🔴 = alat WAJIB.</div>
+      </div>
+      ${audit.bags.map(bagSection).join("")}
+      <div class="sign">
+        <div>Diaudit oleh (nama &amp; ttd)</div>
+        <div>Diketahui oleh (nama &amp; ttd)</div>
+      </div>
+      </body></html>`;
+    const w = window.open("", "_blank");
+    if (!w) { showNotif?.("⚠️ Popup diblokir browser — izinkan popup untuk mencetak/simpan PDF."); return; }
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    setTimeout(() => { try { w.print(); } catch { /* user bisa cetak manual */ } }, 400);
+  };
+
+  const handleExport = (fn) => {
+    if (Object.keys(allChecklists).length === 0) { showNotif?.("⏳ Checklist alat belum termuat, coba lagi sebentar."); return; }
+    setExporting(true);
+    try { fn(); } finally { setTimeout(() => setExporting(false), 600); }
+  };
+
   return (
     <div style={{ display: "grid", gap: 16 }}>
       {/* Header */}
@@ -122,10 +281,22 @@ function ToolBagView({ supabase, currentUser, showNotif, showConfirm }) {
             Kirim foto ke WA AClean: <b>"Pagi Tas 1"</b>, <b>"Pulang Tas 5"</b>, dst (Tas 1 – Tas 10)
           </div>
         </div>
-        <button onClick={loadChecks}
-          style={{ padding: "8px 14px", background: cs.accent, color: "#000", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>
-          🔄 Refresh
-        </button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button onClick={() => handleExport(printChecklist)} disabled={exporting}
+            title="Checklist cetak/PDF semua 10 tas — untuk audit fisik manual (ada kolom ✓ AI Vision + kotak cek fisik)"
+            style={{ padding: "8px 14px", background: cs.card, color: cs.text, border: `1px solid ${cs.border}`, borderRadius: 8, fontWeight: 700, cursor: exporting ? "wait" : "pointer", fontSize: 12 }}>
+            🖨️ Checklist Audit (PDF)
+          </button>
+          <button onClick={() => handleExport(downloadCsv)} disabled={exporting}
+            title="Unduh CSV status semua 10 tas — mana alat yang terdeteksi foto AI minggu ini (buka di Excel)"
+            style={{ padding: "8px 14px", background: cs.card, color: cs.text, border: `1px solid ${cs.border}`, borderRadius: 8, fontWeight: 700, cursor: exporting ? "wait" : "pointer", fontSize: 12 }}>
+            ⬇️ CSV
+          </button>
+          <button onClick={loadChecks}
+            style={{ padding: "8px 14px", background: cs.accent, color: "#000", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>
+            🔄 Refresh
+          </button>
+        </div>
       </div>
 
       {/* Week Navigator */}
