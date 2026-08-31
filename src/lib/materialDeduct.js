@@ -22,22 +22,34 @@ function unitEntries(item) {
 const keyOf = (e) => (e.unit_id ? "u:" + e.unit_id : "c:" + (e.inventory_code || e.label));
 
 // computeDayDeduct(pagiItems, pulangItems) → baris deduct per unit:
-//   [{unit_id, inventory_code, label, material_type, brought, returned, used}]
+//   [{unit_id, inventory_code, label, material_type, brought, returned, used, hanyaPulang}]
 // used = max(0, brought − returned). Unit yang dibawa tapi tak ada di pulang → returned 0 (used = penuh).
+//
+// PENTING: baris juga diterbitkan untuk unit yang HANYA ada di sesi pulang (brought = 0),
+// ditandai hanyaPulang. Dulu daftar ini dibangun murni dari sesi pagi, sehingga barang yang
+// terlanjur ditulis di pulang saja LENYAP tanpa jejak — tidak tampil, tidak terpotong, tanpa
+// peringatan (kasus nyata 29 Agu 2026: Freon Tabung R32-S 2,9 kg Bu Vessa, dan 4 Agu 2026:
+// Roll 2.5PK-C1 3 m). used-nya tetap 0 karena bawa−sisa memang tak bisa dihitung, jadi
+// deductLines()/usedByCode() yang menyaring used > 0 tidak ikut berubah; gunanya semata agar
+// UI bisa memperingatkan dan menahan Confirm sampai sesi pagi dibetulkan.
 export function computeDayDeduct(pagiItems, pulangItems) {
   const brought = new Map();
   const meta = new Map();
+  const catat = (e) => {
+    const k = keyOf(e);
+    if (!meta.has(k)) meta.set(k, { unit_id: e.unit_id, inventory_code: e.inventory_code, label: e.label, unit_label: e.unit_label, material_type: e.material_type });
+    return k;
+  };
   for (const it of (Array.isArray(pagiItems) ? pagiItems : [])) {
     for (const e of unitEntries(it)) {
-      const k = keyOf(e);
+      const k = catat(e);
       brought.set(k, (brought.get(k) || 0) + e.qty);
-      if (!meta.has(k)) meta.set(k, { unit_id: e.unit_id, inventory_code: e.inventory_code, label: e.label, unit_label: e.unit_label, material_type: e.material_type });
     }
   }
   const returned = new Map();
   for (const it of (Array.isArray(pulangItems) ? pulangItems : [])) {
     for (const e of unitEntries(it)) {
-      const k = keyOf(e);
+      const k = catat(e);
       returned.set(k, (returned.get(k) || 0) + e.qty);
     }
   }
@@ -45,9 +57,27 @@ export function computeDayDeduct(pagiItems, pulangItems) {
   for (const [k, b] of brought) {
     const r = returned.get(k) || 0;
     const used = round2(b - r);
-    out.push({ ...meta.get(k), brought: round2(b), returned: round2(r), used: used > 0 ? used : 0 });
+    out.push({ ...meta.get(k), brought: round2(b), returned: round2(r), used: used > 0 ? used : 0, hanyaPulang: false });
+  }
+  for (const [k, r] of returned) {
+    if (brought.has(k)) continue;
+    out.push({ ...meta.get(k), brought: 0, returned: round2(r), used: 0, hanyaPulang: true });
   }
   return out;
+}
+
+// Baris yang ada di sesi pulang tapi tidak pernah dibawa pagi — wajib dibereskan sebelum
+// Confirm, karena angkanya mustahil ditafsirkan: "sisa" dari barang yang tak pernah dibawa.
+export function barisHanyaPulang(lines) {
+  return (lines || []).filter((l) => l?.hanyaPulang);
+}
+
+export function pesanHanyaPulang(lines) {
+  const b = barisHanyaPulang(lines);
+  if (!b.length) return "";
+  const rinci = b.map((l) => `${l.unit_label || l.label} (${l.returned})`).join(", ");
+  return `Ada di sesi pulang tapi tidak dibawa pagi: ${rinci}. ` +
+         `Betulkan sesi pagi teknisi dulu — kalau tidak, barang ini tidak akan terpotong dari stok.`;
 }
 
 // Hanya baris yang benar-benar terpakai (used > 0) — yang perlu dipotong dari stok.

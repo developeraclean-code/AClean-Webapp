@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import { cs } from "../theme/cs.js";
 import { computeDayDeduct, applyAdminOverrides, lineKey, buildReversalRow, reversalByUnit,
+  barisHanyaPulang, pesanHanyaPulang,
   hitungKekuranganStok, pesanKekuranganStok } from "../lib/materialDeduct.js";
 import { defaultSplit, splitRemainder, belumTerbagi, splitToAllocations } from "../lib/materialSplit.js";
 import { isiUnitOtomatis } from "../lib/tebakUnit.js";
@@ -187,6 +188,14 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
     const row = entry.pulang;
     setBusy(row.id);
     try {
+      // Gerbang pertama: barang yang ditulis di sesi pulang tapi tidak pernah dibawa pagi.
+      // Angkanya mustahil ditafsirkan (bawa−sisa tak bisa dihitung), dan kalau dibiarkan
+      // lewat ia hilang diam-diam tanpa terpotong. Tahan Confirm sampai sesi pagi dibetulkan.
+      const yatim = barisHanyaPulang(entry.lines);
+      if (yatim.length) {
+        showNotif("⚠️ " + pesanHanyaPulang(entry.lines));
+        setBusy(""); return;
+      }
       // Cek awal dari angka yang dilihat admin — supaya gagalnya cepat & jelas,
       // tanpa terlanjur menandai sesi ini CONFIRMED.
       const linesLayar = applyAdminOverrides(
@@ -208,6 +217,14 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
       // Sengaja dihitung ulang dari data SEGAR (bukan dari state kartu) supaya
       // koreksi admin ditempel di atas angka terbaru, bukan angka basi di layar.
       const base = computeDayDeduct(pg?.items || [], fresh.items || []);
+      // Data bisa berubah di sela pemeriksaan layar dan klaim — periksa sekali lagi atas
+      // angka segar, dan kembalikan sesi ke Menunggu kalau ternyata ada baris yatim.
+      if (barisHanyaPulang(base).length) {
+        await supabase.from("teknisi_material_checkout")
+          .update({ confirm_status: "PENDING", confirmed_by: null, confirmed_at: null }).eq("id", row.id);
+        showNotif("⚠️ " + pesanHanyaPulang(base) + " Sesi dikembalikan ke Menunggu.");
+        await load(); return;
+      }
       const { lines: adjusted, changes } = applyAdminOverrides(base, overrides);
       const lines = adjusted.filter((l) => l.used > 0);
       // Cek otoritatif atas angka SEGAR. Kalau tidak cukup, batalkan klaimnya —
@@ -599,6 +616,9 @@ function PulangCard({ entry, view, busy, photos, onConfirm, onReject, onBukaKore
   // Hanya baris yang benar-benar dibawa yang relevan. Baris terpakai 0 tetap
   // ditampilkan saat PENDING supaya admin bisa MENAIKKAN kalau teknisi lupa catat.
   const baris = entry.lines.filter((l) => Number(l.brought) > 0);
+  // Ditulis di sesi pulang tapi tidak pernah dibawa pagi — tidak bisa dihitung bawa−sisa,
+  // dan dulu hilang diam-diam tanpa terpotong. Confirm ditahan sampai sesi pagi dibetulkan.
+  const yatim = barisHanyaPulang(entry.lines);
   const overrides = Object.fromEntries(
     Object.entries(edit).filter(([, v]) => v !== "" && v != null).map(([k, v]) => [k, Number(v)])
   );
@@ -731,14 +751,35 @@ function PulangCard({ entry, view, busy, photos, onConfirm, onReject, onBukaKore
         </div>
       )}
 
+      {yatim.length > 0 && (
+        <div style={{ background: "#3f1515", border: "1px solid " + cs.red, borderRadius: 9, padding: "10px 12px", marginBottom: 10 }}>
+          <div style={{ fontWeight: 800, fontSize: 12, color: "#fca5a5", marginBottom: 4 }}>
+            ⚠️ Ada di sesi pulang tapi tidak dibawa pagi
+          </div>
+          <div style={{ display: "grid", gap: 2, marginBottom: 6 }}>
+            {yatim.map((l) => (
+              <div key={lineKey(l)} style={{ fontSize: 12, color: "#fecaca" }}>
+                • <b>{l.unit_label || l.label}</b> — tertulis {fmt(l.returned)} {l.material_type === "freon" ? "kg" : "meter"}
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: "#fca5a5", lineHeight: 1.5 }}>
+            Terpakai dihitung dari <b>bawa − sisa</b>. Karena barang ini tidak pernah tercatat dibawa pagi,
+            angkanya tidak bisa dihitung dan <b>tidak akan terpotong dari stok</b>.
+            Betulkan dulu sesi pagi teknisi lewat <b>+ Input Mewakili Teknisi</b>, lalu kembali ke sini.
+          </div>
+        </div>
+      )}
+
       {view === "PENDING" && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 8 }}>
           <button disabled={busy === r.id} onClick={onReject}
             style={{ background: cs.card, border: "1px solid " + cs.red + "55", color: cs.red, padding: 10, borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Tolak</button>
-          <button disabled={busy === r.id || alasanKurang || kurangBagi.length > 0}
+          <button disabled={busy === r.id || alasanKurang || kurangBagi.length > 0 || yatim.length > 0}
             onClick={() => onConfirm(entry, overrides, alasan.trim(), splitEfektif)}
-            style={{ background: (busy === r.id || alasanKurang || kurangBagi.length > 0) ? cs.border : "linear-gradient(135deg,#10b981,#059669)", border: "none", color: "#fff", padding: 10, borderRadius: 9, cursor: (busy === r.id || alasanKurang || kurangBagi.length > 0) ? "not-allowed" : "pointer", fontWeight: 800, fontSize: 13 }}>
+            style={{ background: (busy === r.id || alasanKurang || kurangBagi.length > 0 || yatim.length > 0) ? cs.border : "linear-gradient(135deg,#10b981,#059669)", border: "none", color: "#fff", padding: 10, borderRadius: 9, cursor: (busy === r.id || alasanKurang || kurangBagi.length > 0 || yatim.length > 0) ? "not-allowed" : "pointer", fontWeight: 800, fontSize: 13 }}>
             {busy === r.id ? "Memproses…"
+              : yatim.length > 0 ? `Betulkan sesi pagi dulu: ${yatim.map((l) => l.unit_label || l.label).join(", ")}`
               : alasanKurang ? "Isi alasan koreksi dulu"
               : kurangBagi.length > 0 ? `Bagi dulu: ${kurangBagi.map((b) => b.label).join(", ")}`
               : `✓ Confirm & Potong Stok (${terpakai.length} unit)`}
