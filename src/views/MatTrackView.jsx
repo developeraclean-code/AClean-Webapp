@@ -3,7 +3,7 @@ import { cs } from "../theme/cs.js";
 import { useAppContext } from "../context/AppContext.js";
 import { displayStock, computeStockStatus } from "../lib/inventory.js";
 import { reconcileDay, sumReportedUsage, reconStatus } from "../lib/materialRecon.js";
-import { shiftDateStr } from "../lib/dateTime.js";
+import { shiftDateStr, shortDateID } from "../lib/dateTime.js";
 import { detectKind, KIND_META, qtyEfektif, cocokkanKePagi, pisahkanItemLink, namaItem } from "../lib/aiMaterialKind.js";
 import MaterialConfirmTab from "./MaterialConfirmTab.jsx";
 import MaterialBroughtRecapTab from "./MaterialBroughtRecapTab.jsx";
@@ -414,6 +414,12 @@ function PendingAiMaterialTab({ supabase, showNotif, currentUser, addAgentLog })
 // Recon Material Harian — bandingkan material dibawa (pagi) vs dikembalikan (pulang)
 // vs pemakaian yang dilaporkan di laporan job (inventory_transactions). Read-only audit.
 // ───────────────────────────────────────────────
+const navBtn = (disabled) => ({
+  padding: "5px 11px", borderRadius: 7, fontSize: 13, fontWeight: 700,
+  border: "1px solid " + cs.border, background: cs.surface, color: cs.text,
+  opacity: disabled ? 0.35 : 1, cursor: disabled ? "default" : "pointer",
+});
+
 const FLAG_STYLE = {
   OK:           { bg: "#10b98122", fg: "#10b981", label: "OK" },
   OVER:         { bg: "#ef444422", fg: "#ef4444", label: "OVER (tak dilaporkan?)" },
@@ -421,8 +427,23 @@ const FLAG_STYLE = {
   MISSING_DATA: { bg: "#6b728022", fg: "#9ca3af", label: "Data belum lengkap" },
 };
 
+const HARI_ID = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+const todayJkt = () => new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" });
+// "Senin, 1 Sep" — dibaca dari komponen tanggal, bukan Date lokal, supaya tidak bergeser zona.
+const labelHari = (ds) => {
+  const [y, m, d] = String(ds || "").slice(0, 10).split("-").map(Number);
+  if (!y) return ds;
+  const nama = HARI_ID[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
+  return `${nama}, ${shortDateID(ds, todayJkt())}`;
+};
+
 function MaterialReconTab({ supabase, appSettings }) {
-  const [date, setDate] = useState(new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" }));
+  // Navigasi geser per hari (offset 0 = hari ini) — menggantikan pemilih kalender yang
+  // membingungkan. Mode "belum" mengabaikan tanggal: kumpulkan semua hari yang masih
+  // punya sesi menunggu konfirmasi, supaya tak perlu menebak-nebak tanggal satu per satu.
+  const [mode, setMode] = useState("harian");     // harian | belum
+  const [offset, setOffset] = useState(0);
+  const date = useMemo(() => shiftDateStr(todayJkt(), offset), [offset]);
   const [rows, setRows] = useState([]);        // teknisi_material_checkout
   const [tx, setTx] = useState([]);            // inventory_transactions usage
   const [loading, setLoading] = useState(false);
@@ -437,29 +458,61 @@ function MaterialReconTab({ supabase, appSettings }) {
     let alive = true;
     (async () => {
       setLoading(true);
-      const [{ data: co }, { data: txn }] = await Promise.all([
-        supabase.from("teknisi_material_checkout").select("*").eq("checkout_date", date),
-        supabase.from("inventory_transactions").select("inventory_code,inventory_name,qty,qty_actual,type,teknisi_name,job_date").eq("job_date", date).eq("type", "usage"),
-      ]);
-      if (!alive) return;
-      setRows(co || []); setTx(txn || []); setLoading(false);
+      if (mode === "harian") {
+        const [{ data: co }, { data: txn }] = await Promise.all([
+          supabase.from("teknisi_material_checkout").select("*").eq("checkout_date", date),
+          supabase.from("inventory_transactions").select("inventory_code,inventory_name,qty,qty_actual,type,teknisi_name,job_date").eq("job_date", date).eq("type", "usage"),
+        ]);
+        if (!alive) return;
+        setRows(co || []); setTx(txn || []);
+      } else {
+        // Ambil sesi terbaru lalu tentukan "belum selesai" di klien. Tidak bisa disaring
+        // lewat confirm_status='PENDING' di query: sesi PAGI memang SELAMANYA PENDING —
+        // yang dikonfirmasi adalah sesi pulang — jadi menyaring begitu akan menarik hampir
+        // semua hari yang justru sudah beres (17 dari 20 saat diuji ke data nyata).
+        const { data: co } = await supabase.from("teknisi_material_checkout")
+          .select("*").in("session_type", ["pagi", "pulang"])
+          .order("checkout_date", { ascending: false }).limit(400);
+        const semua = co || [];
+        const tgl = [...new Set(semua.map((r) => r.checkout_date).filter(Boolean))];
+        const { data: txn } = tgl.length
+          ? await supabase.from("inventory_transactions")
+              .select("inventory_code,inventory_name,qty,qty_actual,type,teknisi_name,job_date")
+              .in("job_date", tgl).eq("type", "usage")
+          : { data: [] };
+        if (!alive) return;
+        setRows(semua); setTx(txn || []);
+      }
+      setLoading(false);
     })();
     return () => { alive = false; };
-  }, [supabase, date]);
+  }, [supabase, date, mode]);
 
   const byTeknisi = useMemo(() => {
     const map = new Map();
     for (const r of rows) {
       if (r.session_type !== "pagi" && r.session_type !== "pulang") continue; // 'pakai' (draft AI) diurus di tab Konfirmasi
-      if (!map.has(r.teknisi_name)) map.set(r.teknisi_name, { teknisi: r.teknisi_name, pagi: null, pulang: null });
-      map.get(r.teknisi_name)[r.session_type] = r;
+      // Di mode harian semua sesi hari itu dikelompokkan per teknisi; di mode "belum"
+      // kuncinya harus ikut tanggal, kalau tidak sesi teknisi yang sama dari hari berbeda
+      // akan saling menimpa dan reconnya jadi salah.
+      const k = r.teknisi_name + "|" + r.checkout_date;
+      if (!map.has(k)) map.set(k, { key: k, teknisi: r.teknisi_name, tanggal: r.checkout_date, pagi: null, pulang: null });
+      map.get(k)[r.session_type] = r;
     }
-    return [...map.values()].map(g => {
-      const txRows = tx.filter(t => (t.teknisi_name || "").trim() === (g.teknisi || "").trim());
+    let out = [...map.values()].map(g => {
+      const txRows = tx.filter(t => (t.teknisi_name || "").trim() === (g.teknisi || "").trim()
+        && (mode === "harian" || t.job_date === g.tanggal));
       const lines = reconcileDay(g.pagi?.items || [], g.pulang?.items || [], sumReportedUsage(txRows), tolerances);
-      return { ...g, lines, status: reconStatus(lines) };
+      // Status hari itu ditentukan sesi PULANG — sesi pagi tak pernah dikonfirmasi sendiri.
+      const st = !g.pulang ? "TANPA_PULANG"
+        : g.pulang.confirm_status === "CONFIRMED" ? "SELESAI"
+        : g.pulang.confirm_status === "REJECTED" ? "DITOLAK" : "MENUNGGU";
+      return { ...g, lines, status: reconStatus(lines), belum: st !== "SELESAI", statusSesi: st };
     });
-  }, [rows, tx, tolerances]);
+    if (mode === "belum") out = out.filter((g) => g.belum)
+      .sort((a, b) => (a.tanggal < b.tanggal ? 1 : a.tanggal > b.tanggal ? -1 : a.teknisi.localeCompare(b.teknisi)));
+    return out;
+  }, [rows, tx, tolerances, mode]);
 
   const q = search.trim().toLowerCase();
   const shown = q
@@ -469,27 +522,69 @@ function MaterialReconTab({ supabase, appSettings }) {
   return (
     <div style={{ display: "grid", gap: 14 }}>
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <span style={{ fontSize: 12, color: cs.muted, fontWeight: 600 }}>Tanggal:</span>
-        <input type="date" value={date} onChange={e => setDate(e.target.value)}
-          style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "7px 11px", color: cs.text, fontSize: 13 }} />
+        <div style={{ display: "flex", gap: 4, background: cs.surface, borderRadius: 8, padding: 3 }}>
+          {[["harian", "Per Hari"], ["belum", "Belum Terkonfirmasi"]].map(([m, lbl]) => (
+            <button key={m} onClick={() => { setMode(m); setOffset(0); }}
+              style={{ padding: "5px 12px", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                background: mode === m ? cs.accent : "transparent", color: mode === m ? "#fff" : cs.muted }}>{lbl}</button>
+          ))}
+        </div>
+
+        {mode === "harian" && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <button onClick={() => setOffset(o => o - 1)} title="Hari sebelumnya"
+              style={navBtn(false)}>◀</button>
+            <span style={{ minWidth: 132, textAlign: "center", fontSize: 12.5, fontWeight: 800, color: cs.text }}>
+              {offset === 0 ? "Hari ini" : offset === -1 ? "Kemarin" : labelHari(date)}
+            </span>
+            <button onClick={() => setOffset(o => Math.min(0, o + 1))} disabled={offset >= 0} title="Hari berikutnya"
+              style={navBtn(offset >= 0)}>▶</button>
+            {offset !== 0 && (
+              <button onClick={() => setOffset(0)}
+                style={{ background: "transparent", border: "1px solid " + cs.border, color: cs.muted, borderRadius: 7, padding: "4px 10px", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>
+                Hari ini
+              </button>
+            )}
+            {offset !== 0 && <span style={{ fontSize: 11, color: cs.muted }}>{labelHari(date)}</span>}
+          </div>
+        )}
+
         <input value={search} onChange={e => setSearch(e.target.value)}
           placeholder="🔍 Cari teknisi / material..."
           style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "7px 11px", color: cs.text, fontSize: 13, outline: "none", flex: "1 1 180px", minWidth: 140 }} />
         {loading && <span style={{ fontSize: 12, color: cs.muted }}>memuat…</span>}
       </div>
 
+      {mode === "belum" && !loading && (
+        <div style={{ fontSize: 12, color: cs.muted, background: cs.card, border: "1px solid " + cs.border, borderRadius: 9, padding: "8px 11px" }}>
+          <b style={{ color: cs.text }}>{byTeknisi.length}</b> hari-teknisi yang belum tuntas — sesi pulangnya belum ada,
+          masih menunggu konfirmasi, atau ditolak. Dari semua tanggal, tanpa perlu digeser satu per satu.
+        </div>
+      )}
+
       {byTeknisi.length === 0 && !loading && (
-        <div style={{ padding: 24, textAlign: "center", color: cs.muted, fontSize: 13 }}>Belum ada catatan material harian untuk tanggal ini.</div>
+        <div style={{ padding: 24, textAlign: "center", color: cs.muted, fontSize: 13 }}>
+          {mode === "belum" ? "Tidak ada sesi yang menunggu konfirmasi. 🎉" : `Belum ada catatan material harian untuk ${labelHari(date)}.`}
+        </div>
       )}
       {byTeknisi.length > 0 && shown.length === 0 && (
         <div style={{ padding: 24, textAlign: "center", color: cs.muted, fontSize: 13 }}>Tidak ada hasil untuk "{search}".</div>
       )}
 
       {shown.map(g => (
-        <div key={g.teknisi} style={{ background: cs.panel, border: "1px solid " + cs.border, borderRadius: 12, padding: 14 }}>
+        <div key={g.key} style={{ background: cs.panel, border: "1px solid " + (g.belum ? cs.yellow + "66" : cs.border), borderRadius: 12, padding: 14 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
-            <div style={{ fontSize: 14, fontWeight: 800, color: cs.text }}>👷 {g.teknisi}</div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <div style={{ fontSize: 14, fontWeight: 800, color: cs.text }}>
+              👷 {g.teknisi}
+              {mode === "belum" && <span style={{ fontSize: 11, fontWeight: 600, color: cs.muted, marginLeft: 8 }}>{labelHari(g.tanggal)}</span>}
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              {g.belum && (() => {
+                const m = { TANPA_PULANG: ["📤 BELUM ADA LAPORAN PULANG", cs.yellow],
+                            MENUNGGU:     ["⏳ MENUNGGU KONFIRMASI", cs.accent],
+                            DITOLAK:      ["✕ DITOLAK", cs.red] }[g.statusSesi];
+                return <span style={{ fontSize: 10.5, fontWeight: 800, background: m[1] + "22", color: m[1], borderRadius: 20, padding: "3px 9px" }}>{m[0]}</span>;
+              })()}
               {!g.pagi && <span style={{ fontSize: 11, color: cs.muted }}>⚠️ pagi belum diisi</span>}
               {!g.pulang && <span style={{ fontSize: 11, color: cs.muted }}>⚠️ pulang belum diisi</span>}
               <span style={{ fontSize: 11, fontWeight: 800, padding: "3px 10px", borderRadius: 20,
