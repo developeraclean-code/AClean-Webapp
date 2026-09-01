@@ -208,6 +208,26 @@ export async function notifyAbsence(req, res) {
 export async function receiveWa(req, res) {
       if (req.method === "GET") return res.status(200).json({ status: "ok", service: "AClean WA Webhook" });
       if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+
+      // ── OPT-CPU: buang delivery-status callback SEDINI mungkin ──────────────
+      // Fonnte kirim callback status untuk SETIAP pesan keluar (sent/delivered/read).
+      // Shape nyata: { state: "delivered"|"read"|2|3, device, stateid }  (varian lama: { status, id }).
+      // Ini ~79% dari SEMUA hit webhook (2.292/2.908 per hari) dan NOL nilai: kolom
+      // fonnte_message_id tak ada → PATCH dispatch_logs di bawah selalu 0 baris (kode mati).
+      // Dulu callback ini jatuh ke bawah → nulis 1 baris wa_webhook_raw + balas 400 → boros
+      // CPU (Fluid) + bloat DB (21MB). Sekarang: exit ~1ms tanpa DB write, sebelum rate-limit.
+      // CATATAN: cara terbaik = matikan "delivery status webhook" di dashboard Fonnte (biar tak
+      // dikirim sama sekali). Guard ini tetap ada sebagai jaring pengaman kalau masih terkirim.
+      {
+        const rb = req.body || {};
+        const isDeliveryReceipt =
+          (rb.state !== undefined || (rb.status !== undefined && !rb.message)) &&
+          !rb.message && !rb.sender && !rb.from && !rb.member && !rb.participant;
+        if (isDeliveryReceipt) {
+          return res.status(200).json({ ok: true, ignored: "delivery_receipt" });
+        }
+      }
+
       // SEMUA webhook Fonnte datang dari IP yang SAMA (server Fonnte) → rate-limit per-IP
       // menghitung gabungan SEMUA inbound WA (customer + teknisi + grup) + retry Fonnte
       // (AI vision 8-12s memicu retry). Limit 60/mnt jebol saat sesi ramai (mis. foto "Pagi/
