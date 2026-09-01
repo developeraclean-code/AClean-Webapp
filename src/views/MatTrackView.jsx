@@ -829,6 +829,51 @@ useEffect(() => {
   })();
   return () => { cancelled = true; };
 }, [supabase, invUnitsData]);
+// ── Sedang dibawa: unit yang sudah keluar gudang tapi pemakaiannya belum dikonfirmasi ──
+// Sumbernya sesi PAGI di teknisi_material_checkout, bukan job_materials_brought
+// (reservedMap di atas) — jalur itu praktis sudah tidak terisi lagi.
+// Angka stok di layar ini adalah "sisa menurut catatan": ia baru berkurang saat admin
+// menekan Confirm. Jadi selama sesi pulang-nya belum CONFIRMED, barangnya secara fisik
+// ada di tangan teknisi walau angkanya masih utuh — itulah yang ditandai di sini.
+const [dibawaMap, setDibawaMap] = useState({});   // unit_id → [{teknisi, tanggal, qty}]
+useEffect(() => {
+  let cancelled = false;
+  (async () => {
+    try {
+      const batas = new Date(Date.now() + 7 * 3600 * 1000 - 14 * 86400000).toISOString().slice(0, 10);
+      const [{ data: pagi }, { data: selesai }] = await Promise.all([
+        // Sesi pagi 14 hari terakhir. Lebih tua dari itu bukan lagi "sedang dibawa"
+        // melainkan masalah pencatatan — itu urusan kartu kuning di Konfirmasi Material,
+        // bukan penanda permanen yang menempel di layar stok.
+        supabase.from("teknisi_material_checkout")
+          .select("teknisi_name,checkout_date,items")
+          .eq("session_type", "pagi").neq("confirm_status", "REJECTED")
+          .is("archived_at", null).gte("checkout_date", batas).limit(300),
+        // Pulang CONFIRMED TANPA penyaring arsip — sesi lama yang sudah tuntas memang
+        // sudah diarsipkan (migrasi 162). Menyaringnya di sini membuat SEMUA sesi pagi
+        // terlihat "masih dibawa" padahal sudah beres.
+        supabase.from("teknisi_material_checkout")
+          .select("teknisi_name,checkout_date")
+          .eq("session_type", "pulang").eq("confirm_status", "CONFIRMED").limit(600),
+      ]);
+      if (cancelled) return;
+      const tuntas = new Set((selesai || []).map((r) => r.teknisi_name + "|" + r.checkout_date));
+      const m = {};
+      for (const r of (pagi || [])) {
+        if (tuntas.has(r.teknisi_name + "|" + r.checkout_date)) continue;
+        for (const it of (Array.isArray(r.items) ? r.items : [])) {
+          for (const u of (Array.isArray(it.units) ? it.units : [])) {
+            if (!u?.unit_id) continue;
+            (m[u.unit_id] ||= []).push({ teknisi: r.teknisi_name, tanggal: r.checkout_date, qty: Number(u.qty) || 0 });
+          }
+        }
+      }
+      setDibawaMap(m);
+    } catch (_) { /* penanda pelengkap — kegagalannya tidak boleh mengganggu layar stok */ }
+  })();
+  return () => { cancelled = true; };
+}, [supabase, invUnitsData]);
+
 const [confirmArchiveId, setConfirmArchiveId] = useState(null); // unit.id yang menunggu konfirmasi archive
 const [archiveTabFilter, setArchiveTabFilter] = useState("aktif"); // "aktif" | "diarsipkan" | "semua"
 
@@ -1810,6 +1855,18 @@ return (
                       <div style={{ fontSize: 10, color: hiddenFromTek && unit.is_active ? "#f97316" : cs.muted, marginTop: 1 }}>
                         {!unit.is_active ? "⏸ Nonaktif" : hiddenFromTek ? "Tersembunyi teknisi" : "Aktif"}
                       </div>
+                      {(dibawaMap[unit.id] || []).length > 0 && (() => {
+                        const bawa = dibawaMap[unit.id];
+                        const tot = bawa.reduce((a, b) => a + b.qty, 0);
+                        const siapa = [...new Set(bawa.map((b) => b.teknisi))].join(", ");
+                        const tgl = bawa.map((b) => b.tanggal).sort()[0];
+                        return (
+                          <div title="Tercatat keluar gudang dan pemakaiannya belum dikonfirmasi. Angka stok di kanan BELUM berkurang — baru berkurang setelah Confirm di Konfirmasi Material."
+                            style={{ fontSize: 10, fontWeight: 700, color: cs.yellow, background: cs.yellow + "18", border: "1px solid " + cs.yellow + "44", borderRadius: 5, padding: "2px 6px", marginTop: 3, display: "inline-block" }}>
+                            🚚 keluar: {siapa} · {tot} {item.unit} · sejak {tgl}
+                          </div>
+                        );
+                      })()}
                       {unit.purchase_date && (
                         <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>🧾 beli {unit.purchase_date}</div>
                       )}
