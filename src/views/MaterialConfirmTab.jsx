@@ -42,7 +42,11 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
   const [mewakiliTek, setMewakiliTek] = useState("");
   const [mewakiliTgl, setMewakiliTgl] = useState(getLocalDate());
   const [mewakiliAktif, setMewakiliAktif] = useState(null); // { nama, id, tgl }
-  const [view, setView] = useState("PENDING"); // PENDING | CONFIRMED
+  const [view, setView] = useState("PENDING"); // PENDING | CONFIRMED | REJECTED
+  // Sesi PAGI yang tidak pernah punya sesi pulang. Tab ini dibangun mengelilingi sesi
+  // pulang, jadi hari seperti itu dulu TIDAK MUNCUL di layar mana pun: barang sudah keluar
+  // gudang tapi Owner/Admin tak punya tempat melihatnya (8 kejadian s/d 31 Agu 2026).
+  const [pagiYatim, setPagiYatim] = useState([]);
   const [search, setSearch] = useState("");
   const [lastLoaded, setLastLoaded] = useState(0); // jejak kesegaran (tab tak realtime)
   // Seberapa jauh ke belakang job boleh dipilih untuk ditautkan ke material.
@@ -63,7 +67,9 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
     // ── PULANG (model bawa−sisa) ──
     const { data: puls } = await supabase.from("teknisi_material_checkout")
       .select("*").eq("session_type", "pulang").eq("confirm_status", view)
-      .order("checkout_date", { ascending: false }).limit(60);
+      // Batas dinaikkan dari 60: tab "Selesai" sudah menyentuh 52 baris, dan begitu
+      // lewat batas sesi terlama BERHENTI TAMPIL tanpa pesan apa pun — riwayat hilang diam-diam.
+      .order("checkout_date", { ascending: false }).limit(300);
     const pulRows = puls || [];
     const pagiMap = {};
     for (const p of pulRows) {
@@ -75,7 +81,7 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
     // ── PAKAI (draft AI) ──
     const { data: paks } = await supabase.from("teknisi_material_checkout")
       .select("*").eq("session_type", "pakai").eq("confirm_status", view)
-      .order("checkout_date", { ascending: false }).limit(60);
+      .order("checkout_date", { ascending: false }).limit(300);
     const pakRows = paks || [];
 
     // Kumpulkan job_ids semua (pulang + pakai) untuk nama customer
@@ -142,10 +148,26 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
         return { row: { ...row, items: lines }, jobOptions: jobOptionsFor(row), unitsByType, jobMap, unitTerisi: terisi };
       });
     }
+    // ── PAGI TANPA PULANG ──
+    // Tidak relevan di tab "Selesai": yang selesai selalu punya pasangan pulang.
+    let yatimRows = [];
+    if (view !== "CONFIRMED") {
+      const [{ data: pagis }, { data: kunciPulang }] = await Promise.all([
+        supabase.from("teknisi_material_checkout").select("*")
+          .eq("session_type", "pagi").eq("confirm_status", view)
+          .order("checkout_date", { ascending: false }).limit(300),
+        supabase.from("teknisi_material_checkout").select("teknisi_name,checkout_date")
+          .eq("session_type", "pulang"),
+      ]);
+      const punyaPulang = new Set((kunciPulang || []).map((r) => r.teknisi_name + "|" + r.checkout_date));
+      yatimRows = (pagis || []).filter((r) => !punyaPulang.has(r.teknisi_name + "|" + r.checkout_date));
+    }
+
     // Terapkan HANYA bila ini load terbaru (bukan hasil basi yang balapan).
     if (myId === loadSeq.current) {
       setRows(mappedRows);
       setPakai(pakEntries);
+      setPagiYatim(yatimRows);
       setLastLoaded(Date.now());
     }
     if (!silent) setLoading(false);
@@ -353,15 +375,19 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
     finally { setBusy(""); }
   };
 
-  const bukaMewakili = async () => {
-    setMewakiliOpen(true);
-    if (tekList.length === 0) {
-      const { data } = await supabase.from("user_profiles")
-        .select("id,name,role,active").in("role", ["Teknisi", "Helper"])
-        .order("name");
-      setTekList((data || []).filter((u) => u.active !== false));
-    }
-  };
+  const muatTekList = useCallback(async () => {
+    const { data } = await supabase.from("user_profiles")
+      .select("id,name,role,active").in("role", ["Teknisi", "Helper"])
+      .order("name");
+    setTekList((data || []).filter((u) => u.active !== false));
+  }, [supabase]);
+
+  // Dimuat di awal (bukan hanya saat modal dibuka) supaya tombol pintas "Betulkan sesi pagi"
+  // bisa langsung menyertakan teknisi_id yang benar. Ditaruh SESUDAH definisinya —
+  // useEffect di atas sini akan membaca muatTekList saat masih di temporal dead zone.
+  useEffect(() => { muatTekList(); }, [muatTekList]);
+
+  const bukaMewakili = () => setMewakiliOpen(true);
 
   // Buka layar Material Harian milik teknisi itu, apa adanya — lengkap dengan
   // pemilih tabung/roll. Admin mengarahkan unit yang benar, bukan menebak lewat
@@ -373,6 +399,34 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
       `${currentUser?.name || "?"} buka Material Harian mewakili ${mewakiliTek} tgl ${mewakiliTgl}`, "INFO");
     setMewakiliAktif({ nama: mewakiliTek, id: prof?.id || null, tgl: mewakiliTgl });
     setMewakiliOpen(false);
+  };
+
+  // Pintasan: langsung buka Material Harian teknisi pada tanggal itu — dipakai spanduk
+  // "ada di pulang tapi tak dibawa pagi" dan kartu "belum ada laporan pulang", supaya admin
+  // tak perlu mencari sendiri lewat menu + Input Mewakili Teknisi.
+  const betulkanSesi = (teknisiName, tanggal) => {
+    const prof = tekList.find((u) => u.name === teknisiName);
+    addAgentLog?.("MATERIAL_INPUT_MEWAKILI",
+      `${currentUser?.name || "?"} buka Material Harian mewakili ${teknisiName} tgl ${tanggal} (pintasan koreksi)`, "INFO");
+    setMewakiliAktif({ nama: teknisiName, id: prof?.id || null, tgl: tanggal });
+  };
+
+  // Sesi yang pernah ditolak bisa dikembalikan ke antrean — sebelumnya tidak ada layar
+  // maupun tombol untuk itu, jadi salah-tolak berarti data terkubur selamanya.
+  const bukaKembali = async (row) => {
+    setBusy(row.id);
+    try {
+      const { data, error } = await supabase.from("teknisi_material_checkout")
+        .update({ confirm_status: "PENDING", confirmed_by: null, confirmed_at: null })
+        .eq("id", row.id).eq("confirm_status", "REJECTED").select("id");
+      if (error) throw error;
+      if (!data?.length) { showNotif("Sesi sudah tidak berstatus Ditolak"); await load(); return; }
+      addAgentLog?.("MATERIAL_BUKA_KEMBALI",
+        `${currentUser?.name || "?"} membuka kembali sesi ${row.session_type} ${row.teknisi_name} ${row.checkout_date}`, "WARN");
+      showNotif("↩︎ Sesi dikembalikan ke Menunggu");
+      await load();
+    } catch (e) { showNotif("❌ Gagal membuka kembali: " + (e?.message || e)); }
+    finally { setBusy(""); }
   };
 
   const tutupLayarMewakili = async () => {
@@ -472,10 +526,16 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
     ].join(" ").toLowerCase();
     return hay.includes(q);
   };
+  const matchYatim = (r) => {
+    if (!q) return true;
+    const isi = (r.items || []).flatMap((it) => (it.units || []).map((u) => u.label));
+    return [r.teknisi_name, r.checkout_date, ...isi].join(" ").toLowerCase().includes(q);
+  };
   const shownRows = rows.filter(matchPulang);
   const shownPakai = pakai.filter(matchPakai);
-  const empty = shownRows.length === 0 && shownPakai.length === 0;
-  const emptyAll = rows.length === 0 && pakai.length === 0;
+  const shownYatim = pagiYatim.filter(matchYatim);
+  const empty = shownRows.length === 0 && shownPakai.length === 0 && shownYatim.length === 0;
+  const emptyAll = rows.length === 0 && pakai.length === 0 && pagiYatim.length === 0;
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
@@ -505,8 +565,8 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
           {lastLoaded ? <span style={{ color: cs.muted, fontWeight: 400 }}>· {new Date(lastLoaded).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}</span> : null}
         </button>
         <div style={{ display: "flex", gap: 4, background: cs.surface, borderRadius: 8, padding: 3 }}>
-          {["PENDING", "CONFIRMED"].map((v) => (
-            <button key={v} onClick={() => setView(v)} style={{ padding: "5px 12px", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer", background: view === v ? cs.accent : "transparent", color: view === v ? "#fff" : cs.muted }}>{v === "PENDING" ? "Menunggu" : "Selesai"}</button>
+          {[["PENDING", "Menunggu"], ["CONFIRMED", "Selesai"], ["REJECTED", "Ditolak"]].map(([v, lbl]) => (
+            <button key={v} onClick={() => setView(v)} style={{ padding: "5px 12px", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer", background: view === v ? cs.accent : "transparent", color: view === v ? "#fff" : cs.muted }}>{lbl}</button>
           ))}
         </div>
         </div>
@@ -576,22 +636,93 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
       )}
 
       {loading ? <div style={{ color: cs.muted, fontSize: 13, padding: 16 }}>Memuat…</div>
-        : empty ? <div style={{ color: cs.muted, fontSize: 13, padding: 16, textAlign: "center", background: cs.card, border: "1px solid " + cs.border, borderRadius: 12 }}>{q ? `Tidak ada hasil untuk "${search}".` : view === "PENDING" ? "Tidak ada yang menunggu konfirmasi." : "Belum ada yang dikonfirmasi."}</div>
+        : empty ? <div style={{ color: cs.muted, fontSize: 13, padding: 16, textAlign: "center", background: cs.card, border: "1px solid " + cs.border, borderRadius: 12 }}>{q ? `Tidak ada hasil untuk "${search}".` : view === "PENDING" ? "Tidak ada yang menunggu konfirmasi." : view === "CONFIRMED" ? "Belum ada yang dikonfirmasi." : "Tidak ada sesi yang ditolak."}</div>
         : <>
+          {/* BELUM ADA LAPORAN PULANG — paling atas: barang sudah keluar tapi tak terhitung */}
+          {shownYatim.map((row) => (
+            <PagiTanpaPulangCard key={row.id} row={row} view={view} busy={busy}
+              onBetulkan={() => betulkanSesi(row.teknisi_name, row.checkout_date)}
+              onReject={() => reject(row)} onBukaKembali={() => bukaKembali(row)} />
+          ))}
+
           {/* DRAFT AI (pakai) — di atas biar cepat terlihat */}
           {shownPakai.map((entry) => (
             <PakaiCard key={entry.row.id} entry={entry} view={view} busy={busy}
               onConfirm={confirmPakai} onReject={() => reject(entry.row)}
-              onBukaKoreksi={bukaKoreksi} />
+              onBukaKoreksi={bukaKoreksi} onBukaKembali={() => bukaKembali(entry.row)} />
           ))}
 
           {/* PULANG (bawa−sisa) — qty terpakai bisa dikoreksi admin sebelum potong stok */}
           {shownRows.map((entry) => (
             <PulangCard key={entry.pulang.id} entry={entry} view={view} busy={busy}
               photos={photosOf(entry)} onConfirm={confirm} onReject={() => reject(entry.pulang)}
-              onBukaKoreksi={bukaKoreksi} />
+              onBukaKoreksi={bukaKoreksi} onBukaKembali={() => bukaKembali(entry.pulang)}
+              onBetulkanPagi={() => betulkanSesi(entry.pulang.teknisi_name, entry.pulang.checkout_date)} />
           ))}
         </>}
+    </div>
+  );
+}
+
+// Kartu sesi PAGI yang tidak pernah punya sesi pulang. Barang sudah keluar gudang tapi
+// pemakaiannya tak pernah dilaporkan — dulu hari seperti ini tidak muncul di layar mana pun
+// karena tab ini hanya mendaftar sesi 'pulang'/'pakai'.
+function PagiTanpaPulangCard({ row, view, busy, onBetulkan, onReject, onBukaKembali }) {
+  const unit = (row.items || []).flatMap((it) =>
+    (it.units || []).map((u) => ({ label: u.label || it.label, qty: u.qty, tipe: it.material_type })));
+  const umur = Math.max(0, Math.round(
+    (new Date().setHours(0, 0, 0, 0) - new Date(row.checkout_date + "T00:00:00").getTime()) / 86400000));
+
+  return (
+    <div style={{ background: cs.card, border: "1px solid " + cs.yellow + "88", borderRadius: 12, padding: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 10, fontWeight: 800, background: cs.yellow, color: "#000", borderRadius: 4, padding: "1px 7px" }}>
+              BELUM ADA LAPORAN PULANG
+            </span>
+            <b style={{ fontSize: 14, color: cs.text }}>{row.teknisi_name}</b>
+          </div>
+          <div style={{ fontSize: 11, color: cs.muted, marginTop: 3 }}>
+            {row.checkout_date}{umur > 0 ? ` · ${umur} hari lalu` : " · hari ini"}
+            {row.source === "admin" ? " · diisi admin" : ""}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ background: cs.surface, borderRadius: 8, padding: "8px 10px", marginBottom: 8 }}>
+        <div style={{ fontSize: 11, color: cs.muted, fontWeight: 700, marginBottom: 4 }}>Dibawa pagi</div>
+        <div style={{ display: "grid", gap: 2 }}>
+          {unit.map((u, i) => (
+            <div key={i} style={{ fontSize: 12.5, color: cs.text }}>
+              • <b>{u.label}</b> — {u.qty} {u.tipe === "freon" ? "kg" : "meter"}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ fontSize: 11, color: cs.yellow, lineHeight: 1.5, marginBottom: 10 }}>
+        Barang ini sudah keluar gudang tapi <b>tidak pernah dilaporkan pulang</b>, jadi terpakainya
+        tak bisa dihitung dan <b>stok belum berkurang sama sekali</b>.
+        Isi laporan pulangnya mewakili {row.teknisi_name} — atau tolak sesi ini kalau ternyata
+        materialnya tidak jadi dibawa.
+      </div>
+
+      {view === "REJECTED" ? (
+        <button disabled={busy === row.id} onClick={onBukaKembali}
+          style={{ width: "100%", background: cs.card, border: "1px solid " + cs.accent + "88", color: cs.accent, padding: 10, borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
+          ↩︎ Buka Kembali ke Menunggu
+        </button>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 8 }}>
+          <button disabled={busy === row.id} onClick={onReject}
+            style={{ background: cs.card, border: "1px solid " + cs.red + "55", color: cs.red, padding: 10, borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Tolak</button>
+          <button disabled={busy === row.id} onClick={onBetulkan}
+            style={{ background: "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", color: "#fff", padding: 10, borderRadius: 9, cursor: "pointer", fontWeight: 800, fontSize: 13 }}>
+            ✏️ Isi Laporan Pulang Mewakili {row.teknisi_name}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -600,7 +731,7 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
 // selisih laporan teknisi, tapi admin boleh mengoreksinya sebagai double-check
 // sebelum stok dipotong — wajib beralasan, dan setiap koreksi ditinggalkan
 // jejaknya (lihat migrasi 146).
-function PulangCard({ entry, view, busy, photos, onConfirm, onReject, onBukaKoreksi }) {
+function PulangCard({ entry, view, busy, photos, onConfirm, onReject, onBukaKoreksi, onBukaKembali, onBetulkanPagi }) {
   const r = entry.pulang;
   const jobOptions = entry.jobOptions || [];
   const [edit, setEdit] = useState({});     // { [lineKey]: string dari input }
@@ -766,9 +897,22 @@ function PulangCard({ entry, view, busy, photos, onConfirm, onReject, onBukaKore
           <div style={{ fontSize: 11, color: "#fca5a5", lineHeight: 1.5 }}>
             Terpakai dihitung dari <b>bawa − sisa</b>. Karena barang ini tidak pernah tercatat dibawa pagi,
             angkanya tidak bisa dihitung dan <b>tidak akan terpotong dari stok</b>.
-            Betulkan dulu sesi pagi teknisi lewat <b>+ Input Mewakili Teknisi</b>, lalu kembali ke sini.
+            Betulkan dulu sesi pagi teknisi, lalu kembali ke sini.
           </div>
+          {onBetulkanPagi && (
+            <button onClick={onBetulkanPagi}
+              style={{ marginTop: 8, width: "100%", background: cs.card, border: "1px solid " + cs.red + "88", color: "#fca5a5", padding: "8px 10px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+              ✏️ Betulkan Sesi Pagi {r.teknisi_name} ({r.checkout_date})
+            </button>
+          )}
         </div>
+      )}
+
+      {view === "REJECTED" && onBukaKembali && (
+        <button disabled={busy === r.id} onClick={onBukaKembali}
+          style={{ width: "100%", background: cs.card, border: "1px solid " + cs.accent + "88", color: cs.accent, padding: 10, borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
+          ↩︎ Buka Kembali ke Menunggu
+        </button>
       )}
 
       {view === "PENDING" && (
@@ -799,7 +943,7 @@ function PulangCard({ entry, view, busy, photos, onConfirm, onReject, onBukaKore
 }
 
 // Kartu draft AI (sesi 'pakai') — baris editable: qty, job (nama customer), tabung/roll.
-function PakaiCard({ entry, view, busy, onConfirm, onReject, onBukaKoreksi }) {
+function PakaiCard({ entry, view, busy, onConfirm, onReject, onBukaKoreksi, onBukaKembali }) {
   const { row, jobOptions, unitsByType, unitTerisi = [] } = entry;
   // Job hari yang sama tetap didahulukan; job hari sebelumnya dipisah ke grup
   // tersendiri lengkap dgn tanggal, supaya admin tidak salah tempel material.
@@ -940,6 +1084,13 @@ function PakaiCard({ entry, view, busy, onConfirm, onReject, onBukaKoreksi }) {
           title="Kembalikan stok yang sudah dipotong, sesi kembali ke Menunggu untuk dibetulkan"
           style={{ background: "transparent", border: "1px solid " + cs.yellow + "66", color: cs.yellow, padding: "8px 12px", borderRadius: 9, cursor: busy === row.id ? "wait" : "pointer", fontWeight: 700, fontSize: 12.5, justifySelf: "start" }}>
           {busy === row.id ? "Memproses…" : "↩︎ Buka Koreksi (stok dikembalikan)"}
+        </button>
+      )}
+
+      {view === "REJECTED" && onBukaKembali && (
+        <button disabled={busy === row.id} onClick={onBukaKembali}
+          style={{ width: "100%", background: cs.card, border: "1px solid " + cs.accent + "88", color: cs.accent, padding: 10, borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
+          ↩︎ Buka Kembali ke Menunggu
         </button>
       )}
     </div>
