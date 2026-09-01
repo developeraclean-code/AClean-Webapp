@@ -27,9 +27,11 @@ describe("tebakUnit", () => {
   });
 
   it("salah ketik di label unit ikut jadi pembeda — konsekuensi yang disengaja", () => {
-    // Data nyata: satu tabung tertulis "Tabung", satunya "Tanung". Kata "tabung"
-    // jadi milik satu unit saja, sehingga laporan yang menyebut "tabung" condong
-    // ke unit itu. Tetap butuh kata itu MUNCUL di laporan, jadi tidak asal tebak.
+    // Dulu data nyata: satu tabung tertulis "Tabung", satunya "Tanung" — sampai
+    // salah ketiknya dirapikan 1 Sep 2026 (migrasi 161). Perilakunya tetap diuji:
+    // label yang tidak konsisten BISA jadi kata pembeda, dan itu risiko yang perlu
+    // disadari kalau ada salah ketik baru. Tetap butuh kata itu MUNCUL di laporan,
+    // jadi tidak asal tebak.
     expect(tebakUnit({ label: "Freon" }, [K, G], "tabung K dan G dibawa")).toBe("uK");
     expect(tebakUnit({ label: "Freon" }, [K, G], "freon dibawa")).toBe(null);
   });
