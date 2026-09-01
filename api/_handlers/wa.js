@@ -47,11 +47,16 @@ export async function sendWa(req, res) {
       // agar Fonnte bisa fetch langsung — jauh lebih cepat, tidak makan waktu serverless.
       const hasAttachment = b.url && typeof b.url === "string" && b.url.startsWith("http");
 
-      // Resolve proxy URL → direct R2 public URL (hanya jika R2_PUBLIC_URL di-set & bucket public access ON)
-      // Jika R2_PUBLIC_URL tidak di-set, tetap pakai proxy URL (/api/foto) yang sudah PUBLIC_ROUTES
+      // Resolve proxy URL → direct R2 public URL (hanya jika base publik di-set & bucket public access ON)
+      // Jika tidak ada yang di-set, tetap pakai proxy URL (/api/foto) yang sudah PUBLIC_ROUTES.
+      //
+      // Urutan pilihan: R2_CDN_URL (custom domain) > R2_PUBLIC_URL (pub-xxx.r2.dev).
+      // r2.dev di-rate-limit Cloudflare — Fonnte kerap gagal fetch berkas agak besar
+      // lalu jatuh ke fallback teks+link (lihat riwayat debugging PDF-WA). Custom
+      // domain tidak kena rate-limit itu dan di-cache CDN, jadi didahulukan.
       const resolveDirectUrl = (proxyUrl) => {
         try {
-          const r2PublicUrl = process.env.R2_PUBLIC_URL;
+          const r2PublicUrl = (process.env.R2_CDN_URL || "").replace(/\/+$/, "") || process.env.R2_PUBLIC_URL;
           if (!r2PublicUrl) return proxyUrl; // proxy URL aman — PUBLIC_ROUTES, no auth needed
           const u = new URL(proxyUrl);
           const key = u.searchParams.get("key");

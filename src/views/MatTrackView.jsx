@@ -2,6 +2,7 @@ import { memo, useState, useMemo, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { useAppContext } from "../context/AppContext.js";
 import { displayStock, computeStockStatus } from "../lib/inventory.js";
+import { fotoUrl } from "../lib/fotoUrl.js";
 import { reconcileDay, sumReportedUsage, reconStatus } from "../lib/materialRecon.js";
 import { shiftDateStr, shortDateID } from "../lib/dateTime.js";
 import { detectKind, KIND_META, qtyEfektif, cocokkanKePagi, pisahkanItemLink, namaItem } from "../lib/aiMaterialKind.js";
@@ -14,15 +15,8 @@ import { downloadCsv } from "../lib/exportUtils.js";
 // Source: ai_extractions WHERE intent='material' AND status='pending'
 // Owner pilih: Link ke Job X (commit job_materials_brought) atau Reject.
 // ───────────────────────────────────────────────
-function fotoSrc(url) {
-  if (!url) return null;
-  // Already API proxy format
-  if (url.startsWith("/api/foto")) return url;
-  // R2 pub URL → proxy via /api/foto?key=
-  const m = url.match(/\/([^?]+\.[a-z0-9]+)(?:\?|$)/i);
-  if (m) return "/api/foto?key=" + encodeURIComponent(m[1]);
-  return url;
-}
+// Foto R2 — logika bersama di src/lib/fotoUrl.js (CDN kalau di-set, kalau tidak proxy).
+const fotoSrc = (url) => fotoUrl(url) || null;
 
 function PendingAiMaterialTab({ supabase, showNotif, currentUser, addAgentLog }) {
   const [rows, setRows] = useState([]);

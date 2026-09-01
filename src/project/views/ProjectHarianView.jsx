@@ -1,20 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 
-// Mirror logic dari App.jsx fotoSrc — extract R2 key dari full URL, serve via proxy
-function fotoProxySrc(url) {
-  if (!url) return "";
-  if (url.startsWith("/api/foto")) return url;
-  if (url.includes(".r2.dev/")) {
-    const m = url.match(/\.r2\.dev\/(.+)$/);
-    if (m) return "/api/foto?key=" + encodeURIComponent(m[1]);
-  }
-  if (url.includes(".r2.cloudflarestorage.com/")) {
-    const m = url.match(/cloudflarestorage\.com\/[^/]+\/(.+)$/);
-    if (m) return "/api/foto?key=" + encodeURIComponent(m[1]);
-  }
-  if (!url.startsWith("http")) return "/api/foto?key=" + encodeURIComponent(url);
-  return url;
-}
+import { fotoUrl } from "../../lib/fotoUrl.js";
 import { cs } from "../../theme/cs.js";
 import * as S from "../utils/styles.js";
 import { useProject } from "../context/ProjectContext.jsx";
@@ -24,6 +10,9 @@ import { StatusPill } from "../components/Bits.jsx";
 import Modal from "../components/Modal.jsx";
 import { supabase } from "../../supabaseClient.js";
 import { reportError } from "../../lib/reportError.js";
+
+// Foto R2 — logika bersama di src/lib/fotoUrl.js (CDN kalau di-set, kalau tidak proxy).
+const fotoProxySrc = (url) => fotoUrl(url);
 
 export default function ProjectHarianView() {
   const { db, can, today, upsertHarian, patchRow, uploadPhotos, deleteRow } = useProject();

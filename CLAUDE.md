@@ -272,7 +272,7 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
 
 **AI (ARA):** System prompt built from `brain.md` (in `app_settings` table) + live price list. Supports `[ACTION]` tags for DB mutations parsed client-side in `handleAraAction()`.
 
-**Image storage:** Cloudflare R2 via AWS Sig V4 in `/api/upload-foto`. Served via `/api/foto` proxy.
+**Image storage:** Cloudflare R2 via AWS Sig V4 in `/api/upload-foto`. Render URL SELALU lewat `fotoUrl()` (`src/lib/fotoUrl.js`): langsung ke CDN kalau `VITE_R2_CDN_URL` di-set (hemat kuota Vercel), kalau tidak jatuh ke proxy `/api/foto`; `.pdf`/`.html` selalu proxy. Simpan bentuk key/proxy di DB, bukan URL CDN.
 
 **App settings:** Global config stored in `app_settings` table as key-value pairs. `cron_jobs` key menyimpan JSON array konfigurasi cron jobs.
 

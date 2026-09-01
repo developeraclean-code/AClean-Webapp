@@ -6,6 +6,7 @@ import { safeJsonParse } from "./lib/safeJson.js";
 import { useDebounce } from "./lib/useDebounce.js";
 import { cachedFetch, invalidateCache } from "./lib/fetchCache.js";
 import { reportError } from "./lib/reportError.js";
+import { fotoUrl } from "./lib/fotoUrl.js";
 import {
   validatePhone, validateTime, validateDate,
   validatePositiveNumber, validateAddressLength, validateNameLength,
@@ -1648,31 +1649,10 @@ export default function ACleanWebApp() {
     } catch { resolve(dataUrl); }
   });
 
-  // Helper: normalize URL foto → selalu proxy via /api/foto
-  // /api/foto melakukan AWS Sig V4 signing ke R2 private endpoint
-  // Ini memastikan foto tampil meskipun R2 public access belum diaktifkan
-  const fotoSrc = (url) => {
-    if (!url) return "";
-    // Sudah pakai proxy → langsung
-    if (url.startsWith("/api/foto")) return url;
-    // Plain path (laporan/JOB-ID/file.jpg) → proxy via /api/foto
-    if (url.startsWith("laporan/")) {
-      return "/api/foto?key=" + encodeURIComponent(url);
-    }
-    // URL r2.dev atau r2.cloudflarestorage.com → extract key → proxy
-    if (url.includes(".r2.dev/")) {
-      const keyMatch = url.match(/\.r2\.dev\/(.+)$/);
-      if (keyMatch) return "/api/foto?key=" + encodeURIComponent(keyMatch[1]);
-    }
-    if (url.includes(".r2.cloudflarestorage.com/")) {
-      const keyMatch = url.match(/cloudflarestorage\.com\/[^/]+\/(.+)$/);
-      if (keyMatch) return "/api/foto?key=" + encodeURIComponent(keyMatch[1]);
-    }
-    // Supabase storage → langsung (tidak perlu proxy)
-    if (url.includes("supabase")) return url;
-    // Fallback → langsung
-    return url;
-  };
+  // Helper: normalize URL foto. Logika pindah ke src/lib/fotoUrl.js (dipakai
+  // bersama portal & Project) — gambar ke CDN R2 kalau VITE_R2_CDN_URL di-set,
+  // kalau tidak jatuh ke proxy /api/foto seperti sebelumnya.
+  const fotoSrc = (url) => fotoUrl(url);
 
   // ── Generate & Download Invoice PDF (pakai browser print API) ──
   // ── Download Rekap Harian (Orders + Invoice) ke CSV/Excel ──

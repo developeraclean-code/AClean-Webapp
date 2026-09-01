@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { INVOICE_UNPAID_STATUSES } from "../constants/status.js";
 import { formatPhone } from "../lib/phone.js";
+import { fotoUrl } from "../lib/fotoUrl.js";
 
 const API_BASE = "/api";
 const GOOGLE_REVIEW_URL = "https://g.page/r/Ce7qdwu8xHxoEAI/review";
@@ -44,18 +45,9 @@ function fmtDateShort(d) {
   } catch { return d; }
 }
 
-// Foto R2 disajikan via proxy /api/foto (public access r2.dev mungkin nonaktif).
-// Konsisten dengan fotoSrc() di App.jsx.
-function fotoSrc(url) {
-  if (!url) return "";
-  if (url.startsWith("/api/foto")) return url;
-  if (url.startsWith("laporan/")) return `${API_BASE}/foto?key=` + encodeURIComponent(url);
-  const m = url.match(/\.r2\.dev\/(.+)$/);
-  if (m) return `${API_BASE}/foto?key=` + encodeURIComponent(m[1]);
-  const m2 = url.match(/cloudflarestorage\.com\/[^/]+\/(.+)$/);
-  if (m2) return `${API_BASE}/foto?key=` + encodeURIComponent(m2[1]);
-  return url;
-}
+// Foto R2: langsung dari CDN kalau VITE_R2_CDN_URL di-set, kalau tidak lewat
+// proxy /api/foto. Logika bersama di src/lib/fotoUrl.js.
+const fotoSrc = (url) => fotoUrl(url, { apiBase: API_BASE });
 
 const SERVICE_ICON = (service = "") => {
   const s = service.toLowerCase();

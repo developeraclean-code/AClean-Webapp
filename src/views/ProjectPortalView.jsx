@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { fotoUrl } from "../lib/fotoUrl.js";
 
 // Portal customer modul Project (clean view). Dibuka via /p/<token> atau /status/ptk_<...>.
 // Data dari /api/project-portal — hanya laporan harian VERIFIED (approval Owner/Admin).
@@ -9,20 +10,8 @@ function fmtDate(d) { if (!d) return "—"; try { return new Date(d).toLocaleDat
 function fmtDateShort(d) { if (!d) return "—"; try { return new Date(d).toLocaleDateString("id-ID", { day: "numeric", month: "short" }); } catch { return d; } }
 
 // Foto R2 private — extract key dari full URL, serve via /api/foto proxy
-function fotoSrc(url) {
-  if (!url) return "";
-  if (url.startsWith("/api/foto")) return url;
-  if (url.includes(".r2.dev/")) {
-    const m = url.match(/\.r2\.dev\/(.+)$/);
-    if (m) return `${API}/foto?key=${encodeURIComponent(m[1])}`;
-  }
-  if (url.includes(".r2.cloudflarestorage.com/")) {
-    const m = url.match(/cloudflarestorage\.com\/[^/]+\/(.+)$/);
-    if (m) return `${API}/foto?key=${encodeURIComponent(m[1])}`;
-  }
-  if (!url.startsWith("http")) return `${API}/foto?key=${encodeURIComponent(url)}`;
-  return url;
-}
+// Foto R2 — logika bersama di src/lib/fotoUrl.js (CDN kalau di-set, kalau tidak proxy).
+const fotoSrc = (url) => fotoUrl(url, { apiBase: API });
 
 const PSTATUS = {
   BERJALAN: ["#2563eb", "Sedang Berjalan"],
