@@ -235,6 +235,17 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
     }
     const items = buildItems(sess, materials);
     if (items.length === 0) { showNotif("⚠️ Belum ada material diinput"); return; }
+    // Job WAJIB dipilih saat mengisi pulang. Sebelumnya boleh kosong dan 25 dari 63
+    // sesi (40%) memang kosong — itulah asal pertanyaan "material ini untuk customer
+    // siapa?" yang harus ditebak admin berhari-hari kemudian. Yang di lapangan paling
+    // tahu jawabannya, jadi ditanyakan di sini, bukan di meja admin.
+    // Dikecualikan kalau memang TIDAK ADA job hari itu (mis. kerja luar jadwal atau
+    // job belum sempat dibuat) — kalau tidak, teknisi terkunci total tanpa jalan keluar.
+    if (session === "pulang" && myJobs.length > 0
+        && (!Array.isArray(sess.jobIds) || sess.jobIds.length === 0)) {
+      showNotif("⚠️ Pilih dulu job/customer hari ini — tanpa itu materialnya tidak bisa dihitung masuk ke pekerjaan siapa");
+      return;
+    }
     const photoUrls = sess.photos.map((p) => p.url).filter(Boolean);
     setBusy(session);
     try {

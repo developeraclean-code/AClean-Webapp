@@ -88,7 +88,7 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
     const allIds = [...new Set([...pulRows, ...pakRows].flatMap((p) => (p.job_ids || [])))];
     let jobMap = {};
     if (allIds.length) {
-      const { data: ords } = await supabase.from("orders").select("id,customer,service").in("id", allIds);
+      const { data: ords } = await supabase.from("orders").select("id,customer,service,date").in("id", allIds);
       jobMap = Object.fromEntries((ords || []).map((o) => [o.id, o]));
     }
 
@@ -324,18 +324,46 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
   // jalur normal. Tidak menyunting transaksi lama: potongannya DIBALIK dengan
   // transaksi lawan, jadi riwayatnya tetap utuh dan bisa ditelusuri.
   const bukaKoreksi = async (row) => {
+    setBusy(row.id);
+    // Tunjukkan DULU apa yang akan dibatalkan, sebelum bertanya. Tanpa ini admin
+    // menekan Buka Koreksi tanpa tahu isinya: kasus nyata 1 Sep 2026 — koreksi sesi
+    // Dedi diam-diam mengembalikan 5 m milik PT FORTA LARESE BOGOR (job 28 Agu, job
+    // yang sama sekali berbeda dari yang sedang dibetulkan), dan baru ketahuan
+    // setelah ditelusuri manual.
+    let txIds = [];
+    let rincian = "";
+    try {
+      const { data: cur } = await supabase.from("teknisi_material_checkout")
+        .select("deduct_tx_ids").eq("id", row.id).single();
+      txIds = Array.isArray(cur?.deduct_tx_ids) ? cur.deduct_tx_ids : [];
+      if (txIds.length) {
+        const { data: txs } = await supabase.from("inventory_transactions")
+          .select("qty,unit_label,inventory_name,customer_name,job_date").in("id", txIds);
+        const perJob = {};
+        for (const t of txs || []) {
+          const k = (t.customer_name || "tanpa job") + "|" + (t.job_date || "-");
+          (perJob[k] ||= []).push(`${Math.abs(Number(t.qty))} ${t.unit_label || t.inventory_name}`);
+        }
+        rincian = Object.entries(perJob)
+          .map(([k, v]) => { const [cust, tgl] = k.split("|"); return `• ${v.join(", ")} → ${cust} (${tgl})`; })
+          .join("\n");
+      }
+    } catch { /* gagal baca rincian jangan memblokir koreksi — lanjut tanpa daftar */ }
+    setBusy("");
+
+    const daftar = rincian
+      ? `AKAN DIBATALKAN — stok dikembalikan:\n${rincian}\n\n`
+      : "Belum ada potongan stok tercatat untuk sesi ini.\n\n";
     const alasan = window.prompt(
-      `Buka koreksi sesi ${row.teknisi_name} ${row.checkout_date}?\n\n` +
-      "Stok yang sudah dipotong akan DIKEMBALIKAN, lalu sesi ini kembali ke Menunggu " +
-      "supaya Anda betulkan angka & pembagian jobnya, lalu konfirmasi ulang.\n\n" +
+      `Buka koreksi sesi ${row.teknisi_name} ${row.checkout_date}?\n\n` + daftar +
+      "⚠️ Periksa daftar di atas — pembatalan bisa menyentuh job LAIN yang ikut dibagi " +
+      "dari sesi ini, bukan hanya job yang sedang Anda betulkan.\n\n" +
+      "Sesudahnya sesi kembali ke Menunggu untuk Anda betulkan & konfirmasi ulang.\n\n" +
       "Alasan (wajib, min 5 huruf):", "");
     if (alasan === null) return;
     if (alasan.trim().length < 5) { showNotif("Alasan terlalu pendek — dibatalkan."); return; }
     setBusy(row.id);
     try {
-      const { data: cur } = await supabase.from("teknisi_material_checkout")
-        .select("deduct_tx_ids").eq("id", row.id).single();
-      const txIds = Array.isArray(cur?.deduct_tx_ids) ? cur.deduct_tx_ids : [];
 
       // Klaim dulu supaya dua admin tidak membalik sesi yang sama dua kali.
       const { data: claimed } = await supabase.from("teknisi_material_checkout")
@@ -750,6 +778,11 @@ function PulangCard({ entry, view, busy, photos, onConfirm, onReject, onBukaKore
   // Ditulis di sesi pulang tapi tidak pernah dibawa pagi — tidak bisa dihitung bawa−sisa,
   // dan dulu hilang diam-diam tanpa terpotong. Confirm ditahan sampai sesi pagi dibetulkan.
   const yatim = barisHanyaPulang(entry.lines);
+  // Laporan telat: job yang ditautkan berasal dari hari LAIN. Ini SAH — transaksi stok
+  // mengikuti tanggal job, bukan tanggal sesi — tapi tanpa label, admin membacanya
+  // sebagai salah link (kejadian nyata 1 Sep 2026: sesi Dedi 29 Agu menautkan job
+  // PT Forta 28 Agu, dan itu dikira kekeliruan sampai ditelusuri manual).
+  const jobBedaHari = (entry.jobs || []).filter((j) => j?.date && j.date !== r.checkout_date);
   const overrides = Object.fromEntries(
     Object.entries(edit).filter(([, v]) => v !== "" && v != null).map(([k, v]) => [k, Number(v)])
   );
@@ -879,6 +912,13 @@ function PulangCard({ entry, view, busy, photos, onConfirm, onReject, onBukaKore
           <input value={alasan} onChange={(e) => setAlasan(e.target.value)}
             placeholder="Contoh: sisa roll salah ukur, dicek ulang di gudang"
             style={{ width: "100%", background: cs.card, border: "1px solid " + (alasanKurang ? cs.red : cs.border), borderRadius: 6, padding: "7px 9px", color: cs.text, fontSize: 12.5 }} />
+        </div>
+      )}
+
+      {jobBedaHari.length > 0 && (
+        <div style={{ background: cs.accent + "14", border: "1px solid " + cs.accent + "44", borderRadius: 9, padding: "7px 10px", marginBottom: 8, fontSize: 11.5, color: cs.accent, lineHeight: 1.5 }}>
+          🕓 <b>Laporan telat</b> — {jobBedaHari.map((j) => `${j.customer} (job ${j.date})`).join(", ")} dikerjakan di hari lain.
+          Ini normal: potongan stok akan tercatat pada tanggal job-nya, bukan tanggal sesi ini.
         </div>
       )}
 

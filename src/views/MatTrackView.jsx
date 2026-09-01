@@ -795,7 +795,7 @@ const kabelReport = useMemo(() => buildMatReport("kabel", kabelReportMonth, kabe
 
 // ── State untuk inline mini-form unit fisik ──
 const [addUnitFor, setAddUnitFor]   = useState(null); // inventory_code sedang tambah unit
-const [addUnitForm, setAddUnitForm] = useState({ label: "", capacity: "", minVisible: "" });
+const [addUnitForm, setAddUnitForm] = useState({ label: "", capacity: "", minVisible: "", purchaseDate: "", notes: "" });
 const [editUnitId, setEditUnitId]   = useState(null); // unit.id sedang diedit stok
 const [editUnitVal, setEditUnitVal] = useState("");   // nilai stok baru
 const [showArchived, setShowArchived] = useState(false); // tampilkan unit archived
@@ -967,12 +967,16 @@ const addUnit = async (invCode) => {
     capacity: cap,
     min_visible: minV,
     is_active: true,
+    // Dikosongkan (NULL) kalau tidak diisi — tanggal karangan lebih berbahaya
+    // daripada kolom kosong saat mencocokkan pemakaian dengan nota pembelian.
+    purchase_date: addUnitForm.purchaseDate || null,
+    notes: addUnitForm.notes.trim() || null,
   });
   if (!error) {
     await reloadUnits();
     showNotif("✅ Unit " + label + " ditambahkan");
     setAddUnitFor(null);
-    setAddUnitForm({ label: "", capacity: "", minVisible: "" });
+    setAddUnitForm({ label: "", capacity: "", minVisible: "", purchaseDate: "", notes: "" });
   } else showNotif("❌ " + error.message);
 };
 
@@ -1754,12 +1758,29 @@ return (
                     onChange={e => setAddUnitForm(f => ({ ...f, minVisible: e.target.value }))}
                     style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: "8px 10px", color: cs.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
                 </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr auto", gap: 8, alignItems: "flex-end", marginTop: 8 }}>
+                <div>
+                  <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Tanggal Beli</div>
+                  <input type="date" value={addUnitForm.purchaseDate}
+                    onChange={e => setAddUnitForm(f => ({ ...f, purchaseDate: e.target.value }))}
+                    style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: "8px 10px", color: cs.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Catatan</div>
+                  <input type="text" placeholder="cth: nota 1123 · Toko Sinar Jaya · segel utuh" value={addUnitForm.notes}
+                    onChange={e => setAddUnitForm(f => ({ ...f, notes: e.target.value }))}
+                    style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: "8px 10px", color: cs.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
+                </div>
                 <button onClick={() => addUnit(item.code)}
                   style={{ background: cs.accent, border: "none", color: "#0a0f1e", padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12, whiteSpace: "nowrap" }}>
                   ✓ Simpan
                 </button>
               </div>
-              <div style={{ fontSize: 10, color: cs.muted, marginTop: 6 }}>Min Tampil: stok minimum agar unit masih terlihat oleh teknisi saat input laporan</div>
+              <div style={{ fontSize: 10, color: cs.muted, marginTop: 6 }}>
+                Min Tampil: stok minimum agar unit masih terlihat oleh teknisi saat input laporan ·
+                Tanggal Beli &amp; Catatan boleh dikosongkan, tapi sangat membantu saat mencocokkan pemakaian dengan nota
+              </div>
             </div>
           )}
 
@@ -1789,6 +1810,14 @@ return (
                       <div style={{ fontSize: 10, color: hiddenFromTek && unit.is_active ? "#f97316" : cs.muted, marginTop: 1 }}>
                         {!unit.is_active ? "⏸ Nonaktif" : hiddenFromTek ? "Tersembunyi teknisi" : "Aktif"}
                       </div>
+                      {unit.purchase_date && (
+                        <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>🧾 beli {unit.purchase_date}</div>
+                      )}
+                      {unit.notes && (
+                        <div title={unit.notes} style={{ fontSize: 10, color: cs.muted, marginTop: 1, maxWidth: 190, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          📝 {unit.notes}
+                        </div>
+                      )}
                     </div>
                     {/* Progress bar */}
                     <div style={{ flex: 1 }}>

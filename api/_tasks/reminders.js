@@ -412,27 +412,49 @@ export async function taskMaterialPulangReminder() {
     return { skipped: true };
   }
   const today = new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+  // Jendela 30 hari ke belakang, BUKAN hari ini saja. Versi lama memakai
+  // .eq("checkout_date", today) + flag pulang_reminder_sent, jadi teknisi yang
+  // melewatkan malam itu TIDAK PERNAH ditegur lagi — Boim 22 Agu 2026 menggantung
+  // 10 hari tanpa satu pun pengingat susulan. Sekarang ditagih tiap malam sampai beres.
+  const sejak = new Date(Date.now() + 7 * 3600 * 1000 - 30 * 86400000).toISOString().slice(0, 10);
   const { data: rows } = await sb.from("teknisi_material_checkout")
-    .select("id,teknisi_name,session_type,pulang_reminder_sent").eq("checkout_date", today);
-  const byTek = {};
+    .select("id,teknisi_name,checkout_date,session_type,confirm_status")
+    .gte("checkout_date", sejak).lte("checkout_date", today)
+    .in("session_type", ["pagi", "pulang"]);
+  const byHari = {};
   for (const r of rows || []) {
-    const t = (byTek[r.teknisi_name] ||= { name: r.teknisi_name });
-    if (r.session_type === "pagi") t.pagi = r; else if (r.session_type === "pulang") t.pulang = r;
+    const k = r.teknisi_name + "|" + r.checkout_date;
+    const t = (byHari[k] ||= { name: r.teknisi_name, tanggal: r.checkout_date });
+    if (r.session_type === "pagi") t.pagi = r; else t.pulang = r;
   }
-  // pagi ada, pulang belum, dan belum pernah di-reminder
-  const need = Object.values(byTek).filter(t => t.pagi && !t.pulang && !t.pagi.pulang_reminder_sent);
+  const umur = (d) => Math.round((new Date(today) - new Date(d)) / 86400000);
+  // Pagi terisi tapi pulang belum ada sama sekali. Sesi pagi yang DITOLAK tidak
+  // ditagih — itu keputusan admin bahwa materialnya tidak jadi dibawa.
+  const need = Object.values(byHari)
+    .filter(t => t.pagi && t.pagi.confirm_status !== "REJECTED" && !t.pulang)
+    .sort((a, b) => a.tanggal.localeCompare(b.tanggal));
   if (!need.length) {
-    await log("MATERIAL_PULANG_REMINDER", "Tidak ada teknisi yang belum konfirmasi pulang", "INFO");
+    await log("MATERIAL_PULANG_REMINDER", "Tidak ada hari yang belum lengkap dalam 30 hari terakhir", "INFO");
     return { checked: true, reminded: 0 };
   }
   const { data: profs } = await sb.from("user_profiles").select("name,phone");
   const phoneByName = Object.fromEntries((profs || []).filter(p => p.phone).map(p => [p.name, p.phone]));
-  const { data: ords } = await sb.from("orders").select("teknisi,helper,teknisi2,helper2,teknisi3,helper3").eq("date", today);
-  const msg = `🌙 *Belum Konfirmasi Material Pulang*\nMaterial yang dibawa hari ini (${today}) belum dicatat pengembaliannya.\n\nMohon segera isi *Material Pulang* di app (menu Material Harian) agar stok bisa dicocokkan & dikonfirmasi. — AClean`;
+  const tglUnik = [...new Set(need.map(t => t.tanggal))];
+  const { data: ords } = await sb.from("orders")
+    .select("date,teknisi,helper,teknisi2,helper2,teknisi3,helper3").in("date", tglUnik);
   let waCount = 0;
   for (const t of need) {
+    const hari = umur(t.tanggal);
+    // Nadanya menajam seiring umur — teguran yang sama tiap malam mudah diabaikan.
+    const judul = hari >= 2 ? "🔴 *SUDAH " + hari + " HARI — Material Pulang Belum Diisi*"
+                            : "🌙 *Belum Konfirmasi Material Pulang*";
+    const msg = `${judul}\nMaterial yang Anda bawa tanggal *${t.tanggal}*`
+      + (hari > 0 ? ` (${hari} hari lalu)` : " (hari ini)")
+      + ` belum dicatat pengembaliannya.\n\nStok belum bisa dipotong dan pemakaiannya belum masuk ke customer mana pun.`
+      + ` Mohon isi *Material Pulang* di app (menu Material Harian) untuk tanggal itu. — AClean`;
     const targets = new Set([t.name]);
     for (const o of ords || []) {
+      if (o.date !== t.tanggal) continue;   // rekan satu tim di HARI ITU, bukan hari ini
       const slots = [o.teknisi, o.helper, o.teknisi2, o.helper2, o.teknisi3, o.helper3];
       if (slots.includes(t.name)) slots.forEach(n => { if (n) targets.add(n); });
     }
@@ -440,11 +462,25 @@ export async function taskMaterialPulangReminder() {
       const ph = phoneByName[name];
       if (ph) { const ok = await sendWA(ph, msg); if (ok) waCount++; }
     }
-    if (t.pagi?.id) await sb.from("teknisi_material_checkout").update({ pulang_reminder_sent: true }).eq("id", t.pagi.id);
   }
-  if (OWNER_PHONE) await sendWA(OWNER_PHONE, `🌙 Reminder Material Pulang: ${need.length} teknisi belum konfirmasi (${today}). WA terkirim: ${waCount}.`);
-  await log("MATERIAL_PULANG_REMINDER", `Reminded ${need.length} teknisi, ${waCount} WA`, "SUCCESS");
-  return { reminded: need.length, waCount };
+  // Eskalasi Owner: yang lewat 2 hari disebut satu per satu, bukan sekadar dihitung.
+  // Angka telanjang ("5 teknisi belum konfirmasi") tidak bisa ditindaklanjuti —
+  // Owner perlu tahu SIAPA dan TANGGAL BERAPA supaya bisa langsung dibetulkan
+  // lewat "+ Input Mewakili Teknisi".
+  const basi = need.filter(t => umur(t.tanggal) >= 2);
+  if (OWNER_PHONE) {
+    let ow = `🌙 *Reminder Material Pulang*\n${need.length} hari-teknisi belum lengkap · WA terkirim: ${waCount}`;
+    if (basi.length) {
+      ow += `\n\n🔴 *${basi.length} sudah lewat 2 hari:*\n`
+        + basi.map(t => `• ${t.name} — ${t.tanggal} (${umur(t.tanggal)} hari)`).join("\n")
+        + `\n\nStok belum terpotong untuk hari-hari ini. Betulkan lewat Stok Material → Konfirmasi Material → "+ Input Mewakili Teknisi".`;
+    }
+    await sendWA(OWNER_PHONE, ow);
+  }
+  await log("MATERIAL_PULANG_REMINDER",
+    `${need.length} hari-teknisi belum lengkap (${basi.length} lewat 2 hari), ${waCount} WA terkirim`,
+    basi.length ? "WARNING" : "SUCCESS");
+  return { reminded: need.length, basi: basi.length, waCount };
 }
 
 // TASK 8: Weekly Report — Minggu 09:00 WIB (02:00 UTC)
