@@ -47,6 +47,13 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
   // pulang, jadi hari seperti itu dulu TIDAK MUNCUL di layar mana pun: barang sudah keluar
   // gudang tapi Owner/Admin tak punya tempat melihatnya (8 kejadian s/d 31 Agu 2026).
   const [pagiYatim, setPagiYatim] = useState([]);
+  // Sesi terarsip disembunyikan dari pandangan harian (migrasi 162) tapi TIDAK dikunci —
+  // Owner memilih sesi lama tetap bisa di-Buka Koreksi, jadi harus ada jalan melihatnya.
+  const [lihatArsip, setLihatArsip] = useState(false);
+  // supabase-js: penyaringan NULL memakai .is()/.not(), BUKAN .filter(col, op, null) —
+  // null di .filter() diserialkan jadi string dan penyaringnya diam-diam meleset.
+  // Pola ini sama dengan yang dipakai reads.js untuk deleted_at.
+  const saringArsip = (q) => (lihatArsip ? q.not("archived_at", "is", null) : q.is("archived_at", null));
   const [search, setSearch] = useState("");
   const [lastLoaded, setLastLoaded] = useState(0); // jejak kesegaran (tab tak realtime)
   // Seberapa jauh ke belakang job boleh dipilih untuk ditautkan ke material.
@@ -65,8 +72,8 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
     const myId = ++loadSeq.current;
     if (!silent) setLoading(true);
     // ── PULANG (model bawa−sisa) ──
-    const { data: puls } = await supabase.from("teknisi_material_checkout")
-      .select("*").eq("session_type", "pulang").eq("confirm_status", view)
+    const { data: puls } = await saringArsip(supabase.from("teknisi_material_checkout")
+      .select("*").eq("session_type", "pulang").eq("confirm_status", view))
       // Batas dinaikkan dari 60: tab "Selesai" sudah menyentuh 52 baris, dan begitu
       // lewat batas sesi terlama BERHENTI TAMPIL tanpa pesan apa pun — riwayat hilang diam-diam.
       .order("checkout_date", { ascending: false }).limit(300);
@@ -79,8 +86,8 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
     }
 
     // ── PAKAI (draft AI) ──
-    const { data: paks } = await supabase.from("teknisi_material_checkout")
-      .select("*").eq("session_type", "pakai").eq("confirm_status", view)
+    const { data: paks } = await saringArsip(supabase.from("teknisi_material_checkout")
+      .select("*").eq("session_type", "pakai").eq("confirm_status", view))
       .order("checkout_date", { ascending: false }).limit(300);
     const pakRows = paks || [];
 
@@ -153,8 +160,8 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
     let yatimRows = [];
     if (view !== "CONFIRMED") {
       const [{ data: pagis }, { data: kunciPulang }] = await Promise.all([
-        supabase.from("teknisi_material_checkout").select("*")
-          .eq("session_type", "pagi").eq("confirm_status", view)
+        saringArsip(supabase.from("teknisi_material_checkout").select("*")
+          .eq("session_type", "pagi").eq("confirm_status", view))
           .order("checkout_date", { ascending: false }).limit(300),
         supabase.from("teknisi_material_checkout").select("teknisi_name,checkout_date")
           .eq("session_type", "pulang"),
@@ -171,7 +178,7 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
       setLastLoaded(Date.now());
     }
     if (!silent) setLoading(false);
-  }, [supabase, view, fetchInventoryUnits, jobDays]);
+  }, [supabase, view, fetchInventoryUnits, jobDays, lihatArsip]);
   useEffect(() => { load(); }, [load]);
 
   // Live-ish refresh: tabel ini TIDAK di realtime publication, jadi tanpa ini daftar
@@ -592,6 +599,11 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
           {loading ? "⏳" : "🔄"} Segarkan
           {lastLoaded ? <span style={{ color: cs.muted, fontWeight: 400 }}>· {new Date(lastLoaded).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}</span> : null}
         </button>
+        <button onClick={() => setLihatArsip((v) => !v)}
+          title="Sesi lama yang sudah tuntas disembunyikan dari pandangan harian — tetap bisa dibuka & dikoreksi dari sini"
+          style={{ background: lihatArsip ? cs.yellow + "22" : cs.card, border: "1px solid " + (lihatArsip ? cs.yellow : cs.border), borderRadius: 8, padding: "5px 12px", color: lihatArsip ? cs.yellow : cs.muted, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+          📦 {lihatArsip ? "Sedang lihat Arsip" : "Arsip"}
+        </button>
         <div style={{ display: "flex", gap: 4, background: cs.surface, borderRadius: 8, padding: 3 }}>
           {[["PENDING", "Menunggu"], ["CONFIRMED", "Selesai"], ["REJECTED", "Ditolak"]].map(([v, lbl]) => (
             <button key={v} onClick={() => setView(v)} style={{ padding: "5px 12px", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer", background: view === v ? cs.accent : "transparent", color: view === v ? "#fff" : cs.muted }}>{lbl}</button>
@@ -599,6 +611,14 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
         </div>
         </div>
       </div>
+
+      {lihatArsip && (
+        <div style={{ background: cs.yellow + "12", border: "1px solid " + cs.yellow + "44", borderRadius: 9, padding: "9px 12px", fontSize: 12, color: cs.yellow, lineHeight: 1.55 }}>
+          📦 <b>Mode arsip</b> — menampilkan sesi lama yang sudah tuntas sebelum uji coba
+          admin-only (1 Sep 2026). Bukan dihapus dan tidak dikunci: Buka Koreksi tetap bisa dipakai.
+          Tekan tombol Arsip lagi untuk kembali ke pandangan harian.
+        </div>
+      )}
 
       {!emptyAll && (
         <input value={search} onChange={(e) => setSearch(e.target.value)}
@@ -664,7 +684,7 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
       )}
 
       {loading ? <div style={{ color: cs.muted, fontSize: 13, padding: 16 }}>Memuat…</div>
-        : empty ? <div style={{ color: cs.muted, fontSize: 13, padding: 16, textAlign: "center", background: cs.card, border: "1px solid " + cs.border, borderRadius: 12 }}>{q ? `Tidak ada hasil untuk "${search}".` : view === "PENDING" ? "Tidak ada yang menunggu konfirmasi." : view === "CONFIRMED" ? "Belum ada yang dikonfirmasi." : "Tidak ada sesi yang ditolak."}</div>
+        : empty ? <div style={{ color: cs.muted, fontSize: 13, padding: 16, textAlign: "center", background: cs.card, border: "1px solid " + cs.border, borderRadius: 12 }}>{q ? `Tidak ada hasil untuk "${search}".` : view === "PENDING" ? "Tidak ada yang menunggu konfirmasi." : view === "CONFIRMED" ? (lihatArsip ? "Tidak ada sesi terkonfirmasi di arsip." : "Belum ada yang dikonfirmasi sejak garis mulai — sesi lama ada di 📦 Arsip.") : (lihatArsip ? "Tidak ada sesi ditolak di arsip." : "Tidak ada sesi yang ditolak — yang lama ada di 📦 Arsip.")}</div>
         : <>
           {/* BELUM ADA LAPORAN PULANG — paling atas: barang sudah keluar tapi tak terhitung */}
           {shownYatim.map((row) => (
