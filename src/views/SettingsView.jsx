@@ -932,6 +932,56 @@ const d = await r.json();
         {/* ══ OTOMASI ═════════════════════════════════════════════════════════ */}
         {activeTab === "otomasi" && (<>
 
+        {/* Material Harian — kendali siapa yang boleh mengisi */}
+        <Card>
+          <CardHeader icon="📥" title="Material Harian Teknisi" subtitle="Siapa yang mengisi material pagi & pulang" />
+          {(() => {
+            // Default AKTIF: hanya "false" eksplisit yang mematikan. Kalau key belum ada
+            // atau gagal terbaca, teknisi TIDAK ikut terkunci diam-diam.
+            const isOn = appSettings.material_harian_teknisi_enabled !== "false";
+            return (
+              <>
+                <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 0" }}>
+                  <span style={{ fontSize: 18, minWidth: 24 }}>{isOn ? "👷" : "🔒"}</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 700, color: isOn ? cs.text : cs.muted, fontSize: 13 }}>
+                      Teknisi &amp; Helper boleh isi Material Harian
+                    </div>
+                    <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>
+                      {isOn
+                        ? "Teknisi mengisi sendiri material pagi & pulang lewat app-nya. Admin tetap bisa mengoreksi dan mengisi mewakili."
+                        : "Menu Material Harian DISEMBUNYIKAN dari teknisi & helper. Seluruh input hanya lewat Stok Material → Konfirmasi Material → “+ Input Mewakili Teknisi”."}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: isOn ? cs.green : cs.yellow, minWidth: 24 }}>{isOn ? "ON" : "OFF"}</span>
+                    <div onClick={async () => {
+                      const newVal = isOn ? "false" : "true";
+                      setAppSettings(prev => ({ ...prev, material_harian_teknisi_enabled: newVal }));
+                      await supabase.from("app_settings")
+                        .upsert({ key: "material_harian_teknisi_enabled", value: newVal }, { onConflict: "key" });
+                      showNotif(isOn
+                        ? "🔒 Material Harian disembunyikan dari teknisi — semua input lewat admin"
+                        : "✅ Material Harian dikembalikan ke teknisi & helper");
+                    }}
+                      style={{ width: 44, height: 24, borderRadius: 99, background: isOn ? "linear-gradient(135deg," + cs.green + ",#059669)" : cs.surface, border: "1px solid " + (isOn ? cs.green : cs.yellow), cursor: "pointer", position: "relative", transition: "all .2s" }}>
+                      <div style={{ position: "absolute", width: 18, height: 18, borderRadius: "50%", background: "#fff", top: 2, left: isOn ? 22 : 2, transition: "left .2s", boxShadow: "0 1px 3px #0004" }} />
+                    </div>
+                  </div>
+                </div>
+                {!isOn && (
+                  <div style={{ padding: "10px 12px", background: cs.yellow + "12", border: "1px solid " + cs.yellow + "44", borderRadius: 8, fontSize: 11, color: cs.yellow, lineHeight: 1.6 }}>
+                    ⚠️ <b>Mode uji coba — semua input di tangan admin.</b> Yang perlu diawasi selama percobaan:
+                    reminder WA “Material Pulang” tidak lagi punya sasaran teknisi, dan tabung/roll fisik
+                    serta sisa akhir hari harus admin pastikan sendiri (mis. dari foto grup).
+                    Kembalikan ke ON kapan saja — data yang sudah masuk tidak terpengaruh.
+                  </div>
+                )}
+              </>
+            );
+          })()}
+        </Card>
+
         {/* WA Auto-Reply */}
         <Card>
           <CardHeader icon="💬" title="Pengaturan WA Auto-Reply" subtitle="Kontrol auto-reply & notifikasi masuk tanpa ubah kode" />

@@ -405,7 +405,8 @@ export async function taskLaporanStaleAlert() {
 // Teknisi yang pagi-nya catat material tapi belum input "pulang" → WA ke teknisi + helper job-nya.
 // ══════════════════════════════════════════════════
 export async function taskMaterialPulangReminder() {
-  const { data: togData } = await sb.from("app_settings").select("key,value").in("key", ["material_pulang_reminder_enabled", "cron_jobs"]);
+  const { data: togData } = await sb.from("app_settings").select("key,value")
+    .in("key", ["material_pulang_reminder_enabled", "material_harian_teknisi_enabled", "cron_jobs"]);
   const togMap = Object.fromEntries((togData || []).map(s => [s.key, s.value]));
   if (!isCronJobEnabled(togMap, "material_pulang_reminder_enabled") || togMap["material_pulang_reminder_enabled"] !== "true") {
     await log("MATERIAL_PULANG_REMINDER", "Dilewati — material_pulang_reminder_enabled OFF", "INFO");
@@ -437,6 +438,10 @@ export async function taskMaterialPulangReminder() {
     await log("MATERIAL_PULANG_REMINDER", "Tidak ada hari yang belum lengkap dalam 30 hari terakhir", "INFO");
     return { checked: true, reminded: 0 };
   }
+  // Kalau Material Harian disembunyikan dari teknisi, menyuruh mereka "isi di app"
+  // adalah instruksi yang mustahil dijalankan — menunya tidak ada. Dalam mode itu
+  // tagihan diarahkan ke Owner saja, karena admin yang memegang seluruh input.
+  const teknisiBolehIsi = togMap["material_harian_teknisi_enabled"] !== "false";
   const { data: profs } = await sb.from("user_profiles").select("name,phone");
   const phoneByName = Object.fromEntries((profs || []).filter(p => p.phone).map(p => [p.name, p.phone]));
   const tglUnik = [...new Set(need.map(t => t.tanggal))];
@@ -452,6 +457,7 @@ export async function taskMaterialPulangReminder() {
       + (hari > 0 ? ` (${hari} hari lalu)` : " (hari ini)")
       + ` belum dicatat pengembaliannya.\n\nStok belum bisa dipotong dan pemakaiannya belum masuk ke customer mana pun.`
       + ` Mohon isi *Material Pulang* di app (menu Material Harian) untuk tanggal itu. — AClean`;
+    if (!teknisiBolehIsi) continue;   // ringkasan ke Owner di bawah tetap jalan
     const targets = new Set([t.name]);
     for (const o of ords || []) {
       if (o.date !== t.tanggal) continue;   // rekan satu tim di HARI ITU, bukan hari ini
@@ -469,7 +475,9 @@ export async function taskMaterialPulangReminder() {
   // lewat "+ Input Mewakili Teknisi".
   const basi = need.filter(t => umur(t.tanggal) >= 2);
   if (OWNER_PHONE) {
-    let ow = `🌙 *Reminder Material Pulang*\n${need.length} hari-teknisi belum lengkap · WA terkirim: ${waCount}`;
+    let ow = `🌙 *Reminder Material Pulang*\n${need.length} hari-teknisi belum lengkap`
+      + (teknisiBolehIsi ? ` · WA terkirim: ${waCount}`
+                         : ` · mode admin-only, WA ke teknisi TIDAK dikirim`);
     if (basi.length) {
       ow += `\n\n🔴 *${basi.length} sudah lewat 2 hari:*\n`
         + basi.map(t => `• ${t.name} — ${t.tanggal} (${umur(t.tanggal)} hari)`).join("\n")

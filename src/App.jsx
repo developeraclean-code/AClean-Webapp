@@ -2372,8 +2372,15 @@ export default function ACleanWebApp() {
     // Teknisi & Helper: dashboard, jadwal, laporan sendiri, material harian, + Komisi Saya (dilindungi PIN
     // per-teknisi bila Owner set commission_pin — layer-2 anti "intip" data keuangan sensitif)
     // + Panduan (tutorial in-app statis, khusus Teknisi/Helper — lihat PanduanView.jsx)
-    if (role === "Teknisi" || role === "Helper")
+    if (role === "Teknisi" || role === "Helper") {
+      // Uji coba Owner 1 Sep 2026: Material Harian bisa disembunyikan dari teknisi/helper
+      // supaya SELURUH input pipa/kabel/freon lewat admin ("+ Input Mewakili Teknisi").
+      // Sengaja toggle, bukan hapus kode — percobaan seminggu, dan dikembalikan cukup
+      // dari Pengaturan tanpa deploy ulang. Default ON: kalau key hilang/gagal dibaca,
+      // teknisi TIDAK ikut terkunci diam-diam.
+      if (menu === "matcheckout" && appSettings?.material_harian_teknisi_enabled === "false") return false;
       return menu === "dashboard" || menu === "schedule" || menu === "myreport" || menu === "matcheckout" || menu === "alatsaya" || menu === "komisi" || menu === "panduan" || menu === "tatatertib";
+    }
     // Finance: akses finance hub, invoice, biaya, statistik
     if (role === "Finance")
       return ["finance", "invoice", "biaya", "reports"].includes(menu);
