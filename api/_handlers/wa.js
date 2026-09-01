@@ -1320,6 +1320,28 @@ export async function receiveWa(req, res) {
       const nowIso = new Date().toISOString();
       const senderName = sanitizeName(wb.name || ("+" + sender));
 
+      // ── Pengirim nomor internal (admin/teknisi/helper)? ──
+      // Bukti transfer dari nomor sendiri BUKAN pembayaran customer: itu transfer pribadi
+      // atau operasional. Terbukti di data 1 Sep 2026 — 23 saran pembayaran berasal dari
+      // nomor internal (Yola 7x dengan nominal 20.605/40.000/45.000/50.000, dll) dan
+      // NOL di antaranya pernah tertaut ke invoice. Semuanya hanya menyumbat antrean.
+      // Dihitung sekali di sini supaya tidak menambah query di tiap cabang.
+      let senderIsInternal = false;
+      try {
+        const iv = buildPhoneVariants(sender);
+        const ivFilter = iv.map((p2) => "phone.eq." + encodeURIComponent(p2)).join(",");
+        const ipRes = await fetch(
+          SU + "/rest/v1/user_profiles?select=id,name,role&or=(" + ivFilter + ")&limit=1",
+          { headers: { apikey: SK, Authorization: "Bearer " + SK } });
+        if (ipRes.ok) {
+          const rows = await ipRes.json();
+          if (rows && rows.length > 0) senderIsInternal = true;
+        }
+      } catch (_) {
+        // Gagal cek = anggap BUKAN internal. Lebih baik satu baris kebisingan lolos
+        // daripada bukti bayar customer yang asli ikut terbuang karena query gagal.
+      }
+
       // ── Save inbound message ke wa_messages (schema: phone,name,content,role,created_at) ──
       // Simpan created_at sebagai anchor agar image classifier bisa PATCH record yang tepat
       const msgCreatedAt = nowIso;
@@ -1435,6 +1457,24 @@ export async function receiveWa(req, res) {
                         const ords = await ordRes.json(); if (ords?.length > 0) matchedOrderId = ords[0].id;
                       }
                     } catch(_) {}
+                    // Gerbang sama seperti jalur gambar: nomor internal tidak membuat saran
+                    // pembayaran. Kalau hanya jalur gambar yang dijaga, teks bukti transfer
+                    // dari staf tetap lolos dan antreannya kotor lagi.
+                    if (senderIsInternal) {
+                      console.log("[PAY_SKIP_INTERNAL_TEXT]", sender, senderName, extracted.amount);
+                      fetch(SU + "/rest/v1/agent_logs", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
+                        body: JSON.stringify({
+                          action: "PAY_SUGGEST_SKIP_INTERNAL",
+                          detail: `Teks bukti transfer dari nomor internal ${senderName} (${sender}) diabaikan — bukan pembayaran customer. Nominal: ${extracted.amount || "?"}`,
+                          status: "INFO",
+                          metadata: { phone: sender, sender_name: senderName, amount: extracted.amount,
+                                      bank: extracted.bank, raw_message: (message || "").slice(0, 300) },
+                          created_at: nowIso,
+                        }),
+                      }).catch(() => {});
+                    } else {
                     criticalFetch("payment_suggestion_text_insert", SU + "/rest/v1/payment_suggestions", {
                       method: "POST",
                       headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
@@ -1461,6 +1501,7 @@ export async function receiveWa(req, res) {
                         body: JSON.stringify({ target: OP, message: ownerNotif, delay: "1", countryCode: "62" })
                       }).catch(() => {});
                     }
+                    }   // ← tutup: if (senderIsInternal) ... else { insert + notif owner }
                   }
                 }
               }
@@ -2132,6 +2173,25 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                       console.warn("[PAY_AUTO_PATCH] Bukti transfer tersimpan di R2 tapi invoice tidak ditemukan untuk", sender, savedImageUrl);
                     }
 
+                    // Nomor internal: jangan buat saran pembayaran, tapi JANGAN pula dibuang
+                    // diam-diam — kalau ternyata staf meneruskan bukti bayar customer, harus
+                    // masih bisa ditemukan. Jejaknya disimpan di agent_logs lengkap dengan
+                    // foto & nominalnya. Foto R2-nya sendiri sudah tersimpan lebih dulu.
+                    if (senderIsInternal) {
+                      console.log("[PAY_SKIP_INTERNAL]", sender, senderName, classified.amount);
+                      await fetch(SU + "/rest/v1/agent_logs", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
+                        body: JSON.stringify({
+                          action: "PAY_SUGGEST_SKIP_INTERNAL",
+                          detail: `Bukti transfer dari nomor internal ${senderName} (${sender}) diabaikan — bukan pembayaran customer. Nominal: ${classified.amount || "?"}`,
+                          status: "INFO",
+                          metadata: { phone: sender, sender_name: senderName, amount: classified.amount,
+                                      bank: classified.bank, image_url: savedImageUrl || mediaUrl },
+                          created_at: nowIso,
+                        }),
+                      }).catch(() => {});
+                    } else {
                     // Simpan ke payment_suggestions — await + log error supaya tidak silent fail
                     try {
                       const psRes = await fetch(SU + "/rest/v1/payment_suggestions", {
@@ -2206,6 +2266,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                         body: JSON.stringify({ target: OP, message: ownerNotifImg, delay: "1", countryCode: "62" })
                       }).catch(() => {});
                     }
+                    }   // ← tutup: if (senderIsInternal) ... else { insert + notif owner }
 
                     // ── REVERSE FLOW: auto-forward bukti TF ke grup yang ditandai ai_forward_target ──
                     // Confidence: HIGH = amount + bank + match invoice, MEDIUM = amount only
