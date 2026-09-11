@@ -11,6 +11,7 @@ import {
 } from "../lib/bonus.js";
 import { buildBonusRekap } from "../lib/bonusRekap.js";
 import { invoiceMaterialCostHPP } from "../lib/hpp.js";
+import { bonusEditChanges, buildBonusEditPayload } from "../lib/bonusEdit.js";
 import { downloadCsv, printDocument, htmlTable, rp, fmtTanggal, escapeHtml } from "../lib/exportUtils.js";
 import BonusRekapPanel from "./BonusRekapPanel.jsx";
 import {
@@ -546,10 +547,13 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
   const [loadingBonus, setLoadingBonus] = useState(false);
   const [openBonusIds, setOpenBonusIds] = useState(() => new Set()); // order2 yg panel input bonusnya terbuka (multi, inline)
   const [voidForm, setVoidForm]         = useState(null); // { id, reason }
+  const [editBonusForm, setEditBonusForm] = useState(null);
+  const [editBonusSaving, setEditBonusSaving] = useState(false);
   const [dismissForm, setDismissForm]   = useState(null); // { orderId, reason } — tandai order tidak dapat bonus
   const [bonusFilter, setBonusFilter]   = useState("ALL"); // ALL|PENDING|ELIGIBLE|PAID|VOID
 
   const isOwner = currentUser?.role === "Owner";
+  const bolehEditBonus = currentUser?.role === "Owner" || currentUser?.role === "Admin";
   // Uang keluar (mark gaji/komisi dibayar) & pembatalan (void) = Admin DIBLOK (anti-fraud).
   // Owner & Finance tetap boleh (peran keuangan sah). Admin lihat penanda 🔒.
   const bolehBayar = currentUser?.role === "Owner" || currentUser?.role === "Finance";
@@ -985,6 +989,76 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
     closeBonusCard(orderRow.id);
     loadBonuses();
     showNotif?.(`✅ ${ok} bonus disimpan${skipped ? `, ${skipped} dilewati (sudah ada)` : ""}${fail ? `, ${fail} gagal` : ""}. Status: PENDING`);
+  };
+
+  // ── Revisi bonus yang sudah diinput — khusus Owner/Admin ──
+  // Status PAID/paid_at sengaja tidak disentuh: revisi memperbaiki detail bonus,
+  // bukan membatalkan pembayaran. Perubahan sesudah bayar diberi warning + audit.
+  const openBonusEdit = (bonus) => {
+    if (!bolehEditBonus || bonus?.bonus_type === "dismissed" || bonus?.status === "VOID") return;
+    setEditBonusForm({
+      id: bonus.id,
+      bonus_type: bonus.bonus_type,
+      total_amount: String(bonus.total_amount ?? ""),
+      team_members: [...(bonus.team_members || [])],
+      note: bonus.note || "",
+      gross_revenue: bonus.gross_revenue == null ? "" : String(bonus.gross_revenue),
+      material_cost: bonus.material_cost == null ? "" : String(bonus.material_cost),
+      material_cost_source: bonus.material_cost_source || "manual",
+    });
+  };
+
+  const handleSaveBonusEdit = async () => {
+    const before = bonuses.find(b => b.id === editBonusForm?.id);
+    if (!before || !bolehEditBonus) return;
+
+    let payload;
+    try {
+      payload = buildBonusEditPayload(editBonusForm);
+    } catch (error) {
+      showNotif?.("❌ " + error.message);
+      return;
+    }
+
+    const changes = bonusEditChanges(before, payload);
+    if (changes.length === 0) {
+      setEditBonusForm(null);
+      showNotif?.("ℹ️ Tidak ada perubahan bonus");
+      return;
+    }
+
+    const save = async () => {
+      setEditBonusSaving(true);
+      try {
+        const { error } = await updateOrderBonus(supabase, before.id, payload);
+        if (error) throw error;
+        addAgentLog?.(
+          "BONUS_EDIT",
+          `Bonus [${before.order_id || "-"}] direvisi oleh ${currentUser?.name || "-"}: ${changes.join("; ")}`,
+          before.status === "PAID" ? "WARNING" : "INFO",
+        );
+        setEditBonusForm(null);
+        await loadBonuses();
+        showNotif?.("✅ Bonus berhasil direvisi");
+      } catch (error) {
+        const duplicate = String(error?.message || "").toLowerCase().includes("duplicate");
+        showNotif?.(duplicate
+          ? "❌ Jenis bonus tersebut sudah ada untuk order ini"
+          : "❌ Gagal revisi bonus: " + (error?.message || "unknown error"));
+      } finally {
+        setEditBonusSaving(false);
+      }
+    };
+
+    if (before.status === "PAID" && showConfirm) {
+      showConfirm({
+        message: `Bonus ini sudah dibayar. Revisi akan mengubah rekap historis dan pembagian per orang, tetapi tidak melakukan transfer/klaim balik otomatis.\n\nLanjutkan revisi?`,
+        confirmText: "Ya, Simpan Revisi",
+        onConfirm: save,
+      });
+      return;
+    }
+    await save();
   };
 
   // ── Void bonus ──
@@ -1731,9 +1805,28 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                       <div style={{ fontSize: 11, color: cs.muted }}>Total Tim</div>
                       <div style={{ fontWeight: 800, fontSize: 16, color: cs.accent }}>{fmtRp(b.total_amount)}</div>
                       <div style={{ fontSize: 11, color: cs.muted }}>÷{b.member_count || 1} = {fmtRp(b.amount_per_person)}/org</div>
+                      {bolehEditBonus && est !== "VOID" && (
+                        <button onClick={() => editBonusForm?.id === b.id ? setEditBonusForm(null) : openBonusEdit(b)}
+                          style={{ marginTop: 7, padding: "5px 12px", borderRadius: 7, background: editBonusForm?.id === b.id ? cs.surface : cs.yellow + "18", border: "1px solid " + cs.yellow + "66", color: cs.yellow, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
+                          {editBonusForm?.id === b.id ? "✕ Tutup Edit" : "✏️ Edit Bonus"}
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
+                {editBonusForm?.id === b.id && (
+                  <BonusEditForm
+                    form={editBonusForm}
+                    setForm={setEditBonusForm}
+                    memberOptions={[...new Set([...(teknisiData || []).map(t => t.name), ...(b.team_members || [])])].filter(Boolean)}
+                    bonusCategories={bonusCategories}
+                    bonusLabels={BONUS_LABELS}
+                    saving={editBonusSaving}
+                    paid={b.status === "PAID"}
+                    onSave={handleSaveBonusEdit}
+                    onCancel={() => setEditBonusForm(null)}
+                  />
+                )}
                 {/* Actions */}
                 {(est === "PENDING" || est === "ELIGIBLE") && (
                   <div style={{ display: "flex", gap: 8, marginTop: 10, borderTop: "1px solid " + cs.border, paddingTop: 10, alignItems: "center" }}>
@@ -1936,6 +2029,105 @@ function getInstallCumulative(ordersData, date, teamMembers) {
   const totalUnits = relevant.reduce((s, o) => s + (Number(o.units) || 0), 0);
   const tier = totalUnits >= 4 ? "install_4" : totalUnits >= 3 ? "install_3" : totalUnits >= 2 ? "install_2" : null;
   return { totalUnits, tier, orderIds: relevant.map(o => o.id) };
+}
+
+function BonusEditForm({ form, setForm, memberOptions, bonusCategories, bonusLabels, saving, paid, onSave, onCancel }) {
+  const typeOptions = [...new Set([
+    form.bonus_type,
+    ...(bonusCategories || []).map(category => category.id),
+  ].filter(type => type && type !== "dismissed"))];
+  const isMargin = String(form.bonus_type || "").startsWith("margin_");
+  const memberCount = form.team_members.length;
+  const amountPerPerson = memberCount > 0 ? Number(form.total_amount || 0) / memberCount : 0;
+  const update = (fields) => setForm(previous => ({ ...previous, ...fields }));
+  const toggleMember = (name) => update({
+    team_members: form.team_members.includes(name)
+      ? form.team_members.filter(member => member !== name)
+      : [...form.team_members, name],
+  });
+
+  return (
+    <div style={{ marginTop: 12, padding: 14, background: cs.surface, border: "1px solid " + cs.yellow + "66", borderRadius: 10 }}>
+      <div style={{ fontWeight: 800, fontSize: 13, color: cs.yellow, marginBottom: 4 }}>✏️ Revisi Bonus</div>
+      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 12 }}>
+        UUID bonus dan status pembayaran tetap dipertahankan. Nilai per orang dihitung ulang otomatis.
+      </div>
+
+      {paid && (
+        <div style={{ padding: "8px 10px", marginBottom: 10, borderRadius: 7, background: cs.red + "14", border: "1px solid " + cs.red + "55", color: "#fca5a5", fontSize: 11, lineHeight: 1.5 }}>
+          ⚠️ Bonus ini sudah dibayar. Revisi mengubah rekap historis, tetapi tidak mengirim atau menarik uang otomatis.
+        </div>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(170px,1fr) minmax(150px,1fr)", gap: 10 }}>
+        <label style={{ fontSize: 11, color: cs.muted }}>
+          Jenis Bonus
+          <select value={form.bonus_type} onChange={event => update({ bonus_type: event.target.value })}
+            style={{ width: "100%", marginTop: 4, padding: "7px 9px", borderRadius: 7, border: "1px solid " + cs.border, background: cs.card, color: cs.text, fontSize: 12 }}>
+            {typeOptions.map(type => <option key={type} value={type}>{bonusLabels[type] || type}</option>)}
+          </select>
+        </label>
+        <label style={{ fontSize: 11, color: cs.muted }}>
+          Total Bonus Tim (Rp)
+          <input type="number" min="1" step="1000" value={form.total_amount}
+            onChange={event => update({ total_amount: event.target.value })}
+            style={{ width: "100%", marginTop: 4, padding: "7px 9px", borderRadius: 7, border: "1px solid " + cs.border, background: cs.card, color: cs.text, fontSize: 12, boxSizing: "border-box" }} />
+        </label>
+      </div>
+
+      {isMargin && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
+          <label style={{ fontSize: 11, color: cs.muted }}>
+            Omset / Invoice (Rp)
+            <input type="number" min="0" value={form.gross_revenue} onChange={event => update({ gross_revenue: event.target.value })}
+              style={{ width: "100%", marginTop: 4, padding: "7px 9px", borderRadius: 7, border: "1px solid " + cs.border, background: cs.card, color: cs.text, fontSize: 12, boxSizing: "border-box" }} />
+          </label>
+          <label style={{ fontSize: 11, color: cs.muted }}>
+            Biaya Material (Rp)
+            <input type="number" min="0" value={form.material_cost} onChange={event => update({ material_cost: event.target.value, material_cost_source: "manual" })}
+              style={{ width: "100%", marginTop: 4, padding: "7px 9px", borderRadius: 7, border: "1px solid " + cs.border, background: cs.card, color: cs.text, fontSize: 12, boxSizing: "border-box" }} />
+          </label>
+        </div>
+      )}
+
+      <div style={{ marginTop: 10 }}>
+        <div style={{ fontSize: 11, color: cs.muted, marginBottom: 6 }}>Tim yang menerima bonus</div>
+        <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+          {memberOptions.map(name => {
+            const selected = form.team_members.includes(name);
+            return (
+              <label key={name} style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", background: selected ? cs.accent + "18" : cs.card, border: "1px solid " + (selected ? cs.accent : cs.border), borderRadius: 6, padding: "5px 9px", fontSize: 11, color: cs.text }}>
+                <input type="checkbox" checked={selected} onChange={() => toggleMember(name)} />
+                {name}
+              </label>
+            );
+          })}
+        </div>
+      </div>
+
+      <label style={{ display: "block", fontSize: 11, color: cs.muted, marginTop: 10 }}>
+        Catatan
+        <input value={form.note} onChange={event => update({ note: event.target.value })}
+          placeholder="Alasan/keterangan revisi"
+          style={{ width: "100%", marginTop: 4, padding: "7px 9px", borderRadius: 7, border: "1px solid " + cs.border, background: cs.card, color: cs.text, fontSize: 12, boxSizing: "border-box" }} />
+      </label>
+
+      <div style={{ marginTop: 10, padding: "7px 10px", borderRadius: 7, background: cs.card, color: cs.muted, fontSize: 11 }}>
+        Preview: {fmtRp(Number(form.total_amount || 0))} ÷ {memberCount || 0} orang = <strong style={{ color: cs.accent }}>{memberCount ? fmtRp(amountPerPerson) : "pilih tim"}/orang</strong>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <button onClick={onSave} disabled={saving}
+          style={{ padding: "7px 16px", borderRadius: 7, background: cs.yellow, border: "none", color: "#111827", cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.6 : 1, fontSize: 12, fontWeight: 800 }}>
+          {saving ? "Menyimpan…" : "💾 Simpan Revisi"}
+        </button>
+        <button onClick={onCancel} disabled={saving}
+          style={{ padding: "7px 14px", borderRadius: 7, background: "transparent", border: "1px solid " + cs.border, color: cs.muted, cursor: saving ? "not-allowed" : "pointer", fontSize: 12 }}>
+          Batal
+        </button>
+      </div>
+    </div>
+  );
 }
 
 // Form input bonus per order — MULTI-KATEGORI (1 order bisa dapat >1 bonus, mis. Freon + Kapasitor).
