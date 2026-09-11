@@ -36,7 +36,7 @@ function OfficeToolsView({ supabase, currentUser, showNotif, showConfirm }) {
       const row = {
         nama: form.nama.trim(), kategori: form.kategori || "Umum",
         qty: parseInt(form.qty, 10) || 1, kondisi: form.kondisi || "baik",
-        catatan: form.catatan || "", updated_at: new Date().toISOString(),
+        catatan: (form.catatan || "").trim(), updated_at: new Date().toISOString(),
       };
       if (form.id) { const { error } = await supabase.from("office_tools").update(row).eq("id", form.id); if (error) throw error; }
       else { const { error } = await supabase.from("office_tools").insert(row); if (error) throw error; }
@@ -84,7 +84,14 @@ function OfficeToolsView({ supabase, currentUser, showNotif, showConfirm }) {
               return (
                 <>
                   <tr key={t.id} style={{ borderTop: "1px solid " + cs.border, background: i % 2 ? cs.surface + "80" : "transparent" }}>
-                    <td style={{ ...td, fontWeight: 600 }}>{t.nama}</td>
+                    <td style={{ ...td, fontWeight: 600 }}>
+                      <div>{t.nama}</div>
+                      {t.catatan && (
+                        <div style={{ color: cs.muted, fontSize: 11, fontWeight: 400, marginTop: 3, maxWidth: 280, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+                          {t.catatan}
+                        </div>
+                      )}
+                    </td>
                     <td style={{ ...td, color: cs.muted, fontSize: 12 }}>{t.kategori}</td>
                     <td style={td}>{st.total}</td>
                     <td style={{ ...td, fontWeight: 700, color: st.available > 0 ? "#10b981" : cs.red }}>{st.available}</td>
@@ -131,7 +138,16 @@ function OfficeToolsView({ supabase, currentUser, showNotif, showConfirm }) {
                 <div><div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Jumlah Unit</div><input type="number" min={1} value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} style={inp} /></div>
               </div>
               <div><div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Kondisi</div><select value={form.kondisi} onChange={(e) => setForm({ ...form, kondisi: e.target.value })} style={inp}>{KON_OPT.map((k) => <option key={k} value={k}>{k}</option>)}</select></div>
-              <div><div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Catatan</div><input value={form.catatan} onChange={(e) => setForm({ ...form, catatan: e.target.value })} style={inp} placeholder="opsional" /></div>
+              <div>
+                <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Note</div>
+                <textarea
+                  value={form.catatan}
+                  onChange={(e) => setForm({ ...form, catatan: e.target.value })}
+                  style={{ ...inp, minHeight: 82, resize: "vertical", fontFamily: "inherit", lineHeight: 1.45 }}
+                  placeholder="Catatan tambahan atau keterangan barang (opsional)"
+                  rows={3}
+                />
+              </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10, marginTop: 16 }}>
               <button onClick={() => setForm(null)} disabled={busy} style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: 11, borderRadius: 10, cursor: "pointer", fontWeight: 600 }}>Batal</button>
