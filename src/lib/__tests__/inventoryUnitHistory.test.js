@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { transactionsForInventoryUnit } from "../inventoryUnitHistory.js";
+import { shortInventoryUnitId, transactionsForInventoryUnit } from "../inventoryUnitHistory.js";
 
 const oldUnit = {
   id: "unit-old",
@@ -55,5 +55,12 @@ describe("transactionsForInventoryUnit", () => {
     const tx = { id: "legacy", inventory_code: "SKU009", unit_label: oldUnit.unit_label };
 
     expect(transactionsForInventoryUnit(tanpaWaktu, [tanpaWaktu, newUnit], [tx])).toEqual([]);
+  });
+});
+
+describe("shortInventoryUnitId", () => {
+  it("membuat penanda singkat tanpa mengganti UUID sumber", () => {
+    expect(shortInventoryUnitId("a4765a2c-b89a-4262-bf9d-9edb2c4a66b1")).toBe("A4765A");
+    expect(shortInventoryUnitId(null)).toBe("—");
   });
 });

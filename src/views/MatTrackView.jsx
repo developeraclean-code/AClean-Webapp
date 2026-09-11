@@ -9,7 +9,7 @@ import { detectKind, KIND_META, qtyEfektif, cocokkanKePagi, pisahkanItemLink, na
 import MaterialConfirmTab from "./MaterialConfirmTab.jsx";
 import MaterialBroughtRecapTab from "./MaterialBroughtRecapTab.jsx";
 import { downloadCsv } from "../lib/exportUtils.js";
-import { transactionsForInventoryUnit } from "../lib/inventoryUnitHistory.js";
+import { shortInventoryUnitId, transactionsForInventoryUnit } from "../lib/inventoryUnitHistory.js";
 
 // ───────────────────────────────────────────────
 // Pending AI Material — manual approve only (no auto-insert)
@@ -1867,7 +1867,7 @@ return (
                       )}
                       {unit.created_at && (
                         <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }} title="Waktu input ini membedakan lifecycle unit meskipun labelnya dipakai kembali">
-                          🆔 diinput {new Date(unit.created_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}
+                          🆔 Unit #{shortInventoryUnitId(unit.id)} · diinput {new Date(unit.created_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}
                         </div>
                       )}
                       {unit.notes && (
@@ -2048,7 +2048,7 @@ return (
                           <div style={{ flex: 1 }}>
                             <div style={{ fontSize: 12, fontWeight: 600, color: cs.muted }}>🗄 {unit.unit_label}</div>
                             <div style={{ fontSize: 10, color: cs.muted }}>Diarsipkan {unit.archived_at ? new Date(unit.archived_at).toLocaleDateString("id-ID") : ""}{unit.archived_reason ? " · " + unit.archived_reason : ""}</div>
-                            {unit.created_at && <div style={{ fontSize: 10, color: cs.muted }}>ID lifecycle · diinput {new Date(unit.created_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</div>}
+                            {unit.created_at && <div style={{ fontSize: 10, color: cs.muted }}>🆔 Unit #{shortInventoryUnitId(unit.id)} · diinput {new Date(unit.created_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</div>}
                           </div>
                           <span style={{ fontSize: 11, color: cs.muted }}>{parseFloat((unit.stock||0).toFixed(1))} {item.unit}</span>
                           <button onClick={() => setHistoryUnitId(isShowingHistory ? null : unit.id)}

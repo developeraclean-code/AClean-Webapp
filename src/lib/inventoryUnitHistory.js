@@ -3,6 +3,13 @@
 
 const norm = (value) => String(value || "").trim().toLowerCase();
 
+// ID pendek hanya untuk membantu manusia membedakan unit berlabel sama.
+// Relasi database tetap selalu memakai UUID lengkap.
+export const shortInventoryUnitId = (id) => {
+  const compact = String(id || "").replace(/-/g, "").trim();
+  return compact ? compact.slice(0, 6).toUpperCase() : "—";
+};
+
 const timeOf = (row) => {
   const raw = row?.created_at || row?.job_date;
   if (!raw) return null;
