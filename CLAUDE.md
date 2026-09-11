@@ -251,6 +251,11 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
 154       # Applied 28 Agu 2026 — trigger trg_guard_inventory_price: hanya Owner/Admin boleh
           #   ubah price/purchase_price/pack_* (policy `inventory_all` blanket authenticated
           #   — teknisi TERBUKTI bisa menulis; stok tetap bebas agar potong stok jalan)
+155-163   # Applied Agu-Sep 2026 — skema insentif 2025, tutup payment suggestion basi,
+          #   sinkron stok unit, approval expense, baseline timbang freon, metadata unit,
+          #   koreksi label tabung, dan penutupan sesi material lama
+164       # Applied 11 Sep 2026 — 10 komisi order s/d 30 Apr 2026 ditandai PAID manual;
+          #   paid_at historis 30 Apr agar tidak masuk arus kas/payroll minggu berjalan
 ```
 
 > Daftar di atas pernah tertinggal jauh (berhenti di 126 padahal file sudah 132).
