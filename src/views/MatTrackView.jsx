@@ -9,6 +9,7 @@ import { detectKind, KIND_META, qtyEfektif, cocokkanKePagi, pisahkanItemLink, na
 import MaterialConfirmTab from "./MaterialConfirmTab.jsx";
 import MaterialBroughtRecapTab from "./MaterialBroughtRecapTab.jsx";
 import { downloadCsv } from "../lib/exportUtils.js";
+import { transactionsForInventoryUnit } from "../lib/inventoryUnitHistory.js";
 
 // ───────────────────────────────────────────────
 // Pending AI Material — manual approve only (no auto-insert)
@@ -1864,6 +1865,11 @@ return (
                       {unit.purchase_date && (
                         <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>🧾 beli {unit.purchase_date}</div>
                       )}
+                      {unit.created_at && (
+                        <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }} title="Waktu input ini membedakan lifecycle unit meskipun labelnya dipakai kembali">
+                          🆔 diinput {new Date(unit.created_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}
+                        </div>
+                      )}
                       {unit.notes && (
                         <div title={unit.notes} style={{ fontSize: 10, color: cs.muted, marginTop: 1, maxWidth: 190, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           📝 {unit.notes}
@@ -1986,8 +1992,7 @@ return (
                       )}
                       {/* ── Riwayat pemakaian unit ── */}
                       {historyUnitId === unit.id && (() => {
-                        const unitTxs = invTxData
-                          .filter(tx => tx.unit_id === unit.id || tx.unit_label === unit.unit_label)
+                        const unitTxs = transactionsForInventoryUnit(unit, invUnitsData, invTxData)
                           .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
                         return (
                           <div style={{ borderTop: "1px solid " + cs.accent + "22", padding: "12px 14px", background: cs.surface }}>
@@ -2035,7 +2040,7 @@ return (
               {showArchived && (
                 <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
                   {archivedUnits.map(unit => {
-                    const unitTxs = invTxData.filter(tx => tx.unit_id === unit.id || tx.unit_label === unit.unit_label).sort((a,b) => (b.created_at||"").localeCompare(a.created_at||""));
+                    const unitTxs = transactionsForInventoryUnit(unit, invUnitsData, invTxData).sort((a,b) => (b.created_at||"").localeCompare(a.created_at||""));
                     const isShowingHistory = historyUnitId === unit.id;
                     return (
                       <div key={unit.id} style={{ background: cs.surface, borderRadius: 8, border: "1px solid #64748b22", opacity: 0.7 }}>
@@ -2043,6 +2048,7 @@ return (
                           <div style={{ flex: 1 }}>
                             <div style={{ fontSize: 12, fontWeight: 600, color: cs.muted }}>🗄 {unit.unit_label}</div>
                             <div style={{ fontSize: 10, color: cs.muted }}>Diarsipkan {unit.archived_at ? new Date(unit.archived_at).toLocaleDateString("id-ID") : ""}{unit.archived_reason ? " · " + unit.archived_reason : ""}</div>
+                            {unit.created_at && <div style={{ fontSize: 10, color: cs.muted }}>ID lifecycle · diinput {new Date(unit.created_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</div>}
                           </div>
                           <span style={{ fontSize: 11, color: cs.muted }}>{parseFloat((unit.stock||0).toFixed(1))} {item.unit}</span>
                           <button onClick={() => setHistoryUnitId(isShowingHistory ? null : unit.id)}
