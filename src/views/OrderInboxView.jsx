@@ -6,6 +6,7 @@ import { normalizePhone, samePhone, cleanPhoneInput, extractPhones, formatPhone 
 import { getTechColor } from "../lib/techColor.js";
 import { detectContinuationCandidates, calcContinuationDayNum, multiDayProgress } from "../lib/orders.js";
 import { withMaintenanceLink, findMaintClientByPhoneAddr } from "../lib/maintenanceLink.js";
+import { planningDisplayStatus, submittedReportJobIds } from "../lib/planningStatus.js";
 import QuickScheduleModal from "../components/QuickScheduleModal.jsx";
 import MaintUnitPickerModal from "./MaintUnitPickerModal.jsx";
 import { useAppContext } from "../context/AppContext.js";
@@ -338,7 +339,7 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, w
                             <div style={{ fontSize: 11, color: cs.muted }}>{o.service}{o.units > 1 ? ` · ${o.units} unit` : ""}</div>
                             {o.teknisi && <div style={{ fontSize: 11, color: blockColor, fontWeight: 700, marginTop: 2 }}>{o.teknisi}{o.helper ? ` · ${o.helper}` : ""}</div>}
                             {o.address && <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>{o.address}</div>}
-                            <div style={{ marginTop: 4 }}><StatusBadge status={o.status} /></div>
+                            <div style={{ marginTop: 4 }}><StatusBadge status={isDone ? "COMPLETED" : o.status} /></div>
                             {isConflict && <div style={{ color: cs.red, fontSize: 10, fontWeight: 800, marginTop: 4 }}>⚠️ Waktu bentrok dengan order lain</div>}
                           </div>
                         )}
@@ -354,7 +355,8 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, w
           {(() => {
             const unassigned = dayOrders.filter(o =>
               (!o.team_slot || !hasValidTime(o.time)) &&
-              !["CANCELLED","COMPLETED","VERIFIED","REPORT_SUBMITTED"].includes(o.status)
+              !["CANCELLED","COMPLETED","VERIFIED","REPORT_SUBMITTED"].includes(o.status) &&
+              !(laporanJobSet && laporanJobSet.has(o.id))
             );
             if (unassigned.length === 0) return null;
             return (
@@ -399,6 +401,7 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, w
 }
 
 const INBOX_STATUSES = ["PENDING", "CONFIRMED", "CONTINUED", "CANCELLED"];
+const PLANNING_FILTER_STATUSES = [...INBOX_STATUSES, "COMPLETED"];
 const WEEK_DAYS = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
 const DAY_NAMES  = ["Min","Sen","Sel","Rab","Kam","Jum","Sab"];
 
@@ -1045,7 +1048,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   // selalu dirender di dalam <App> (Provider), aman pakai useAppContext.
   const { currentUser, supabase, showNotif, showConfirm, auditUserName, TODAY, maintClients } = useAppContext();
   const laporanJobSet = useMemo(
-    () => new Set((laporanReports || []).map(r => r.job_id).filter(Boolean)),
+    () => submittedReportJobIds(laporanReports),
     [laporanReports]
   );
   const [form, setForm] = useState({ ...EMPTY_FORM, date: TODAY });
@@ -2070,7 +2073,9 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       if (o.status === "CANCELLED" && o.date < TODAY) return false;
       return true;
     });
-    if (filterStatus !== "ALL") list = list.filter(o => o.status === filterStatus);
+    if (filterStatus !== "ALL") {
+      list = list.filter(o => planningDisplayStatus(o, laporanJobSet) === filterStatus);
+    }
     if (searchQ.trim()) {
       const q = searchQ.toLowerCase();
       list = list.filter(o =>
@@ -2086,7 +2091,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       if (dateComp !== 0) return dateComp;
       return (a.time || "").localeCompare(b.time || "");
     });
-  }, [ordersData, filterStatus, searchQ, TODAY, gridDate]);
+  }, [ordersData, filterStatus, searchQ, TODAY, gridDate, laporanJobSet]);
 
   // List final yang ditampilkan = base + filter Tim (kalau ada).
   const inboxOrders = useMemo(() =>
@@ -2485,7 +2490,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
             <select style={{ ...inputStyle, width: "auto", padding: "6px 10px" }}
               value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
               <option value="ALL">Semua Status</option>
-              {INBOX_STATUSES.map(s => <option key={s} value={s}>{statusLabel[s]}</option>)}
+              {PLANNING_FILTER_STATUSES.map(s => <option key={s} value={s}>{statusLabel[s]}</option>)}
             </select>
           </div>
         </div>
@@ -2572,7 +2577,11 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
                 // sudah selesai/batal tidak dihitung. Dulu chip pakai estimasi flat →
                 // ⚠️ palsu padahal grid bersih (time_end aktual tidak overlap).
                 const DONE_OR_CANCELLED = ["REPORT_SUBMITTED","COMPLETED","VERIFIED","INVOICE_APPROVED","PAID","INVOICED","CANCELLED"];
-                const activeOrders = teamOrders.filter(o => o.time && !DONE_OR_CANCELLED.includes(o.status));
+                const activeOrders = teamOrders.filter(o =>
+                  o.time &&
+                  !DONE_OR_CANCELLED.includes(o.status) &&
+                  !laporanJobSet.has(o.id)
+                );
                 const rangeOf = (o) => {
                   const st = toMinutes(o.time);
                   if (st === null) return null;
@@ -2618,6 +2627,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         <div style={{ background: cs.accent + "0a", border: "1px solid " + cs.accent + "33", borderRadius: 8, padding: "7px 12px", marginBottom: 14, fontSize: 11, color: cs.muted }}>
           <span style={{ color: cs.accent, fontWeight: 700 }}>Alur Opsi B: </span>
           PENDING = planning · <span style={{ color: statusColor.CONFIRMED }}>CONFIRMED</span> = fix, muncul di Order Masuk ·
+          <span style={{ color: statusColor.COMPLETED }}> SELESAI</span> = laporan teknisi sudah masuk ·
           <span style={{ color: statusColor.CANCELLED }}> CANCELLED</span> = batal, tidak di-dispatch
         </div>
 
@@ -2637,6 +2647,8 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
                 const helperColor = o.helper ? getTechColor(o.helper, teknisiData) : cs.muted;
                 const isToday = o.date === TODAY;
                 const isCancelled = o.status === "CANCELLED";
+                const displayStatus = planningDisplayStatus(o, laporanJobSet);
+                const isCompleted = displayStatus === "COMPLETED";
                 const ddStyle = { background: cs.card, border: "1px solid " + cs.border, borderRadius: 6, color: cs.text, padding: "4px 6px", fontSize: 11, cursor: "pointer", outline: "none", width: "100%", minWidth: 110 };
                 return (
                   <tr key={o.id} style={{
@@ -2745,19 +2757,26 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
 
                     {/* Status — dengan visual Opsi B */}
                     <td style={{ padding: "8px 10px" }}>
-                      <select
-                        value={o.status}
-                        onChange={e => handleStatusChange(o, e.target.value)}
-                        style={{
-                          background: (statusColor[o.status] || "#64748b") + "22",
-                          color: statusColor[o.status] || cs.muted,
-                          border: "2px solid " + (statusColor[o.status] || "#64748b") + "88",
-                          borderRadius: 6, padding: "4px 8px", fontSize: 11, fontWeight: 800,
-                          cursor: "pointer", outline: "none",
-                        }}>
-                        {INBOX_STATUSES.map(s => <option key={s} value={s}>{statusLabel[s]}</option>)}
-                      </select>
-                      {o.status === "CONFIRMED" && (
+                      {isCompleted ? (
+                        <StatusBadge status="COMPLETED" />
+                      ) : (
+                        <select
+                          value={o.status}
+                          onChange={e => handleStatusChange(o, e.target.value)}
+                          style={{
+                            background: (statusColor[o.status] || "#64748b") + "22",
+                            color: statusColor[o.status] || cs.muted,
+                            border: "2px solid " + (statusColor[o.status] || "#64748b") + "88",
+                            borderRadius: 6, padding: "4px 8px", fontSize: 11, fontWeight: 800,
+                            cursor: "pointer", outline: "none",
+                          }}>
+                          {INBOX_STATUSES.map(s => <option key={s} value={s}>{statusLabel[s]}</option>)}
+                        </select>
+                      )}
+                      {isCompleted && (
+                        <div style={{ color: cs.green, fontSize: 10, marginTop: 3, fontWeight: 600 }}>✓ Laporan teknisi sudah masuk</div>
+                      )}
+                      {!isCompleted && o.status === "CONFIRMED" && (
                         <div style={{ color: cs.green, fontSize: 10, marginTop: 3, fontWeight: 600 }}>✓ Muncul di Order Masuk</div>
                       )}
                       {o.status === "CANCELLED" && (
@@ -2786,7 +2805,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
                       </button>
                       {/* Tombol Buat Order Lanjutan — hanya muncul untuk order yang bisa dilanjutkan
                           Skip child multi-day, tapi non-multi-day (mis. Repair dari Complain) tetap bisa di-lanjutkan */}
-                      {!(o.parent_job_id && o.is_multi_day) && !["CANCELLED", "COMPLETED", "PAID"].includes(o.status) && (
+                      {!(o.parent_job_id && o.is_multi_day) && !["CANCELLED", "COMPLETED"].includes(displayStatus) && (
                         <button onClick={() => handleCreateContinuation(o)}
                           style={{ background: "#f9731618", color: "#f97316", border: "1px solid #f9731644", borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer", marginRight: 4, fontWeight: 600 }}>
                           +Lanjutan

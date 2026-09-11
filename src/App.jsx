@@ -3593,6 +3593,7 @@ export default function ACleanWebApp() {
       customersData={customersData} setCustomersData={setCustomersData} teknisiData={teknisiData}
       sendWA={sendWA} showUndoToast={showUndoToast}
       insertOrder={insertOrder}
+      laporanReports={laporanReports}
       apiHeaders={_apiHeaders} />
   );
 
