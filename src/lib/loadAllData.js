@@ -2,30 +2,50 @@
 // customers, inventory, laporan, settings, users, WA, dll) + hydrate cache & state.
 // Diekstrak dari App.jsx (Fase 3, pola ctx). 49 dependency dioper via ctx. Body
 // verbatim. Dipanggil dari efek init & auto-refresh polling (nama tetap `loadAll`).
+import { recordPerfMetric } from "./perfMetrics.js";
+
 export async function loadAllData({
   _ls, _lsSave, buildPriceListFromDB, cachedFetch, currentUser, dedupReportsByJob,
   fetchAppSettings, fetchAraBrain, fetchCustomers, fetchDispatchLogs, fetchInventory,
   fetchInventoryTransactions, fetchInventoryUnits, fetchInvoices, fetchOrders,
   fetchPayments, fetchPriceList, fetchServiceReports, fetchUserAccounts,
   fetchUserProfiles, fetchWaConversations, parseInvoiceRow, parseLaporanRow,
+  fetchBootstrapInvoices, fetchBootstrapOrders, fetchBootstrapServiceReports,
   setAppSettings, setBonusCategories, setBrainMd, setBrainMdCustomer, setCronJobs,
   setCustomersData, setDispatchLogs, setInvTxData, setInvUnitsData, setInventoryData,
   setInvoicesData, setLaporanReports, setLlmApiKey, setLlmModel, setLlmProvider,
   setOrdersData, setPaymentSuggestions, setPaymentsData, setPriceListData,
   setPriceListSyncedAt, setProjectDailyReports, setTeknisiData, setUserAccounts,
-  setWaConversations, setWaProvider, supabase,
+  setWaConversations, setWaProvider, supabase, bootstrapMode = "full",
+  onCriticalReady, today,
 }) {
+        const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+        const criticalBootstrap = bootstrapMode === "critical";
+        const baseDate = new Date(`${today || new Date().toISOString().slice(0, 10)}T12:00:00`);
+        const orderSince = new Date(baseDate); orderSince.setDate(orderSince.getDate() - 14);
+        const invoiceSince = new Date(baseDate); invoiceSince.setDate(invoiceSince.getDate() - 14);
+        // Selaras dengan window order agar proteksi anti-duplikat laporan di grid
+        // Dashboard tetap memiliki report untuk setiap order historis yang ditampilkan.
+        const reportSince = new Date(baseDate); reportSince.setDate(reportSince.getDate() - 14);
+        const until = new Date(baseDate); until.setDate(until.getDate() + 60);
+        const dateOnly = d => d.toISOString().slice(0, 10);
         // Opsi-A: agent_logs, expenses, quotations dikeluarkan dari loadAll — diload on-demand saat view dibuka
         // inv_tx (hanya MatTrack) & project_daily_reports (hanya MyReport) DIKELUARKAN
         // dari bootstrap → lazy-load saat menu-nya dibuka (App.jsx, useEffect activeMenu).
         // Data TIDAK dikurangi, cuma ditunda → payload awal lebih ringan.
         const results = await Promise.allSettled([
-          cachedFetch("orders", () => fetchOrders(supabase)),
-          cachedFetch("invoices", () => fetchInvoices(supabase)),
-          cachedFetch("customers", () => fetchCustomers(supabase)),
+          cachedFetch(criticalBootstrap ? "orders_bootstrap" : "orders", () => criticalBootstrap
+            ? fetchBootstrapOrders(supabase, dateOnly(orderSince), dateOnly(until))
+            : fetchOrders(supabase)),
+          cachedFetch(criticalBootstrap ? "invoices_bootstrap" : "invoices", () => criticalBootstrap
+            ? fetchBootstrapInvoices(supabase, invoiceSince.toISOString())
+            : fetchInvoices(supabase)),
+          criticalBootstrap ? Promise.resolve({ data: null, error: null }) : cachedFetch("customers", () => fetchCustomers(supabase)),
           cachedFetch("inventory", () => fetchInventory(supabase)),
-          cachedFetch("service_reports", () => fetchServiceReports(supabase)),
-          cachedFetch("inv_units", () => fetchInventoryUnits(supabase)),
+          cachedFetch(criticalBootstrap ? "service_reports_bootstrap" : "service_reports", () => criticalBootstrap
+            ? fetchBootstrapServiceReports(supabase, dateOnly(reportSince))
+            : fetchServiceReports(supabase)),
+          criticalBootstrap ? Promise.resolve({ data: null, error: null }) : cachedFetch("inv_units", () => fetchInventoryUnits(supabase)),
         ]);
         const [ordersRes, invoicesRes, customersRes, inventoryRes, laporanRes, invUnitsRes] = results.map(r => r.status === "fulfilled" ? r.value : { error: r.reason });
         // Selalu pakai data DB jika tidak error (bahkan array kosong = data nyata dari DB)
@@ -47,6 +67,20 @@ export async function loadAllData({
         // Jika DB error total, keep demo data (already in useState init)
         // agent_logs: diakses lewat Monitoring → tab Audit Log (server-side)
 
+        if (criticalBootstrap) {
+          const current = typeof performance !== "undefined" ? performance.now() : Date.now();
+          recordPerfMetric("bootstrap.critical", current - startedAt, {
+            orders: ordersRes.data?.length || 0,
+            invoices: invoicesRes.data?.length || 0,
+            reports: laporanRes.data?.length || 0,
+            inventory: inventoryRes.data?.length || 0,
+          });
+          onCriticalReady?.();
+          // Beri browser satu frame/tick untuk commit Dashboard sebelum request
+          // pendukung dimulai, supaya UI dan RPC snapshot tidak antre di belakangnya.
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
+
         // ── Expenses & agent_logs: load on-demand (opsi-A, bukan di sini) ──
 
         // ── Auto-cleanup agent_logs > 90 hari: dilakukan oleh cron backend,
@@ -61,9 +95,9 @@ export async function loadAllData({
         const _pSettings = Promise.resolve(fetchAppSettings(supabase));
         const _pTek = Promise.resolve(fetchUserProfiles(supabase));
         const _pUA = Promise.resolve(fetchUserAccounts(supabase));
-        const _pWA = Promise.resolve(fetchWaConversations(supabase, 100)).catch(() => ({ error: true }));
+        const _pWA = criticalBootstrap ? Promise.resolve({ data: null }) : Promise.resolve(fetchWaConversations(supabase, 100)).catch(() => ({ error: true }));
         const _pPL = Promise.resolve(fetchPriceList(supabase));
-        const _pBrain = Promise.resolve(fetchAraBrain(supabase));
+        const _pBrain = criticalBootstrap ? Promise.resolve({ data: null }) : Promise.resolve(fetchAraBrain(supabase));
         const _pPS = _isOwnerAdmin
           ? Promise.resolve(supabase.from("payment_suggestions").select("*").eq("status", "PENDING").order("created_at", { ascending: false }).limit(200))
           : Promise.resolve({ data: null });
@@ -262,5 +296,10 @@ export async function loadAllData({
             const { data: psData } = await _pPS;
             if (psData?.length > 0) setPaymentSuggestions(psData);
           } catch(_) { /* tabel belum ada, skip */ }
+        }
+
+        if (criticalBootstrap) {
+          const current = typeof performance !== "undefined" ? performance.now() : Date.now();
+          recordPerfMetric("bootstrap.background", current - startedAt);
         }
 }

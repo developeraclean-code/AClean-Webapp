@@ -37,6 +37,7 @@ import { SERVICE_TYPES } from "./constants/services.js";
 import { DEFAULT_BONUS_CATEGORIES } from "./constants/bonus.js";
 import {
   fetchOrders, fetchInvoices, fetchOutstandingInvoices, fetchCustomers, fetchInventory,
+  fetchBootstrapOrders, fetchBootstrapInvoices, fetchBootstrapServiceReports,
   fetchServiceReports, fetchInventoryTransactions,
   fetchInvoicesSince, fetchServiceReportsSince, fetchOrdersSince,
   searchInvoicesServer, searchOrdersServer, searchServiceReportsServer, searchCustomersServer,
@@ -78,6 +79,7 @@ import { mergedInvoiceWA as mergedInvoiceWALib } from "./lib/mergedInvoiceWa.js"
 import { approveInvoiceCore as approveInvoiceCoreLib } from "./lib/approveInvoiceCore.js";
 import { submitLaporan as submitLaporanImpl } from "./lib/submitLaporan.js";
 import { loadAllData } from "./lib/loadAllData.js";
+import { measureAsync } from "./lib/perfMetrics.js";
 import { tryDirectR2Upload } from "./lib/directR2Upload.js";
 import { approveKasbon as approveKasbonLib, rejectKasbon as rejectKasbonLib } from "./lib/kasbon.js";
 import { handleFotoUpload as handleFotoUploadLib } from "./lib/fotoUpload.js";
@@ -729,6 +731,7 @@ export default function ACleanWebApp() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
   const [dataLoading, setDataLoading] = useState(false);
+  const [bootstrapReady, setBootstrapReady] = useState(false);
   const [paymentsData, setPaymentsData] = useState([]);
   const [dispatchLogs, setDispatchLogs] = useState([]);
   const [loginScreen, setLoginScreen] = useState("login"); // "login" | "select_account"
@@ -1228,7 +1231,7 @@ export default function ACleanWebApp() {
   const _maintIdxMenus = ["orders", "wa-inbox", "customers", "maintenance"];
   const _maintIdxTrigger = _maintIdxMenus.includes(activeMenu) ? activeMenu : "";
   useEffect(() => {
-    if (!isLoggedIn) return;
+    if (!isLoggedIn || !_maintIdxTrigger) return;
     let alive = true;
     (async () => {
       try {
@@ -1252,6 +1255,7 @@ export default function ACleanWebApp() {
   // Muat SEKALI saat menu-nya pertama dibuka. Data TIDAK dikurangi — cuma ditunda.
   const _invTxLoaded = useRef(false);
   const _pdrLoaded = useRef(false);
+  const _viewDataLoaded = useRef(new Set());
   useEffect(() => {
     if (activeMenu === "mattrack" && !_invTxLoaded.current) {
       _invTxLoaded.current = true;
@@ -1269,6 +1273,58 @@ export default function ACleanWebApp() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeMenu]);
+
+  // Dataset berat dimuat tepat saat view pertama kali dibuka. Bootstrap kritis cukup
+  // untuk Dashboard; histori/detail tidak lagi bersaing dengan layar pertama saat login.
+  useEffect(() => {
+    if (!isLoggedIn) {
+      _viewDataLoaded.current.clear();
+      return;
+    }
+    const once = (key, task) => {
+      if (_viewDataLoaded.current.has(key)) return;
+      _viewDataLoaded.current.add(key);
+      measureAsync(`view_data.${key}`, task, { menu: activeMenu })
+        .catch(() => { _viewDataLoaded.current.delete(key); });
+    };
+    if (["orders", "schedule", "wa-inbox", "finance", "reports"].includes(activeMenu)) {
+      once("orders", async () => {
+        const { data, error } = await fetchOrders(supabase);
+        if (error) throw error;
+        if (data) setOrdersData(data);
+      });
+    }
+    if (["invoice", "finance"].includes(activeMenu)) {
+      once("invoices", async () => {
+        const [recent, outstanding] = await Promise.all([fetchInvoices(supabase), fetchOutstandingInvoices(supabase)]);
+        if (recent.error || outstanding.error) throw recent.error || outstanding.error;
+        const map = new Map([...(recent.data || []), ...(outstanding.data || [])].map(row => [row.id, parseInvoiceRow(row)]));
+        setInvoicesData(Array.from(map.values()));
+      });
+    }
+    if (["laporantim", "reports", "myreport"].includes(activeMenu)) {
+      once("service_reports", async () => {
+        const { data, error } = await fetchServiceReports(supabase);
+        if (error) throw error;
+        if (data) setLaporanReports(dedupReportsByJob(data.map(parseLaporanRow)));
+      });
+    }
+    if (["customers", "orders", "wa-inbox"].includes(activeMenu)) {
+      once("customers", async () => {
+        const { data, error } = await fetchCustomers(supabase);
+        if (error) throw error;
+        if (data) setCustomersData(data);
+      });
+    }
+    if (["inventory", "mattrack", "matcheckout"].includes(activeMenu)) {
+      once("inventory_units", async () => {
+        const { data, error } = await fetchInventoryUnits(supabase);
+        if (error) throw error;
+        if (data) setInvUnitsData(data);
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeMenu, isLoggedIn]);
 
   // Server-side search Invoice — debounce 350ms; reset hasil saat search dibersihkan
   useEffect(() => {
@@ -2328,6 +2384,7 @@ export default function ACleanWebApp() {
     _lsSave("localSession", null);
     addAgentLog("LOGOUT", `${currentUser?.name || "User"} (${currentUser?.role || ""}) keluar`, "SUCCESS");
     setIsLoggedIn(false);
+    setBootstrapReady(false);
     setCurrentUser(null);
     setLoginEmail("");
     setLoginPassword("");
@@ -2524,7 +2581,7 @@ export default function ACleanWebApp() {
   const checkSessionValidity = async () => {
     // Only check once per 30 seconds to avoid excessive checking
     const now = Date.now();
-    if (now - lastSessionCheckRef.current < 30000) return;
+    if (now - lastSessionCheckRef.current < 30000) return true;
     lastSessionCheckRef.current = now;
 
     // Check local session expiry
@@ -2619,10 +2676,11 @@ export default function ACleanWebApp() {
     restoreSession();
   }, []);
 
-  // ── Load LLM Configuration from Backend (independent of login) ──
+  // ── Load LLM Configuration hanya saat fitur AI/pengaturan diminta ──
   // ✨ FIX #2: Hanya VALIDASI provider yang tersedia, JANGAN override pilihan user.
   // Source of truth = Supabase app_settings.llm_provider. Default = "minimax".
   useEffect(() => {
+    if (!isLoggedIn || !["ara", "settings"].includes(activeMenu)) return;
     const loadLlmConfig = async () => {
       try {
         const headers = await _apiHeaders();
@@ -2642,7 +2700,7 @@ export default function ACleanWebApp() {
       }
     };
     loadLlmConfig();
-  }, []);
+  }, [isLoggedIn, activeMenu]);
 
   // ── Supabase: Load data + Realtime saat login ──
   useEffect(() => {
@@ -2651,8 +2709,10 @@ export default function ACleanWebApp() {
 
     // Wrapper (Fase 3, pola ctx): loadAll (bootstrap data) pindah ke lib/loadAllData.
     // Dipanggil dari initLoadAll (bawah) & auto-refresh polling.
-    const loadAll = () => loadAllData({
+    const loadAll = (options = {}) => loadAllData({
+      ...options,
       _ls, _lsSave, buildPriceListFromDB, cachedFetch, currentUser, dedupReportsByJob,
+      fetchBootstrapInvoices, fetchBootstrapOrders, fetchBootstrapServiceReports,
       fetchAppSettings, fetchAraBrain, fetchCustomers, fetchDispatchLogs, fetchInventory,
       fetchInventoryTransactions, fetchInventoryUnits, fetchInvoices, fetchOrders,
       fetchPayments, fetchPriceList, fetchServiceReports, fetchUserAccounts,
@@ -2662,16 +2722,28 @@ export default function ACleanWebApp() {
       setInvoicesData, setLaporanReports, setLlmApiKey, setLlmModel, setLlmProvider,
       setOrdersData, setPaymentSuggestions, setPaymentsData, setPriceListData,
       setPriceListSyncedAt, setProjectDailyReports, setTeknisiData, setUserAccounts,
-      setWaConversations, setWaProvider, supabase,
+      setWaConversations, setWaProvider, supabase, today: TODAY,
     });
 
     const initLoadAll = async () => {
-      const isValid = await checkSessionValidity();
+      const isValid = await measureAsync("bootstrap.session_check", checkSessionValidity);
       if (!isValid) return;
       setDataLoading(true);
-      loadAll().finally(() => {
+      setBootstrapReady(false);
+      let criticalReady = false;
+      measureAsync("bootstrap.initial_total", () => loadAll({
+        bootstrapMode: "critical",
+        onCriticalReady: () => {
+          criticalReady = true;
+          setBootstrapReady(true);
+          setDataLoading(false);
+        },
+      })).finally(() => {
         lastFullLoadAt = Date.now();
-        setDataLoading(false);
+        if (!criticalReady) {
+          setBootstrapReady(true);
+          setDataLoading(false);
+        }
         // GAP-7: Jalankan check stuck jobs segera setelah data load, lalu setiap 15 menit
         setTimeout(() => checkStuckJobs(), 5000); // delay 5 detik agar state ready
         startStuckCheck();
@@ -3614,7 +3686,7 @@ export default function ACleanWebApp() {
       setSelectedInvoice={setSelectedInvoice} setModalPDF={setModalPDF}
       customersData={customersData} laporanReports={laporanReports} findCustomer={findCustomer}
       setSelectedCustomer={setSelectedCustomer} setCustomerTab={setCustomerTab}
-      expensesData={expensesData} apiHeaders={_apiHeaders} />
+      expensesData={expensesData} apiHeaders={_apiHeaders} bootstrapReady={bootstrapReady} />
     );
   };
 
@@ -4122,7 +4194,7 @@ export default function ACleanWebApp() {
     // (limit 2000 → dipotong PostgREST ke 1000) membuang 500+ baris terlama → biaya bulan lama
     // undercount & profit overstated. fetchAllExpenses mem-paginate agar lengkap. "reports"
     // ikut memuat supaya Statistik tidak menampilkan biaya 0 saat dibuka langsung.
-    if (activeMenu === "biaya" || activeMenu === "dashboard" || activeMenu === "reports") {
+    if (activeMenu === "biaya" || activeMenu === "finance" || activeMenu === "reports") {
       fetchAllExpenses(supabase).then(({ data, error }) => { if (!error && data) setExpensesData(data); }).catch(() => {});
     }
     if (activeMenu === "biaya" || activeMenu === "dashboard") {

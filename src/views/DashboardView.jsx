@@ -1,8 +1,9 @@
 import { memo, useState, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor, statusLabel, ORDER_DONE_STATUSES } from "../constants/status.js";
-import { fetchAllOrders, fetchAllInvoices, fetchPayrollCost, fetchReportWorkStats } from "../data/reads.js";
+import { fetchAllOrders, fetchAllInvoices, fetchAllExpenses, fetchPayrollCost, fetchReportWorkStats, fetchDashboardSnapshot } from "../data/reads.js";
 import { displayStock } from "../lib/inventory.js";
+import { measureAsync } from "../lib/perfMetrics.js";
 import AbsenBanner from "./AbsenBanner.jsx";
 import { useAppContext } from "../context/AppContext.js";
 
@@ -29,9 +30,25 @@ function workPeriodRange(mode, offset) {
 }
 // Hitung agregat jenis pekerjaan dari laporan VERIFIED (units jsonb per unit).
 // cleaning/install = per UNIT, kapasitor = per unit (pcs), freon = per JOB (split bayar/free via invoice gratis).
-function computeWorkStats(reports, invMap) {
+export function computeWorkStats(reports, invMap) {
   const s = { cleaning: 0, install: 0, kapasitor: 0, freonJobs: 0, freonAddJobs: 0, freonVacJobs: 0, freonPaid: 0, freonFree: 0 };
   for (const r of reports) {
+    if (r.dashboard_aggregated) {
+      s.cleaning += Number(r.cleaning_count) || 0;
+      s.install += Number(r.install_count) || 0;
+      s.kapasitor += Number(r.kapasitor_count) || 0;
+      const hasFreonAdd = r.has_freon_add === true;
+      const hasFreonVac = r.has_freon_vac === true;
+      if (hasFreonAdd) s.freonAddJobs++;
+      if (hasFreonVac) s.freonVacJobs++;
+      if (hasFreonAdd || hasFreonVac) {
+        s.freonJobs++;
+        const inv = invMap[r.job_id];
+        const gratis = inv && (inv.repair_gratis === true || inv.repair_gratis === "true" || inv.repair_gratis === "t" || Number(inv.total) === 0);
+        if (gratis) s.freonFree++; else s.freonPaid++;
+      }
+      continue;
+    }
     const svc = String(r.service || "");
     const units = Array.isArray(r.units) ? r.units : [];
     const nUnits = units.length || Number(r.total_units) || 0;
@@ -59,7 +76,7 @@ function computeWorkStats(reports, invMap) {
   return s;
 }
 
-function DashboardView({ ordersData, invoicesData, inventoryData, teknisiData, omsetView, setOmsetView, waConversations, bulanIni, setActiveMenu, setInvoiceFilter, setModalOrder, setWaPanel, setWaTekTarget, setModalWaTek, getTechColor, triggerRekapHarian, openLaporanModal, openBAPModal, openMaterialBringModal, openJobReport, materialsBroughtMap, sendWA, dispatchWA, setSelectedInvoice, setModalPDF, customersData, laporanReports, findCustomer, setSelectedCustomer, setCustomerTab, setHistoryPreview, expensesData, apiHeaders, bapEnabled }) {
+function DashboardView({ ordersData, invoicesData, inventoryData, teknisiData, omsetView, setOmsetView, waConversations, bulanIni, setActiveMenu, setInvoiceFilter, setModalOrder, setWaPanel, setWaTekTarget, setModalWaTek, getTechColor, triggerRekapHarian, openLaporanModal, openBAPModal, openMaterialBringModal, openJobReport, materialsBroughtMap, sendWA, dispatchWA, setSelectedInvoice, setModalPDF, customersData, laporanReports, findCustomer, setSelectedCustomer, setCustomerTab, setHistoryPreview, expensesData, apiHeaders, bapEnabled, bootstrapReady = true }) {
   // Fase 1: primitif global dari AppContext.
   const { currentUser, isMobile, fmt, showNotif, TODAY, addAgentLog, supabase } = useAppContext();
 const role = currentUser?.role || "Admin";
@@ -78,28 +95,51 @@ const [finOrders, setFinOrders] = useState(null);
 const [finInvoices, setFinInvoices] = useState(null);
 const [finPayroll, setFinPayroll] = useState(null);
 const [finReports, setFinReports] = useState(null);
+const [finExpenses, setFinExpenses] = useState(null);
 // Rekap jenis pekerjaan: mode ("minggu"/"bulan") + offset (0=periode berjalan, geser prev/next)
 const [workMode, setWorkMode] = useState("bulan");
 const [workOffset, setWorkOffset] = useState(0);
 useEffect(() => {
-  if (role !== "Owner" || !supabase) return;   // hanya Owner yang punya panel ini
+  if (!bootstrapReady || !["Owner", "Admin"].includes(role) || !supabase) return;
   let cancelled = false;
   (async () => {
+    const sinceReports = toISOLocal(new Date(new Date().getFullYear(), new Date().getMonth() - 6, 1));
     try {
-      const sinceReports = toISOLocal(new Date(new Date().getFullYear(), new Date().getMonth() - 6, 1));
-      const [{ data: ord }, { data: inv }, { data: pay }, { data: rep }] = await Promise.all([
-        fetchAllOrders(supabase), fetchAllInvoices(supabase), fetchPayrollCost(supabase), fetchReportWorkStats(supabase, sinceReports),
-      ]);
+      const snapshot = await measureAsync(
+        "dashboard.snapshot_rpc",
+        async () => {
+          const { data, error } = await fetchDashboardSnapshot(supabase, sinceReports);
+          if (error) throw error;
+          return data;
+        },
+        { role },
+      );
       if (cancelled) return;
-      setFinOrders(ord || []); setFinInvoices(inv || []); setFinPayroll(pay || []); setFinReports(rep || []);
+      setFinOrders(snapshot?.orders || []);
+      setFinInvoices(snapshot?.invoices || []);
+      setFinPayroll(snapshot?.payroll || []);
+      setFinReports(snapshot?.reports || []);
+      setFinExpenses(snapshot?.expenses || []);
     } catch (e) {
-      // Non-blocking: panel tetap tampil pakai data ber-cap (lebih baik angka lama
-      // daripada dashboard kosong) — tapi jangan senyap total.
-      console.warn("[FIN_ANALYTICS] gagal muat data penuh:", e?.message || e);
+      // Migration 167 belum aktif: local trial tetap aman memakai jalur lama. Fallback
+      // ini dihapus pada fase berikut setelah RPC terverifikasi di production.
+      console.warn("[DASHBOARD_RPC] fallback ke query lama:", e?.message || e);
+      if (role !== "Owner") return;
+      const [{ data: ord }, { data: inv }, { data: pay }, { data: rep }, { data: exp }] = await measureAsync(
+        "dashboard.legacy_fallback",
+        () => Promise.all([
+          fetchAllOrders(supabase), fetchAllInvoices(supabase), fetchPayrollCost(supabase),
+          fetchReportWorkStats(supabase, sinceReports), fetchAllExpenses(supabase),
+        ]),
+        { role },
+      );
+      if (cancelled) return;
+      setFinOrders(ord || []); setFinInvoices(inv || []); setFinPayroll(pay || []);
+      setFinReports(rep || []); setFinExpenses(exp || []);
     }
   })();
   return () => { cancelled = true; };
-}, [role, supabase]);
+}, [bootstrapReady, role, supabase]);
 
 // ── TEKNISI & HELPER DASHBOARD ─────────────────────────────
 if (role === "Teknisi" || role === "Helper") {
@@ -212,7 +252,7 @@ if (role === "Teknisi" || role === "Helper") {
 const orderDateMap = Object.fromEntries((finOrders || ordersData).map(o => [o.id, o.date]));
 // Teknisi utama job = dari ORDER (selalu terisi), bukan invoice.teknisi yang mayoritas NULL.
 // invoice.teknisi cuma fallback bila job_id tak ketemu (order terhapus).
-const orderTeknisiMap = Object.fromEntries(ordersData.filter(o => o.teknisi).map(o => [o.id, o.teknisi]));
+const orderTeknisiMap = Object.fromEntries((finOrders || ordersData).filter(o => o.teknisi).map(o => [o.id, o.teknisi]));
 function jobDate(inv) {
   return orderDateMap[inv.job_id] || (inv.created_at || "").slice(0, 10) || "";
 }
@@ -1050,7 +1090,7 @@ return (
       });
 
       const revenueByMonth = months.map(m => {
-        const expLain = (expensesData || []).filter(e => countsAsExpense(e) && (e.date || "").startsWith(m.prefix)).reduce((s, e) => s + (e.amount || 0), 0);
+        const expLain = (finExpenses || expensesData || []).filter(e => countsAsExpense(e) && (e.date || "").startsWith(m.prefix)).reduce((s, e) => s + (e.amount || 0), 0);
         const gaji = payrollByMonth[m.prefix] || 0;
         return {
           ...m,
@@ -1103,7 +1143,7 @@ return (
               { label: "Pengeluaran Bln Ini", value: fmt(expThisM), color: cs.yellow, icon: "🧾",
                 sub: gajiThisM > 0
                   ? "Termasuk gaji tim " + fmt(gajiThisM)
-                  : "Dari " + (expensesData || []).filter(e => countsAsExpense(e) && (e.date || "").startsWith(thisMPrefix)).length + " transaksi",
+                  : "Dari " + (finExpenses || expensesData || []).filter(e => countsAsExpense(e) && (e.date || "").startsWith(thisMPrefix)).length + " transaksi",
                 subColor: cs.muted },
               { label: "Estimasi Profit", value: fmt(profitThisM), color: profitThisM >= 0 ? cs.green : cs.red, icon: "📈", sub: expThisM > 0 && revThisM > 0 ? "Margin " + Math.round(profitThisM / revThisM * 100) + "%" : "Belum ada pengeluaran", subColor: cs.muted },
               { label: "Outstanding Unpaid", value: fmt(unpaidTotal), color: cs.yellow, icon: "⏳", sub: unpaidList.length + " invoice belum lunas", subColor: cs.muted },
@@ -1184,7 +1224,7 @@ return (
                 other:             { label: "Lainnya", icon: "📋", color: "#8b5cf6" },
               };
 
-              const allExpThisM = (expensesData || []).filter(e => countsAsExpense(e) && (e.date || e.created_at || "").startsWith(thisMPrefix));
+              const allExpThisM = (finExpenses || expensesData || []).filter(e => countsAsExpense(e) && (e.date || e.created_at || "").startsWith(thisMPrefix));
               const byCategory = {};
               allExpThisM.forEach(e => {
                 const cat = e.category || "other";
@@ -1281,8 +1321,9 @@ return (
                 const invTek = i.teknisi || ordSrc.find(o => o.id === i.job_id)?.teknisi;
                 return invTek === tek && i.status === "PAID" && jobDate(i).startsWith(bulanIniPfx);
               }).reduce((a, b) => a + (b.total || 0), 0);
-              const lapVerif = laporanReports.filter(r => r.teknisi === tek && r.status === "VERIFIED" && (r.date || r.submitted_at || "").startsWith(bulanIniPfx)).length;
-              const lapRevisi = laporanReports.filter(r => r.teknisi === tek && r.status === "REVISION" && (r.date || r.submitted_at || "").startsWith(bulanIniPfx)).length;
+              const reportSrc = finReports || laporanReports;
+              const lapVerif = reportSrc.filter(r => r.teknisi === tek && r.status === "VERIFIED" && (r.date || r.submitted_at || "").startsWith(bulanIniPfx)).length;
+              const lapRevisi = reportSrc.filter(r => r.teknisi === tek && r.status === "REVISION" && (r.date || r.submitted_at || "").startsWith(bulanIniPfx)).length;
               return { tek, col, jobsBulan: jobsBulan.length, selesai, revInvTek, lapVerif, lapRevisi };
             }).filter(r => r.revInvTek > 0).sort((a, b) => b.revInvTek - a.revInvTek);
             if (rows.length === 0) return <div style={{ fontSize: 12, color: cs.muted }}>Belum ada anggota tim dengan omset bulan ini.</div>;

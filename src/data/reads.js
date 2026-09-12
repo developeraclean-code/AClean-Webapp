@@ -10,6 +10,16 @@ export const fetchOrders = (supabase) =>
     .select(ORDER_COLS)
     .order("date", { ascending: false }).limit(500);
 
+// Bootstrap login hanya membutuhkan pekerjaan yang masih relevan di layar pertama.
+// Riwayat lama tetap tersedia lewat server-side search dan full fetch saat view dibuka.
+export const fetchBootstrapOrders = (supabase, sinceDate, untilDate) =>
+  supabase.from("orders")
+    .select(ORDER_COLS)
+    .gte("date", sinceDate)
+    .lte("date", untilDate)
+    .order("date", { ascending: false })
+    .limit(500);
+
 // Incremental: hanya order yang berubah/baru sejak `since` (updated_at).
 // Polling live pakai ini agar egress minim — saat idle → 0 baris.
 export const fetchOrdersSince = (supabase, since) =>
@@ -35,6 +45,26 @@ export const fetchInvoices = (supabase) =>
   supabase.from("invoices")
     .select(INVOICE_COLS)
     .order("created_at", { ascending: false }).limit(300);
+
+const mergeRowsById = (...groups) => {
+  const map = new Map();
+  groups.flat().filter(Boolean).forEach(row => map.set(row.id, row));
+  return Array.from(map.values());
+};
+
+// Gabungkan invoice terbaru dengan semua invoice yang masih butuh tindakan. Dengan
+// demikian badge/pelunasan tetap akurat tanpa mengunduh 300 invoice lengkap saat login.
+export const fetchBootstrapInvoices = async (supabase, sinceIso) => {
+  const [recent, actionable] = await Promise.all([
+    supabase.from("invoices").select(INVOICE_COLS)
+      .gte("created_at", sinceIso).order("created_at", { ascending: false }).limit(150),
+    supabase.from("invoices").select(INVOICE_COLS)
+      .in("status", ["PENDING_APPROVAL", "APPROVED", "UNPAID", "OVERDUE", "PARTIAL_PAID"])
+      .order("created_at", { ascending: false }).limit(300),
+  ]);
+  const error = recent.error || actionable.error;
+  return { data: error ? null : mergeRowsById(recent.data, actionable.data), error };
+};
 
 // Invoice outstanding (UNPAID/OVERDUE/PARTIAL_PAID) TANPA cap tanggal — dipakai untuk
 // merge ke invoicesData di App.jsx supaya tab Overdue/Unpaid & badge hitung tidak
@@ -170,6 +200,27 @@ export const fetchServiceReports = async (supabase) => {
   if (result.data) result.data = result.data.map(row => ({ ...row, _detailLoaded: false }));
   return result;
 };
+
+// Layar pertama hanya perlu laporan periode berjalan serta antrean audit. Laporan lama
+// diambil saat menu Laporan/Statistik benar-benar dibuka.
+export const fetchBootstrapServiceReports = async (supabase, sinceDate) => {
+  const [recent, actionable] = await Promise.all([
+    supabase.from("service_reports").select(REPORT_SUMMARY_COLS)
+      .gte("date", sinceDate).order("submitted_at", { ascending: false }).limit(750),
+    supabase.from("service_reports").select(REPORT_SUMMARY_COLS)
+      .in("status", ["SUBMITTED", "REVISION"])
+      .order("submitted_at", { ascending: false }).limit(300),
+  ]);
+  const error = recent.error || actionable.error;
+  const data = error ? null : mergeRowsById(recent.data, actionable.data)
+    .map(row => ({ ...row, _detailLoaded: false }));
+  return { data, error };
+};
+
+// Satu RPC menggantikan full-fetch orders + invoices + payroll + reports + expenses
+// yang sebelumnya berjalan bersamaan ketika Dashboard Owner dibuka.
+export const fetchDashboardSnapshot = (supabase, sinceDate) =>
+  supabase.rpc("get_dashboard_snapshot", { p_since: sinceDate });
 
 export const fetchServiceReportById = (supabase, id) =>
   supabase.from("service_reports")
