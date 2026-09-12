@@ -30,7 +30,8 @@ BEGIN
       INTO jobs FROM jsonb_array_elements(jobs) e;
     ELSE
       jobs := jobs || jsonb_build_array(jsonb_build_object(
-        'id', 2100000000 + abs(hashtext(cfg.backend_key)),
+        -- Cast sebelum penjumlahan: hash positif dapat membuat integer overflow.
+        'id', 2100000000::bigint + abs(hashtext(cfg.backend_key)::bigint),
         'name', cfg.job_name, 'icon', cfg.icon, 'time', cfg.job_time,
         'days', 'Setiap Hari', 'active', true, 'backendKey', cfg.backend_key,
         'task', cfg.job_name
