@@ -256,6 +256,8 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
           #   koreksi label tabung, dan penutupan sesi material lama
 164       # Applied 11 Sep 2026 — 10 komisi order s/d 30 Apr 2026 ditandai PAID manual;
           #   paid_at historis 30 Apr agar tidak masuk arus kas/payroll minggu berjalan
+165       # Applied 11 Sep 2026 — 31 kandidat bonus April yang belum diinput ditutup sebagai
+          #   Bonus Manual Rp 0 PAID; seluruh review bonus April kini selesai
 ```
 
 > Daftar di atas pernah tertinggal jauh (berhenti di 126 padahal file sudah 132).
