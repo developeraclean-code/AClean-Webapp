@@ -3,6 +3,7 @@
 import { sb, sendWA, isCronJobEnabled, fmt, log, deleteR2Object, OWNER_PHONE } from "./_shared.js";
 import * as Sentry from "@sentry/node";
 import { createHmac, createHash } from "crypto";
+import { getR2BucketUsage } from "../_r2-upload.js";
 
 // ══════════════════════════════════════════════════
 // TASK: Project Alerts — WA ke Owner untuk modul Project
@@ -604,4 +605,63 @@ export async function taskDataIntegrityAudit() {
   if (OWNER_PHONE) await sendWA(OWNER_PHONE, msg);
   await log("DATA_INTEGRITY_AUDIT", `Alert ${actionable.length} anomali: ${actionable.map(f => f.check + "=" + f.n).join(", ")}`, nCrit ? "ERROR" : "WARNING");
   return { ok: true, anomalies: actionable.length, critical: nCrit };
+}
+
+// ══════════════════════════════════════════════════
+// TASK: infra-usage-alert — harian 07:00 WIB
+// Ukur database Supabase + bucket R2. Egress Supabase/Vercel tidak tersedia dari
+// runtime aplikasi tanpa Management API token, sehingga sengaja tidak ditebak.
+// ══════════════════════════════════════════════════
+export async function taskInfraUsageAlert() {
+  const { data: rows } = await sb.from("app_settings").select("key,value")
+    .in("key", ["infra_usage_alert_enabled", "infra_usage_warn_percent", "infra_usage_critical_percent", "infra_usage_last_alert", "cron_jobs"]);
+  const settings = Object.fromEntries((rows || []).map(r => [r.key, r.value]));
+  if (!isCronJobEnabled(settings, "infra_usage_alert_enabled") || settings.infra_usage_alert_enabled !== "true") {
+    await log("INFRA_USAGE", "Dilewati — infra_usage_alert_enabled OFF", "INFO");
+    return { skipped: true };
+  }
+
+  const warnAt = Math.max(1, Number(settings.infra_usage_warn_percent) || 70);
+  const criticalAt = Math.max(warnAt, Number(settings.infra_usage_critical_percent) || 85);
+  const DB_FREE_BYTES = 500 * 1024 * 1024;
+  const R2_FREE_BYTES = 10 * 1024 * 1024 * 1024;
+  const [dbResult, r2] = await Promise.all([
+    sb.rpc("get_infra_database_size"),
+    getR2BucketUsage(),
+  ]);
+  const dbBytes = Number(dbResult?.data?.bytes) || null;
+  const r2Bytes = r2.ok ? Number(r2.bytes) : null;
+  const percent = (value, limit) => value == null ? null : Number((value / limit * 100).toFixed(1));
+  const dbPercent = percent(dbBytes, DB_FREE_BYTES);
+  const r2Percent = percent(r2Bytes, R2_FREE_BYTES);
+  const levelOf = (p) => p == null ? "unknown" : p >= criticalAt ? "critical" : p >= warnAt ? "warning" : "ok";
+  const levels = [levelOf(dbPercent), levelOf(r2Percent)];
+  const level = levels.includes("critical") ? "critical" : levels.includes("warning") ? "warning" : levels.every(x => x === "unknown") ? "unknown" : "ok";
+  const snapshot = {
+    measured_at: new Date().toISOString(), level, warn_percent: warnAt, critical_percent: criticalAt,
+    supabase_database: { bytes: dbBytes, limit_bytes: DB_FREE_BYTES, percent: dbPercent, error: dbResult?.error?.message || null },
+    r2_storage: { bytes: r2Bytes, objects: r2.objects || null, limit_bytes: R2_FREE_BYTES, percent: r2Percent, requests: r2.requests || 0, error: r2.ok ? null : r2.err },
+    external_dashboards: { supabase_egress: "unavailable", vercel_usage: "unavailable" },
+  };
+  await sb.from("app_settings").upsert({ key: "infra_usage_snapshot", value: JSON.stringify(snapshot) }, { onConflict: "key" });
+
+  let previous = {};
+  try { previous = JSON.parse(settings.infra_usage_last_alert || "{}"); } catch (_) {}
+  const lastAlertAge = previous.at ? Date.now() - new Date(previous.at).getTime() : Infinity;
+  const shouldAlert = ["warning", "critical"].includes(level)
+    && (previous.level !== level || lastAlertAge >= 7 * 86400000);
+  if (shouldAlert && OWNER_PHONE) {
+    const fmtSize = b => b == null ? "tidak tersedia" : b >= 1024 ** 3
+      ? `${(b / 1024 ** 3).toFixed(2)} GB`
+      : `${(b / 1024 ** 2).toFixed(1)} MB`;
+    const icon = level === "critical" ? "🔴" : "⚠️";
+    const message = `${icon} *ALARM KUOTA INFRASTRUKTUR*\n\nSupabase DB: *${dbPercent ?? "?"}%* (${fmtSize(dbBytes)} / 500 MB)\nCloudflare R2: *${r2Percent ?? "?"}%* (${fmtSize(r2Bytes)} / 10 GB, ${r2.objects || 0} file)\n\nBatas peringatan ${warnAt}% · kritis ${criticalAt}%\nCek menu Monitoring dan dashboard provider.`;
+    await sendWA(OWNER_PHONE, message);
+    await sb.from("app_settings").upsert({ key: "infra_usage_last_alert", value: JSON.stringify({ level, at: new Date().toISOString() }) }, { onConflict: "key" });
+  } else if (level === "ok" && previous.level && previous.level !== "ok") {
+    await sb.from("app_settings").upsert({ key: "infra_usage_last_alert", value: JSON.stringify({ level: "ok", at: new Date().toISOString() }) }, { onConflict: "key" });
+  }
+
+  await log("INFRA_USAGE", `DB=${dbPercent ?? "?"}% R2=${r2Percent ?? "?"}% level=${level}`, level === "critical" ? "WARNING" : "INFO");
+  return { snapshot, alerted: shouldAlert && !!OWNER_PHONE };
 }

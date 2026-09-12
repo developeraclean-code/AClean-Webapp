@@ -6,6 +6,72 @@ export async function uploadFoto(req, res) {
       if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
       const body = req.body || {};
 
+      // Direct-to-R2 upload: browser hanya meminta URL PUT bertanda tangan, lalu byte
+      // file dikirim langsung ke R2. Jalur base64 lama di bawah tetap dipertahankan
+      // sebagai fallback otomatis bila CORS R2 belum siap saat masa trial.
+      if (body.action === "presign") {
+        const accessKeyId     = process.env.R2_ACCESS_KEY;
+        const secretAccessKey = process.env.R2_SECRET_KEY;
+        const accountId       = process.env.R2_ACCOUNT_ID || process.env.CLOUDFLARE_ACCOUNT_ID;
+        const bucket          = process.env.R2_BUCKET_NAME || "aclean-files";
+        const publicUrl       = (process.env.R2_PUBLIC_URL || "").replace(/\/$/, "");
+        if (!accessKeyId || !secretAccessKey || !accountId) {
+          return res.status(503).json({ error: "R2 credentials belum lengkap" });
+        }
+
+        const fileName = String(body.filename || body.fileName || `foto_${Date.now()}.jpg`);
+        const mimeType = String(body.mimeType || body.fileType || "application/octet-stream").toLowerCase();
+        const size = Number(body.size) || 0;
+        const allowedMime = /^(image\/(jpeg|png|gif|webp)|application\/pdf|text\/html|application\/json)$/;
+        if (!allowedMime.test(mimeType)) return res.status(400).json({ error: "Tipe file tidak diizinkan" });
+        if (size <= 0 || size > 15 * 1024 * 1024) return res.status(400).json({ error: "Ukuran file tidak valid (maks. 15 MB)" });
+
+        const rawFolder = body.reportId ? ("laporan/" + body.reportId) : (body.folder || "laporan");
+        const folder = String(rawFolder).replace(/\.\./g, "").replace(/^\/+|\/+$/g, "").replace(/[^a-zA-Z0-9_\-/.]/g, "_");
+        const safe = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
+        const clientHash = String(body.hash || "").replace(/[^a-fA-F0-9]/g, "").slice(0, 64);
+        const key = clientHash
+          ? `${folder}/${clientHash}.jpg`
+          : `${folder}/${Date.now()}_${safe}`;
+
+        try {
+          const crypto = await import("crypto");
+          const host = accountId + ".r2.cloudflarestorage.com";
+          const now = new Date();
+          const dateStr = now.toISOString().replace(/[:-]|\.\d{3}/g, "").slice(0, 8);
+          const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "").slice(0, 15) + "Z";
+          const expires = "300";
+          const credScope = `${dateStr}/auto/s3/aws4_request`;
+          const enc = (v) => encodeURIComponent(String(v)).replace(/[!'()*]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+          const params = {
+            "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
+            "X-Amz-Credential": `${accessKeyId}/${credScope}`,
+            "X-Amz-Date": amzDate,
+            "X-Amz-Expires": expires,
+            "X-Amz-SignedHeaders": "host",
+          };
+          const canonicalQuery = Object.keys(params).sort().map(k => `${enc(k)}=${enc(params[k])}`).join("&");
+          const canonicalUri = "/" + bucket + "/" + key.split("/").map(enc).join("/");
+          const canonicalReq = ["PUT", canonicalUri, canonicalQuery, `host:${host}\n`, "host", "UNSIGNED-PAYLOAD"].join("\n");
+          const strToSign = ["AWS4-HMAC-SHA256", amzDate, credScope, crypto.createHash("sha256").update(canonicalReq).digest("hex")].join("\n");
+          const hmac = (k, d) => crypto.createHmac("sha256", k).update(d).digest();
+          const signingKey = hmac(hmac(hmac(hmac("AWS4" + secretAccessKey, dateStr), "auto"), "s3"), "aws4_request");
+          const signature = crypto.createHmac("sha256", signingKey).update(strToSign).digest("hex");
+          const uploadUrl = `https://${host}${canonicalUri}?${canonicalQuery}&X-Amz-Signature=${signature}`;
+          return res.status(200).json({
+            success: true,
+            direct: true,
+            uploadUrl,
+            key,
+            bucket,
+            url: publicUrl ? `${publicUrl}/${key}` : `https://${host}/${bucket}/${key}`,
+            expiresIn: Number(expires),
+          });
+        } catch (err) {
+          return res.status(500).json({ error: "Gagal membuat direct upload URL: " + err.message });
+        }
+      }
+
       // App.jsx mengirim: { base64, filename, reportId, mimeType }
       const rawData  = body.base64 || body.fileData || "";
       const fileName = body.filename || body.fileName || ("foto_" + Date.now() + ".jpg");
@@ -322,4 +388,3 @@ export async function syncFotos(req, res) {
         return res.status(500).json({ error: "Sync failed: " + err.message });
       }
 }
-

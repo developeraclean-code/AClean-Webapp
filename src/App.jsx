@@ -44,6 +44,7 @@ import {
   fetchAppSettings, fetchUserProfiles, fetchUserAccounts,
   fetchWaConversations, fetchPriceList, fetchAraBrain,
   lookupCustomersByPhone, fetchKasbonRequests, fetchInvoiceById, fetchInvoicesByIds,
+  fetchServiceReportById,
 } from "./data/reads.js";
 import {
   insertOrder, updateOrder, updateOrderStatus, deleteOrder,
@@ -77,6 +78,7 @@ import { mergedInvoiceWA as mergedInvoiceWALib } from "./lib/mergedInvoiceWa.js"
 import { approveInvoiceCore as approveInvoiceCoreLib } from "./lib/approveInvoiceCore.js";
 import { submitLaporan as submitLaporanImpl } from "./lib/submitLaporan.js";
 import { loadAllData } from "./lib/loadAllData.js";
+import { tryDirectR2Upload } from "./lib/directR2Upload.js";
 import { approveKasbon as approveKasbonLib, rejectKasbon as rejectKasbonLib } from "./lib/kasbon.js";
 import { handleFotoUpload as handleFotoUploadLib } from "./lib/fotoUpload.js";
 import { retroMatchPayment as retroMatchPaymentLib } from "./lib/retroMatch.js";
@@ -820,6 +822,7 @@ export default function ACleanWebApp() {
   const [projectDailyReports, setProjectDailyReports] = useState([]); // laporan harian project (project_daily_reports)
   const [selectedLaporan, setSelectedLaporan] = useState(null);
   const [modalLaporanDetail, setModalLaporanDetail] = useState(false);
+  const [selectedLaporanLoading, setSelectedLaporanLoading] = useState(false);
   const [editLaporanMode, setEditLaporanMode] = useState(false);
   const [editLaporanForm, setEditLaporanForm] = useState({});
   const [activeEditUnitIdx, setActiveEditUnitIdx] = useState(0);
@@ -1199,6 +1202,10 @@ export default function ACleanWebApp() {
   // Gunakan ini di tempat-tempat baru. Existing fetch() yang pakai _apiHeaders() tetap jalan.
   const _apiFetch = async (url, opts = {}) => {
     const headers = { ...(opts.headers || {}), ...(await _apiHeaders()) };
+    // Upload file tidak lagi melewati bandwidth/function Vercel bila CORS R2 siap.
+    // Saat direct PUT gagal, lanjut otomatis ke request base64 lama di bawah.
+    const direct = await tryDirectR2Upload(url, opts, headers);
+    if (direct) return direct;
     let r = await fetch(url, { ...opts, headers });
     if (r.status === 401) {
       _internalTokenRef.current = null;
@@ -2640,6 +2647,7 @@ export default function ACleanWebApp() {
   // ── Supabase: Load data + Realtime saat login ──
   useEffect(() => {
     if (!isLoggedIn) return;
+    let lastFullLoadAt = 0;
 
     // Wrapper (Fase 3, pola ctx): loadAll (bootstrap data) pindah ke lib/loadAllData.
     // Dipanggil dari initLoadAll (bawah) & auto-refresh polling.
@@ -2662,6 +2670,7 @@ export default function ACleanWebApp() {
       if (!isValid) return;
       setDataLoading(true);
       loadAll().finally(() => {
+        lastFullLoadAt = Date.now();
         setDataLoading(false);
         // GAP-7: Jalankan check stuck jobs segera setelah data load, lalu setiap 15 menit
         setTimeout(() => checkStuckJobs(), 5000); // delay 5 detik agar state ready
@@ -2738,11 +2747,25 @@ export default function ACleanWebApp() {
     }, 8000); // jalankan 8 detik setelah data selesai load
 
 
-    // ── GAP-08 FIX: Auto-refresh — 30 menit jam kerja, 60 menit luar jam kerja ──
-    const STATS_INTERVAL = isWorkingHours() ? 30 * 60 * 1000 : 60 * 60 * 1000;
+    // Polling incremental sudah menjaga perubahan harian. Full reconciliation cukup
+    // 6 jam sekali saat tab terlihat, atau saat kembali ke tab setelah minimal 4 jam.
+    const FULL_REFRESH_MS = 6 * 60 * 60 * 1000;
+    const FOCUS_REFRESH_MS = 4 * 60 * 60 * 1000;
+    const STATS_INTERVAL = 30 * 60 * 1000;
+    const runFullRefreshIfDue = (minimumAge = FULL_REFRESH_MS) => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      if (Date.now() - lastFullLoadAt < minimumAge) return;
+      loadAll()
+        .then(() => { lastFullLoadAt = Date.now(); })
+        .catch(e => console.warn("Full reconciliation skip:", e?.message));
+    };
     const _statsTimer = setInterval(() => {
-      loadAll().catch(e => console.warn("Auto-refresh skip:", e?.message));
+      runFullRefreshIfDue();
     }, STATS_INTERVAL);
+    const _onVisibilityRefresh = () => {
+      if (document.visibilityState === "visible") runFullRefreshIfDue(FOCUS_REFRESH_MS);
+    };
+    document.addEventListener("visibilitychange", _onVisibilityRefresh);
 
     // ══ Polling ringan — pengganti Supabase Realtime / Postgres Changes ══
     // Postgres Changes (decode WAL) = sumber utama beban compute Supabase (~68%) → DIMATIKAN.
@@ -2875,6 +2898,7 @@ export default function ACleanWebApp() {
 
       clearTimeout(autoVerifyTimer);
       clearInterval(_statsTimer);
+      document.removeEventListener("visibilitychange", _onVisibilityRefresh);
       if (stuckCheckTimer.current) clearInterval(stuckCheckTimer.current);
     };
   }, [isLoggedIn]);
@@ -2922,7 +2946,33 @@ export default function ACleanWebApp() {
     catatan_global: r.catatan_global || r.catatan || "",
     submitted: r.submitted || (r.submitted_at || "").slice(0, 16).replace("T", " "),
     status: r.status || "SUBMITTED",
+    _detailLoaded: r._detailLoaded !== false,
   });
+
+  // Bootstrap laporan sengaja tanpa objek `fotos` rinci yang menduplikasi URL.
+  // Hydrate satu laporan saat detail dibuka agar label/unit foto tetap lengkap.
+  useEffect(() => {
+    if (!modalLaporanDetail || !selectedLaporan?.id || selectedLaporan._detailLoaded !== false) return;
+    let cancelled = false;
+    setSelectedLaporanLoading(true);
+    fetchServiceReportById(supabase, selectedLaporan.id)
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error || !data) {
+          showNotif("⚠️ Detail laporan gagal dimuat. Coba tutup dan buka kembali.", true);
+          return;
+        }
+        const fresh = parseLaporanRow(data);
+        setSelectedLaporan(fresh);
+        setLaporanReports(prev => prev.map(r => r.id === fresh.id ? { ...r, ...fresh } : r));
+      })
+      .catch(err => {
+        if (!cancelled) console.warn("[REPORT_DETAIL_LOAD]", err?.message || err);
+      })
+      .finally(() => { if (!cancelled) setSelectedLaporanLoading(false); });
+    return () => { cancelled = true; setSelectedLaporanLoading(false); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modalLaporanDetail, selectedLaporan?.id, selectedLaporan?._detailLoaded]);
 
   // Dedup laporan by job_id — keep latest submitted (cegah double laporan saat rewrite).
   const dedupReportsByJob = (reports) => {
@@ -4854,7 +4904,12 @@ export default function ACleanWebApp() {
       </Suspense>
 
       {/* ═══════ MODAL EDIT / DETAIL LAPORAN ═══════ */}
-      {modalLaporanDetail && selectedLaporan && (
+      {modalLaporanDetail && selectedLaporan && selectedLaporanLoading && (
+        <div style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 501, display: "flex", alignItems: "center", justifyContent: "center", color: cs.muted }}>
+          ⏳ Memuat detail laporan…
+        </div>
+      )}
+      {modalLaporanDetail && selectedLaporan && !selectedLaporanLoading && selectedLaporan._detailLoaded !== false && (
         <Suspense fallback={<div style={{ position: "fixed", inset: 0, background: "#000d", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", color: cs.muted }}>Memuat...</div>}>
           <LaporanDetailModal ctx={{
             INSTALL_ITEMS, KONDISI_SBL, KONDISI_SDH, PEKERJAAN_OPT, SATUAN_OPT, TIPE_AC_OPT,

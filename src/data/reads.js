@@ -159,10 +159,23 @@ export const fetchInventory = (supabase) =>
 // duplikat dari units & materials_used (jsonb). Semua 1133 row sudah di-backfill jsonb-nya
 // (scripts/backfill-report-jsonb), jadi parseLaporan cukup pakai jsonb. Hemat ~0,9MB payload startup.
 const REPORT_COLS = "id,job_id,teknisi,helper,customer,service,type,date,total_units,total_freon,units,materials_used,foto_urls,fotos,rekomendasi,catatan_global,edit_log,status,submitted_at,updated_at,submitted,unit_mismatch,created_at,is_substitute,is_install,bap_number,bap_statement,bap_recommendation,ttd_customer_url,ttd_customer_name,bap_skipped_reason,bap_signed_at,hasil_survey,catatan_rekomendasi,survey_sent_at,report_card_sent_at,report_card_sent_by";
-export const fetchServiceReports = (supabase) =>
+// Bootstrap hanya membawa daftar URL foto, bukan objek `fotos` rinci yang menduplikasi
+// URL + label/unit tag. Units/materials/BAP tetap ada karena dipakai langsung untuk
+// audit kartu. Detail foto lengkap diambil per-ID ketika modal dibuka/report card dibuat.
+const REPORT_SUMMARY_COLS = "id,job_id,teknisi,helper,customer,service,type,date,total_units,total_freon,units,materials_used,foto_urls,rekomendasi,catatan_global,edit_log,status,submitted_at,updated_at,submitted,unit_mismatch,created_at,is_substitute,is_install,bap_number,bap_statement,bap_recommendation,ttd_customer_url,ttd_customer_name,bap_skipped_reason,bap_signed_at,hasil_survey,catatan_rekomendasi,survey_sent_at,report_card_sent_at,report_card_sent_by";
+export const fetchServiceReports = async (supabase) => {
+  const result = await supabase.from("service_reports")
+    .select(REPORT_SUMMARY_COLS)
+    .order("submitted_at", { ascending: false }).limit(5000);
+  if (result.data) result.data = result.data.map(row => ({ ...row, _detailLoaded: false }));
+  return result;
+};
+
+export const fetchServiceReportById = (supabase, id) =>
   supabase.from("service_reports")
     .select(REPORT_COLS)
-    .order("submitted_at", { ascending: false }).limit(5000);
+    .eq("id", id)
+    .maybeSingle();
 
 // Rekap jenis pekerjaan (Dashboard) — proyeksi RINGAN (tanpa kolom foto/bap berat).
 // Hanya VERIFIED sejak `sinceDate` (YYYY-MM-DD) untuk navigasi minggu/bulan prev/next.

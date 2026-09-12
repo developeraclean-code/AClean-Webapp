@@ -12,16 +12,20 @@ export async function monitor(req, res) {
     const sinceParam = encodeURIComponent(since24h);
     const sbHeaders = { apikey: SK, Authorization: "Bearer " + SK };
 
-    const [errResponse, countResponse, cronResponse, aiResponse] = await Promise.all([
+    const [errResponse, countResponse, cronResponse, aiResponse, infraResponse] = await Promise.all([
       fetch(SU+"/rest/v1/agent_logs?select=action,status,severity,category,detail,created_at&or=(status.eq.ERROR,status.eq.WARNING,severity.eq.error,severity.eq.warn,severity.eq.critical)&created_at=gte."+sinceParam+"&order=created_at.desc&limit=100", { headers: sbHeaders }),
       fetch(SU+"/rest/v1/agent_logs?select=id&created_at=gte."+sinceParam+"&limit=1", { headers: { ...sbHeaders, Prefer: "count=exact" } }),
       fetch(SU+"/rest/v1/cron_runs?select=task_name,status,duration_ms,error_message,items_processed,started_at,finished_at&started_at=gte."+sinceParam+"&order=started_at.desc&limit=100", { headers: sbHeaders }),
       fetch(SU+"/rest/v1/ai_usage?select=provider,model,feature,input_tokens,output_tokens,cost_usd,duration_ms,error,created_at&created_at=gte."+sinceParam+"&order=created_at.desc&limit=200", { headers: sbHeaders }),
+      fetch(SU+"/rest/v1/app_settings?select=value&key=eq.infra_usage_snapshot&limit=1", { headers: sbHeaders }),
     ]);
     const logs = errResponse.ok ? await errResponse.json() : [];
     const totalLogsIn24h = parseInt(countResponse.headers?.get?.("content-range")?.split("/")?.[1] || "0") || 0;
     const crons = cronResponse.ok ? await cronResponse.json() : [];
     const aiUsage = aiResponse.ok ? await aiResponse.json() : [];
+    const infraRows = infraResponse.ok ? await infraResponse.json() : [];
+    let infra = null;
+    try { infra = JSON.parse(infraRows?.[0]?.value || "null"); } catch (_) { infra = null; }
 
     const logsArray = Array.isArray(logs) ? logs : [];
     const cronArray = Array.isArray(crons) ? crons : [];
@@ -81,11 +85,14 @@ export async function monitor(req, res) {
         errorCount: aiArray.filter(a => a.error).length,
         byProvider: aiByProvider,
       },
+      infra,
     };
 
-    const health = (errorCount === 0 && cronFailed === 0)
+    let health = (errorCount === 0 && cronFailed === 0)
       ? "healthy"
       : (metrics.errorRate < 0.1 && cronFailed < 3) ? "degraded" : "unhealthy";
+    if (infra?.level === "critical") health = "unhealthy";
+    else if (infra?.level === "warning" && health === "healthy") health = "degraded";
 
     return res.status(200).json({
       status: "ok",

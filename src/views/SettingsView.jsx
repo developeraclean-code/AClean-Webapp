@@ -1050,6 +1050,12 @@ const d = await r.json();
                     const newVal = isOn ? "false" : "true";
                     setAppSettings(prev => ({ ...prev, [key]: newVal }));
                     await supabase.from("app_settings").upsert({ key, value: newVal }, { onConflict: "key" });
+                    let updCronJobs = cronJobs.map(j => j.backendKey === key ? { ...j, active: newVal === "true" } : j);
+                    if (!updCronJobs.some(j => j.backendKey === key)) {
+                      updCronJobs = [...updCronJobs, { id: Date.now(), backendKey: key, name: label, icon, time: "03:00", days: "Setiap Hari", task: desc, active: newVal === "true" }];
+                    }
+                    setCronJobs(updCronJobs);
+                    await supabase.from("app_settings").upsert({ key: "cron_jobs", value: JSON.stringify(updCronJobs) }, { onConflict: "key" });
                     showNotif((isOn ? "⛔ " : "✅ ") + label + (isOn ? " dimatikan" : " diaktifkan"));
                   }}
                     style={{ width: 44, height: 24, borderRadius: 99, background: isOn ? "linear-gradient(135deg," + cs.green + ",#059669)" : cs.surface, border: "1px solid " + (isOn ? cs.green : cs.border), cursor: "pointer", position: "relative", transition: "all .2s" }}>
@@ -1061,6 +1067,62 @@ const d = await r.json();
           })}
           <div style={{ marginTop: 12, padding: "10px 12px", background: cs.surface, borderRadius: 8, fontSize: 11, color: cs.muted }}>
             💡 File yang sudah dihapus tidak bisa dikembalikan. Matikan toggle bila perlu menyimpan file lebih lama.
+          </div>
+        </Card>
+        )}
+
+        {/* Alarm kuota internal — ukuran DB Supabase + storage R2 */}
+        {isOwner && (
+        <Card>
+          <CardHeader icon="🚨" title="Alarm Kuota Infrastruktur" subtitle="Ukur Supabase Database dan Cloudflare R2 setiap hari; kirim WA Owner saat melewati batas." />
+          {(() => {
+            const key = "infra_usage_alert_enabled";
+            const isOn = appSettings[key] === "true";
+            return (
+              <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "8px 0 14px", borderBottom: "1px solid " + cs.border }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, color: isOn ? cs.text : cs.muted, fontSize: 13 }}>Monitoring Harian + WA Owner</div>
+                  <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>Snapshot tampil di menu Monitoring. Alarm yang sama diulang maksimal tujuh hari sekali.</div>
+                </div>
+                <span style={{ fontSize: 11, fontWeight: 700, color: isOn ? cs.green : cs.muted }}>{isOn ? "ON" : "OFF"}</span>
+                <div onClick={async () => {
+                  const newVal = isOn ? "false" : "true";
+                  setAppSettings(prev => ({ ...prev, [key]: newVal }));
+                  await supabase.from("app_settings").upsert({ key, value: newVal }, { onConflict: "key" });
+                  let updCronJobs = cronJobs.map(j => j.backendKey === key ? { ...j, active: newVal === "true" } : j);
+                  if (!updCronJobs.some(j => j.backendKey === key)) {
+                    updCronJobs = [...updCronJobs, { id: Date.now(), backendKey: key, name: "Alarm Kuota Infrastruktur", icon: "🚨", time: "07:00", days: "Setiap Hari", task: "Ukur DB Supabase dan storage R2", active: newVal === "true" }];
+                  }
+                  setCronJobs(updCronJobs);
+                  await supabase.from("app_settings").upsert({ key: "cron_jobs", value: JSON.stringify(updCronJobs) }, { onConflict: "key" });
+                  showNotif((isOn ? "⛔ Alarm kuota dimatikan" : "✅ Alarm kuota diaktifkan"));
+                }} style={{ width: 44, height: 24, borderRadius: 99, background: isOn ? "linear-gradient(135deg," + cs.green + ",#059669)" : cs.surface, border: "1px solid " + (isOn ? cs.green : cs.border), cursor: "pointer", position: "relative" }}>
+                  <div style={{ position: "absolute", width: 18, height: 18, borderRadius: "50%", background: "#fff", top: 2, left: isOn ? 22 : 2, transition: "left .2s" }} />
+                </div>
+              </div>
+            );
+          })()}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 12, marginTop: 14 }}>
+            {[
+              { key: "infra_usage_warn_percent", label: "Peringatan (%)", fallback: "70", min: 50, max: 90 },
+              { key: "infra_usage_critical_percent", label: "Kritis (%)", fallback: "85", min: 60, max: 99 },
+            ].map(field => (
+              <label key={field.key} style={{ display: "grid", gap: 5, fontSize: 11, color: cs.muted }}>
+                <span style={{ fontWeight: 700 }}>{field.label}</span>
+                <input type="number" min={field.min} max={field.max}
+                  value={appSettings[field.key] || field.fallback}
+                  onChange={e => setAppSettings(prev => ({ ...prev, [field.key]: e.target.value }))}
+                  onBlur={async e => {
+                    const value = String(Math.max(field.min, Math.min(field.max, Number(e.target.value) || Number(field.fallback))));
+                    setAppSettings(prev => ({ ...prev, [field.key]: value }));
+                    await supabase.from("app_settings").upsert({ key: field.key, value }, { onConflict: "key" });
+                  }}
+                  style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 9, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none" }} />
+              </label>
+            ))}
+          </div>
+          <div style={{ marginTop: 12, padding: "10px 12px", background: cs.surface, borderRadius: 8, fontSize: 11, color: cs.muted }}>
+            Egress Supabase dan usage Vercel tetap wajib memakai alert di dashboard provider; aplikasi tidak memiliki Management API token untuk membaca angka tersebut.
           </div>
         </Card>
         )}

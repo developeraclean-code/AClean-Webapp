@@ -19,6 +19,12 @@ const fmtDuration = (ms) => {
   if (ms < 60000) return (ms / 1000).toFixed(1) + "s";
   return Math.floor(ms / 60000) + "m " + Math.floor((ms % 60000) / 1000) + "s";
 };
+const fmtBytes = (bytes) => {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n <= 0) return "—";
+  if (n >= 1024 ** 3) return (n / 1024 ** 3).toFixed(2) + " GB";
+  return (n / 1024 ** 2).toFixed(1) + " MB";
+};
 const SEVERITY_COLOR = {
   debug: { bg: "#94a3b8", label: "DEBUG" },
   info: { bg: "#3b82f6", label: "INFO" },
@@ -36,6 +42,7 @@ function TabOverview({ data, onRefresh }) {
   const errorRate = metrics.errorRate || 0;
   const cron = metrics.cron || {};
   const ai = metrics.ai || {};
+  const infra = metrics.infra || null;
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
@@ -61,6 +68,23 @@ function TabOverview({ data, onRefresh }) {
           <Card label="Warnings (24h)" value={metrics.totalWarnings || 0} color={cs.yellow} />
           <Card label="Error Rate"     value={(errorRate * 100).toFixed(1) + "%"} color={errorRate > 0.1 ? cs.red : errorRate > 0.05 ? cs.yellow : cs.green} />
           <Card label="Logs Checked"   value={metrics.totalLogsChecked || 0} color={cs.accent} />
+        </div>
+      </div>
+
+      <div style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 14, padding: 16 }}>
+        <div style={{ fontWeight: 700, color: cs.text, marginBottom: 4, fontSize: 14 }}>📦 Kuota Infrastruktur</div>
+        <div style={{ fontSize: 11, color: cs.muted, marginBottom: 12 }}>
+          {infra?.measured_at ? `Diukur ${new Date(infra.measured_at).toLocaleString("id-ID")}` : "Belum ada snapshot — jalankan cron infra-usage-alert setelah migration 166."}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 12 }}>
+          <Card label="Supabase Database" value={infra?.supabase_database?.percent != null ? `${infra.supabase_database.percent}% · ${fmtBytes(infra.supabase_database.bytes)}` : "Belum tersedia"}
+            color={(infra?.supabase_database?.percent || 0) >= (infra?.critical_percent || 85) ? cs.red : (infra?.supabase_database?.percent || 0) >= (infra?.warn_percent || 70) ? cs.yellow : cs.green} />
+          <Card label="Cloudflare R2" value={infra?.r2_storage?.percent != null ? `${infra.r2_storage.percent}% · ${fmtBytes(infra.r2_storage.bytes)}` : "Belum tersedia"}
+            color={(infra?.r2_storage?.percent || 0) >= (infra?.critical_percent || 85) ? cs.red : (infra?.r2_storage?.percent || 0) >= (infra?.warn_percent || 70) ? cs.yellow : cs.green} />
+          <Card label="Objek R2" value={infra?.r2_storage?.objects?.toLocaleString?.("id-ID") || "—"} color={cs.accent} />
+        </div>
+        <div style={{ marginTop: 10, fontSize: 11, color: cs.muted, lineHeight: 1.5 }}>
+          Alarm WA: peringatan {infra?.warn_percent || 70}% · kritis {infra?.critical_percent || 85}%. Egress Supabase dan pemakaian Vercel tetap diperiksa di dashboard provider karena tidak tersedia dari runtime aplikasi.
         </div>
       </div>
 

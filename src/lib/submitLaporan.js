@@ -378,22 +378,31 @@ export async function submitLaporan({
       return; // Don't proceed to reload/notify if save failed
     }
 
-    // ── 8. Reload laporan (backup, realtime juga akan trigger) ──
-    const reloadLaporan = async () => {
-      const { data } = await supabase.from("service_reports")
-        .select("*").order("submitted_at", { ascending: false });
-      if (data?.length > 0) {
-        setLaporanReports(data.map(r => ({
-          ...r,
-          units: r.units_json ? (() => { try { return JSON.parse(r.units_json); } catch (_) { return r.units || []; } })() : (r.units || []),
-          materials: r.materials_json ? (() => { try { return JSON.parse(r.materials_json); } catch (_) { return r.materials_used || []; } })() : (r.materials_used || []),
-          fotos: r.fotos || (r.foto_urls || []).map((url, i) => ({ id: i, label: `Foto ${i + 1}`, url })),
-          editLog: safeArr(r.edit_log ?? r.editLog),
-        })));
+    // ── 8. Sinkronkan hanya laporan yang baru disimpan ──
+    // Dulu seluruh service_reports diunduh DUA kali (800ms + 3s) untuk satu submit.
+    // Upsert sudah selesai pada titik ini, jadi satu lookup by ID cukup dan deterministik.
+    try {
+      const { data: savedRow, error: savedReadErr } = await supabase.from("service_reports")
+        .select("*").eq("id", newReport.id).maybeSingle();
+      if (savedReadErr) throw savedReadErr;
+      if (savedRow) {
+        const parsedSaved = {
+          ...savedRow,
+          units: savedRow.units_json ? (() => { try { return JSON.parse(savedRow.units_json); } catch (_) { return savedRow.units || []; } })() : (savedRow.units || []),
+          materials: savedRow.materials_json ? (() => { try { return JSON.parse(savedRow.materials_json); } catch (_) { return savedRow.materials_used || []; } })() : (savedRow.materials_used || []),
+          fotos: savedRow.fotos || (savedRow.foto_urls || []).map((url, i) => ({ id: i, label: `Foto ${i + 1}`, url })),
+          editLog: safeArr(savedRow.edit_log ?? savedRow.editLog),
+          _detailLoaded: true,
+        };
+        setLaporanReports(prev => {
+          const withoutSameJob = (prev || []).filter(r => r.id !== parsedSaved.id && r.job_id !== parsedSaved.job_id);
+          return [parsedSaved, ...withoutSameJob];
+        });
       }
-    };
-    setTimeout(reloadLaporan, 800);
-    setTimeout(reloadLaporan, 3000);
+    } catch (reloadErr) {
+      // Simpan utama sudah sukses; kegagalan refresh lokal tidak boleh menggagalkan submit.
+      console.warn("[REPORT_SINGLE_RELOAD]", reloadErr?.message || reloadErr);
+    }
 
     // ── 9. Update order status ──
     setOrdersData(prev => prev.map(o =>
