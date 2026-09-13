@@ -1,8 +1,9 @@
 import { memo, useState, useMemo, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { useAppContext } from "../context/AppContext.js";
-import { fetchDeletedExpenses } from "../data/reads.js";
+import { fetchAllExpenses, fetchDeletedExpenses, fetchExpenseBudgets, fetchExpenseWorkspace } from "../data/reads.js";
 import { restoreExpense, purgeExpense } from "../data/writes.js";
+import { useDebounce } from "../lib/useDebounce.js";
 import ExpenseFormModal, { BudgetModal } from "./ExpenseFormModal.jsx";
 import TautkanStokModal from "./TautkanStokModal.jsx";
 import { downloadCsv, printDocument, htmlTable, rp, fmtTanggal, escapeHtml } from "../lib/exportUtils.js";
@@ -117,22 +118,44 @@ const MONTH_QUICK = useMemo(() => {
   });
 }, []);
 
+const debouncedExpenseSearch = useDebounce(expenseSearch, 300);
+const [workspace, setWorkspace] = useState(null);
+const [workspaceV2, setWorkspaceV2] = useState(false);
+const [workspaceLoading, setWorkspaceLoading] = useState(false);
+const [workspaceError, setWorkspaceError] = useState("");
+const [workspaceRevision, setWorkspaceRevision] = useState(0);
+
 // ── Budget state ──
 const [showBudgetPanel, setShowBudgetPanel] = useState(false);
 const [budgetForm, setBudgetForm] = useState(null); // null | { category, subcategory, amount }
 const [budgetSaving, setBudgetSaving] = useState(false);
+const [monthlyBudgetRows, setMonthlyBudgetRows] = useState([]);
+const [budgetV2, setBudgetV2] = useState(false);
+const budgetKey = (cat, sub) => sub ? `${cat}::${sub}` : cat;
 
 // Budget data dari app_settings.expense_budgets (JSON: { "petty_cash::Bensin Motor": 500000, ... })
 const budgetMap = useMemo(() => {
+  if (budgetV2) return Object.fromEntries(monthlyBudgetRows.map(row => [budgetKey(row.category, row.subcategory || null), Number(row.amount) || 0]));
   try { return JSON.parse(appSettings?.expense_budgets || "{}"); } catch { return {}; }
-}, [appSettings?.expense_budgets]);
-
-const budgetKey = (cat, sub) => sub ? `${cat}::${sub}` : cat;
+}, [appSettings?.expense_budgets, budgetV2, monthlyBudgetRows]);
 
 // Hitung pengeluaran bulan ini per kategori & sub
 const nowDate = new Date();
 const thisMonthPrefix = `${nowDate.getFullYear()}-${String(nowDate.getMonth() + 1).padStart(2, "0")}`;
+const budgetPeriodMonth = `${thisMonthPrefix}-01`;
+useEffect(() => {
+  let alive = true;
+  fetchExpenseBudgets(supabase, budgetPeriodMonth).then(({ data, error }) => {
+    if (!alive) return;
+    if (!error) { setMonthlyBudgetRows(data || []); setBudgetV2(true); }
+    else if (!/expense_budgets|schema cache/i.test(error.message || "")) showNotif?.("❌ Gagal memuat budget: " + error.message);
+  });
+  return () => { alive = false; };
+}, [supabase, budgetPeriodMonth]);
 const spendThisMonth = useMemo(() => {
+  if (workspaceV2 && workspace?.budget_spend) {
+    return Object.fromEntries(Object.entries(workspace.budget_spend).map(([key, value]) => [key, Number(value) || 0]));
+  }
   const map = {};
   expensesData.forEach(e => {
     if (e.approval_status === "PENDING_APPROVAL") return;   // belum disetujui Owner → belum dihitung
@@ -146,7 +169,7 @@ const spendThisMonth = useMemo(() => {
     }
   });
   return map;
-}, [expensesData, thisMonthPrefix]);
+}, [expensesData, thisMonthPrefix, workspaceV2, workspace]);
 
 const saveBudget = async () => {
   if (!budgetForm) return;
@@ -154,6 +177,26 @@ const saveBudget = async () => {
   const key = budgetKey(budgetForm.category, budgetForm.subcategory);
   const newMap = { ...budgetMap };
   const amt = Number(budgetForm.amount);
+  if (budgetV2) {
+    const subcategory = budgetForm.subcategory || "";
+    const result = (!amt || amt <= 0)
+      ? await supabase.from("expense_budgets").delete().eq("period_month", budgetPeriodMonth).eq("category", budgetForm.category).eq("subcategory", subcategory)
+      : await supabase.from("expense_budgets").upsert({
+          period_month: budgetPeriodMonth, category: budgetForm.category, subcategory,
+          amount: amt, updated_by: currentUser?.id || null, updated_at: new Date().toISOString(),
+        }, { onConflict: "period_month,category,subcategory" }).select().single();
+    if (result.error) showNotif?.("❌ Gagal simpan budget: " + result.error.message);
+    else {
+      setMonthlyBudgetRows(prev => {
+        const rest = prev.filter(r => !(r.category === budgetForm.category && (r.subcategory || "") === subcategory));
+        return (!amt || amt <= 0) ? rest : [...rest, result.data];
+      });
+      showNotif?.("✅ Budget bulan ini disimpan");
+      setBudgetForm(null);
+    }
+    setBudgetSaving(false);
+    return;
+  }
   if (!amt || amt <= 0) { delete newMap[key]; } else { newMap[key] = amt; }
   const newVal = JSON.stringify(newMap);
   const { error } = await supabase.from("app_settings")
@@ -186,6 +229,47 @@ const budgetAlerts = ALL_BUDGET_ITEMS.filter(item => {
 const isTrash = expenseTab === "deleted";
 const isPendingAi = expenseTab === "pending_ai";
 
+// Server-side filter + pagination setelah migration 168. Sebelum migration tersedia,
+// fallback lama tetap dipakai sehingga localhost/production tidak blank saat rollout.
+useEffect(() => {
+  if (isTrash || isPendingAi || !supabase) return;
+  let alive = true;
+  const load = async () => {
+    setWorkspaceLoading(true);
+    setWorkspaceError("");
+    try {
+      const category = ["petty_cash", "material_purchase"].includes(expenseTab) ? expenseTab : null;
+      const subcategory = expenseTab === "petty_cash" && expenseFilter !== "Semua" ? expenseFilter : null;
+      const result = await fetchExpenseWorkspace(supabase, {
+        dateFrom: expenseDateFrom, dateTo: expenseDateTo, category, subcategory,
+        search: debouncedExpenseSearch, page: expensePage, pageSize: EXPENSE_PAGE_SIZE,
+      });
+      if (!alive) return;
+      if (!result.error && result.data) {
+        setWorkspace(result.data);
+        setWorkspaceV2(true);
+        setExpensesData(result.data.rows || []);
+        return;
+      }
+      const unavailable = /get_expense_workspace|schema cache|could not find the function/i.test(result.error?.message || "");
+      if (!unavailable) throw result.error;
+      const fallback = await fetchAllExpenses(supabase);
+      if (fallback.error) throw fallback.error;
+      if (alive) {
+        setExpensesData(fallback.data || []);
+        setWorkspace(null);
+        setWorkspaceV2(false);
+      }
+    } catch (error) {
+      if (alive) setWorkspaceError(error?.message || "Gagal memuat biaya");
+    } finally {
+      if (alive) setWorkspaceLoading(false);
+    }
+  };
+  load();
+  return () => { alive = false; };
+}, [isTrash, isPendingAi, supabase, expenseTab, expenseFilter, expenseDateFrom, expenseDateTo, debouncedExpenseSearch, expensePage, EXPENSE_PAGE_SIZE, workspaceRevision]);
+
 // Pending AI items — diisi oleh AI vision classifier dari foto grup WA
 const [pendingAi, setPendingAi] = useState([]);
 const [loadingPendingAi, setLoadingPendingAi] = useState(false);
@@ -213,9 +297,13 @@ useEffect(() => { if (isPendingAi) loadPendingAi(); /* eslint-disable-line */ },
 const handleApprovePendingAi = async (item) => {
   setPendingAiBusy(item.id);
   try {
-    await supabase.from("expenses").update({ validation_status: "APPROVED" }).eq("id", item.id);
+    const { error: expenseError } = await supabase.from("expenses")
+      .update({ validation_status: "APPROVED", last_changed_by: auditUserName() })
+      .eq("id", item.id);
+    if (expenseError) throw expenseError;
     if (item.ai_extraction_id) {
-      await supabase.from("ai_extractions").update({ status: "approved" }).eq("id", item.ai_extraction_id);
+      const { error: aiError } = await supabase.from("ai_extractions").update({ status: "approved" }).eq("id", item.ai_extraction_id);
+      if (aiError) throw new Error("Biaya sudah approved, tetapi sinkronisasi AI gagal: " + aiError.message);
     }
     showNotif?.("✓ Approved: " + (item.description || ""), "success");
     setPendingAi(prev => prev.filter(x => x.id !== item.id));
@@ -226,6 +314,7 @@ const handleApprovePendingAi = async (item) => {
       // Item belum ada di expensesData (insert dari backend setelah Owner buka tab) → tambah
       return [{ ...item, validation_status: "APPROVED" }, ...prev];
     });
+    setWorkspaceRevision(v => v + 1);
   } catch (e) {
     showNotif?.("Gagal approve: " + e.message, "error");
   } finally { setPendingAiBusy(null); }
@@ -233,17 +322,25 @@ const handleApprovePendingAi = async (item) => {
 const handleRejectPendingAi = async (item) => {
   showConfirm?.({
     title: "Tolak entri ini?",
-    message: "Entri AI akan dihapus permanen. Yakin?",
+    message: "Entri AI akan ditolak dan dipindahkan ke recycle bin agar jejak audit tetap tersimpan. Yakin?",
     onConfirm: async () => {
       setPendingAiBusy(item.id);
       try {
-        await supabase.from("expenses").delete().eq("id", item.id);
+        const { error: expenseError } = await supabase.from("expenses").update({
+          validation_status: "REJECTED",
+          deleted_at: new Date().toISOString(),
+          deleted_by: auditUserName(),
+          last_changed_by: auditUserName(),
+        }).eq("id", item.id);
+        if (expenseError) throw expenseError;
         if (item.ai_extraction_id) {
-          await supabase.from("ai_extractions").update({ status: "rejected" }).eq("id", item.ai_extraction_id);
+          const { error: aiError } = await supabase.from("ai_extractions").update({ status: "rejected" }).eq("id", item.ai_extraction_id);
+          if (aiError) throw new Error("Biaya sudah ditolak, tetapi sinkronisasi AI gagal: " + aiError.message);
         }
         showNotif?.("✕ Rejected", "info");
         setPendingAi(prev => prev.filter(x => x.id !== item.id));
         setExpensesData(prev => prev.filter(x => x.id !== item.id));
+        setWorkspaceRevision(v => v + 1);
       } catch (e) {
         showNotif?.("Gagal reject: " + e.message, "error");
       } finally { setPendingAiBusy(null); }
@@ -258,14 +355,19 @@ useEffect(() => {
   if (expenseTab !== "deleted") return;
   let alive = true;
   setLoadingDeleted(true);
-  fetchDeletedExpenses(supabase).then(({ data }) => {
-    if (alive) { setDeletedData(data || []); setLoadingDeleted(false); }
-  }).catch(() => { if (alive) setLoadingDeleted(false); });
+  fetchDeletedExpenses(supabase).then(({ data, error }) => {
+    if (!alive) return;
+    if (error) showNotif?.("❌ Gagal memuat recycle bin: " + error.message);
+    else setDeletedData(data || []);
+    setLoadingDeleted(false);
+  }).catch((error) => {
+    if (alive) { showNotif?.("❌ Gagal memuat recycle bin: " + error.message); setLoadingDeleted(false); }
+  });
   return () => { alive = false; };
 }, [expenseTab, supabase]);
 
 // Apply filters — sumber data tergantung tab (trash = deletedData, else = expensesData)
-const filtered = (isTrash ? deletedData : expensesData).filter(e => {
+const filtered = (isTrash ? deletedData : (workspaceV2 ? (workspace?.rows || []) : expensesData)).filter(e => {
   if (!isTrash) {
     // Sembunyikan entri PENDING_AI dari tab regular — hanya muncul di tab Pending AI
     if (e.validation_status === "PENDING_AI") return false;
@@ -285,12 +387,14 @@ const filtered = (isTrash ? deletedData : expensesData).filter(e => {
   return true;
 }).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 
-const totalPage = Math.ceil(filtered.length / EXPENSE_PAGE_SIZE) || 1;
-const pageData = filtered.slice((expensePage - 1) * EXPENSE_PAGE_SIZE, expensePage * EXPENSE_PAGE_SIZE);
+const totalFilteredCount = workspaceV2 ? Number(workspace?.total_count || 0) : filtered.length;
+const totalPage = Math.ceil(totalFilteredCount / EXPENSE_PAGE_SIZE) || 1;
+const pageData = workspaceV2 ? filtered : filtered.slice((expensePage - 1) * EXPENSE_PAGE_SIZE, expensePage * EXPENSE_PAGE_SIZE);
 // Total tidak menghitung biaya PENDING_APPROVAL (belum disetujui Owner).
-const grandTotal = filtered.reduce((s, e) => s + (e.approval_status === "PENDING_APPROVAL" ? 0 : Number(e.amount || 0)), 0);
+const grandTotal = workspaceV2 ? Number(workspace?.total_amount || 0) : filtered.reduce((s, e) => s + (e.approval_status === "PENDING_APPROVAL" ? 0 : Number(e.amount || 0)), 0);
 const pendingApprovals = (expensesData || []).filter(e => e.approval_status === "PENDING_APPROVAL" && !e.deleted_at);
-const pendingApprovalSum = pendingApprovals.reduce((s, e) => s + Number(e.amount || 0), 0);
+const pendingApprovalCount = workspaceV2 ? Number(workspace?.pending_approval_count || 0) : pendingApprovals.length;
+const pendingApprovalSum = workspaceV2 ? Number(workspace?.pending_approval_amount || 0) : pendingApprovals.reduce((s, e) => s + Number(e.amount || 0), 0);
 
 // ── Export rekap Biaya (CSV + PDF) — ikut data yang sedang tampil (filter/tab/tanggal) ──
 const catLabel = (c) => c === "material_purchase" ? "Pembelian Material" : c === "petty_cash" ? "Petty Cash" : (c || "-");
@@ -303,10 +407,30 @@ const fileTag = (expenseDateFrom && expenseDateTo)
   : "semua";
 const statusLabelExp = (e) => e.approval_status === "PENDING_APPROVAL" ? "Menunggu Approval" : "OK";
 
-const exportBiayaCsv = () => {
-  if (filtered.length === 0) { showNotif?.("Tidak ada data untuk diekspor."); return; }
+const loadRowsForExport = async () => {
+  if (isTrash || !workspaceV2 || totalFilteredCount <= filtered.length) return filtered;
+  const rows = [];
+  const category = ["petty_cash", "material_purchase"].includes(expenseTab) ? expenseTab : null;
+  const subcategory = expenseTab === "petty_cash" && expenseFilter !== "Semua" ? expenseFilter : null;
+  const pages = Math.ceil(totalFilteredCount / 100);
+  for (let page = 1; page <= pages; page++) {
+    const { data, error } = await fetchExpenseWorkspace(supabase, {
+      dateFrom: expenseDateFrom, dateTo: expenseDateTo, category, subcategory,
+      search: debouncedExpenseSearch, page, pageSize: 100,
+    });
+    if (error) throw error;
+    rows.push(...(data?.rows || []));
+  }
+  return rows;
+};
+
+const exportBiayaCsv = async () => {
+  let exportRows;
+  try { exportRows = await loadRowsForExport(); }
+  catch (error) { showNotif?.("❌ Gagal menyiapkan export: " + error.message); return; }
+  if (exportRows.length === 0) { showNotif?.("Tidak ada data untuk diekspor."); return; }
   const headers = ["Tanggal", "Kategori", "Subkategori", "Item", "Keterangan", "Teknisi", "Nominal", "Status", "Tertaut Stok", "Dibuat Oleh"];
-  const rows = filtered.map(e => [
+  const rows = exportRows.map(e => [
     e.date || "", catLabel(e.category), e.subcategory || "", e.item_name || "",
     (e.description || "").replace(/\s+/g, " ").trim(), e.teknisi_name || "",
     Number(e.amount || 0), statusLabelExp(e), e.stock_linked_at ? "Ya" : "", e.created_by || "",
@@ -315,11 +439,14 @@ const exportBiayaCsv = () => {
   showNotif?.("✅ CSV rekap biaya diunduh");
 };
 
-const exportBiayaPdf = () => {
-  if (filtered.length === 0) { showNotif?.("Tidak ada data untuk diekspor."); return; }
+const exportBiayaPdf = async () => {
+  let exportRows;
+  try { exportRows = await loadRowsForExport(); }
+  catch (error) { showNotif?.("❌ Gagal menyiapkan export: " + error.message); return; }
+  if (exportRows.length === 0) { showNotif?.("Tidak ada data untuk diekspor."); return; }
   // Ringkasan per subkategori (kecualikan PENDING_APPROVAL agar sama dgn total di layar).
   const sumMap = {};
-  filtered.forEach(e => {
+  exportRows.forEach(e => {
     if (e.approval_status === "PENDING_APPROVAL") return;
     const key = `${catLabel(e.category)}||${e.subcategory || "-"}`;
     if (!sumMap[key]) sumMap[key] = { cat: catLabel(e.category), sub: e.subcategory || "-", total: 0, count: 0 };
@@ -330,9 +457,9 @@ const exportBiayaPdf = () => {
     .map(s => [escapeHtml(s.cat), escapeHtml(s.sub), String(s.count), rp(s.total)]);
   const summaryTable = htmlTable(
     ["Kategori", "Subkategori", "Transaksi", "Total"], sumRows,
-    { colClass: ["", "", "c", "r"], footer: ["", "TOTAL", String(filtered.filter(e => e.approval_status !== "PENDING_APPROVAL").length), rp(grandTotal)] }
+    { colClass: ["", "", "c", "r"], footer: ["", "TOTAL", String(exportRows.filter(e => e.approval_status !== "PENDING_APPROVAL").length), rp(grandTotal)] }
   );
-  const detailRows = filtered.map((e, i) => [
+  const detailRows = exportRows.map((e, i) => [
     String(i + 1), fmtTanggal(e.date), escapeHtml(catLabel(e.category)), escapeHtml(e.subcategory || "-"),
     escapeHtml([e.item_name, (e.description || "").replace(/\s+/g, " ").trim()].filter(Boolean).join(" — ") || "-"),
     escapeHtml(e.teknisi_name || "-"),
@@ -344,7 +471,7 @@ const exportBiayaPdf = () => {
   );
   printDocument({
     title: "Rekap Biaya — AClean",
-    subtitle: `${tabLabel} · ${periodLabel} · ${filtered.length} transaksi · Dicetak ${fmtTanggal(new Date())}`,
+    subtitle: `${tabLabel} · ${periodLabel} · ${exportRows.length} transaksi · Dicetak ${fmtTanggal(new Date())}`,
     legend: `Total <b>${rp(grandTotal)}</b> (belum termasuk biaya berstatus <i>Menunggu Approval</i>).`,
     bodyHtml: `<h2 class="sec">Ringkasan per Kategori</h2>${summaryTable}<h2 class="sec">Rincian Transaksi</h2>${detailTable}`,
     signature: true,
@@ -368,7 +495,7 @@ const fmtDayLong = (d) => new Date(d + "T00:00:00").toLocaleDateString("id-ID", 
 const resetForm = () => {
   setNewExpenseForm({
     category: expenseTab === "material_purchase" ? "material_purchase" : "petty_cash",
-    subcategory: "", amount: "", date: TODAY, description: "", teknisi_name: "", item_name: "", freon_type: "", order_id: ""
+    subcategory: "", amount: "", date: TODAY, description: "", teknisi_name: "", item_name: "", freon_type: "", order_id: "", allocation_status: "UNRESOLVED"
   });
   setEditExpenseItem(null);
 };
@@ -379,51 +506,28 @@ const openEdit = (item) => {
   setNewExpenseForm({
     category: item.category, subcategory: item.subcategory, amount: String(item.amount || ""),
     date: item.date || TODAY, description: item.description || "", teknisi_name: item.teknisi_name || "",
-    item_name: item.item_name || "", freon_type: item.freon_type || "", order_id: item.order_id || ""
+    item_name: item.item_name || "", freon_type: item.freon_type || "", order_id: item.order_id || "", allocation_status: item.allocation_status || "UNRESOLVED"
   });
   setModalExpense(true);
 };
 
-const saveExpense = async () => {
-  const f = newExpenseForm;
-  if (!f.subcategory || !f.amount || !f.date) { showNotif?.("⚠️ Isi subkategori, jumlah, dan tanggal."); return; }
-  const payload = {
-    category: f.category, subcategory: f.subcategory, amount: Number(f.amount),
-    date: f.date, description: f.description,
-    // PENTING: trim teknisi_name — case mismatch / trailing space bikin kasbon tidak ke-deduct di payroll
-    teknisi_name: f.teknisi_name ? f.teknisi_name.trim() : null,
-    item_name: f.item_name || null, freon_type: f.freon_type || null,
-    created_by: currentUser?.name || currentUser?.email || "unknown",
-  };
-  if (editExpenseItem) {
-    // Auto-approve kalau edit entri PENDING_AI — anggap edit+save = Owner sudah review
-    if (editExpenseItem.validation_status === "PENDING_AI") {
-      payload.validation_status = "APPROVED";
-      if (editExpenseItem.ai_extraction_id) {
-        supabase.from("ai_extractions").update({ status: "edited" }).eq("id", editExpenseItem.ai_extraction_id).then(() => {}, () => {});
-      }
-    }
-    const { error } = await updateExpense(supabase, editExpenseItem.id, payload, auditUserName());
-    if (error) { showNotif?.("❌ Gagal update biaya: " + error.message); return; }
-    setExpensesData(prev => prev.map(x => x.id === editExpenseItem.id ? { ...x, ...payload } : x));
-    if (editExpenseItem.validation_status === "PENDING_AI") {
-      setPendingAi(prev => prev.filter(x => x.id !== editExpenseItem.id));
-    }
-    showNotif?.(`✅ Biaya ${payload.subcategory} (${fmt(payload.amount)}) diperbarui`);
-  } else {
-    // Anti-fraud: biaya yang dibuat ADMIN & ≥ Rp 500.000 → PENDING_APPROVAL (belum dihitung
-    // di total/laporan sampai Owner/Finance menyetujui). Owner/Finance atau < 500rb → langsung APPROVED.
-    const needApproval = currentUser?.role === "Admin" && Number(f.amount) >= 500000;
-    payload.approval_status = needApproval ? "PENDING_APPROVAL" : "APPROVED";
-    const { data, error } = await insertExpense(supabase, { ...payload, last_changed_by: auditUserName() });
-    if (error) { showNotif?.("❌ Gagal simpan biaya: " + error.message); return; }
-    setExpensesData(prev => [data, ...prev]);
-    showNotif?.(needApproval
-      ? `⏳ Biaya ${payload.subcategory} (${fmt(payload.amount)}) MENUNGGU persetujuan Owner (≥ Rp 500rb).`
-      : `✅ Biaya ${payload.subcategory} (${fmt(payload.amount)}) tersimpan`);
+const markMaterialNonStock = async (item) => {
+  const ok = showConfirm
+    ? await showConfirm({ icon: "✅", title: "Tandai langsung dipakai?", message: "Nota tidak akan menambah stok dan dianggap sudah selesai dialokasikan.", confirmText: "Ya, Tandai" })
+    : window.confirm("Tandai nota sebagai langsung dipakai / non-stok?");
+  if (!ok) return;
+  const { error } = await supabase.from("expenses").update({
+    allocation_status: "NON_STOCK", allocation_notes: "Langsung dipakai / non-stok",
+    last_changed_by: auditUserName(),
+  }).eq("id", item.id);
+  if (error) {
+    const hint = /allocation_status|schema cache/i.test(error.message || "") ? " Jalankan migration 168 terlebih dahulu." : "";
+    showNotif?.("❌ Gagal mengubah alokasi: " + error.message + hint);
+    return;
   }
-  setModalExpense(false);
-  resetForm();
+  setExpensesData(prev => prev.map(x => x.id === item.id ? { ...x, allocation_status: "NON_STOCK" } : x));
+  setWorkspace(prev => prev ? { ...prev, rows: (prev.rows || []).map(x => x.id === item.id ? { ...x, allocation_status: "NON_STOCK" } : x), unresolved_material_count: Math.max(0, Number(prev.unresolved_material_count || 0) - 1) } : prev);
+  showNotif?.("✅ Nota ditandai langsung dipakai / non-stok");
 };
 
 const handleDeleteExpense = async (item) => {
@@ -435,6 +539,7 @@ const handleDeleteExpense = async (item) => {
   const { error } = await deleteExpense(supabase, item.id, auditUserName());
   if (error) { showNotif?.("❌ Gagal hapus biaya: " + error.message); return; }
   setExpensesData(prev => prev.filter(x => x.id !== item.id));
+  setWorkspaceRevision(v => v + 1);
   showNotif?.(`🗑️ Biaya ${item.subcategory} dipindah ke Dihapus (bisa dipulihkan)`);
 };
 
@@ -445,6 +550,7 @@ const approveExpense = async (item) => {
     { approval_status: "APPROVED", approved_by: auditUserName(), approved_at: new Date().toISOString() }, auditUserName());
   if (error) { showNotif?.("❌ Gagal setujui: " + error.message); return; }
   setExpensesData(prev => prev.map(x => x.id === item.id ? { ...x, approval_status: "APPROVED" } : x));
+  setWorkspaceRevision(v => v + 1);
   showNotif?.(`✅ Biaya ${item.subcategory} (${fmt(item.amount)}) disetujui — kini terhitung`);
 };
 const rejectExpense = async (item) => {
@@ -453,9 +559,12 @@ const rejectExpense = async (item) => {
         message: `Tolak & hapus biaya "${item.subcategory}" ${fmt(item.amount)}? (masuk ke Dihapus)`, confirmText: "Ya, Tolak" })
     : window.confirm("Tolak biaya ini?");
   if (!ok) return;
-  const { error } = await deleteExpense(supabase, item.id, auditUserName());
+  const { error } = await updateExpense(supabase, item.id, {
+    approval_status: "REJECTED", deleted_at: new Date().toISOString(), deleted_by: auditUserName(),
+  }, auditUserName());
   if (error) { showNotif?.("❌ Gagal tolak: " + error.message); return; }
   setExpensesData(prev => prev.filter(x => x.id !== item.id));
+  setWorkspaceRevision(v => v + 1);
   showNotif?.(`❌ Biaya ${item.subcategory} ditolak`);
 };
 
@@ -686,7 +795,7 @@ return (
                     setNewExpenseForm({
                       category: item.category, subcategory: item.subcategory, amount: String(item.amount || ""),
                       date: item.date || TODAY, description: item.description || "", teknisi_name: item.teknisi_name || "",
-                      item_name: item.item_name || "", freon_type: item.freon_type || "", order_id: item.order_id || ""
+                      item_name: item.item_name || "", freon_type: item.freon_type || "", order_id: item.order_id || "", allocation_status: item.allocation_status || "UNRESOLVED"
                     });
                     setModalExpense(true);
                   }}
@@ -717,11 +826,11 @@ return (
               <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>
                 {fmtDayLong(expenseDateFrom)}{expenseDateFrom === TODAY && <span style={{ fontSize: 11, color: cs.accent, marginLeft: 6 }}>Hari Ini</span>}
               </div>
-              <div style={{ fontSize: 11, color: cs.muted }}>{filtered.length} transaksi · Total Rp {grandTotal.toLocaleString("id-ID")}</div>
+              <div style={{ fontSize: 11, color: cs.muted }}>{totalFilteredCount} transaksi · Total Rp {grandTotal.toLocaleString("id-ID")}</div>
             </>
           ) : (
             <div style={{ fontSize: 13, fontWeight: 700, color: cs.muted }}>
-              {(expenseDateFrom || expenseDateTo) ? `Rentang: ${expenseDateFrom || "…"} — ${expenseDateTo || "…"}` : "Semua tanggal"} · {filtered.length} transaksi
+              {(expenseDateFrom || expenseDateTo) ? `Rentang: ${expenseDateFrom || "…"} — ${expenseDateTo || "…"}` : "Semua tanggal"} · {totalFilteredCount} transaksi
             </div>
           )}
         </div>
@@ -787,9 +896,19 @@ return (
     </div>
 
     {/* Banner approval biaya Admin (≥500rb) — Owner/Finance */}
-    {!isTrash && bolehApprove && pendingApprovals.length > 0 && (
+    {!isTrash && bolehApprove && pendingApprovalCount > 0 && (
       <div style={{ background: "#78350f", border: "2px solid #f59e0b", borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "#fde68a", fontWeight: 700 }}>
-        ⏳ {pendingApprovals.length} biaya Admin menunggu persetujuan (Rp {pendingApprovalSum.toLocaleString("id-ID")}) — belum dihitung di total. Setujui/Tolak di daftar (bertanda ⏳).
+        ⏳ {pendingApprovalCount} biaya Admin menunggu persetujuan (Rp {pendingApprovalSum.toLocaleString("id-ID")}) — belum dihitung di total. Gunakan filter tanggal untuk membuka baris yang akan direview.
+      </div>
+    )}
+    {!isTrash && workspaceV2 && Number(workspace?.duplicate_warning_count || 0) > 0 && (
+      <div style={{ background: cs.yellow + "10", border: "1px solid " + cs.yellow + "44", borderRadius: 10, padding: "9px 14px", fontSize: 12, color: cs.yellow }}>
+        ⚠️ {Number(workspace.duplicate_warning_count)} kelompok transaksi tampak serupa. Ini hanya peringatan audit; tidak ada data yang dihapus otomatis.
+      </div>
+    )}
+    {!isTrash && bolehApprove && workspaceV2 && Number(workspace?.legacy_admin_high_without_review || 0) > 0 && (
+      <div style={{ background: cs.red + "10", border: "1px solid " + cs.red + "44", borderRadius: 10, padding: "9px 14px", fontSize: 12, color: cs.red }}>
+        🔎 {Number(workspace.legacy_admin_high_without_review)} biaya lama Admin ≥ Rp500.000 belum memiliki jejak reviewer. Nilai tidak diubah otomatis; perlu audit Owner/Finance.
       </div>
     )}
 
@@ -819,13 +938,17 @@ return (
       background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: "12px 18px",
       display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8
     }}>
-      <span style={{ fontSize: 13, color: cs.muted }}>{filtered.length} transaksi</span>
+      <span style={{ fontSize: 13, color: cs.muted }}>{totalFilteredCount} transaksi{workspaceV2 ? " · server-side" : ""}</span>
       <span style={{ fontWeight: 700, fontSize: 16, color: cs.red }}>Total: Rp {grandTotal.toLocaleString("id-ID")}</span>
     </div>
 
     {/* Table */}
     <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, overflow: "hidden" }}>
-      {isTrash && loadingDeleted
+      {(!isTrash && workspaceLoading)
+        ? <div style={{ padding: "40px", textAlign: "center", color: cs.muted }}>Memuat biaya…</div>
+        : (!isTrash && workspaceError)
+        ? <div style={{ padding: "40px", textAlign: "center", color: cs.red }}>❌ {workspaceError}</div>
+        : isTrash && loadingDeleted
         ? <div style={{ padding: "40px", textAlign: "center", color: cs.muted }}>Memuat data dihapus…</div>
         : pageData.length === 0
         ? <div style={{ padding: "40px", textAlign: "center", color: cs.muted }}>{isTrash ? "Recycle bin kosong — tidak ada biaya yang dihapus." : "Tidak ada data biaya."}</div>
@@ -840,12 +963,18 @@ return (
               {item.description && <div style={{ fontSize: 11, color: cs.muted }}>{item.description}</div>}
               {item.teknisi_name && <div style={{ fontSize: 11, color: cs.accent }}>👤 {item.teknisi_name}</div>}
               {item.item_name && <div style={{ fontSize: 11, color: cs.muted }}>📦 {item.item_name}{item.freon_type ? " (" + item.freon_type + ")" : ""}</div>}
+              {item.source && <div style={{ fontSize: 9, color: cs.muted, marginTop: 2 }}>Sumber: {item.source}{item.created_by ? ` · ${item.created_by}` : ""}</div>}
               {item.stock_linked_at && (
                 <div style={{ fontSize: 10, color: cs.green, marginTop: 2 }}>
                   🔗 Sudah jadi stok: {item.qty} {item.unit} @ Rp{Number(item.unit_cost || 0).toLocaleString("id-ID")}
                 </div>
               )}
               {item.order_id && <div style={{ fontSize: 10, color: cs.accent, marginTop: 2 }}>🧾 Biaya job {item.order_id}</div>}
+              {item.category === "material_purchase" && !item.stock_linked_at && !item.order_id && (
+                <div style={{ fontSize: 10, color: item.allocation_status === "NON_STOCK" ? cs.green : cs.yellow, marginTop: 2 }}>
+                  {item.allocation_status === "NON_STOCK" ? "✅ Langsung dipakai / non-stok" : "⏳ Belum ditentukan: masuk stok atau langsung dipakai"}
+                </div>
+              )}
               {isTrash && item.deleted_at && (
                 <div style={{ fontSize: 10, color: cs.red, marginTop: 2 }}>
                   🗑️ Dihapus {new Date(item.deleted_at).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}{item.deleted_by ? " oleh " + item.deleted_by : ""}
@@ -891,6 +1020,12 @@ return (
                       background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green,
                       borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: 12, fontWeight: 700
                     }}>🔗 Stok</button>
+                )}
+                {item.category === "material_purchase" && !item.stock_linked_at && !item.order_id
+                  && item.allocation_status !== "NON_STOCK"
+                  && (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
+                  <button onClick={() => markMaterialNonStock(item)} title="Barang langsung dipakai atau bukan stok gudang"
+                    style={{ background: cs.yellow + "18", border: "1px solid " + cs.yellow + "44", color: cs.yellow, borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>✅ Non-stok</button>
                 )}
                 <button onClick={() => openEdit(item)}
                   style={{
@@ -952,6 +1087,7 @@ return (
       setPendingAi={setPendingAi}
       fmt={fmt}
       ordersData={ordersData}
+      onSaved={() => setWorkspaceRevision(v => v + 1)}
     />
 
     {/* Nota material → restock + update HPP */}
@@ -962,6 +1098,7 @@ return (
       onClose={() => setLinkExpense(null)}
       onLinked={({ expensePatch, inventoryPatch }) => {
         setExpensesData(prev => prev.map(x => x.id === linkExpense.id ? { ...x, ...expensePatch } : x));
+        setWorkspace(prev => prev ? { ...prev, rows: (prev.rows || []).map(x => x.id === linkExpense.id ? { ...x, ...expensePatch } : x), unresolved_material_count: Math.max(0, Number(prev.unresolved_material_count || 0) - 1) } : prev);
         setInventoryData?.(prev => prev.map(i => i.code === inventoryPatch.code ? { ...i, ...inventoryPatch } : i));
       }}
       supabase={supabase}

@@ -260,6 +260,9 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
           #   Bonus Manual Rp 0 PAID; seluruh review bonus April kini selesai
 166       # Applied 12 Sep 2026 — efisiensi free tier: aktifkan cleanup foto expense, RPC ukuran DB,
           #   snapshot + alarm WA kuota Supabase DB/R2
+167       # Applied 13 Sep 2026 — RPC snapshot Dashboard untuk bootstrap ringan Owner/Admin
+168       # Applied 13 Sep 2026 — Monitoring exact/paginasi, approval dan provenance Biaya,
+          #   budget bulanan serta tautan nota-ke-stok atomik
 ```
 
 > Daftar di atas pernah tertinggal jauh (berhenti di 126 padahal file sudah 132).

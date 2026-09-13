@@ -968,14 +968,18 @@ export default function ACleanWebApp() {
   const [expenseTab, setExpenseTab] = useState("petty_cash"); // "petty_cash" | "material_purchase"
   const [expenseFilter, setExpenseFilter] = useState("Semua");
   const [expenseSearch, setExpenseSearch] = useState("");
-  const [expenseDateFrom, setExpenseDateFrom] = useState("");
-  const [expenseDateTo, setExpenseDateTo] = useState("");
+  // Default bulan berjalan: halaman Biaya tidak lagi mengunduh seluruh histori saat dibuka.
+  const [expenseDateFrom, setExpenseDateFrom] = useState(() => `${getLocalDate().slice(0, 7)}-01`);
+  const [expenseDateTo, setExpenseDateTo] = useState(() => {
+    const [year, month] = getLocalDate().split("-").map(Number);
+    return `${year}-${String(month).padStart(2, "0")}-${String(new Date(year, month, 0).getDate()).padStart(2, "0")}`;
+  });
   const [expensePage, setExpensePage] = useState(1);
   const [modalExpense, setModalExpense] = useState(false);
   const [editExpenseItem, setEditExpenseItem] = useState(null);
   const [newExpenseForm, setNewExpenseForm] = useState(() => ({
     category: "petty_cash", subcategory: "", amount: "", date: getLocalDate(),
-    description: "", teknisi_name: "", item_name: "", freon_type: ""
+    description: "", teknisi_name: "", item_name: "", freon_type: "", order_id: "", allocation_status: "UNRESOLVED"
   }));
   const EXPENSE_PAGE_SIZE = 20;
 
@@ -4170,9 +4174,11 @@ export default function ACleanWebApp() {
         setMonitorLoading(true);
         const resp = await fetch("/api/monitor", { headers: await _apiHeaders() });
         const data = await resp.json();
+        if (!resp.ok || data?.status !== "ok") throw new Error(data?.message || `HTTP ${resp.status}`);
         setMonitorData(data);
       } catch (err) {
         console.error("[Monitor Load Error]", err.message);
+        setMonitorData({ status: "error", health: "unhealthy", message: err.message, timestamp: new Date().toISOString() });
       } finally {
         setMonitorLoading(false);
       }
@@ -4194,8 +4200,11 @@ export default function ACleanWebApp() {
     // (limit 2000 → dipotong PostgREST ke 1000) membuang 500+ baris terlama → biaya bulan lama
     // undercount & profit overstated. fetchAllExpenses mem-paginate agar lengkap. "reports"
     // ikut memuat supaya Statistik tidak menampilkan biaya 0 saat dibuka langsung.
-    if (activeMenu === "biaya" || activeMenu === "finance" || activeMenu === "reports") {
-      fetchAllExpenses(supabase).then(({ data, error }) => { if (!error && data) setExpensesData(data); }).catch(() => {});
+    if (activeMenu === "reports") {
+      fetchAllExpenses(supabase).then(({ data, error }) => {
+        if (error) { console.error("[Expenses reports load]", error.message); return; }
+        if (data) setExpensesData(data);
+      }).catch((error) => console.error("[Expenses reports load]", error.message));
     }
     if (activeMenu === "biaya" || activeMenu === "dashboard") {
       fetchKasbonRequests(supabase).then(({ data, error }) => { if (!error && data) setKasbonRequests(data); }).catch(() => {});

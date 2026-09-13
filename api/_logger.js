@@ -82,6 +82,16 @@ export async function logStructured(sb, {
 export async function startCronRun(sb, taskName, metadata = null) {
   if (!sb) return null;
   try {
+    // Tutup run lama yang tidak pernah mencapai finally (timeout Vercel/crash). Tanpa ini
+    // tabel menyimpan RUNNING selamanya dan Overview dapat memberi status sehat palsu.
+    const staleCutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const { error: staleError } = await sb.from("cron_runs").update({
+      status: "TIMEOUT",
+      finished_at: new Date().toISOString(),
+      error_message: "Auto-closed: run masih RUNNING lebih dari 1 jam",
+    }).eq("task_name", taskName).eq("status", "RUNNING").lt("started_at", staleCutoff);
+    if (staleError) console.warn("[LOGGER] stale cron cleanup failed:", staleError.message);
+
     const { data, error } = await sb.from("cron_runs").insert({
       task_name: taskName,
       started_at: new Date().toISOString(),
@@ -117,13 +127,8 @@ export async function finishCronRun(sb, runId, {
     };
     if (startedAtMs) update.duration_ms = Date.now() - startedAtMs;
     if (metadata) update.metadata = metadata;
-    await sb.from("cron_runs").update(update).eq("id", runId);
-
-    // Update duration_ms via SQL fallback kalau startedAtMs tidak diset
-    if (!startedAtMs) {
-      await sb.rpc("noop").catch(() => {}); // no-op to satisfy linter
-      // Compute via subselect — pakai raw update kalau perlu, atau abaikan (kolom nullable)
-    }
+    const { error } = await sb.from("cron_runs").update(update).eq("id", runId);
+    if (error) console.warn("[LOGGER] cron_runs finish failed:", error.message);
   } catch (err) {
     console.warn("[LOGGER] cron_runs finish failed:", err.message);
   }

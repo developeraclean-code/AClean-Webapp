@@ -91,6 +91,32 @@ export default function TautkanStokModal({
     const now = new Date().toISOString();
     const stokBaru = Math.round((stokLama + qtyDasar) * 100) / 100;
 
+    // Migration 168: seluruh perubahan expense + HPP + ledger + stok berada dalam satu
+    // transaksi PostgreSQL. Fallback legacy di bawah hanya dipakai sebelum migrasi ada.
+    const rpcResult = await supabase.rpc("link_expense_to_stock", {
+      p_expense_id: expense.id,
+      p_inventory_code: item.code,
+      p_qty: qtyDasar,
+    });
+    if (!rpcResult.error && rpcResult.data) {
+      const expensePatch = rpcResult.data.expense || {};
+      const inventoryPatch = rpcResult.data.inventory || {};
+      onLinked?.({ expensePatch, inventoryPatch: { ...inventoryPatch, status: computeStockStatus(inventoryPatch.stock, item.reorder) } });
+      addAgentLog?.("EXPENSE_STOCK_LINK",
+        `Nota ${expense.item_name || expense.subcategory} ${rp(amount)} → ${item.name} +${qtyDasar} ${item.unit} · HPP ${rp(hppLama)} → ${rp(inventoryPatch.purchase_price)}`,
+        "SUCCESS");
+      showNotif(`✅ ${item.name} +${qtyDasar} ${item.unit} · seluruh perubahan stok tersimpan atomik`);
+      setSaving(false);
+      onClose();
+      return;
+    }
+    const rpcUnavailable = /link_expense_to_stock|schema cache|could not find the function/i.test(rpcResult.error?.message || "");
+    if (!rpcUnavailable) {
+      showNotif("❌ Gagal menautkan nota: " + rpcResult.error.message);
+      setSaving(false);
+      return;
+    }
+
     // 1. Tandai notanya dulu — kalau langkah ini gagal, jangan sampai stok terlanjur naik
     //    tanpa penanda (nota tanpa penanda bisa ditautkan lagi = stok dobel).
     //    `.is("stock_linked_at", null)` = klaim atomik: kalau tab lain sudah menautkan nota

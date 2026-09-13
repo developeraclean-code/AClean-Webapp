@@ -80,6 +80,9 @@ function DashboardView({ ordersData, invoicesData, inventoryData, teknisiData, o
   // Fase 1: primitif global dari AppContext.
   const { currentUser, isMobile, fmt, showNotif, TODAY, addAgentLog, supabase } = useAppContext();
 const role = currentUser?.role || "Admin";
+// Dashboard difokuskan untuk operasional. Seluruh angka keuangan tersedia di
+// menu Statistik dan sengaja tidak dimuat/ditampilkan di halaman ini.
+const showFinancialDashboard = false;
 const [gridDate, setGridDate] = useState(TODAY);
 const hariIni = new Date(TODAY + "T00:00:00+07:00").toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
@@ -100,7 +103,7 @@ const [finExpenses, setFinExpenses] = useState(null);
 const [workMode, setWorkMode] = useState("bulan");
 const [workOffset, setWorkOffset] = useState(0);
 useEffect(() => {
-  if (!bootstrapReady || !["Owner", "Admin"].includes(role) || !supabase) return;
+  if (!showFinancialDashboard || !bootstrapReady || !["Owner", "Admin"].includes(role) || !supabase) return;
   let cancelled = false;
   (async () => {
     const sinceReports = toISOLocal(new Date(new Date().getFullYear(), new Date().getMonth() - 6, 1));
@@ -330,7 +333,7 @@ return (
           <span style={{ fontSize: 22 }}>🔴</span>
           <div>
             <div style={{ fontWeight: 800, color: "#ef4444", fontSize: 13 }}>{pendingOldInv.length} Invoice Pending Approval &gt;3 Hari</div>
-            <div style={{ fontSize: 11, color: cs.muted }}>Total tertahan: Rp {pendingOldInv.reduce((s, i) => s + (i.total || 0), 0).toLocaleString("id-ID")}</div>
+            <div style={{ fontSize: 11, color: cs.muted }}>Perlu segera diperiksa dan disetujui</div>
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -346,7 +349,7 @@ return (
           <span style={{ fontSize: 22 }}>🟡</span>
           <div>
             <div style={{ fontWeight: 800, color: cs.yellow, fontSize: 13 }}>{approvedUnpaid.length} Invoice Approved Belum Dibayar</div>
-            <div style={{ fontSize: 11, color: cs.muted }}>Total: Rp {approvedUnpaid.reduce((s, i) => s + (i.total || 0), 0).toLocaleString("id-ID")}</div>
+            <div style={{ fontSize: 11, color: cs.muted }}>Perlu ditindaklanjuti pada menu Invoice</div>
           </div>
         </div>
         <button onClick={() => { setActiveMenu("invoice"); setInvoiceFilter("APPROVED"); }} style={{ padding: "7px 14px", borderRadius: 8, background: cs.yellow + "22", border: "1px solid " + cs.yellow + "44", color: cs.yellow, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Lihat Invoice</button>
@@ -354,11 +357,10 @@ return (
     )}
 
     {/* KPI Cards */}
-    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(4,1fr)", gap: 14 }}>
+    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(3,1fr)", gap: 14 }}>
       {[
         { label: "Order Hari Ini", value: todayOrders.length, sub: `${todayOrders.filter(o => o.status === "IN_PROGRESS").length} aktif · ${todayOrders.filter(o => ORDER_DONE_STATUSES.includes(o.status)).length} selesai`, color: cs.accent, icon: "📋", onClick: () => setActiveMenu("orders") },
         { label: "Invoice Unpaid", value: unpaidCount, sub: "Perlu follow-up", color: cs.yellow, icon: "🧾", onClick: () => { setActiveMenu("invoice"); setInvoiceFilter("UNPAID"); } },
-        ...(role === "Owner" ? [{ label: "Pendapatan Bln Ini", value: fmt(totalRevBulanIni), sub: "Invoice terbayar", color: cs.green, icon: "💰", onClick: () => { setActiveMenu("invoice"); setInvoiceFilter("PAID"); } }] : [{ label: "Invoice Selesai", value: invoicesData.filter(i => i.status === "PAID" && jobDate(i).startsWith(bulanIni)).length, sub: "Dikerjakan bln ini", color: cs.green, icon: "✅", onClick: () => { setActiveMenu("invoice"); setInvoiceFilter("PAID"); } }]),
         { label: "Stok Kritis", value: lowStock, sub: "Perlu restock", color: cs.red, icon: "📦", onClick: () => setActiveMenu("inventory") },
       ].map(kpi => (
         <div key={kpi.label} onClick={kpi.onClick} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 18, cursor: "pointer" }}>
@@ -373,7 +375,7 @@ return (
     </div>
 
     {/* ── STATISTIK OMSET PER HARI/MINGGU/BULAN (Owner & Admin) ── */}
-    {(() => {
+    {showFinancialDashboard && (() => {
       const now = new Date();
       const todayStr = TODAY;
 
@@ -649,8 +651,6 @@ return (
 
     {/* ── GRID ORDER HARIAN ── */}
     {(() => {
-      const isOwner = role === "Owner";
-
       // Semua tanggal unik yang punya order, sorted ascending
       const orderDates = [...new Set(ordersData.map(o => o.date).filter(Boolean))].sort();
 
@@ -693,9 +693,9 @@ return (
       const laporanMasuk  = gridOrders.filter(o => lapByJob[o.id]).length;
       const invBelum      = gridOrders.filter(o => !invByJob[o.id]).length;
       const rcTerkirim    = gridOrders.filter(o => invByJob[o.id]?.sent).length;
-      const estimasiTotal = gridOrders.reduce((s, o) => s + (invByJob[o.id]?.total || 0), 0);
+      const estimasiTotal = gridOrders.reduce((sum, order) => sum + (invByJob[order.id]?.total || 0), 0);
 
-      // Same columns for Owner & Admin — Invoice Value visible for both
+      // Nilai invoice harian tetap terlihat untuk audit cepat Owner/Admin.
       const COLS = "200px 120px 110px 80px 120px 110px 100px 150px";
 
       const colH = (label, extra = {}) => (
@@ -828,7 +828,7 @@ return (
                     : badge("✗ Belum", cs.red)}
                 </div>
 
-                {/* Invoice Value */}
+                {/* Invoice Value — ringkasan harian Owner/Admin */}
                 <div style={{ padding: "11px 14px 11px 12px", display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
                   <span style={{ fontSize: 12, fontWeight: 700, color: inv?.total > 0 ? cs.green : cs.muted }}>
                     {inv?.total > 0 ? fmt(inv.total) : "—"}
@@ -872,30 +872,19 @@ return (
             );
           })}
 
-          {/* Footer total — Owner only */}
-          {isOwner && gridOrders.length > 0 && (
-            <div style={{ display: "grid", gridTemplateColumns: COLS, background: cs.surface, borderTop: "2px solid " + cs.border }}>
-              <div style={{ padding: "10px 12px", gridColumn: "1 / 5", display: "flex", alignItems: "center", fontSize: 11, fontWeight: 700, color: cs.muted, gap: 12 }}>
+          {/* Footer operasional — Owner & Admin */}
+          {gridOrders.length > 0 && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", background: cs.surface, borderTop: "2px solid " + cs.border, gap: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", fontSize: 11, fontWeight: 700, color: cs.muted, gap: 14 }}>
                 TOTAL HARI INI
                 <span style={{ color: cs.accent }}>{totalOrders} Order</span>
                 <span style={{ color: cs.green }}>{laporanMasuk} Laporan</span>
                 <span style={{ color: "#25d366" }}>{rcTerkirim} RC Terkirim</span>
+                <span style={{ color: cs.yellow }}>{invBelum} Belum Invoice</span>
               </div>
-              <div style={{ padding: "10px 14px 10px 12px", display: "flex", alignItems: "center", justifyContent: "flex-end", fontSize: 14, fontWeight: 800, color: cs.green }}>
-                {fmt(estimasiTotal)}
+              <div style={{ fontSize: 14, fontWeight: 800, color: cs.green, whiteSpace: "nowrap" }}>
+                Total {fmt(estimasiTotal)}
               </div>
-              <div style={{ gridColumn: "6 / 9" }} />
-            </div>
-          )}
-
-          {/* Footer Admin — counts only, no total value */}
-          {!isOwner && gridOrders.length > 0 && (
-            <div style={{ padding: "10px 16px", background: cs.surface, borderTop: "2px solid " + cs.border, display: "flex", alignItems: "center", fontSize: 11, fontWeight: 700, color: cs.muted, gap: 14 }}>
-              TOTAL HARI INI
-              <span style={{ color: cs.accent }}>{totalOrders} Order</span>
-              <span style={{ color: cs.green }}>{laporanMasuk} Laporan</span>
-              <span style={{ color: "#25d366" }}>{rcTerkirim} RC Terkirim</span>
-              <span style={{ color: cs.yellow }}>{invBelum} Belum Invoice</span>
             </div>
           )}
         </div>
@@ -911,15 +900,13 @@ return (
         const overdueCount = actionInvoices.filter(i => i.status === "OVERDUE").length;
         const pendingCount = actionInvoices.filter(i => i.status === "PENDING_APPROVAL").length;
         const unpaidCount2 = actionInvoices.filter(i => i.status === "UNPAID").length;
-        const totalUnpaidVal = actionInvoices.reduce((s, i) => s + (i.total || 0), 0);
-
         return (
           <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, overflow: "hidden" }}>
             {/* Header */}
             <div style={{ padding: "14px 16px", borderBottom: "1px solid " + cs.border, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div>
                 <div style={{ fontWeight: 800, fontSize: 14, color: cs.text }}>🧾 Invoice Perlu Tindakan</div>
-                <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>{actionInvoices.length} invoice · Total {fmt(totalUnpaidVal)}</div>
+                <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>{actionInvoices.length} invoice perlu diperiksa</div>
               </div>
               <button onClick={() => setActiveMenu("invoice")}
                 style={{ fontSize: 11, fontWeight: 700, color: cs.accent, background: cs.accent + "18", border: "1px solid " + cs.accent + "33", borderRadius: 7, padding: "5px 10px", cursor: "pointer" }}>
@@ -963,7 +950,7 @@ return (
                     </span>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 12, fontWeight: 700, color: isOverdue ? cs.red : cs.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{inv.customer}</div>
-                      <div style={{ fontSize: 10, color: cs.muted }}>{fmt(inv.total)}{inv.garansi_expires ? " · 🔒 Garansi" : ""}</div>
+                      <div style={{ fontSize: 10, color: cs.muted }}>{inv.service || "Invoice"}{inv.garansi_expires ? " · 🔒 Garansi" : ""}</div>
                     </div>
                     <button onClick={e => { e.stopPropagation(); setSelectedInvoice(inv); setModalPDF(true); }}
                       style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "4px 8px", borderRadius: 6, cursor: "pointer", fontSize: 10, fontWeight: 700, flexShrink: 0 }}>
@@ -1056,7 +1043,7 @@ return (
       })()}
     </div>
     {/* ── FINANCIAL ANALYTICS — Owner only ── */}
-    {currentUser?.role === "Owner" && (() => {
+    {showFinancialDashboard && currentUser?.role === "Owner" && (() => {
       const [bY, bM] = bulanIni.split("-").map(Number);
       const months = Array.from({ length: 6 }, (_, i) => {
         let m = bM - (5 - i);
@@ -1295,7 +1282,7 @@ return (
     })()}
 
     {/* ── SIM-9: Performa Tim per Teknisi ── */}
-    {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (() => {
+    {showFinancialDashboard && (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (() => {
       const isOwner = currentUser?.role === "Owner";
       // Pakai teknisiData sebagai sumber — filter active saja, bukan dari ordersData
       // (teknisi non-aktif tidak ditampilkan meski masih punya order lama)

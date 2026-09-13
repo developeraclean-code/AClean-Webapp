@@ -123,7 +123,10 @@ export async function validateInternalToken(req, res) {
       const r = await fetch(`${supabaseUrl}/auth/v1/user`, {
         headers: { "Authorization": `Bearer ${jwt}`, "apikey": supabaseAnonKey }
       });
-      if (r.ok) return true;
+      if (r.ok) {
+        req.authUser = await r.json();
+        return true;
+      }
     } catch { /* fall through */ }
   }
 

@@ -52,8 +52,16 @@ export async function approveKasbon(req, reviewNotes = "", {
       validation_status: "APPROVED",
       last_changed_by: auditUserName(),
       dedup_key: kasbonDedupKey,
+      source: "kasbon",
+      source_ref: String(req.id),
+      created_by_user_id: currentUser?.id || null,
     };
-    const { data: expData, error: eErr } = await insertExpense(supabase, expPayload);
+    let insertResult = await insertExpense(supabase, expPayload);
+    if (insertResult.error && /source_ref|created_by_user_id|schema cache/i.test(insertResult.error.message || "")) {
+      const { source: _source, source_ref: _sourceRef, created_by_user_id: _actor, ...legacyPayload } = expPayload;
+      insertResult = await insertExpense(supabase, legacyPayload);
+    }
+    const { data: expData, error: eErr } = insertResult;
     if (eErr) {
       // 23505 = unique violation di expenses.dedup_key → kasbon yang sama SUDAH tercatat
       // via WA Finance grup. Ini BUKAN kegagalan: link ke expense yang ada, biarkan status

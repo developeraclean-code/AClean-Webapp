@@ -42,6 +42,7 @@ function TabOverview({ data, onRefresh }) {
   const errorRate = metrics.errorRate || 0;
   const cron = metrics.cron || {};
   const ai = metrics.ai || {};
+  const expenses = metrics.expenses || null;
   const infra = metrics.infra || null;
 
   return (
@@ -71,6 +72,21 @@ function TabOverview({ data, onRefresh }) {
         </div>
       </div>
 
+      {(cron.staleRunning > 0 || expenses) && (
+        <div style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 14, padding: 16 }}>
+          <div style={{ fontWeight: 700, color: cs.text, marginBottom: 12, fontSize: 14 }}>🚨 Needs Action</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12 }}>
+            <Card label="Cron macet >1 jam" value={cron.staleRunning || 0} color={cron.staleRunning ? cs.red : cs.green} />
+            {expenses && <Card label="Biaya pending AI" value={expenses.pendingAi || 0} color={expenses.pendingAiOver24h ? cs.red : cs.yellow} />}
+            {expenses && <Card label="Pending >24 jam" value={expenses.pendingAiOver24h || 0} color={expenses.pendingAiOver24h ? cs.red : cs.green} />}
+            {expenses && <Card label="Pending approval" value={expenses.pendingApproval || 0} color={expenses.pendingApproval ? cs.yellow : cs.green} />}
+            {expenses && <Card label="Material belum dialokasi" value={expenses.unresolvedMaterial || 0} color={expenses.unresolvedMaterial ? cs.yellow : cs.green} />}
+            {expenses && <Card label="Kemungkinan duplikat" value={expenses.duplicateWarnings || 0} color={expenses.duplicateWarnings ? cs.yellow : cs.green} />}
+            {expenses && <Card label="Biaya lama tanpa jejak review" value={expenses.legacyAdminHighWithoutReview || 0} color={expenses.legacyAdminHighWithoutReview ? cs.red : cs.green} />}
+          </div>
+        </div>
+      )}
+
       <div style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 14, padding: 16 }}>
         <div style={{ fontWeight: 700, color: cs.text, marginBottom: 4, fontSize: 14 }}>📦 Kuota Infrastruktur</div>
         <div style={{ fontSize: 11, color: cs.muted, marginBottom: 12 }}>
@@ -89,7 +105,7 @@ function TabOverview({ data, onRefresh }) {
       </div>
 
       <div style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 14, padding: 16 }}>
-        <div style={{ fontWeight: 700, color: cs.text, marginBottom: 12, fontSize: 14 }}>⏰ Cron Jobs (24h)</div>
+        <div style={{ fontWeight: 700, color: cs.text, marginBottom: 12, fontSize: 14 }}>⏰ Cron Jobs ({data?.source === "monitoring_snapshot_v2" ? "7 hari" : "24 jam"})</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 12 }}>
           <Card label="Total"   value={cron.total   || 0} color={cs.accent} />
           <Card label="Success" value={cron.success || 0} color={cs.green} />
@@ -100,7 +116,7 @@ function TabOverview({ data, onRefresh }) {
       </div>
 
       <div style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 14, padding: 16 }}>
-        <div style={{ fontWeight: 700, color: cs.text, marginBottom: 12, fontSize: 14 }}>🤖 AI Usage (24h)</div>
+        <div style={{ fontWeight: 700, color: cs.text, marginBottom: 12, fontSize: 14 }}>🤖 AI Usage ({data?.source === "monitoring_snapshot_v2" ? "30 hari" : "24 jam"})</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 12 }}>
           <Card label="Total Calls" value={ai.totalCalls || 0} color={cs.accent} />
           <Card label="Cost (USD)"  value={fmtUSD(ai.totalCostUsd)} color={cs.green} />
@@ -139,14 +155,34 @@ function TabOverview({ data, onRefresh }) {
 // ─────────────────────────────────────────────
 function TabCron({ supabase }) {
   const [runs, setRuns] = useState([]);
+  const [rpcTaskStats, setRpcTaskStats] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [taskFilter, setTaskFilter] = useState("");
 
   const load = async () => {
     setLoading(true);
+    setLoadError("");
+    const rpc = await supabase.rpc("get_cron_monitor_summary", { p_days: 7 });
+    if (!rpc.error && rpc.data) {
+      setRuns(rpc.data.recent || []);
+      setRpcTaskStats(Object.fromEntries((rpc.data.tasks || []).map(s => [s.task_name, {
+        total: Number(s.total)||0, success: Number(s.success)||0, failed: Number(s.failed)||0,
+        skipped: Number(s.skipped)||0, running: Number(s.running)||0, avgDuration: Number(s.avg_duration)||0,
+      }])));
+      setLoading(false);
+      return;
+    }
+    const rpcUnavailable = /get_cron_monitor_summary|schema cache|could not find the function/i.test(rpc.error?.message || "");
+    if (!rpcUnavailable) {
+      setLoadError("Gagal memuat ringkasan cron: " + (rpc.error?.message || "unknown error"));
+      setLoading(false);
+      return;
+    }
     const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const { data, error } = await fetchCronRuns(supabase, { since, limit: 200 });
-    if (!error && data) setRuns(data);
+    if (!error && data) { setRuns(data); setRpcTaskStats(null); }
+    else if (error) setLoadError("Gagal memuat cron: " + error.message);
     setLoading(false);
   };
 
@@ -158,19 +194,20 @@ function TabCron({ supabase }) {
   }, [runs, taskFilter]);
 
   const taskStats = useMemo(() => {
+    if (rpcTaskStats) return rpcTaskStats;
     const stats = {};
     for (const r of runs) {
       if (!stats[r.task_name]) stats[r.task_name] = { total: 0, success: 0, failed: 0, skipped: 0, avgDuration: 0, totalDuration: 0, durCount: 0 };
       const s = stats[r.task_name];
       s.total++;
       if (r.status === "SUCCESS") s.success++;
-      else if (r.status === "FAILED") s.failed++;
+      else if (r.status === "FAILED" || r.status === "TIMEOUT") s.failed++;
       else if (r.status === "SKIPPED") s.skipped++;
       if (r.duration_ms != null) { s.totalDuration += r.duration_ms; s.durCount++; }
     }
     Object.keys(stats).forEach(t => { if (stats[t].durCount > 0) stats[t].avgDuration = Math.round(stats[t].totalDuration / stats[t].durCount); });
     return stats;
-  }, [runs]);
+  }, [runs, rpcTaskStats]);
 
   const tasks = Object.keys(taskStats).sort();
 
@@ -182,6 +219,8 @@ function TabCron({ supabase }) {
           {loading ? "⏳" : "🔄 Refresh"}
         </button>
       </div>
+
+      {loadError && <div style={{ color: cs.red, background: cs.red + "12", border: `1px solid ${cs.red}44`, borderRadius: 10, padding: 12, fontSize: 12 }}>❌ {loadError}</div>}
 
       <div style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 12, padding: 12 }}>
         <div style={{ fontSize: 12, color: cs.muted, marginBottom: 8, fontWeight: 700 }}>Per Task Summary</div>
@@ -217,7 +256,7 @@ function TabCron({ supabase }) {
           ) : filtered.map(r => (
             <div key={r.id} style={{ display: "grid", gridTemplateColumns: "minmax(120px,1fr) 80px 80px 80px 1fr", alignItems: "center", padding: "8px 12px", background: cs.surface, borderRadius: 8, fontSize: 11, gap: 8 }}>
               <span style={{ color: cs.text, fontWeight: 700 }}>{r.task_name}</span>
-              <Badge color={r.status === "SUCCESS" ? cs.green : r.status === "FAILED" ? cs.red : r.status === "SKIPPED" ? cs.muted : r.status === "RUNNING" ? cs.yellow : cs.muted}>{r.status}</Badge>
+              <Badge color={r.status === "SUCCESS" ? cs.green : (r.status === "FAILED" || r.status === "TIMEOUT") ? cs.red : r.status === "SKIPPED" ? cs.muted : r.status === "RUNNING" ? cs.yellow : cs.muted}>{r.status}</Badge>
               <span style={{ color: cs.muted }}>{fmtDuration(r.duration_ms)}</span>
               <span style={{ color: cs.muted }}>{r.items_processed || 0} items</span>
               <div style={{ color: cs.muted }}>
@@ -237,20 +276,47 @@ function TabCron({ supabase }) {
 // ─────────────────────────────────────────────
 function TabAiCost({ supabase }) {
   const [usage, setUsage] = useState([]);
+  const [rpcSummary, setRpcSummary] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [days, setDays] = useState(7);
 
   const load = async () => {
     setLoading(true);
+    setLoadError("");
+    const rpc = await supabase.rpc("get_ai_usage_summary", { p_days: days });
+    if (!rpc.error && rpc.data) {
+      setRpcSummary(rpc.data);
+      setUsage([]);
+      setLoading(false);
+      return;
+    }
+    const rpcUnavailable = /get_ai_usage_summary|schema cache|could not find the function/i.test(rpc.error?.message || "");
+    if (!rpcUnavailable) {
+      setLoadError("Gagal memuat ringkasan AI: " + (rpc.error?.message || "unknown error"));
+      setLoading(false);
+      return;
+    }
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
     const { data, error } = await fetchAiUsage(supabase, { since, limit: 500 });
-    if (!error && data) setUsage(data);
+    if (!error && data) { setUsage(data); setRpcSummary(null); }
+    else if (error) setLoadError("Gagal memuat AI cost: " + error.message);
     setLoading(false);
   };
 
   useEffect(() => { if (supabase) load(); }, [supabase, days]);
 
   const stats = useMemo(() => {
+    if (rpcSummary) {
+      return {
+        totalCost: Number(rpcSummary.total_cost)||0, totalCalls: Number(rpcSummary.total_calls)||0,
+        totalInput: Number(rpcSummary.input_tokens)||0, totalOutput: Number(rpcSummary.output_tokens)||0,
+        errors: Number(rpcSummary.errors)||0,
+        byProvider: Object.fromEntries((rpcSummary.by_provider||[]).map(x => [x.name, x])),
+        byFeature: Object.fromEntries((rpcSummary.by_feature||[]).map(x => [x.name, x])),
+        byDay: Object.fromEntries((rpcSummary.by_day||[]).map(x => [x.usage_day, x])),
+      };
+    }
     let totalCost = 0, totalCalls = usage.length, totalInput = 0, totalOutput = 0, errors = 0;
     const byProvider = {};
     const byFeature = {};
@@ -276,7 +342,7 @@ function TabAiCost({ supabase }) {
       byDay[day].cost += Number(u.cost_usd) || 0;
     }
     return { totalCost, totalCalls, totalInput, totalOutput, errors, byProvider, byFeature, byDay };
-  }, [usage]);
+  }, [usage, rpcSummary]);
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
@@ -292,6 +358,8 @@ function TabAiCost({ supabase }) {
           {loading ? "⏳" : "🔄 Refresh"}
         </button>
       </div>
+
+      {loadError && <div style={{ color: cs.red, background: cs.red + "12", border: `1px solid ${cs.red}44`, borderRadius: 10, padding: 12, fontSize: 12 }}>❌ {loadError}</div>}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 12 }}>
         <Card label="Total Cost"   value={fmtUSD(stats.totalCost)} color={cs.green} />
@@ -359,25 +427,48 @@ function TabAiCost({ supabase }) {
 function TabAudit({ supabase }) {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [severity, setSeverity] = useState("");
   const [category, setCategory] = useState("");
   const [days, setDays] = useState(1);
   const [page, setPage] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const [serverPaged, setServerPaged] = useState(false);
   const PAGE_SIZE = 20;
 
   const load = async () => {
     setLoading(true);
+    setLoadError("");
+    const rpc = await supabase.rpc("get_agent_logs_page", {
+      p_days: days, p_severity: severity || null, p_category: category || null,
+      p_page: page, p_page_size: PAGE_SIZE,
+    });
+    if (!rpc.error && rpc.data) {
+      setLogs(rpc.data.rows || []);
+      setTotalCount(Number(rpc.data.total_count)||0);
+      setServerPaged(true);
+      setLoading(false);
+      return;
+    }
+    const rpcUnavailable = /get_agent_logs_page|schema cache|could not find the function/i.test(rpc.error?.message || "");
+    if (!rpcUnavailable) {
+      setLoadError("Gagal memuat audit log: " + (rpc.error?.message || "unknown error"));
+      setLoading(false);
+      return;
+    }
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
     const { data, error } = await fetchAgentLogsFiltered(supabase, { severity: severity || undefined, category: category || undefined, since, limit: days >= 90 ? 1000 : 300 });
-    if (!error && data) setLogs(data);
+    if (!error && data) { setLogs(data); setTotalCount(data.length); setServerPaged(false); }
+    else if (error) setLoadError("Gagal memuat audit log: " + error.message);
     setLoading(false);
   };
 
-  useEffect(() => { setPage(1); if (supabase) load(); }, [supabase, severity, category, days]);
+  useEffect(() => { setPage(1); }, [severity, category, days]);
+  useEffect(() => { if (supabase) load(); /* eslint-disable-line */ }, [supabase, severity, category, days, page]);
 
-  const totalPages = Math.ceil(logs.length / PAGE_SIZE) || 1;
+  const totalPages = Math.ceil(totalCount / PAGE_SIZE) || 1;
   const curPage = Math.min(page, totalPages);
-  const pageLogs = logs.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE);
+  const pageLogs = serverPaged ? logs : logs.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE);
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
@@ -401,8 +492,10 @@ function TabAudit({ supabase }) {
         <button onClick={load} disabled={loading} style={{ padding: "6px 12px", borderRadius: 8, background: cs.accent + "22", border: `1px solid ${cs.accent}33`, color: cs.accent, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
           {loading ? "⏳" : "🔄"}
         </button>
-        <span style={{ fontSize: 11, color: cs.muted, marginLeft: "auto" }}>{logs.length} log • retensi 90 hari</span>
+        <span style={{ fontSize: 11, color: cs.muted, marginLeft: "auto" }}>{totalCount} log • retensi 90 hari</span>
       </div>
+
+      {loadError && <div style={{ color: cs.red, background: cs.red + "12", border: `1px solid ${cs.red}44`, borderRadius: 10, padding: 12, fontSize: 12 }}>❌ {loadError}</div>}
 
       <div style={{ display: "grid", gap: 6, maxHeight: 600, overflowY: "auto" }}>
         {logs.length === 0 ? (
@@ -994,6 +1087,7 @@ function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHe
       const resp = await fetch("/api/monitor", { headers: _apiHeaders ? await _apiHeaders() : {} });
       if (!resp.ok) throw new Error("HTTP " + resp.status);
       const data = await resp.json();
+      if (data?.status !== "ok") throw new Error(data?.message || "Monitoring mengembalikan status tidak valid");
       setMonitorData(data);
     } catch (err) {
       console.error("[MonitoringView] refreshOverview:", err.message);
@@ -1040,7 +1134,9 @@ function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHe
         ))}
       </div>
 
-      {activeTab === "overview" && (monitorData ? <TabOverview data={monitorData} onRefresh={refreshOverview} /> : <Empty msg="⏳ Loading monitoring data..." />)}
+      {activeTab === "overview" && (monitorData?.status === "error"
+        ? <Empty msg={`❌ Monitoring gagal: ${monitorData.message || "unknown error"}`} />
+        : monitorData ? <TabOverview data={monitorData} onRefresh={refreshOverview} /> : <Empty msg="⏳ Loading monitoring data..." />)}
       {activeTab === "cron"  && <TabCron supabase={supabase} />}
       {activeTab === "ai"    && <TabAiCost supabase={supabase} />}
       {activeTab === "wa"        && <TabWa supabase={supabase} />}

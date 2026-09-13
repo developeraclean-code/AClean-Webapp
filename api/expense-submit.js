@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { validateInternalToken, checkRateLimit, setCorsHeaders } from "./_auth.js";
 import { uploadBufferToR2, hasR2Config } from "./_r2-upload.js";
 import { classifyImage } from "./_ai-vision.js";
-import { expenseDuplicateExists, buildExpenseDedupKey } from "./_expense-dedup.js";
+import { expenseDuplicateExists } from "./_expense-dedup.js";
 
 const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SK = process.env.SUPABASE_SERVICE_KEY;
@@ -38,7 +38,9 @@ async function sendWA(phone, message) {
       headers: { "Authorization": FONNTE_TOKEN, "Content-Type": "application/json" },
       body: JSON.stringify({ target: phone, message }),
     });
-    return r.ok;
+    if (!r.ok) return false;
+    const body = await r.json().catch(() => null);
+    return body ? body.status !== false : true;
   } catch { return false; }
 }
 
@@ -52,9 +54,22 @@ export default async function handler(req, res) {
 
   const b = req.body || {};
   const category = b.category;
-  const teknisiName = (b.teknisi_name || "").trim();
-  const teknisiPhone = b.teknisi_phone || null;
   const items = Array.isArray(b.items) ? b.items : [];
+
+  // Identitas tidak boleh dipercaya dari body. App token membawa claims bertanda tangan;
+  // Supabase Bearer dipetakan lagi ke user_profiles memakai service key.
+  let actor = req.appClaims || null;
+  const actorId = actor?.userId || req.authUser?.id;
+  if (actorId) {
+    const profileRes = await fetch(REST(`user_profiles?id=eq.${encodeURIComponent(actorId)}&select=id,name,phone,role&limit=1`), { headers: H });
+    const profile = profileRes.ok ? (await profileRes.json())?.[0] : null;
+    if (profile) actor = { userId: profile.id, name: profile.name, role: profile.role, phone: profile.phone };
+  }
+  if (!actor || !["Teknisi", "Helper"].includes(actor.role)) {
+    return res.status(403).json({ error: "Hanya akun Teknisi/Helper yang boleh mengirim biaya lapangan" });
+  }
+  const teknisiName = String(actor.name || "").trim();
+  const teknisiPhone = actor.phone || null;
 
   if (!SUB_LIMITS[category]) return res.status(400).json({ error: "Kategori harus 'Bensin Motor' atau 'Parkir'" });
   if (!teknisiName) return res.status(400).json({ error: "teknisi_name wajib" });
@@ -77,6 +92,8 @@ export default async function handler(req, res) {
       const buffer = Buffer.from(item.base64, "base64");
       if (buffer.length < 1024) { out.status = "ERROR"; out.reason = "Foto terlalu kecil"; return out; }
       const mimeType = item.mimeType || "image/jpeg";
+      if (buffer.length > 5 * 1024 * 1024) { out.status = "ERROR"; out.reason = "Foto maksimal 5 MB"; return out; }
+      if (!["image/jpeg", "image/png", "image/webp"].includes(mimeType)) { out.status = "ERROR"; out.reason = "Format foto tidak didukung"; return out; }
 
       // ── Dedup hash (anti double-claim, window 30 hari) ──
       const hash = createHash("sha256").update(buffer).digest("hex");
@@ -87,15 +104,14 @@ export default async function handler(req, res) {
       if (dupRows.length > 0) { out.status = "DUPLICATE"; out.reason = "Foto struk ini sudah pernah diupload"; return out; }
 
       // ── Cross-source dedup: nama + nominal + tanggal sama (channel lain spt WA grup) ──
-      if (await expenseDuplicateExists({ SU, SK, teknisiName, amount: typedAmount, date: today, subcategory: category })) {
-        out.status = "DUPLICATE"; out.reason = "Biaya dgn nama, kategori, nominal & tanggal sama sudah tercatat (mungkin dari WA grup)"; return out;
-      }
+      const similarBusinessValue = await expenseDuplicateExists({ SU, SK, teknisiName, amount: typedAmount, date: today, subcategory: category });
 
       // ── Upload R2 ──
       const ext = mimeType.includes("png") ? "png" : "jpg";
       const r2Key = `expenses/${monthStr}/${tekSlug}/${today}_${hash.slice(0, 10)}.${ext}`;
       const up = await uploadBufferToR2({ buffer, key: r2Key, mimeType });
-      const r2Url = up.ok ? up.url : null;
+      if (!up.ok) throw new Error("Gagal menyimpan bukti foto ke R2");
+      const r2Url = up.url;
 
       // ── AI Vision: baca tanggal + nominal struk ──
       const groupCfg = { ai_expense_enabled: true, ai_payment_enabled: false };
@@ -118,7 +134,7 @@ export default async function handler(req, res) {
       let validation, reason;
       if (cls.error) {
         validation = "PENDING_AI"; reason = "AI gagal baca foto — perlu review manual";
-      } else if (dateMatch && amountMatch) {
+      } else if (dateMatch && amountMatch && confidence === "HIGH" && !similarBusinessValue) {
         validation = "APPROVED"; reason = null;
       } else {
         validation = "PENDING_AI";
@@ -127,6 +143,8 @@ export default async function handler(req, res) {
         else if (!dateMatch) probs.push(`tanggal struk ${aiDate} ≠ hari ini`);
         if (!aiAmount) probs.push("nominal struk tidak terbaca");
         else if (!amountMatch) probs.push(`nominal struk Rp${aiAmount.toLocaleString("id-ID")} ≠ input Rp${typedAmount.toLocaleString("id-ID")}`);
+        if (confidence !== "HIGH") probs.push(`confidence AI ${confidence} — perlu review`);
+        if (similarBusinessValue) probs.push("ada transaksi bernilai sama — cek kemungkinan duplikat");
         reason = probs.join(" · ") || "perlu review manual";
       }
 
@@ -141,7 +159,8 @@ export default async function handler(req, res) {
         linked_table: "expenses", linked_id: null, notes: reason,
       };
       const aiRes = await fetch(REST("ai_extractions"), { method: "POST", headers: { ...H, Prefer: "return=representation" }, body: JSON.stringify(aiBody) });
-      const aiRow = aiRes.ok ? (await aiRes.json())[0] : null;
+      if (!aiRes.ok) throw new Error("Gagal menyimpan hasil pemeriksaan AI");
+      const aiRow = (await aiRes.json())[0];
       const extractionId = aiRow?.id || null;
 
       // ── Insert expenses (dedup_key = garis pertahanan atomic terakhir, migrasi 094) ──
@@ -150,10 +169,21 @@ export default async function handler(req, res) {
         amount: typedAmount, date: today,
         description: `${category} (input teknisi)${reason ? " — " + reason : ""}`,
         teknisi_name: teknisiName, created_by: teknisiName,
+        created_by_user_id: actor.userId || null,
+        source: "technician_app", source_ref: dedupKey,
         validation_status: validation, ai_extraction_id: extractionId,
-        dedup_key: buildExpenseDedupKey({ teknisiName, amount: typedAmount, date: today, subcategory: category }),
+        // Exact source hash adalah idempotency key. Kemiripan tanggal/nominal hanya warning.
+        dedup_key: dedupKey,
       };
-      const expRes = await fetch(REST("expenses"), { method: "POST", headers: { ...H, Prefer: "return=representation" }, body: JSON.stringify(expBody) });
+      let expRes = await fetch(REST("expenses"), { method: "POST", headers: { ...H, Prefer: "return=representation" }, body: JSON.stringify(expBody) });
+      // Kompatibilitas deployment sebelum migration 168.
+      if (!expRes.ok && expRes.status === 400) {
+        const errText = await expRes.clone().text();
+        if (/created_by_user_id|source_ref|allocation_status|schema cache/i.test(errText)) {
+          const { created_by_user_id: _uid, source: _source, source_ref: _ref, ...legacyBody } = expBody;
+          expRes = await fetch(REST("expenses"), { method: "POST", headers: { ...H, Prefer: "return=representation" }, body: JSON.stringify(legacyBody) });
+        }
+      }
       if (expRes.status === 409) { out.status = "DUPLICATE"; out.reason = "Biaya ini sudah tercatat (race condition dicegah di level DB)"; return out; }
       const expRow = expRes.ok ? (await expRes.json())[0] : null;
       if (!expRow) { out.status = "ERROR"; out.reason = "Gagal simpan ke Biaya"; return out; }
@@ -161,7 +191,14 @@ export default async function handler(req, res) {
 
       // Link balik ai_extractions.linked_id
       if (extractionId) {
-        await fetch(REST("ai_extractions?id=eq." + extractionId), { method: "PATCH", headers: H, body: JSON.stringify({ linked_id: expRow.id }) });
+        const linkRes = await fetch(REST("ai_extractions?id=eq." + extractionId), { method: "PATCH", headers: H, body: JSON.stringify({ linked_id: expRow.id }) });
+        if (!linkRes.ok) {
+          await fetch(REST("expenses?id=eq." + expRow.id), { method: "PATCH", headers: H, body: JSON.stringify({ validation_status: "PENDING_AI" }) });
+          out.status = "PENDING_REVIEW";
+          out.verdict = "PENDING_AI";
+          out.reason = "Biaya tersimpan tetapi link audit AI gagal — perlu pemeriksaan";
+          return out;
+        }
       }
 
       out.status = validation === "APPROVED" ? "APPROVED" : "PENDING_REVIEW";

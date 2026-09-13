@@ -12,6 +12,79 @@ export async function monitor(req, res) {
     const sinceParam = encodeURIComponent(since24h);
     const sbHeaders = { apikey: SK, Authorization: "Bearer " + SK };
 
+    // Migration 168: satu RPC menghasilkan agregat exact. Selain lebih hemat daripada lima
+    // request REST, ia tidak menghitung total dari array yang sudah terkena limit.
+    const snapshotResponse = await fetch(SU + "/rest/v1/rpc/get_monitoring_snapshot", {
+      method: "POST",
+      headers: { ...sbHeaders, "Content-Type": "application/json" },
+      body: "{}",
+    });
+    if (snapshotResponse.ok) {
+      const snap = await snapshotResponse.json();
+      const logs = snap?.logs || {};
+      const cron = snap?.cron || {};
+      const ai = snap?.ai || {};
+      const expense = snap?.expenses || {};
+      let infra = null;
+      try { infra = typeof snap?.infra_raw === "string" ? JSON.parse(snap.infra_raw) : snap?.infra_raw; } catch (_) { infra = null; }
+      const errorCount = Number(logs.errors_24h) || 0;
+      const warningCount = Number(logs.warnings_24h) || 0;
+      const staleRunning = Number(cron.stale_running) || 0;
+      const failed = Number(cron.failed_7d) || 0;
+      let health = (errorCount === 0 && failed === 0 && staleRunning === 0) ? "healthy"
+        : (errorCount < 3 && failed < 3 && staleRunning < 3) ? "degraded" : "unhealthy";
+      if (infra?.level === "critical") health = "unhealthy";
+      else if (infra?.level === "warning" && health === "healthy") health = "degraded";
+
+      return res.status(200).json({
+        status: "ok",
+        source: "monitoring_snapshot_v2",
+        timestamp: snap?.generated_at || new Date().toISOString(),
+        health,
+        metrics: {
+          totalErrors: errorCount,
+          totalWarnings: warningCount,
+          errorRate: Number(logs.total_24h) > 0 ? errorCount / Number(logs.total_24h) : 0,
+          totalLogsChecked: Number(logs.total_24h) || 0,
+          recentErrors: (logs.recent_problems || []).map(l => ({ ...l, time: l.created_at })),
+          cron: {
+            total: Number(cron.total_7d) || 0,
+            success: Number(cron.success_7d) || 0,
+            failed,
+            skipped: Number(cron.skipped_7d) || 0,
+            running: Number(cron.running_7d) || 0,
+            staleRunning,
+            recent: (cron.recent || []).map(c => ({
+              task: c.task_name, status: c.status, duration_ms: c.duration_ms,
+              items: c.items_processed, error: c.error_message, started_at: c.started_at,
+            })),
+            latestByTask: cron.latest_by_task || [],
+          },
+          ai: {
+            totalCalls: Number(ai.calls_30d) || 0,
+            totalCostUsd: Number(ai.cost_30d) || 0,
+            errorCount: Number(ai.errors_30d) || 0,
+            byProvider: ai.by_provider_30d || {},
+          },
+          expenses: {
+            pendingAi: Number(expense.pending_ai) || 0,
+            pendingAiOver24h: Number(expense.pending_ai_over_24h) || 0,
+            pendingApproval: Number(expense.pending_approval) || 0,
+            unresolvedMaterial: Number(expense.unresolved_material) || 0,
+            duplicateWarnings: Number(expense.duplicate_warnings) || 0,
+            legacyAdminHighWithoutReview: Number(expense.legacy_admin_high_without_review) || 0,
+          },
+          infra,
+        },
+      });
+    }
+    // Database live belum migration 168: fallback ke endpoint lama agar operasional aman.
+    const snapshotUnavailable = snapshotResponse.status === 404 || snapshotResponse.status === 400;
+    if (!snapshotUnavailable) {
+      const detail = (await snapshotResponse.text()).slice(0, 200);
+      throw new Error("Monitoring snapshot gagal: HTTP " + snapshotResponse.status + " " + detail);
+    }
+
     const [errResponse, countResponse, cronResponse, aiResponse, infraResponse] = await Promise.all([
       fetch(SU+"/rest/v1/agent_logs?select=action,status,severity,category,detail,created_at&or=(status.eq.ERROR,status.eq.WARNING,severity.eq.error,severity.eq.warn,severity.eq.critical)&created_at=gte."+sinceParam+"&order=created_at.desc&limit=100", { headers: sbHeaders }),
       fetch(SU+"/rest/v1/agent_logs?select=id&created_at=gte."+sinceParam+"&limit=1", { headers: { ...sbHeaders, Prefer: "count=exact" } }),
@@ -19,6 +92,8 @@ export async function monitor(req, res) {
       fetch(SU+"/rest/v1/ai_usage?select=provider,model,feature,input_tokens,output_tokens,cost_usd,duration_ms,error,created_at&created_at=gte."+sinceParam+"&order=created_at.desc&limit=200", { headers: sbHeaders }),
       fetch(SU+"/rest/v1/app_settings?select=value&key=eq.infra_usage_snapshot&limit=1", { headers: sbHeaders }),
     ]);
+    const failedDependency = [errResponse, countResponse, cronResponse, aiResponse, infraResponse].find(r => !r.ok);
+    if (failedDependency) throw new Error("Supabase monitoring dependency gagal: HTTP " + failedDependency.status);
     const logs = errResponse.ok ? await errResponse.json() : [];
     const totalLogsIn24h = parseInt(countResponse.headers?.get?.("content-range")?.split("/")?.[1] || "0") || 0;
     const crons = cronResponse.ok ? await cronResponse.json() : [];
@@ -34,7 +109,7 @@ export async function monitor(req, res) {
     const errorCount = logsArray.filter(l => l.status === "ERROR" || l.severity === "error" || l.severity === "critical").length;
     const warningCount = logsArray.filter(l => l.status === "WARNING" || l.severity === "warn").length;
 
-    const cronFailed = cronArray.filter(c => c.status === "FAILED").length;
+    const cronFailed = cronArray.filter(c => c.status === "FAILED" || c.status === "TIMEOUT").length;
     const cronSuccess = cronArray.filter(c => c.status === "SUCCESS").length;
     const cronSkipped = cronArray.filter(c => c.status === "SKIPPED").length;
     const cronRunning = cronArray.filter(c => c.status === "RUNNING").length;
@@ -101,7 +176,7 @@ export async function monitor(req, res) {
       metrics
     });
   } catch(err) {
-    return res.status(200).json({
+    return res.status(503).json({
       status: "error",
       message: err.message,
       timestamp: new Date().toISOString()

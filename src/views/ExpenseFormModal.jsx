@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { cs } from "../theme/cs.js";
+import { buildExpenseCreateMeta, expenseAllocationStatus, validateExpenseForm } from "../lib/expensePolicy.js";
 
 const PETTY_CASH_SUBS = ["Bensin Motor", "Perbaikan Motor", "Parkir", "Kasbon Karyawan", "Lembur", "Bonus", "Lain-lain"];
 const MATERIAL_SUBS = ["Pipa AC", "Kabel", "Freon", "Material Lain"];
@@ -25,7 +26,7 @@ export default function ExpenseFormModal({
   auditUserName,
   showNotif, TODAY,
   setExpensesData, setPendingAi,
-  fmt, ordersData,
+  fmt, ordersData, onSaved,
 }) {
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
@@ -68,11 +69,7 @@ export default function ExpenseFormModal({
   const nameOptions = [...namesSet].sort((a, b) => a.localeCompare(b));
 
   const validate = () => {
-    const e = {};
-    if (!newExpenseForm.subcategory) e.subcategory = "Sub-kategori wajib dipilih";
-    if (!newExpenseForm.amount) e.amount = "Jumlah wajib diisi";
-    if (!newExpenseForm.date) e.date = "Tanggal wajib diisi";
-    return e;
+    return validateExpenseForm(newExpenseForm);
   };
 
   const handleSave = async () => {
@@ -97,24 +94,58 @@ export default function ExpenseFormModal({
         created_by: currentUser?.name || currentUser?.email || "unknown",
       };
       if (editExpenseItem) {
+        payload.allocation_status = expenseAllocationStatus({ ...editExpenseItem, ...payload });
         if (isPendingAiItem) {
           payload.validation_status = "APPROVED";
-          if (editExpenseItem.ai_extraction_id) {
-            supabase.from("ai_extractions").update({ status: "edited" }).eq("id", editExpenseItem.ai_extraction_id).then(() => {}, () => {});
-          }
         }
-        const { error } = await updateExpense(supabase, editExpenseItem.id, payload, auditUserName());
+        let result = await updateExpense(supabase, editExpenseItem.id, payload, auditUserName());
+        // Kompatibilitas sebelum migration 168: kolom alokasi belum ada.
+        if (result.error && /allocation_status|schema cache/i.test(result.error.message || "")) {
+          const { allocation_status: _ignored, ...legacyPayload } = payload;
+          result = await updateExpense(supabase, editExpenseItem.id, legacyPayload, auditUserName());
+        }
+        const { error } = result;
         if (error) { showNotif?.("❌ Gagal update biaya: " + error.message); return; }
+        if (isPendingAiItem && editExpenseItem.ai_extraction_id) {
+          const { error: aiError } = await supabase.from("ai_extractions").update({ status: "edited" }).eq("id", editExpenseItem.ai_extraction_id);
+          if (aiError) throw new Error("Biaya tersimpan, tetapi status AI gagal disinkronkan: " + aiError.message);
+        }
         setExpensesData(prev => prev.map(x => x.id === editExpenseItem.id ? { ...x, ...payload } : x));
         if (isPendingAiItem) setPendingAi?.(prev => prev.filter(x => x.id !== editExpenseItem.id));
         showNotif?.(`✅ Biaya ${payload.subcategory} (${fmt(payload.amount)}) diperbarui`);
       } else {
-        const { data, error } = await insertExpense(supabase, { ...payload, last_changed_by: auditUserName() });
+        // Similarity hanya warning, bukan hard-block: dua parkir/bensin bernilai sama bisa sah.
+        let duplicateQuery = supabase.from("expenses").select("id").eq("date", payload.date)
+          .eq("amount", payload.amount).eq("category", payload.category).eq("subcategory", payload.subcategory)
+          .is("deleted_at", null).limit(1);
+        if (payload.teknisi_name) duplicateQuery = duplicateQuery.eq("teknisi_name", payload.teknisi_name);
+        else if (payload.item_name) duplicateQuery = duplicateQuery.eq("item_name", payload.item_name);
+        const { data: similarRows, error: duplicateError } = await duplicateQuery;
+        if (duplicateError) throw new Error("Gagal memeriksa kemungkinan duplikat: " + duplicateError.message);
+        if (similarRows?.length && !window.confirm("⚠️ Ada biaya dengan tanggal, kategori, dan nominal yang sama. Tetap simpan sebagai transaksi berbeda?")) return;
+
+        const meta = buildExpenseCreateMeta({
+          role: currentUser?.role, amount: payload.amount, category: payload.category,
+          orderId: payload.order_id, userId: currentUser?.id,
+        });
+        let result = await insertExpense(supabase, { ...payload, ...meta, last_changed_by: auditUserName() });
+        // Frontend tetap aman saat diuji sebelum migration 168 diterapkan. Approval status
+        // sudah tersedia sejak migration 158 dan tidak ikut dibuang.
+        if (result.error && /created_by_user_id|source|allocation_status|schema cache/i.test(result.error.message || "")) {
+          const { created_by_user_id: _u, source: _s, allocation_status: _a, ...legacyMeta } = meta;
+          result = await insertExpense(supabase, { ...payload, ...legacyMeta, last_changed_by: auditUserName() });
+        }
+        const { data, error } = result;
         if (error) { showNotif?.("❌ Gagal simpan biaya: " + error.message); return; }
         setExpensesData(prev => [data, ...prev]);
-        showNotif?.(`✅ Biaya ${payload.subcategory} (${fmt(payload.amount)}) tersimpan`);
+        showNotif?.(meta.approval_status === "PENDING_APPROVAL"
+          ? `⏳ Biaya ${payload.subcategory} (${fmt(payload.amount)}) menunggu persetujuan Owner/Finance`
+          : `✅ Biaya ${payload.subcategory} (${fmt(payload.amount)}) tersimpan`);
       }
+      onSaved?.();
       onClose();
+    } catch (error) {
+      showNotif?.("❌ Gagal simpan biaya: " + error.message);
     } finally {
       setSaving(false);
     }
@@ -208,15 +239,16 @@ export default function ExpenseFormModal({
               {/* Nama Karyawan (Kasbon/Lembur/Bonus) */}
               {isKasbonLemburBonus && (
                 <div>
-                  <label style={lbl}>Nama Karyawan</label>
+                  <label style={lbl}>Nama Karyawan <span style={{ color: cs.red }}>*</span></label>
                   <select
                     value={newExpenseForm.teknisi_name || ""}
                     onChange={e => set("teknisi_name", e.target.value)}
-                    style={{ ...inp(false), borderColor: newExpenseForm.teknisi_name ? cs.border : cs.yellow + "66" }}
+                    style={{ ...inp(errors.teknisi_name), borderColor: errors.teknisi_name ? cs.red : (newExpenseForm.teknisi_name ? cs.border : cs.yellow + "66") }}
                   >
                     <option value="">— Pilih teknisi / helper —</option>
                     {nameOptions.map(n => <option key={n} value={n}>{n}</option>)}
                   </select>
+                  {errors.teknisi_name && <div style={{ fontSize: 11, color: cs.red, marginTop: 3 }}>⚠ {errors.teknisi_name}</div>}
                   <div style={{ fontSize: 10, color: cs.muted, marginTop: 3 }}>Pilih dari preset agar kasbon terhitung di payroll mingguan</div>
                 </div>
               )}
@@ -224,13 +256,14 @@ export default function ExpenseFormModal({
               {newExpenseForm.category === "material_purchase" && (
                 <>
                   <div>
-                    <label style={lbl}>Nama / Spesifikasi Barang</label>
+                    <label style={lbl}>Nama / Spesifikasi Barang <span style={{ color: cs.red }}>*</span></label>
                     <input
                       value={newExpenseForm.item_name || ""}
                       onChange={e => set("item_name", e.target.value)}
                       placeholder="misal: Pipa 3/8 × 5/8 — 15m"
-                      style={inp(false)}
+                      style={inp(errors.item_name)}
                     />
+                    {errors.item_name && <div style={{ fontSize: 11, color: cs.red, marginTop: 3 }}>⚠ {errors.item_name}</div>}
                   </div>
                   <div>
                     <label style={lbl}>Job Terkait (opsional)</label>
@@ -249,6 +282,19 @@ export default function ExpenseFormModal({
                       otomatis saat menilai bonus margin job tsb.
                     </div>
                   </div>
+                  {!newExpenseForm.order_id && (
+                    <div>
+                      <label style={lbl}>Keputusan Alokasi</label>
+                      <select value={newExpenseForm.allocation_status || "UNRESOLVED"}
+                        onChange={e => set("allocation_status", e.target.value)} style={inp(false)}>
+                        <option value="UNRESOLVED">⏳ Belum ditentukan</option>
+                        <option value="NON_STOCK">✅ Langsung dipakai / non-stok</option>
+                      </select>
+                      <div style={{ fontSize: 10, color: cs.muted, marginTop: 3 }}>
+                        Pilih “belum ditentukan” bila nota nanti akan ditautkan ke stok.
+                      </div>
+                    </div>
+                  )}
                   {newExpenseForm.subcategory === "Freon" && (
                     <div>
                       <label style={lbl}>Jenis Freon</label>

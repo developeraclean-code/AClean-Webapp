@@ -380,6 +380,27 @@ export const fetchAllExpenses = async (supabase) => {
   return { data: all, error: null };
 };
 
+// Migration 168: halaman Biaya hanya mengambil satu page + agregat exact.
+// Caller wajib menyediakan fallback selama migration belum diterapkan.
+export const fetchExpenseWorkspace = (supabase, {
+  dateFrom = null, dateTo = null, category = null, subcategory = null,
+  search = null, page = 1, pageSize = 20,
+} = {}) => supabase.rpc("get_expense_workspace", {
+  p_date_from: dateFrom || null,
+  p_date_to: dateTo || null,
+  p_category: category || null,
+  p_subcategory: subcategory || null,
+  p_search: search || null,
+  p_page: page,
+  p_page_size: pageSize,
+});
+
+export const fetchExpenseBudgets = (supabase, periodMonth) => supabase
+  .from("expense_budgets")
+  .select("id,period_month,category,subcategory,amount,updated_at")
+  .eq("period_month", periodMonth)
+  .order("category").order("subcategory");
+
 // Recycle bin — expenses yang sudah di-soft-delete (untuk tab "Dihapus")
 export const fetchDeletedExpenses = (supabase) =>
   supabase.from("expenses")
