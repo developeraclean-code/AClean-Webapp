@@ -1,6 +1,7 @@
 // handleFotoUpload — validasi + kompres + upload foto laporan ke R2, tag per-unit.
 // Diekstrak dari App.jsx (Fase 3, pola ctx). `crypto` = global browser (bukan ctx).
 import { maxFotoLaporan } from "./laporanConstants.js";
+import { recordFieldPhotoUploadFailure, uploadWithRetry } from "./fieldReportWorkflow.js";
 
 export async function handleFotoUpload(e, {
   _apiFetch, _apiHeaders, appSettings, compressImg, currentUser, fotoTargetUnitRef,
@@ -113,7 +114,7 @@ export async function handleFotoUpload(e, {
     setLaporanFotos(prev => [...prev, ...placeholders]);
 
     const uploadOne = async (ph) => {
-      try {
+      const result = await uploadWithRetry(async () => {
         const r = await _apiFetch("/api/upload-foto", {
           method: "POST",
           headers: await _apiHeaders(),
@@ -126,14 +127,16 @@ export async function handleFotoUpload(e, {
             currentUserRole: currentUser?.role || "Unknown",
           }),
         });
-        const d = await r.json();
-        if (d.success && d.url) {
-          return { id: ph.id, url: d.url, errMsg: "", uploading: false };
-        }
-        return { id: ph.id, url: null, errMsg: d.error || "Upload gagal", uploading: false };
-      } catch (err) {
-        return { id: ph.id, url: null, errMsg: err.message || "Network error", uploading: false };
+        const d = await r.json().catch(() => ({}));
+        return { ...d, success: Boolean(r.ok && d.success && d.url), status: r.status };
+      }, {
+        attempts: 3,
+        shouldRetry: result => !result?.status || result.status === 408 || result.status === 429 || result.status >= 500,
+      });
+      if (result.success && result.url) {
+        return { id: ph.id, url: result.url, errMsg: "", uploading: false, uploadAttempts: result.attempts };
       }
+      return { id: ph.id, url: null, errMsg: result.error || "Upload gagal", uploading: false, uploadAttempts: result.attempts };
     };
 
     let savedCount = 0, failedCount = 0;
@@ -147,6 +150,8 @@ export async function handleFotoUpload(e, {
       }));
       results.forEach(r => r.url ? savedCount++ : failedCount++);
     }
+
+    if (failedCount > 0) recordFieldPhotoUploadFailure(laporanModal?.id, failedCount);
 
     if (savedCount === placeholders.length) {
       showNotif(`✅ ${savedCount} foto tersimpan di R2!`);

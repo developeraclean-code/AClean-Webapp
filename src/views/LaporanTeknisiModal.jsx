@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { cs } from "../theme/cs.js";
 import { getBracketKey, hargaPerUnitFromTipe } from "../lib/pricing.js";
 import { categoryFromCatalog } from "../lib/invoicing.js";
@@ -8,6 +8,10 @@ import {
   remapUnitNo, remapUnitNoList, maxFotoLaporan,
 } from "../lib/laporanConstants.js";
 import MaintUnitPickerStep from "./MaintUnitPickerStep.jsx";
+import {
+  beginFieldReportSession, clearFieldReportDraft, loadFieldReportDraft,
+  recordFieldPhotoUploadFailure, saveFieldReportDraft, uploadWithRetry,
+} from "../lib/fieldReportWorkflow.js";
 
 // Debounce lokal (disalin dari App.jsx module-level) — untuk search material
 function useDebounce(value, delay) {
@@ -75,6 +79,64 @@ export default function LaporanTeknisiModal({
   // Picker registry unit AC (customer reguler) — cermin maint
   const [showAddAcUnitModal, setShowAddAcUnitModal] = useState(false);
   const [addAcSelected, setAddAcSelected] = useState(new Set());
+  const [quickMode, setQuickMode] = useState(false);
+  const [draftState, setDraftState] = useState("menyiapkan");
+  const draftReadyJob = useRef(null);
+
+  // Draft disimpan di perangkat teknisi, bukan ke Supabase per ketikan. Ini menjaga
+  // form tetap pulih setelah refresh/tutup tidak sengaja tanpa menghabiskan kuota DB.
+  useEffect(() => {
+    const jobId = laporanModal?.id;
+    if (!jobId || draftReadyJob.current === jobId) return;
+    draftReadyJob.current = jobId;
+    const draft = loadFieldReportDraft(jobId);
+    beginFieldReportSession(jobId, { recovered: Boolean(draft) });
+    if (draft) {
+      if (Array.isArray(draft.units)) setLaporanUnits(draft.units);
+      if (Array.isArray(draft.materials)) setLaporanMaterials(draft.materials);
+      if (Array.isArray(draft.jasaItems)) setLaporanJasaItems(draft.jasaItems);
+      if (Array.isArray(draft.barangItems)) setLaporanBarangItems(draft.barangItems);
+      if (draft.installItems) setLaporanInstallItems(draft.installItems);
+      if (Array.isArray(draft.cleaningInRepair)) setLaporanCleaningInRepair(draft.cleaningInRepair);
+      if (Array.isArray(draft.photos)) setLaporanFotos(draft.photos);
+      setLaporanRekomendasi(draft.rekomendasi || "");
+      setLaporanCatatan(draft.catatan || "");
+      setLaporanSurveyHasil(draft.surveyHasil || "");
+      setLaporanSurveyCatatan(draft.surveyCatatan || "");
+      setActiveUnitIdx(Number(draft.activeUnitIdx || 0));
+      setLaporanStep(Math.max(1, Math.min(4, Number(draft.step || 1))));
+      setQuickMode(Boolean(draft.quickMode));
+      setDraftState("dipulihkan");
+      showNotif?.("♻️ Draft laporan terakhir dipulihkan otomatis");
+    } else {
+      setDraftState("aktif");
+    }
+  }, [laporanModal?.id]); // state setter stabil; sengaja hanya saat job berganti
+
+  useEffect(() => {
+    const jobId = laporanModal?.id;
+    if (!jobId || draftReadyJob.current !== jobId || laporanSubmitted) return;
+    setDraftState("menyimpan");
+    const timer = setTimeout(() => {
+      const saved = saveFieldReportDraft(jobId, {
+        step: laporanStep, activeUnitIdx, quickMode,
+        units: laporanUnits, materials: laporanMaterials,
+        jasaItems: laporanJasaItems, barangItems: laporanBarangItems,
+        installItems: laporanInstallItems, cleaningInRepair: laporanCleaningInRepair,
+        photos: laporanFotos, rekomendasi: laporanRekomendasi, catatan: laporanCatatan,
+        surveyHasil: laporanSurveyHasil, surveyCatatan: laporanSurveyCatatan,
+      });
+      setDraftState(saved ? "tersimpan" : "gagal");
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [laporanModal?.id, laporanSubmitted, laporanStep, activeUnitIdx, quickMode,
+    laporanUnits, laporanMaterials, laporanJasaItems, laporanBarangItems,
+    laporanInstallItems, laporanCleaningInRepair, laporanFotos,
+    laporanRekomendasi, laporanCatatan, laporanSurveyHasil, laporanSurveyCatatan]);
+
+  useEffect(() => {
+    if (laporanSubmitted && laporanModal?.id) clearFieldReportDraft(laporanModal.id);
+  }, [laporanSubmitted, laporanModal?.id]);
 
   // ── Layar sukses (setelah submit) ──
   if (laporanModal && laporanSubmitted) {
@@ -155,7 +217,7 @@ export default function LaporanTeknisiModal({
     setLaporanFotos(prev => prev.map(x => x.id === f.id ? { ...x, uploading: true, errMsg: "" } : x));
     showNotif("⏳ Retry upload...");
     const reportId = laporanModal?.id || "tmp";
-    try {
+    const result = await uploadWithRetry(async () => {
       const r = await _apiFetch("/api/upload-foto", {
         method: "POST", headers: await _apiHeaders(),
         body: JSON.stringify({
@@ -165,14 +227,13 @@ export default function LaporanTeknisiModal({
           currentUserRole: currentUser?.role || "Unknown",
         }),
       });
-      const d = await r.json();
-      setLaporanFotos(prev => prev.map(x => x.id === f.id
-        ? { ...x, uploading: false, url: d.success ? d.url : null, errMsg: d.success ? "" : (d.error || "gagal") } : x));
-      showNotif(d.success ? "✅ Retry berhasil!" : "❌ Masih gagal: " + (d.error || "unknown"));
-    } catch (err) {
-      setLaporanFotos(prev => prev.map(x => x.id === f.id ? { ...x, uploading: false, errMsg: err.message } : x));
-      showNotif("❌ " + err.message);
-    }
+      const d = await r.json().catch(() => ({}));
+      return { ...d, success: Boolean(r.ok && d.success && d.url), status: r.status };
+    }, { shouldRetry: result => !result?.status || result.status === 408 || result.status === 429 || result.status >= 500 });
+    setLaporanFotos(prev => prev.map(x => x.id === f.id
+      ? { ...x, uploading: false, url: result.success ? result.url : null, errMsg: result.success ? "" : result.error, uploadAttempts: result.attempts } : x));
+    if (!result.success) recordFieldPhotoUploadFailure(laporanModal?.id);
+    showNotif(result.success ? `✅ Upload berhasil (${result.attempts} percobaan)` : "❌ Masih gagal: " + result.error);
   };
 
   // ── UNIT PRESET MODAL (pilih AC dari history) ──
@@ -336,6 +397,27 @@ export default function LaporanTeknisiModal({
               <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>{laporanModal.id} · {laporanModal.customer} · {laporanModal.service}</div>
             </div>
             <button onClick={() => setLaporanModal(null)} style={{ background: "none", border: "none", color: cs.muted, fontSize: 24, cursor: "pointer", lineHeight: 1, padding: 0 }}>×</button>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "8px 10px" }}>
+            <span style={{ fontSize: 11, color: draftState === "gagal" ? "#ef4444" : cs.muted, flex: 1 }}>
+              {draftState === "dipulihkan" ? "♻️ Draft dipulihkan" : draftState === "menyimpan" ? "⏳ Menyimpan draft…" : draftState === "gagal" ? "⚠️ Draft gagal disimpan" : "✓ Draft tersimpan otomatis"}
+            </span>
+            {isFieldStaff && laporanModal.service !== "Survey" && (
+              <button onClick={() => {
+                setQuickMode(true);
+                const identityReady = laporanUnits.length > 0 && laporanUnits.every(u => TIPE_AC_OPT.includes(u.tipe) && u.label?.trim() && u.merk?.trim());
+                if (identityReady) {
+                  setLaporanStep(isInstallJob ? 3 : 2);
+                  showNotif("⚡ Data job & unit sudah terisi. Konfirmasi kondisi aktual lalu submit.");
+                } else {
+                  setLaporanStep(1);
+                  showNotif("⚡ Mode cepat aktif. Lengkapi identitas unit yang belum tersedia.");
+                }
+              }} style={{ background: quickMode ? cs.green + "22" : cs.accent + "18", border: "1px solid " + (quickMode ? cs.green : cs.accent) + "55", color: quickMode ? cs.green : cs.accent, borderRadius: 8, padding: "6px 10px", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>
+                ⚡ {quickMode ? "Mode Cepat Aktif" : "Mode Cepat"}
+              </button>
+            )}
           </div>
 
           {/* ── SURVEY: form 2-field sederhana (bypass wizard 4-step) ── */}

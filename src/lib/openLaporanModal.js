@@ -2,6 +2,8 @@
 // (seed unit dari registry AC/maintenance, riwayat customer, reset step/form).
 // TIDAK memutasi DB — hanya set state UI. Diekstrak dari App.jsx (Fase 2, pola ctx).
 // ctx = param ke-2. Body verbatim (behavior-preserving).
+import { hasFieldReportDraft } from "./fieldReportWorkflow.js";
+
 export function openLaporanModal(order, {
   AC_REGISTRY_CUTOFF, _apiFetch, acUnitToHist, buildCustomerHistory, currentUser,
   customersData, fetchAcUnitsByCustomer, findCustomer, inventoryData, invoicesData,
@@ -16,6 +18,7 @@ export function openLaporanModal(order, {
   setShowUnitPresetModal, setUnitPresetHistory, setUnitPresetSelected, showNotif,
   submitLaporanLock, supabase,
 } = {}) {
+    const hadDraftAtOpen = hasFieldReportDraft(order?.id);
     // ANTI-DUPLIKAT: cek apakah sudah ada laporan untuk job ini
     const existingReport = laporanReports.find(r => r.job_id === (order._rewriteId ? order.id : order.id) && r.status !== "PENDING");
     if (existingReport && !order._rewriteId) {
@@ -65,7 +68,7 @@ export function openLaporanModal(order, {
               if (!mu) return mkUnit(i + 1);
               return mkUnit(i + 1, maintUnitToHist(mu));
             });
-            setLaporanUnits(filled);
+            if (!hadDraftAtOpen) setLaporanUnits(filled);
             if (mUnitIds.length > 30) {
               showNotif(`⚠️ Order ini menugaskan ${mUnitIds.length} unit — dimuat ${filled.length} (batas 1 laporan). Sisanya buat laporan terpisah.`);
             }
@@ -107,7 +110,7 @@ export function openLaporanModal(order, {
             const pu = lastReport.units[i];
             return pu ? mkUnit(i + 1, { label: pu.label, tipe: pu.tipe, merk: pu.merk, pk: pu.pk, model: pu.model, from_history_job_id: lastReport.job_id }) : mkUnit(i + 1);
           });
-          setLaporanUnits(prefilled);
+          if (!hadDraftAtOpen) setLaporanUnits(prefilled);
           showNotif(`ℹ️ ${Math.min(count, lastReport.units.length)} unit di-prefill dari servis terakhir — cek & sesuaikan`);
         }
       };
@@ -119,7 +122,7 @@ export function openLaporanModal(order, {
             if (acUnits && acUnits.length > 0) {
               setAcUnitPool(acUnits);
               const filled = acUnits.slice(0, 30).map((au, i) => mkUnit(i + 1, acUnitToHist(au)));
-              setLaporanUnits(filled);
+              if (!hadDraftAtOpen) setLaporanUnits(filled);
               showNotif(`ℹ️ ${filled.length} unit di-prefill dari registry customer — cek & sesuaikan`);
               return; // registry dipakai → skip #1A
             }
@@ -229,7 +232,7 @@ export function openLaporanModal(order, {
     // di atas, lengkap dengan unit_code + maint_unit_id). History-picker malah mubazir &
     // membingungkan (unit history tak punya kode unit) → lewati untuk order maintenance.
     const customer = order.maintenance_client_id ? null : findCustomer(customersData, order.phone, order.customer);
-    if (customer) {
+    if (customer && !hadDraftAtOpen) {
       const custHistory = buildCustomerHistory(customer, ordersData, laporanReports, invoicesData, customersData);
       // Ambil unit detail dari job sebelumnya (terbaru)
       const historyUnits = custHistory.flatMap((h, idx) =>

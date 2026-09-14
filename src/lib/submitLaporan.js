@@ -19,6 +19,7 @@ export async function submitLaporan({
   setLaporanSubmitted, setOrdersData, setQuotationsData, setTeknisiData, showConfirm,
   showNotif, submitLaporanLock, summarize, supabase, syncTrackedStock, teknisiData,
   updateOrderStatus, userAccounts,
+  onReportSubmitted,
 }) {
     if (submitLaporanLock.current) { showNotif("⏳ Sedang submit, harap tunggu..."); return; }
     submitLaporanLock.current = true;
@@ -105,6 +106,7 @@ export async function submitLaporan({
       const admR2 = userAccounts.filter(u => (u.role === "Admin" || u.role === "Owner") && u.active !== false);
       admR2.forEach(u => { if (u.phone) sendWA(u.phone, "Laporan Survey\nJob: " + laporanModal.id + "\nCustomer: " + laporanModal.customer + "\nTeknisi: " + laporanModal.teknisi + "\n\nHasil: " + laporanSurveyHasil.trim().slice(0, 200)); });
       setLaporanSubmitted(true);
+      onReportSubmitted?.(laporanModal);
       submitLaporanLock.current = false;
       return;
     }
@@ -938,6 +940,7 @@ export async function submitLaporan({
     } catch (e) { console.warn("[BROUGHT_SYNC]", e?.message || e); }
 
     setLaporanSubmitted(true);
+    onReportSubmitted?.(laporanModal);
     // Seed-by-confirm registry unit AC (non-blocking, idempotent, forward-only)
     seedAcRegistry(laporanModal, laporanUnits);
     pushNotif(appSettings.app_name || "AClean", "Laporan berhasil dikirim ke Admin ✅");

@@ -3,6 +3,7 @@ import { cs } from "../theme/cs.js";
 import AbsenBanner from "./AbsenBanner.jsx";
 import KasbonWidget from "./KasbonWidget.jsx";
 import ExpenseInputWidget from "./ExpenseInputWidget.jsx";
+import { findDelayedFieldReports } from "../lib/fieldReportWorkflow.js";
 
 const STATUS_CONFIG = {
   PENDING:    { label: "Pending",    color: "#94a3b8", bg: "#94a3b822" },
@@ -11,11 +12,13 @@ const STATUS_CONFIG = {
   IN_PROGRESS:{ label: "Dikerjakan", color: "#a78bfa", bg: "#a78bfa22" },
   ON_SITE:    { label: "Di Lokasi",  color: "#34d399", bg: "#34d39922" },
   COMPLETED:  { label: "Selesai",    color: "#10b981", bg: "#10b98122" },
+  REPORT_SUBMITTED: { label: "Laporan Masuk", color: "#10b981", bg: "#10b98122" },
 };
 
-function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, openJobReport, materialsBroughtMap, updateOrderStatus, supabase, sendWA, auditUserName, showNotif, setActiveMenu, apiHeaders, kasbonProps, expenseProps, customersData, setHistoryPreview }) {
+function TechMobileView({ currentUser, ordersData, laporanReports, TODAY, openLaporanModal, openJobReport, materialsBroughtMap, updateOrderStatus, supabase, sendWA, auditUserName, showNotif, setActiveMenu, apiHeaders, kasbonProps, expenseProps, customersData, setHistoryPreview }) {
   const myName = currentUser?.name || "";
   const [updating, setUpdating] = useState(null); // order.id sedang diupdate
+  const [showAllJobs, setShowAllJobs] = useState(false);
 
   // Filter: order hari ini milik teknisi/helper ini
   const todayOrders = ordersData.filter(o => {
@@ -32,9 +35,16 @@ function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, open
   }).sort((a, b) => (a.time || "").localeCompare(b.time || ""));
 
   // Stats hari ini
-  const countDone      = todayOrders.filter(o => o.status === "COMPLETED").length;
+  const countDone      = todayOrders.filter(o => ["COMPLETED", "REPORT_SUBMITTED"].includes(o.status)).length;
   const countOnSite    = todayOrders.filter(o => o.status === "ON_SITE").length;
   const countActive    = todayOrders.filter(o => ["PENDING","CONFIRMED","DISPATCHED","IN_PROGRESS"].includes(o.status)).length;
+  const focusPriority = { ON_SITE: 0, IN_PROGRESS: 1, DISPATCHED: 2, CONFIRMED: 3, PENDING: 4 };
+  const focusedOrder = [...todayOrders]
+    .filter(order => Object.hasOwn(focusPriority, order.status))
+    .sort((a, b) => (focusPriority[a.status] ?? 9) - (focusPriority[b.status] ?? 9) || (a.time || "").localeCompare(b.time || ""))[0] || null;
+  const displayedOrders = showAllJobs || !focusedOrder ? todayOrders : [focusedOrder];
+  const hiddenJobCount = Math.max(0, todayOrders.length - displayedOrders.length);
+  const delayedReports = findDelayedFieldReports(ordersData, laporanReports, myName, TODAY);
 
   const handleStatus = async (order, newStatus, notifMsg) => {
     setUpdating(order.id);
@@ -115,6 +125,26 @@ function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, open
         ))}
       </div>
 
+      {delayedReports.length > 0 && (
+        <div style={{ background: "#f59e0b12", border: "1px solid #f59e0b55", borderRadius: 12, padding: "11px 13px" }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: "#f59e0b" }}>⏱ {delayedReports.length} laporan tertunda</div>
+          <div style={{ fontSize: 11, color: cs.muted, marginTop: 3 }}>{delayedReports[0].id} · {delayedReports[0].customer} · {delayedReports[0].date}</div>
+          <button onClick={() => openLaporanModal(delayedReports[0])}
+            style={{ marginTop: 8, width: "100%", background: "#f59e0b", color: "#0a0f1e", border: "none", borderRadius: 8, padding: "8px", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
+            Isi laporan tertua sekarang
+          </button>
+        </div>
+      )}
+
+      {focusedOrder && !showAllJobs && (
+        <div style={{ background: cs.accent + "12", border: "1px solid " + cs.accent + "44", borderRadius: 12, padding: "10px 13px" }}>
+          <div style={{ fontSize: 10, color: cs.accent, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".06em" }}>Fokus sekarang · satu aksi berikutnya</div>
+          <div style={{ fontSize: 13, color: cs.text, fontWeight: 700, marginTop: 3 }}>
+            {focusedOrder.status === "ON_SITE" ? "Isi laporan pekerjaan" : ["DISPATCHED", "IN_PROGRESS"].includes(focusedOrder.status) ? "Konfirmasi tiba di lokasi" : "Konfirmasi berangkat"} — {focusedOrder.customer}
+          </div>
+        </div>
+      )}
+
       {/* Job Cards */}
       {todayOrders.length === 0 ? (
         <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: "40px 20px", textAlign: "center" }}>
@@ -127,10 +157,10 @@ function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, open
           </button>
         </div>
       ) : (
-        todayOrders.map(order => {
+        displayedOrders.map(order => {
           const st = STATUS_CONFIG[order.status] || STATUS_CONFIG.PENDING;
           const isUpdating = updating === order.id;
-          const isCompleted = order.status === "COMPLETED";
+          const isCompleted = ["COMPLETED", "REPORT_SUBMITTED"].includes(order.status);
           const isOnSite = order.status === "ON_SITE";
           const isDispatched = order.status === "DISPATCHED" || order.status === "IN_PROGRESS";
           const isPending = order.status === "PENDING" || order.status === "CONFIRMED";
@@ -241,6 +271,19 @@ function TechMobileView({ currentUser, ordersData, TODAY, openLaporanModal, open
             </div>
           );
         })
+      )}
+
+      {hiddenJobCount > 0 && (
+        <button onClick={() => setShowAllJobs(true)}
+          style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.muted, borderRadius: 11, padding: "11px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+          Lihat {hiddenJobCount} job lainnya ▾
+        </button>
+      )}
+      {showAllJobs && focusedOrder && todayOrders.length > 1 && (
+        <button onClick={() => setShowAllJobs(false)}
+          style={{ background: "transparent", border: "none", color: cs.accent, padding: "6px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+          Kembali ke satu job aktif
+        </button>
       )}
 
       {/* Sticky CTA: jika ada job ON_SITE */}

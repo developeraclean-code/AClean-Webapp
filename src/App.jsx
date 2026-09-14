@@ -89,6 +89,7 @@ import { createTeamSplit as createTeamSplitLib } from "./lib/createTeamSplit.js"
 import { sendDispatchWA as sendDispatchWALib } from "./lib/dispatchWa.js";
 import { uploadMergedInvoicePDFForWA as uploadMergedInvoicePDFForWALib } from "./lib/mergedInvoicePdf.js";
 import { openLaporanModal as openLaporanModalLib } from "./lib/openLaporanModal.js";
+import { finishFieldReportSession } from "./lib/fieldReportWorkflow.js";
 const DeletedAuditView = lazy(() => import("./views/DeletedAuditView.jsx"));
 const MonitoringView = lazy(() => import("./views/MonitoringView.jsx"));
 const WaGroupMonitorView = lazy(() => import("./views/WaGroupMonitorView.jsx"));
@@ -3688,6 +3689,7 @@ export default function ACleanWebApp() {
         <TechMobileView
           currentUser={currentUser}
           ordersData={ordersData}
+          laporanReports={laporanReports}
           TODAY={TODAY}
           openLaporanModal={openLaporanModal}
           openJobReport={openJobReport}
@@ -4514,6 +4516,10 @@ export default function ACleanWebApp() {
     setLaporanSubmitted, setOrdersData, setQuotationsData, setTeknisiData, showConfirm,
     showNotif, submitLaporanLock, summarize, supabase, syncTrackedStock, teknisiData,
     updateOrderStatus, userAccounts,
+    onReportSubmitted: (order) => {
+      const metrics = finishFieldReportSession(order);
+      addAgentLog("FIELD_REPORT_METRICS", JSON.stringify(metrics), "INFO");
+    },
   });
 
   return (
