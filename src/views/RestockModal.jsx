@@ -84,79 +84,32 @@ export default function RestockModal({
     if (qtyNum <= 0) { showNotif("❌ Qty harus lebih dari 0"); return; }
     setSaving(true);
 
-    // Audit trail dulu (non-blocking jika gagal). unit_cost/total_cost disimpan PER TRANSAKSI
-    // supaya biaya material sebuah job kelak dihitung dgn harga yang berlaku saat itu,
-    // bukan HPP hari ini (harga pipa/freon bergerak tiap bulan).
-    const { error: txErr } = await supabase.from("inventory_transactions").insert({
-      inventory_code: item.code,
-      inventory_name: item.name,
-      qty: qtyNum,
-      type: "restock",
-      unit_cost: hargaNum > 0 ? hargaNum : null,
-      total_cost: hargaNum > 0 ? totalBeli : null,
-      notes: form.keterangan || ("Restock manual oleh " + (currentUser?.name || "Owner")),
-      created_by: currentUser?.id || null,
-      created_by_name: currentUser?.name || "",
+    // Satu RPC: ledger, stok, HPP, dan biaya (opsional) commit/rollback bersama.
+    const { data: result, error: invErr } = await supabase.rpc("restock_inventory_atomic", {
+      p_code: item.code,
+      p_qty: qtyNum,
+      p_unit_cost: hargaNum > 0 ? hargaNum : null,
+      p_date: form.tanggal || TODAY,
+      p_notes: form.keterangan || null,
+      p_create_expense: !!(form.catetBiaya && hargaNum > 0 && totalBeli > 0),
+      p_actor_name: currentUser?.name || null,
     });
-    if (txErr) console.error("[restock] inventory_transactions:", txErr.message);
-
-    // DB update dulu — UI hanya diupdate kalau berhasil
-    const newStatus = computeStockStatus(stokBaru, item.reorder);
-    const patch = { stock: stokBaru, updated_at: new Date().toISOString() };
-    // Harga kosong TIDAK boleh menimpa HPP jadi 0 (dijaga juga di movingAvgCost).
-    if (hargaNum > 0) {
-      patch.purchase_price = hppBaru;
-      patch.purchase_price_last = hargaNum;
-      patch.purchase_price_source = "restock";
-      patch.purchase_price_updated_at = new Date().toISOString();
-    }
-    const { error: invErr } = await supabase.from("inventory").update(patch).eq("code", item.code);
-
     if (invErr) {
-      showNotif("⚠️ Restock gagal disimpan ke DB: " + invErr.message);
+      showNotif("❌ Restock dibatalkan seluruhnya: " + invErr.message);
       addAgentLog("STOCK_RESTOCK", `Restock ${item.name}: +${qtyNum} → ${stokBaru} ${item.unit} — GAGAL`, "ERROR");
       setSaving(false);
       return;
     }
 
-    // Sukses: update UI baru setelah DB confirmed
-    setInventoryData(prev => prev.map(i => i.code === item.code ? { ...i, ...patch, status: newStatus } : i));
+    const saved = result?.inventory || {};
+    const newStatus = saved.status || computeStockStatus(saved.stock ?? stokBaru, item.reorder);
+    setInventoryData(prev => prev.map(i => i.code === item.code ? { ...i, ...saved, status: newStatus } : i));
     addAgentLog("STOCK_RESTOCK",
       `Restock ${item.name}: +${qtyNum} → ${stokBaru} ${item.unit}` +
       (hargaNum > 0 ? ` · HPP ${rp(hppLama)} → ${rp(hppBaru)} ${hppLabel(item.unit)}` : " · tanpa harga (HPP tidak berubah)"),
       "SUCCESS");
 
-    if (form.catetBiaya && hargaNum > 0 && totalBeli > 0) {
-      const nameLower = item.name.toLowerCase();
-      const subcat = isFreonItem(item)
-        ? "Freon"
-        : item.material_type === "pipa" ? "Pipa AC"
-        : item.material_type === "kabel" ? "Kabel"
-        : "Material Lain";
-      const { error: expErr } = await supabase.from("expenses").insert({
-        category: "material_purchase",
-        subcategory: subcat,
-        amount: totalBeli,
-        date: form.tanggal || TODAY,
-        description: form.keterangan || `Restock ${item.name} ${qtyNum} ${item.unit}`,
-        item_name: item.name + " " + qtyNum + " " + item.unit,
-        // Nota ini SUDAH jadi stok — tandai supaya autosum biaya material tidak
-        // menghitungnya dua kali (sekali lewat expense, sekali lewat pemakaian stok).
-        inventory_code: item.code,
-        qty: qtyNum,
-        unit: item.unit,
-        unit_cost: hargaNum,
-        stock_linked_at: new Date().toISOString(),
-        stock_linked_by: currentUser?.name || "Owner",
-        freon_type: isFreonItem(item)
-          ? (nameLower.includes("r22") ? "R22" : nameLower.includes("r410") ? "R410A" : "R32")
-          : null,
-        created_by: currentUser?.name || "Owner",
-        last_changed_by: currentUser?.name || "Owner",
-      });
-      if (expErr) showNotif("⚠️ Stok berhasil, expense gagal: " + expErr.message);
-      else addAgentLog("RESTOCK_EXPENSE", `Restock ${item.name} +${qtyNum} ${item.unit} — Rp${totalBeli.toLocaleString("id-ID")} dicatat ke biaya`, "SUCCESS");
-    }
+    if (result?.expense_created) addAgentLog("RESTOCK_EXPENSE", `Restock ${item.name} +${qtyNum} ${item.unit} — Rp${totalBeli.toLocaleString("id-ID")} dicatat ke biaya`, "SUCCESS");
 
     showNotif("✅ Restock " + item.name + " +" + qtyNum + " " + item.unit + (form.catetBiaya && totalBeli > 0 ? " · biaya Rp" + totalBeli.toLocaleString("id-ID") + " dicatat" : ""));
     setSaving(false);

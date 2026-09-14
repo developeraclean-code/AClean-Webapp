@@ -359,8 +359,9 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, o
         garansi_days:    30,
         garansi_expires: garansiExpires,
         due:             dueDate,
-        sent:            true,    // AC sale langsung sent (sudah ada bukti transaksi)
-        sent_at:         new Date().toISOString(),
+        // Marker kirim WA hanya ditulis oleh record_invoice_wa_sent setelah provider sukses.
+        sent:            false,
+        sent_at:         null,
       };
 
       const { error: invErr } = await supabase

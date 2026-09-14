@@ -105,29 +105,24 @@ export default function MaterialFormModal({
       material_type: form.material_type || "other",
     };
     setSaving(true);
-    const insertPayload = { ...newItem };
-    delete insertPayload.status;
-    const { error: invErr } = await supabase.from("inventory").insert(insertPayload);
+    const { data: saved, error: invErr } = await supabase.rpc("create_inventory_item_atomic", {
+      p_code: newCode,
+      p_name: newItem.name,
+      p_unit: newItem.unit,
+      p_price: newItem.price,
+      p_initial_stock: newItem.stock,
+      p_reorder: newItem.reorder,
+      p_min_alert: newItem.min_alert,
+      p_material_type: newItem.material_type,
+      p_actor_name: currentUser?.name || null,
+    });
     if (invErr) {
       showNotif("❌ Gagal menyimpan material: " + invErr.message);
       setSaving(false);
       return;
     }
-    // Update UI hanya setelah DB berhasil (cegah phantom item)
-    setInventoryData(prev => [...prev, newItem]);
-    if (stokAwal > 0) {
-      // Insert sudah include stock; hanya perlu audit trail transaksi
-      const { error: txErr } = await supabase.from("inventory_transactions").insert({
-        inventory_code: newCode,
-        inventory_name: newItem.name,
-        qty: stokAwal,
-        type: "restock",
-        notes: "Stok awal (migrasi manual)",
-        created_by: currentUser?.id || null,
-        created_by_name: currentUser?.name || "",
-      });
-      if (txErr) console.error("[addMaterial] inventory_transactions:", txErr.message);
-    }
+    // RPC membuat master dengan stok 0 lalu ledger menambah stok awal tepat satu kali.
+    setInventoryData(prev => [...prev, { ...newItem, ...(saved || {}) }]);
     addAgentLog("STOCK_ADDED", `Material baru: ${newItem.name} [${newCode}] stok: ${stokAwal} ${newItem.unit}`, "SUCCESS");
     showNotif("✅ " + newItem.name + " ditambahkan [" + newCode + "]");
     setSaving(false);
@@ -139,26 +134,22 @@ export default function MaterialFormModal({
     if (stokFinal < 0) { showNotif("❌ Stok tidak boleh negatif"); return; }
     const hargaBaru = parseInt(form.price ?? editItem.price) || 0;
     const reorderBaru = parseInt(form.reorder ?? editItem.reorder) || 5;
-    const updated = { ...editItem, stock: stokFinal, price: hargaBaru, reorder: reorderBaru, status: statusBaru };
     setSaving(true);
-    setInventoryData(prev => prev.map(i => i.code === editItem.code ? updated : i));
-    const deltaStok = stokFinal - editItem.stock;
-    if (deltaStok !== 0) {
-      await supabase.from("inventory_transactions").insert({
-        inventory_code: editItem.code,
-        inventory_name: editItem.name,
-        qty: deltaStok,
-        type: deltaStok > 0 ? "restock" : "correction",
-        notes: `Update manual oleh ${currentUser?.name || "Admin"}`,
-        created_by: currentUser?.id || null,
-        created_by_name: currentUser?.name || "",
-      });
+    const { data: saved, error: eErr } = await supabase.rpc("adjust_inventory_item_atomic", {
+      p_code: editItem.code,
+      p_target_stock: stokFinal,
+      p_price: hargaBaru,
+      p_reorder: reorderBaru,
+      p_actor_name: currentUser?.name || null,
+    });
+    if (eErr) {
+      showNotif("❌ Perubahan dibatalkan seluruhnya: " + eErr.message);
+      setSaving(false);
+      return;
     }
-    const { error: eErr } = await supabase.from("inventory")
-      .update({ stock: stokFinal, price: hargaBaru, reorder: reorderBaru, updated_at: new Date().toISOString() })
-      .eq("code", editItem.code);
-    if (eErr) showNotif("⚠️ Tersimpan lokal, sync DB gagal");
     else {
+      const updated = { ...editItem, ...(saved || {}), status: saved?.status || statusBaru };
+      setInventoryData(prev => prev.map(i => i.code === editItem.code ? updated : i));
       addAgentLog("STOCK_UPDATED", `Stok ${editItem.name}: ${editItem.stock}→${stokFinal} ${editItem.unit} (${statusBaru})`, "SUCCESS");
       showNotif("✅ Stok " + editItem.name + " diupdate → " + stokFinal + " " + editItem.unit);
     }

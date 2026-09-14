@@ -887,53 +887,23 @@ async function saveActualQty(tx) {
   if (isNaN(actual) || actual < 0) { showNotif("❌ Nilai tidak valid", "error"); return; }
   setTimbangSaving(true);
   try {
-    // 1. Simpan qty_actual ke transaksi asal
-    const { error: e1 } = await supabase.from("inventory_transactions")
-      .update({ qty_actual: -actual })
-      .eq("id", tx.id);
-    if (e1) throw e1;
-
+    const { data: result, error } = await supabase.rpc("adjust_inventory_usage_actual_atomic", {
+      p_transaction_id: tx.id,
+      p_actual_qty: actual,
+      p_actor_name: currentUser?.name || null,
+    });
+    if (error) throw error;
     const diff = parseFloat((actual - Math.abs(tx.qty)).toFixed(1));
-    if (Math.abs(diff) >= 0.001) {
-      // 2. Insert adjustment transaction untuk koreksi selisih
-      const { error: e2 } = await supabase.from("inventory_transactions").insert({
-        inventory_code: tx.inventory_code,
-        inventory_name: tx.inventory_name,
-        order_id: tx.order_id || null,
-        report_id: tx.report_id || null,
-        qty: diff,
-        qty_actual: diff,
-        type: "adjustment",
-        unit_id: tx.unit_id || null,
-        unit_label: tx.unit_label || null,
-        notes: `Koreksi timbang aktual dari ${Math.abs(tx.qty)} → ${actual} kg (job ${tx.order_id || tx.report_id || "?"})`,
-        customer_name: tx.customer_name || null,
-        teknisi_name: tx.teknisi_name || null,
-        job_date: tx.job_date || null,
-        created_by_name: currentUser?.name || "Admin",
-      });
-      if (e2) throw e2;
-
-      // 3a. Update stok tabung spesifik di inventory_units (jika ada unit_id)
-      if (tx.unit_id) {
-        const { data: unitRow } = await supabase.from("inventory_units").select("stock").eq("id", tx.unit_id).single();
-        if (unitRow) {
-          const newUnitStock = parseFloat(((unitRow.stock || 0) + diff).toFixed(1));
-          await supabase.from("inventory_units").update({ stock: newUnitStock, updated_at: new Date().toISOString() }).eq("id", tx.unit_id);
-          if (setInvUnitsData) {
-            setInvUnitsData(prev => prev.map(u => u.id === tx.unit_id ? { ...u, stock: newUnitStock } : u));
-          }
-        }
-      }
-
-      // 3b. Update stok global inventoryData
-      if (setInventoryData) {
-        setInventoryData(prev => prev.map(item => {
-          if (item.code !== tx.inventory_code) return item;
-          const newStock = parseFloat((item.stock + diff).toFixed(1));
-          return { ...item, stock: newStock, status: computeStockStatus(newStock, item.reorder) };
-        }));
-      }
+    const stockCorrection = Number(result?.correction || 0);
+    if (tx.unit_id && result?.unit_stock != null && setInvUnitsData) {
+      setInvUnitsData(prev => prev.map(u => u.id === tx.unit_id ? { ...u, stock: Number(result.unit_stock) } : u));
+    }
+    if (setInventoryData && Math.abs(stockCorrection) >= 0.001) {
+      setInventoryData(prev => prev.map(item => {
+        if (item.code !== tx.inventory_code) return item;
+        const newStock = parseFloat((Number(item.stock || 0) + stockCorrection).toFixed(1));
+        return { ...item, stock: newStock, status: computeStockStatus(newStock, item.reorder) };
+      }));
     }
 
     // 4. Update local invTxData
@@ -942,12 +912,12 @@ async function saveActualQty(tx) {
       if (Math.abs(diff) >= 0.001) {
         // Add adjustment row to local state (approximate — no server id yet)
         setInvTxData(prev => [...prev, {
-          id: "adj_" + Date.now(),
+          id: result?.adjustment_id || ("adj_" + Date.now()),
           inventory_code: tx.inventory_code,
           inventory_name: tx.inventory_name,
           order_id: tx.order_id,
-          qty: diff,
-          qty_actual: diff,
+          qty: stockCorrection,
+          qty_actual: stockCorrection,
           type: "adjustment",
           notes: `Koreksi timbang: ${Math.abs(tx.qty)} → ${actual} kg`,
           customer_name: tx.customer_name,
@@ -1033,7 +1003,8 @@ const updateUnitStock = async (unitId, newStock) => {
 };
 
 const toggleUnit = async (unitId, isActive) => {
-  await supabase.from("inventory_units").update({ is_active: isActive }).eq("id", unitId);
+  const { error } = await supabase.from("inventory_units").update({ is_active: isActive }).eq("id", unitId);
+  if (error) { showNotif("❌ Status unit gagal diubah: " + error.message); return; }
   setInvUnitsData(prev => prev.map(u => u.id === unitId ? { ...u, is_active: isActive } : u));
 };
 

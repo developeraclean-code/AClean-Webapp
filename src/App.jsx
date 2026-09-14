@@ -3206,55 +3206,77 @@ export default function ACleanWebApp() {
     } catch { return null; }
   };
 
+  // Satu pintu pengiriman dokumen customer. Provider WA harus sukses lebih dulu;
+  // setelah itu marker dicatat lewat RPC atomik dan state semua role diperbarui.
+  const sendDocumentWA = async ({ documentType, ids, phone, message, attachment = {}, mode = "single", batchInfo = null, method = "fonnte" }) => {
+    if (!['invoice', 'report_card'].includes(documentType)) {
+      return { ok: false, audited: false, error: "unknown_document_type" };
+    }
+    const documentIds = (Array.isArray(ids) ? ids : [ids]).filter(Boolean);
+    if (documentIds.length === 0) return { ok: false, audited: false, error: "missing_document_id" };
+    const sent = await sendWA(phone, message, attachment);
+    if (!sent) return { ok: false, audited: false, error: "send_failed" };
+
+    const actorName = currentUser?.name || currentUser?.role || "Unknown";
+    if (documentType === "invoice") {
+      const invoiceIds = documentIds;
+      const { data, error } = await supabase.rpc("record_invoice_wa_sent", {
+        p_invoice_ids: invoiceIds,
+        p_mode: mode,
+        p_batch: batchInfo,
+        p_actor_name: actorName,
+        p_method: method,
+      });
+      if (error) {
+        showNotif("⚠️ Dokumen terkirim, tetapi audit pengiriman gagal disimpan: " + error.message);
+        addAgentLog("DOCUMENT_SEND_AUDIT_FAILED", `Invoice ${invoiceIds.join(",")} terkirim tetapi audit gagal: ${error.message}`, "ERROR");
+        return { ok: true, audited: false, error: error.message };
+      }
+      const changed = Array.isArray(data) ? data : [];
+      const byId = new Map(changed.map(row => [row.id, parseInvoiceRow(row)]));
+      setInvoicesData(prev => prev.map(inv => byId.has(inv.id) ? { ...inv, ...byId.get(inv.id) } : inv));
+      return { ok: true, audited: true, rows: changed };
+    }
+
+    if (documentType === "report_card") {
+      const reportId = documentIds[0];
+      const { data, error } = await supabase.rpc("record_report_card_wa_sent", {
+        p_report_id: reportId,
+        p_mode: mode,
+        p_actor_name: actorName,
+        p_method: method,
+      });
+      if (error) {
+        showNotif("⚠️ Report Card terkirim, tetapi audit pengiriman gagal disimpan: " + error.message);
+        addAgentLog("DOCUMENT_SEND_AUDIT_FAILED", `Report Card ${reportId} terkirim tetapi audit gagal: ${error.message}`, "ERROR");
+        return { ok: true, audited: false, error: error.message };
+      }
+      const parsed = parseLaporanRow(data);
+      setLaporanReports(prev => prev.map(report => report.id === parsed.id ? { ...report, ...parsed } : report));
+      return { ok: true, audited: true, row: data };
+    }
+  };
+
   const invoiceReminderWA = async (inv) => {
     if (!inv?.phone) { showNotif("⚠️ No. HP customer tidak tersedia untuk reminder"); return; }
     const portalLink = await getPortalLink(inv.phone, inv.customer);
     const invoiceUrl = await uploadInvoicePDFForWA(inv, portalLink);
     const portalLine = portalLink ? `\n\n🔗 Riwayat & invoice Anda:\n${portalLink}` : "";
     const msg = `Halo ${inv.customer}, Terlampir Invoice Resmi Pekerjaan Kemaren senilai *${fmt(inv.total)}*.\n\nPembayaran Bisa Melalui Transfer ke:\n*${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""} a.n. ${appSettings.bank_holder || ""}*\n\nApabila sudah di Transfer Bole dikirimkan Bukti Pembayaran kesini untuk di Konfirmasi Pembayarannya ya Bapak / Ibu. Terima kasih! 🙏${portalLine}`;
-    const sent = await sendWA(inv.phone, msg, invoiceUrl ? { url: invoiceUrl, filename: `Invoice-${inv.id}.pdf` } : {});
-    if (sent) await writeInvoiceSendAudit([inv.id], "single", null);
-  };
-
-  // ── Audit kirim WA per-invoice (update kolom wa_sent_count, wa_last_sent_at, dll) ──
-  const writeInvoiceSendAudit = async (invIds, mode, batchInfo) => {
-    if (!Array.isArray(invIds) || invIds.length === 0) return;
-    const now = new Date().toISOString();
-    try {
-      // Ambil sent_count saat ini agar bisa increment
-      const { data: current } = await supabase.from("invoices")
-        .select("id,wa_sent_count").in("id", invIds);
-      const updates = (current || []).map(c => ({
-        id: c.id,
-        wa_sent_count: (c.wa_sent_count || 0) + 1,
-        wa_last_sent_at: now,
-        wa_last_sent_mode: mode,
-        wa_last_sent_batch: batchInfo || null,
-      }));
-      // Upsert batch
-      for (const u of updates) {
-        await supabase.from("invoices").update({
-          wa_sent_count: u.wa_sent_count,
-          wa_last_sent_at: u.wa_last_sent_at,
-          wa_last_sent_mode: u.wa_last_sent_mode,
-          wa_last_sent_batch: u.wa_last_sent_batch,
-        }).eq("id", u.id);
-      }
-      // Refresh local state
-      setInvoicesData(prev => prev.map(i => {
-        const u = updates.find(x => x.id === i.id);
-        return u ? { ...i, ...u } : i;
-      }));
-    } catch (err) {
-      console.warn("[writeInvoiceSendAudit] gagal:", err.message);
-    }
+    const result = await sendDocumentWA({
+      documentType: "invoice", ids: [inv.id], phone: inv.phone, message: msg,
+      attachment: invoiceUrl ? { url: invoiceUrl, filename: `Invoice-${inv.id}.pdf` } : {},
+      mode: "reminder",
+    });
+    if (result.ok) showNotif(`✅ Invoice terkirim ke ${inv.customer}`);
+    else showNotif(`⚠️ Invoice gagal dikirim ke ${inv.customer}`);
   };
 
   // ── Kirim beberapa invoice digabung jadi 1 PDF (1 page per invoice) ──
   // Validasi: semua invoice harus customer/phone yang sama. Otomatis sort by created_at asc.
   // Cap maksimal 5 invoice per gabungan (UX & payload safety).
   // Return: { ok: bool, error?: string, retryContext?: object }
-  const mergedInvoiceWA = (invList) => mergedInvoiceWALib(invList, { addAgentLog, appSettings, currentUser, fmt, getPortalLink, samePhone, sendWA, showNotif, uploadMergedInvoicePDFForWA, writeInvoiceSendAudit });
+  const mergedInvoiceWA = (invList) => mergedInvoiceWALib(invList, { addAgentLog, appSettings, currentUser, fmt, getPortalLink, samePhone, sendDocumentWA, showNotif, uploadMergedInvoicePDFForWA });
 
   // ── Buat 1 invoice baru gabungan dari beberapa invoice (untuk 1 customer) ──
   // Wrapper (Fase 2, kalibrasi pola ctx stateful): createConsolidatedInvoice
@@ -3373,11 +3395,12 @@ export default function ACleanWebApp() {
     const invoiceUrl = await uploadInvoicePDFForWA(inv, portalLink);
     const portalLine = portalLink ? `\n\n🔗 Riwayat & invoice Anda:\n${portalLink}` : "";
     const waMsg = `Halo ${inv.customer}, invoice *${appSettings.app_name || "AClean"} Service* telah disiapkan:\n\n🔧 ${inv.service || "Servis AC"}\n💰 Total: *${fmt(inv.total)}*\n📅 Jatuh tempo: ${due}\n\nPembayaran ke:\n*${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""} a.n. ${appSettings.bank_holder || ""}*\n\nTerima kasih! 🙏${portalLine}`;
-    const sent = await sendWA(inv.phone, waMsg, invoiceUrl
-      ? { url: invoiceUrl, filename: `Invoice-${inv.id}.pdf` }
-      : {}
-    );
-    if (sent) showNotif(`✅ Invoice ${inv.id} diapprove & terkirim ke WA ${inv.customer}${invoiceUrl ? " 📎" : ""}`);
+    const result = await sendDocumentWA({
+      documentType: "invoice", ids: [inv.id], phone: inv.phone, message: waMsg,
+      attachment: invoiceUrl ? { url: invoiceUrl, filename: `Invoice-${inv.id}.pdf` } : {},
+      mode: "approval",
+    });
+    if (result.ok) showNotif(`✅ Invoice ${inv.id} diapprove & terkirim ke WA ${inv.customer}${invoiceUrl ? " 📎" : ""}`);
     else showNotif(`✅ Invoice ${inv.id} diapprove — WA gagal terkirim (cek koneksi Fonnte)`);
 
     setModalApproveInv(false); setPendingApproveInv(null);
@@ -3819,7 +3842,7 @@ export default function ACleanWebApp() {
       markInvoicePaid={markInvoicePaid} revertInvoicePaid={revertInvoicePaid} updateOrderStatus={updateOrderStatus} deleteInvoice={deleteInvoice} updateInvoice={updateInvoice}
       getLocalDate={getLocalDate} parseMD={parseMD} jasaSvcNames={jasaSvcNames} downloadRekapHarian={downloadRekapHarian}
       INV_PAGE_SIZE={INV_PAGE_SIZE}
-      laporanReports={laporanReports} uploadServiceReportPDFForWA={uploadServiceReportPDFForWA} sendWAFn={sendWA}
+      laporanReports={laporanReports} uploadServiceReportPDFForWA={uploadServiceReportPDFForWA} sendDocumentWA={sendDocumentWA} sendWAFn={sendWA}
       apiHeaders={_apiHeaders} setGroupPaymentCtx={setGroupPaymentCtx}
       paymentSuggestions={paymentSuggestions} setPaymentSuggestions={setPaymentSuggestions} fotoSrc={fotoSrc}
       customersData={customersData} priceListData={priceListData}
@@ -3872,7 +3895,7 @@ export default function ACleanWebApp() {
       sendWA={sendWA} updateOrderStatus={updateOrderStatus}
       hitungJamSelesai={hitungJamSelesai} downloadRekapHarian={downloadRekapHarian} triggerRekapHarian={triggerRekapHarian}
       SCHED_PAGE_SIZE={SCHED_PAGE_SIZE} getLocalDate={getLocalDate} userAccounts={userAccounts}
-      uploadServiceReportPDFForWA={uploadServiceReportPDFForWA} invoicesData={invoicesData} setLaporanReports={setLaporanReports} />
+      uploadServiceReportPDFForWA={uploadServiceReportPDFForWA} invoicesData={invoicesData} setLaporanReports={setLaporanReports} sendDocumentWA={sendDocumentWA} />
   );
 
 

@@ -692,7 +692,7 @@ return (
       const totalOrders   = gridOrders.length;
       const laporanMasuk  = gridOrders.filter(o => lapByJob[o.id]).length;
       const invBelum      = gridOrders.filter(o => !invByJob[o.id]).length;
-      const rcTerkirim    = gridOrders.filter(o => invByJob[o.id]?.sent).length;
+      const rcTerkirim    = gridOrders.filter(o => !!lapByJob[o.id]?.report_card_sent_at).length;
       const estimasiTotal = gridOrders.reduce((sum, order) => sum + (invByJob[order.id]?.total || 0), 0);
 
       // Nilai invoice harian tetap terlihat untuk audit cepat Owner/Admin.
@@ -842,8 +842,8 @@ return (
 
                 {/* Report Card */}
                 <div style={{ padding: "11px 12px", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  {inv?.sent
-                    ? badge("✓ Terkirim", "#25d366")
+                  {lap?.report_card_sent_at
+                    ? badge(`📨 ${lap.report_card_sent_count || 1}x`, "#25d366")
                     : badge("✗ Belum", cs.muted)}
                 </div>
 

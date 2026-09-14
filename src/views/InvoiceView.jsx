@@ -240,7 +240,7 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
   );
 }
 
-function InvoiceView({ invoiceFilterMemo, invoicesData, invoicesDataMerged, setInvoicesData, invoicePage, setInvoicePage, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, mergedInvoiceWA, createConsolidatedInvoice, previewMergedInvoicePDF, approveInvoice, approveSaveOnly, markPaid, markInvoicePaid, revertInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, parseMD, jasaSvcNames, downloadRekapHarian, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendWAFn, apiHeaders, setGroupPaymentCtx, paymentSuggestions, setPaymentSuggestions, fotoSrc, customersData, priceListData, quotationsData, setQuotationsData, uploadQuotationPDFFn, appSettings, searchLoading }) {
+function InvoiceView({ invoiceFilterMemo, invoicesData, invoicesDataMerged, setInvoicesData, invoicePage, setInvoicePage, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, mergedInvoiceWA, createConsolidatedInvoice, previewMergedInvoicePDF, approveInvoice, approveSaveOnly, markPaid, markInvoicePaid, revertInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, parseMD, jasaSvcNames, downloadRekapHarian, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendDocumentWA, sendWAFn, apiHeaders, setGroupPaymentCtx, paymentSuggestions, setPaymentSuggestions, fotoSrc, customersData, priceListData, quotationsData, setQuotationsData, uploadQuotationPDFFn, appSettings, searchLoading }) {
   // Fase 1: primitif global dari AppContext.
   const { currentUser, isMobile, showConfirm, showNotif, addAgentLog, auditUserName, fmt, supabase, TODAY } = useAppContext();
 const { filteredInv, garansiAktif, garansiKritis, unpaidCnt } = invoiceFilterMemo;
@@ -1205,7 +1205,7 @@ return (
             }
             showNotif("⏳ Mengambil data dari server...");
             let q = supabase.from("invoices")
-              .select("id,job_id,customer,phone,service,units,labor,material,discount,trade_in,trade_in_amount,total,status,due,paid_at,sent_at,created_at,teknisi,paid_method,paid_amount,remaining_amount")
+              .select("id,job_id,customer,phone,service,units,labor,material,discount,trade_in,trade_in_amount,total,status,due,paid_at,sent,sent_at,created_at,updated_at,teknisi,paid_method,paid_amount,remaining_amount,wa_sent_count,wa_last_sent_at,wa_last_sent_mode,wa_last_sent_by,wa_last_sent_method")
               .order("created_at", { ascending: false });
             if (invoiceDateFrom) q = q.gte("created_at", invoiceDateFrom + "T00:00:00");
             if (invoiceDateTo) q = q.lte("created_at", invoiceDateTo + "T23:59:59");
@@ -1400,7 +1400,7 @@ return (
               if (updated > 0) {
                 const { data } = await supabase
                   .from("invoices")
-                  .select("id,job_id,customer,phone,service,units,labor,material,discount,trade_in,trade_in_amount,total,status,due,paid_at,sent,sent_at,created_at,follow_up,teknisi,garansi_days,garansi_expires,paid_method,materials_detail,payment_proof_url,repair_gratis")
+                  .select("id,job_id,customer,phone,service,units,labor,material,discount,trade_in,trade_in_amount,total,status,due,paid_at,sent,sent_at,created_at,updated_at,follow_up,teknisi,garansi_days,garansi_expires,paid_method,materials_detail,payment_proof_url,repair_gratis,wa_sent_count,wa_last_sent_at,wa_last_sent_mode,wa_last_sent_by,wa_last_sent_method")
                   .order("created_at", { ascending: false })
                   .limit(300);
                 if (data) setInvoicesData(data);
@@ -1553,7 +1553,7 @@ return (
               {/* Badge audit kirim WA — tampil jika sudah pernah dikirim */}
               {(inv.wa_sent_count || 0) > 0 && (
                 <span
-                  title={`Terakhir kirim: ${inv.wa_last_sent_at ? new Date(inv.wa_last_sent_at).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—"}${inv.wa_last_sent_mode ? " (" + inv.wa_last_sent_mode + ")" : ""}`}
+                  title={`Terakhir kirim: ${inv.wa_last_sent_at ? new Date(inv.wa_last_sent_at).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—"}${inv.wa_last_sent_by ? " oleh " + inv.wa_last_sent_by : ""}${inv.wa_last_sent_method ? " via " + inv.wa_last_sent_method : ""}${inv.wa_last_sent_mode ? " (" + inv.wa_last_sent_mode + ")" : ""}`}
                   style={{ fontSize: 10, padding: "2px 6px", borderRadius: 99, background: "#25D36618", color: "#25D366", border: "1px solid #25D36644", fontWeight: 700 }}>
                   📨 {inv.wa_sent_count}x{inv.wa_last_sent_mode === "merged" ? " (gabung)" : ""}
                 </span>
@@ -1965,8 +1965,12 @@ return (
                   const srUrl = await uploadServiceReportPDFForWA(laporan, inv);
                   if (srUrl) {
                     const srMsg = `📋 *Service Report Card* — ${inv.service || "Servis AC"} untuk ${inv.customer}\n\nDokumen ini berisi detail pengerjaan & dokumentasi foto teknisi.\n\nTerima kasih telah mempercayai AClean Service! 🙏`;
-                    await sendWAFn(inv.phone, srMsg, { url: srUrl, filename: `ServiceReport-${inv.job_id}.pdf` });
-                    showNotif(`📋 Service Report Card terkirim ke ${inv.customer}`);
+                    const result = await sendDocumentWA({
+                      documentType: "report_card", ids: [laporan.id], phone: inv.phone, message: srMsg,
+                      attachment: { url: srUrl, filename: `ServiceReport-${inv.job_id}.pdf` }, mode: "invoice_view",
+                    });
+                    if (result.ok) showNotif(`📋 Service Report Card terkirim ke ${inv.customer}`);
+                    else showNotif(`⚠️ Service Report Card gagal dikirim ke ${inv.customer}`);
                   } else {
                     showNotif("⚠️ Gagal upload report card");
                   }
@@ -1979,9 +1983,19 @@ return (
                   }
                 }
               }}
-              title="Kirim Service Report Card ke customer via WhatsApp"
+              title={(() => {
+                const report = laporanReports?.find(r => r.job_id === inv.job_id);
+                return report?.report_card_sent_at
+                  ? `Terakhir dikirim ${new Date(report.report_card_sent_at).toLocaleString("id-ID")} oleh ${report.report_card_sent_by || "—"}${report.report_card_last_sent_method ? " via " + report.report_card_last_sent_method : ""}`
+                  : "Kirim Service Report Card ke customer via WhatsApp";
+              })()}
               style={{ background: "#0ea5e922", border: "1px solid #0ea5e944", color: "#38bdf8", padding: "7px 12px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
-                📋 Report Card
+                {(() => {
+                  const report = laporanReports?.find(r => r.job_id === inv.job_id);
+                  return report?.report_card_sent_at
+                    ? `📨 ${report.report_card_sent_count || 1}x · Kirim Ulang RC`
+                    : "📋 Report Card";
+                })()}
               </button>
             )}
             {/* Bukti bayar — ada URL: tombol lihat. "verified-no-proof": dikonfirmasi manual. PAID tanpa bukti: warning */}

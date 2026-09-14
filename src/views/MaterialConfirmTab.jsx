@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import { cs } from "../theme/cs.js";
-import { computeDayDeduct, applyAdminOverrides, lineKey, buildReversalRow, reversalByUnit,
+import { computeDayDeduct, applyAdminOverrides, lineKey,
   barisHanyaPulang, pesanHanyaPulang,
   hitungKekuranganStok, pesanKekuranganStok } from "../lib/materialDeduct.js";
 import { defaultSplit, splitRemainder, belumTerbagi, splitToAllocations } from "../lib/materialSplit.js";
@@ -225,48 +225,31 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
         showNotif("⚠️ " + pesanHanyaPulang(entry.lines));
         setBusy(""); return;
       }
-      // Cek awal dari angka yang dilihat admin — supaya gagalnya cepat & jelas,
-      // tanpa terlanjur menandai sesi ini CONFIRMED.
-      const linesLayar = applyAdminOverrides(
-        entry.lines.filter((l) => Number(l.brought) > 0), overrides).lines.filter((l) => l.used > 0);
-      const kurangAwal = hitungKekuranganStok(linesLayar, await ambilStokUnit(linesLayar));
-      if (kurangAwal.length) {
-        showNotif("⚠️ Melebihi stok — " + pesanKekuranganStok(kurangAwal) + ". Betulkan qty terpakai atau stoknya dulu.");
-        setBusy(""); return;
-      }
-      const { data: claimed, error: claimErr } = await supabase
-        .from("teknisi_material_checkout")
-        .update({ confirm_status: "CONFIRMED", confirmed_by: currentUser?.name || null, confirmed_at: new Date().toISOString() })
-        .eq("id", row.id).eq("confirm_status", "PENDING")
-        .select("*");
-      if (claimErr) { showNotif("❌ Gagal confirm: " + claimErr.message); return; }
-      if (!claimed || claimed.length === 0) { showNotif("Sudah dikonfirmasi (oleh proses lain)"); await load(); return; }
-      const fresh = claimed[0];
-      const { data: pg } = await supabase.from("teknisi_material_checkout").select("items").eq("teknisi_name", row.teknisi_name).eq("checkout_date", row.checkout_date).eq("session_type", "pagi").maybeSingle();
+      // Ambil sesi segar tanpa mengubah status. RPC membandingkan updated_at ini
+      // setelah row dikunci agar edit teknisi yang masuk bersamaan tidak tertimpa.
+      const { data: fresh, error: freshErr } = await supabase.from("teknisi_material_checkout")
+        .select("*").eq("id", row.id).single();
+      if (freshErr) throw freshErr;
+      if (fresh.confirm_status !== "PENDING") { showNotif("Sesi sudah diproses oleh pengguna lain"); await load(); return; }
+      const { data: pg, error: pgErr } = await supabase.from("teknisi_material_checkout").select("items")
+        .eq("teknisi_name", row.teknisi_name).eq("checkout_date", row.checkout_date)
+        .eq("session_type", "pagi").maybeSingle();
+      if (pgErr) throw pgErr;
       // Sengaja dihitung ulang dari data SEGAR (bukan dari state kartu) supaya
       // koreksi admin ditempel di atas angka terbaru, bukan angka basi di layar.
       const base = computeDayDeduct(pg?.items || [], fresh.items || []);
-      // Data bisa berubah di sela pemeriksaan layar dan klaim — periksa sekali lagi atas
-      // angka segar, dan kembalikan sesi ke Menunggu kalau ternyata ada baris yatim.
       if (barisHanyaPulang(base).length) {
-        await supabase.from("teknisi_material_checkout")
-          .update({ confirm_status: "PENDING", confirmed_by: null, confirmed_at: null }).eq("id", row.id);
-        showNotif("⚠️ " + pesanHanyaPulang(base) + " Sesi dikembalikan ke Menunggu.");
-        await load(); return;
+        showNotif("⚠️ " + pesanHanyaPulang(base)); return;
       }
       const { lines: adjusted, changes } = applyAdminOverrides(base, overrides);
       const lines = adjusted.filter((l) => l.used > 0);
-      // Cek otoritatif atas angka SEGAR. Kalau tidak cukup, batalkan klaimnya —
-      // jangan tinggalkan sesi berstatus CONFIRMED tanpa potongan.
+      // Pesan cepat untuk admin. RPC memeriksa ulang di dalam transaksi dengan row lock.
       const kurang = hitungKekuranganStok(lines, await ambilStokUnit(lines));
       if (kurang.length) {
-        await supabase.from("teknisi_material_checkout")
-          .update({ confirm_status: "PENDING", confirmed_by: null, confirmed_at: null }).eq("id", row.id);
-        showNotif("⚠️ Melebihi stok — " + pesanKekuranganStok(kurang) + ". Sesi dikembalikan ke Menunggu.");
-        await load(); return;
+        showNotif("⚠️ Melebihi stok — " + pesanKekuranganStok(kurang)); return;
       }
       const koreksiMap = Object.fromEntries(changes.map((c) => [c.key, c]));
-      const txIds = [];
+      const movements = [];
       for (const l of lines) {
         const k = lineKey(l);
         const c = koreksiMap[k];
@@ -283,46 +266,38 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
           job_date: null,
         }];
         for (const a of tulis) {
-          const { data: ins } = await supabase.from("inventory_transactions").insert({
-            inventory_code: l.inventory_code, inventory_name: l.label,
-            qty: -a.qty, qty_actual: -a.qty, type: "usage",
-            teknisi_name: row.teknisi_name,
+          movements.push({
+            inventory_code: l.inventory_code, inventory_name: l.label, qty: a.qty,
             job_date: a.job_date || row.checkout_date,
             order_id: a.job_id || null,
             unit_id: l.unit_id || null, unit_label: l.unit_id ? (l.unit_label || l.label) : null,
             notes: catatan,
             customer_name: a.customer || null,
-            created_by: currentUser?.id || null, created_by_name: currentUser?.name || "",
-          }).select("id").single();
-          if (ins?.id) txIds.push(ins.id);
-        }
-        if (l.unit_id) {
-          const total = tulis.reduce((sum, a) => sum + (Number(a.qty) || 0), 0);
-          const { data: u } = await supabase.from("inventory_units").select("stock").eq("id", l.unit_id).single();
-          // Angka sebenarnya — TIDAK di-Math.max(0,...). Kalau sampai minus,
-          // CHECK di DB (migrasi 152) yang menolak, bukan disembunyikan diam-diam.
-          if (u) await supabase.from("inventory_units").update({ stock: Number(u.stock) - total, updated_at: new Date().toISOString() }).eq("id", l.unit_id);
+          });
         }
       }
-      // Jejak koreksi: kolom terpisah + confirm_notes + agent log. Kolom `items`
-      // (laporan asli teknisi) sengaja TIDAK disentuh supaya bisa dibandingkan.
-      const patch = { deduct_tx_ids: txIds };
-      if (changes.length) {
-        const stamp = new Date().toISOString();
-        patch.admin_adjustments = changes.map((c) => ({ ...c, oleh: currentUser?.name || "?", pada: stamp, alasan }));
-        patch.confirm_notes = alasan;
-      }
-      await supabase.from("teknisi_material_checkout").update(patch).eq("id", row.id);
+      const stamp = new Date().toISOString();
+      const adjustments = changes.map((c) => ({ ...c, oleh: currentUser?.name || "?", pada: stamp, alasan }));
+      const { data: result, error } = await supabase.rpc("confirm_material_checkout_atomic", {
+        p_session_id: row.id,
+        p_movements: movements,
+        p_expected_updated_at: fresh.updated_at,
+        p_session_items: null,
+        p_admin_adjustments: adjustments,
+        p_confirm_notes: changes.length ? alasan : null,
+        p_actor_name: currentUser?.name || null,
+      });
+      if (error) throw error;
       if (changes.length) {
         addAgentLog?.("MATERIAL_KOREKSI_ADMIN",
           `${currentUser?.name || "?"} koreksi material ${row.teknisi_name} ${row.checkout_date}: `
           + changes.map((c) => `${c.label} ${c.dari}→${c.jadi}`).join(", ") + ` | alasan: ${alasan}`,
           "WARNING");
       }
-      showNotif(`✅ Dikonfirmasi — ${lines.length} unit dipotong${changes.length ? ` (${changes.length} dikoreksi)` : ""}`);
+      showNotif(`✅ Dikonfirmasi atomik — ${result?.movement_count ?? movements.length} transaksi${changes.length ? ` (${changes.length} dikoreksi)` : ""}`);
       await refreshStock();
       await load();
-    } catch (e) { showNotif("❌ Gagal potong stok (row sudah CONFIRMED — cek stok manual): " + (e?.message || e)); }
+    } catch (e) { showNotif("❌ Konfirmasi dibatalkan seluruhnya — tidak ada stok parsial: " + (e?.message || e)); }
     finally { setBusy(""); }
   };
 
@@ -371,42 +346,20 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
     if (alasan.trim().length < 5) { showNotif("Alasan terlalu pendek — dibatalkan."); return; }
     setBusy(row.id);
     try {
-
-      // Klaim dulu supaya dua admin tidak membalik sesi yang sama dua kali.
-      const { data: claimed } = await supabase.from("teknisi_material_checkout")
-        .update({ confirm_status: "PENDING", confirmed_by: null, confirmed_at: null })
-        .eq("id", row.id).eq("confirm_status", "CONFIRMED").select("id");
-      if (!claimed || claimed.length === 0) {
-        showNotif("Sesi ini sudah dibuka/diubah proses lain."); await load(); return;
-      }
-
-      let dikembalikan = 0;
-      if (txIds.length) {
-        const { data: txs } = await supabase.from("inventory_transactions")
-          .select("*").in("id", txIds);
-        for (const tx of (txs || [])) {
-          const balik = buildReversalRow(tx, { oleh: currentUser?.name || "?", alasan: alasan.trim() });
-          if (!balik) continue;
-          await supabase.from("inventory_transactions").insert({ ...balik, created_by: currentUser?.id || null });
-          dikembalikan++;
-        }
-        // Stok per tabung/roll dikembalikan sesuai jumlah yang dibalik.
-        for (const [unitId, qty] of Object.entries(reversalByUnit(txs || []))) {
-          const { data: u } = await supabase.from("inventory_units").select("stock").eq("id", unitId).single();
-          if (u) await supabase.from("inventory_units")
-            .update({ stock: Number(u.stock) + qty, updated_at: new Date().toISOString() }).eq("id", unitId);
-        }
-      }
-      await supabase.from("teknisi_material_checkout")
-        .update({ deduct_tx_ids: [], confirm_notes: `Dibuka untuk koreksi oleh ${currentUser?.name || "?"}: ${alasan.trim()}` })
-        .eq("id", row.id);
+      const { data: result, error } = await supabase.rpc("reopen_material_checkout_atomic", {
+        p_session_id: row.id,
+        p_reason: alasan.trim(),
+        p_actor_name: currentUser?.name || null,
+      });
+      if (error) throw error;
+      const dikembalikan = result?.restored_count || 0;
       addAgentLog?.("MATERIAL_BUKA_KOREKSI",
         `${currentUser?.name || "?"} buka koreksi sesi ${row.teknisi_name} ${row.checkout_date} — ${dikembalikan} potongan dikembalikan | alasan: ${alasan.trim()}`,
         "WARNING");
       showNotif(`↩︎ ${dikembalikan} potongan dikembalikan — sesi kembali ke Menunggu`);
       await refreshStock();
       setView("PENDING");
-    } catch (e) { showNotif("❌ Gagal buka koreksi: " + (e?.message || e)); }
+    } catch (e) { showNotif("❌ Buka koreksi dibatalkan seluruhnya: " + (e?.message || e)); }
     finally { setBusy(""); }
   };
 
@@ -473,7 +426,15 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
   const reject = async (row) => {
     setBusy(row.id);
     try {
-      await supabase.from("teknisi_material_checkout").update({ confirm_status: "REJECTED", confirmed_by: currentUser?.name || null, confirmed_at: new Date().toISOString() }).eq("id", row.id);
+      const { data, error } = await supabase.from("teknisi_material_checkout")
+        .update({ confirm_status: "REJECTED", confirmed_by: currentUser?.name || null, confirmed_at: new Date().toISOString() })
+        .eq("id", row.id).eq("confirm_status", "PENDING").select("id");
+      if (error) throw error;
+      if (!data?.length) {
+        showNotif("Sesi sudah diproses pengguna lain");
+        await load();
+        return;
+      }
       showNotif("Ditolak — stok tidak dipotong");
       await load();
     } catch (e) { showNotif("❌ Gagal: " + (e?.message || e)); }
@@ -497,40 +458,34 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
     }
     setBusy(row.id);
     try {
-      const { data: claimed, error: claimErr } = await supabase
-        .from("teknisi_material_checkout")
-        .update({ confirm_status: "CONFIRMED", confirmed_by: currentUser?.name || null, confirmed_at: new Date().toISOString(), items: editedLines })
-        .eq("id", row.id).eq("confirm_status", "PENDING")
-        .select("id");
-      if (claimErr) { showNotif("❌ Gagal confirm: " + claimErr.message); return; }
-      if (!claimed || claimed.length === 0) { showNotif("Sudah dikonfirmasi (oleh proses lain)"); await load(); return; }
-      const txIds = [];
+      const movements = [];
       for (const l of tracked) {
         const qty = Number(l.qty);
         if (!(qty > 0) || !l.unit_id) continue;
-        const { data: ins } = await supabase.from("inventory_transactions").insert({
+        movements.push({
           inventory_code: l.inventory_code, inventory_name: l.label,
-          qty: -qty, qty_actual: -qty, type: "usage",
-          // Tanggal job yang ditautkan — bukan tanggal sesi material. Kalau material
-          // baru dilaporkan beberapa hari setelah pekerjaan, riwayat pemakaian &
-          // biaya per job tetap jatuh di hari pekerjaan yang benar.
-          teknisi_name: row.teknisi_name,
+          qty,
           job_date: l.per_job?.[0]?.job_date || row.checkout_date,
           order_id: l.per_job?.[0]?.job_id || null,
           unit_id: l.unit_id, unit_label: l.label,
           notes: "Pemakaian (draft AI) confirm oleh " + (currentUser?.name || ""),
           customer_name: l.per_job?.[0]?.customer || null,
-          created_by: currentUser?.id || null, created_by_name: currentUser?.name || "",
-        }).select("id").single();
-        if (ins?.id) txIds.push(ins.id);
-        const { data: u } = await supabase.from("inventory_units").select("stock").eq("id", l.unit_id).single();
-        if (u) await supabase.from("inventory_units").update({ stock: Number(u.stock) - qty, updated_at: new Date().toISOString() }).eq("id", l.unit_id);
+        });
       }
-      await supabase.from("teknisi_material_checkout").update({ deduct_tx_ids: txIds }).eq("id", row.id);
-      showNotif(`✅ Draft dikonfirmasi — ${txIds.length} pemakaian dipotong dari stok`);
+      const { data: result, error } = await supabase.rpc("confirm_material_checkout_atomic", {
+        p_session_id: row.id,
+        p_movements: movements,
+        p_expected_updated_at: row.updated_at || null,
+        p_session_items: editedLines,
+        p_admin_adjustments: [],
+        p_confirm_notes: null,
+        p_actor_name: currentUser?.name || null,
+      });
+      if (error) throw error;
+      showNotif(`✅ Draft dikonfirmasi atomik — ${result?.movement_count ?? movements.length} pemakaian dipotong`);
       await refreshStock();
       await load();
-    } catch (e) { showNotif("❌ Gagal potong stok (row sudah CONFIRMED — cek manual): " + (e?.message || e)); }
+    } catch (e) { showNotif("❌ Konfirmasi dibatalkan seluruhnya — tidak ada stok parsial: " + (e?.message || e)); }
     finally { setBusy(""); }
   };
 

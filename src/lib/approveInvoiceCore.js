@@ -60,9 +60,8 @@ export async function approveInvoiceCore(inv, {
     const today = getLocalDate();
     const due = new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const approvedAt = getLocalISOString(); // Indonesia timezone (UTC+7)
-    const sentAt = getLocalISOString(); // When invoice sent/approved timestamp
     setInvoicesData(prev => prev.map(i =>
-      i.id === inv.id ? { ...i, status: "UNPAID", sent: sentAt, due } : i
+      i.id === inv.id ? { ...i, status: "UNPAID", due } : i
     ));
     // 1 order = 1 invoice (termasuk multi-hari, kebijakan Owner 11 Agu 2026): approve
     // HANYA menyentuh order pemilik invoice ini. Dulu status ikut di-propagate ke semua
@@ -77,7 +76,7 @@ export async function approveInvoiceCore(inv, {
     // Update invoice — try full, fallback minimal
     {
       const { error: apErr } = await updateInvoice(supabase, inv.id, {
-        status: "UNPAID", sent: true, due,
+        status: "UNPAID", due,
         approved_by: currentUser?.name || null,
         approved_at: approvedAt,
       }, auditUserName());

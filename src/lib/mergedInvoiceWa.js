@@ -1,8 +1,8 @@
 // mergedInvoiceWA — kirim invoice gabungan (PDF + link portal) via WA ke customer.
 // Diekstrak dari App.jsx (Fase 3, pola ctx).
 export async function mergedInvoiceWA(invList, {
-  addAgentLog, appSettings, currentUser, fmt, getPortalLink, samePhone, sendWA,
-  showNotif, uploadMergedInvoicePDFForWA, writeInvoiceSendAudit,
+  addAgentLog, appSettings, currentUser, fmt, getPortalLink, samePhone, sendDocumentWA,
+  showNotif, uploadMergedInvoicePDFForWA,
 } = {}) {
     if (!Array.isArray(invList) || invList.length < 2) {
       showNotif("⚠️ Pilih minimal 2 invoice untuk digabung");
@@ -44,17 +44,19 @@ export async function mergedInvoiceWA(invList, {
       ? `💰 *Total Tagihan: ${fmt(sisaAll)}*${totalAll !== sisaAll ? ` _(dari ${fmt(totalAll)})_` : ""}`
       : `✅ *Semua sudah lunas — total ${fmt(totalAll)}*`;
     const msg = `Halo ${customer}, Terlampir tagihan gabungan untuk ${sorted.length} pekerjaan servis kami dalam 1 dokumen PDF:\n\n${lines}\n\n${tagihanLine}\n\nPembayaran ke:\n*${appSettings.bank_name || "BCA"} ${appSettings.bank_number || ""} a.n. ${appSettings.bank_holder || ""}*\n\nMohon kirimkan bukti transfer setelah pembayaran ya. Terima kasih! 🙏${portalLine}`;
-    const sent = await sendWA(phone, msg, uploaded ? { url: uploaded.url, filename: uploaded.filename } : {});
-    if (sent) {
+    const ids = sorted.map(i => i.id);
+    const result = await sendDocumentWA({
+      documentType: "invoice", ids, phone, message: msg,
+      attachment: uploaded ? { url: uploaded.url, filename: uploaded.filename } : {},
+      mode: "merged", batchInfo: ids.join(","),
+    });
+    if (result.ok) {
       showNotif(`✅ ${sorted.length} invoice terkirim digabung ke ${customer}${uploaded ? " 📎" : ""}`);
-      const ids = sorted.map(i => i.id);
       addAgentLog("INVOICE_MERGED_SEND",
         `${sorted.length} invoice digabung & dikirim ke ${customer} (${phone}) oleh ${currentUser?.name || "—"}: ${ids.join(", ")}`,
         "SUCCESS"
       );
-      // Audit DB per-invoice
-      await writeInvoiceSendAudit(ids, "merged", ids.join(","));
-      return { ok: true };
+      return { ok: true, audited: result.audited };
     } else {
       showNotif(`⚠️ Gagal kirim WA ke ${customer} — cek koneksi Fonnte`);
       return { ok: false, error: "send_failed", retryContext: { invList: sorted } };

@@ -4,7 +4,7 @@ import { statusColor, statusLabel } from "../constants/status.js";
 import { smartSearchNormalize } from "../lib/phone.js";
 import { useAppContext } from "../context/AppContext.js";
 
-function ScheduleView({ ordersData, setOrdersData, laporanReports, customersData, teknisiData, weekOffset, setWeekOffset, scheduleView, setScheduleView, filterTeknisi, setFilterTeknisi, calLaporanFilter, setCalLaporanFilter, searchSchedule, setSearchSchedule, schedListFilter, setSchedListFilter, schedPage, setSchedPage, setModalOrder, setSelectedCustomer, setCustomerTab, setActiveMenu, setEditOrderItem, setEditOrderForm, setModalEditOrder, setHistoryPreview, setWaTekTarget, setModalWaTek, getTechColor, dispatchStatus, sendDispatchWA, dispatchWA, deleteOrder, openWA, openLaporanModal, openJobReport, materialsBroughtMap, sendWA, updateOrderStatus, hitungJamSelesai, downloadRekapHarian, triggerRekapHarian, SCHED_PAGE_SIZE, getLocalDate, userAccounts, uploadServiceReportPDFForWA, invoicesData, setLaporanReports }) {
+function ScheduleView({ ordersData, setOrdersData, laporanReports, customersData, teknisiData, weekOffset, setWeekOffset, scheduleView, setScheduleView, filterTeknisi, setFilterTeknisi, calLaporanFilter, setCalLaporanFilter, searchSchedule, setSearchSchedule, schedListFilter, setSchedListFilter, schedPage, setSchedPage, setModalOrder, setSelectedCustomer, setCustomerTab, setActiveMenu, setEditOrderItem, setEditOrderForm, setModalEditOrder, setHistoryPreview, setWaTekTarget, setModalWaTek, getTechColor, dispatchStatus, sendDispatchWA, dispatchWA, deleteOrder, openWA, openLaporanModal, openJobReport, materialsBroughtMap, sendWA, updateOrderStatus, hitungJamSelesai, downloadRekapHarian, triggerRekapHarian, SCHED_PAGE_SIZE, getLocalDate, userAccounts, uploadServiceReportPDFForWA, invoicesData, setLaporanReports, sendDocumentWA }) {
   // Fase 1: primitif global dari AppContext.
   const { currentUser, isMobile, addAgentLog, auditUserName, showConfirm, showNotif, supabase, TODAY } = useAppContext();
 // Hitung minggu dinamis berdasarkan weekOffset
@@ -69,7 +69,7 @@ const invoiceStatus = (jobId, invoiceId) => {
   const inv = getInvoice(jobId, invoiceId);
   if (!inv) return { state: "none", color: cs.muted, label: "Invoice belum ada" };
   if (inv.status === "PAID") return { state: "paid", color: cs.green, label: "Invoice LUNAS" };
-  const isSent = !!inv.sent || !!inv.sent_at || (inv.wa_sent_count || 0) > 0 || !!inv.wa_last_sent_at;
+  const isSent = !!inv.sent_at || (inv.wa_sent_count || 0) > 0 || !!inv.wa_last_sent_at;
   if (isSent) return { state: "sent", color: "#38bdf8", label: "Invoice terkirim (belum lunas)" };
   if (inv.status === "DRAFT") return { state: "draft", color: "#facc15", label: "Invoice draft (belum approve)" };
   return { state: "unsent", color: "#facc15", label: "Invoice belum terkirim" };
@@ -87,18 +87,13 @@ const kirimReportCard = async (order) => {
     const phone = order.phone || inv?.phone;
     if (!phone) return showNotif("❌ Nomor HP customer tidak tersedia");
     const msg = `Halo ${order.customer} 👋\n\nBerikut *Service Report Card* untuk pekerjaan AC Anda:\n📋 Job: ${order.id}\n🔧 ${order.service} — ${order.units} unit\n📅 ${order.date}\n\nTerima kasih telah mempercayakan servis AC Anda kepada *AClean* 🙏\n_aclean.id_`;
-    await sendWA(phone, msg, { url: pdfUrl, filename: `ServiceReport_${order.id}.pdf` });
-    const sentAt = new Date().toISOString();
-    const sentBy = currentUser?.name || "Owner";
-    const { error: updErr } = await supabase.from("service_reports").update({ report_card_sent_at: sentAt, report_card_sent_by: sentBy }).eq("id", lap.id);
-    if (updErr) {
-      showNotif("⚠️ Card terkirim ke customer, tapi status gagal disimpan: " + updErr.message);
-      addAgentLog?.("REPORT_CARD_SENT", `Report card ${order.id} terkirim tapi update status GAGAL: ${updErr.message}`, "ERROR");
-      return;
-    }
-    setLaporanReports(prev => prev.map(r => r.id === lap.id ? { ...r, report_card_sent_at: sentAt, report_card_sent_by: sentBy } : r));
+    const result = await sendDocumentWA({
+      documentType: "report_card", ids: [lap.id], phone, message: msg,
+      attachment: { url: pdfUrl, filename: `ServiceReport_${order.id}.pdf` }, mode: "schedule",
+    });
+    if (!result.ok) return showNotif("❌ Report card gagal dikirim ke " + order.customer);
     showNotif("✅ Report card berhasil dikirim ke " + order.customer);
-    addAgentLog?.("REPORT_CARD_SENT", `Report card ${order.id} dikirim ke ${phone} oleh ${sentBy}`, "SUCCESS");
+    addAgentLog?.("REPORT_CARD_SENT", `Report card ${order.id} dikirim ke ${phone} oleh ${currentUser?.name || "Owner"}`, "SUCCESS");
   } catch (err) {
     showNotif("❌ Gagal kirim report card: " + err.message);
   }
@@ -605,7 +600,7 @@ return (
                             return (
                               <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap", alignItems: "center" }}>
                                 {pill("📋", oVerified ? "Report ✓" : oLap ? "Report belum VRF" : "Report belum", oVerified ? cs.green : oLap ? cs.yellow : cs.muted, () => openLaporanModal(o))}
-                                {pill("📤", oSent ? "Card terkirim" : oVerified ? "Card belum kirim" : "Card—", oSent ? cs.green : oVerified ? cs.yellow : cs.muted, oVerified && !oSent ? () => kirimReportCard(o) : undefined)}
+                                {pill("📤", oSent ? `Card ${oLap.report_card_sent_count || 1}x` : oVerified ? "Card belum kirim" : "Card—", oSent ? cs.green : oVerified ? cs.yellow : cs.muted, oVerified && !oSent ? () => kirimReportCard(o) : undefined)}
                                 {pill("🧾", oInv.label, oInv.color, () => setActiveMenu("invoice"))}
                                 {oRisk && <span style={{ fontSize: 10, fontWeight: 800, color: cs.red, background: cs.red + "15", border: "1px solid " + cs.red + "44", borderRadius: 99, padding: "2px 8px" }}>⚠️ H+2 report belum</span>}
                               </div>
@@ -622,7 +617,7 @@ return (
                             const oVerified = ["VERIFIED","APPROVED"].includes(oLap?.status);
                             if (oSent) return (
                               <span style={{ fontSize: 10, color: cs.green, background: cs.green + "15", padding: "5px 8px", borderRadius: 7, border: "1px solid " + cs.green + "33", textAlign: "center" }}>
-                                📤 Terkirim<br/><span style={{ fontSize: 9, opacity: 0.8 }}>{new Date(oLap.report_card_sent_at).toLocaleDateString("id-ID",{day:"2-digit",month:"short"})}</span>
+                                📨 {oLap.report_card_sent_count || 1}x<br/><span style={{ fontSize: 9, opacity: 0.8 }}>{new Date(oLap.report_card_sent_at).toLocaleDateString("id-ID",{day:"2-digit",month:"short"})}</span>
                               </span>
                             );
                             if (oVerified) return (
