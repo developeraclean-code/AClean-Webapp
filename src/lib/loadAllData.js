@@ -3,6 +3,7 @@
 // Diekstrak dari App.jsx (Fase 3, pola ctx). 49 dependency dioper via ctx. Body
 // verbatim. Dipanggil dari efek init & auto-refresh polling (nama tetap `loadAll`).
 import { recordPerfMetric } from "./perfMetrics.js";
+import { requireAppSettingsResult } from "./settingsPersistence.js";
 
 export async function loadAllData({
   _ls, _lsSave, buildPriceListFromDB, cachedFetch, currentUser, dedupReportsByJob,
@@ -17,7 +18,7 @@ export async function loadAllData({
   setOrdersData, setPaymentSuggestions, setPaymentsData, setPriceListData,
   setPriceListSyncedAt, setProjectDailyReports, setTeknisiData, setUserAccounts,
   setWaConversations, setWaProvider, supabase, bootstrapMode = "full",
-  onCriticalReady, today,
+  onCriticalReady, onSettingsLoadError, onSettingsLoadSuccess, today,
 }) {
         const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
         const criticalBootstrap = bootstrapMode === "critical";
@@ -112,8 +113,9 @@ export async function loadAllData({
         // Load app_settings dari Supabase DB (backup dari localStorage)
         try {
           const setRes = await _pSettings;
-          if (!setRes.error && setRes.data) {
-            const sMap = Object.fromEntries(setRes.data.map(s => [s.key, s.value]));
+          const settingsRows = requireAppSettingsResult(setRes);
+          if (settingsRows) {
+            const sMap = Object.fromEntries(settingsRows.map(s => [s.key, s.value]));
             // ── Load bonus_categories from app_settings ──
             if (sMap.bonus_categories) {
               try {
@@ -152,7 +154,7 @@ export async function loadAllData({
             // masuk state → UI baca undefined (bug material_confirm_deduct 6985043,
             // toggle cleanup R2 Jul 2026). Baris eksplisit di bawah hanya utk default
             // key yang mungkin belum ada di DB.
-            if (setRes.data.length > 0) setAppSettings(prev => ({
+            if (settingsRows.length > 0) setAppSettings(prev => ({
               ...prev,
               ...sMap,
               bank_name: sMap.bank_name || prev.bank_name,
@@ -208,7 +210,11 @@ export async function loadAllData({
               if (savedKey) setLlmApiKey(savedKey);
             }
           }
-        } catch { /* muat setting opsional — abaikan */ }
+          onSettingsLoadSuccess?.();
+        } catch (error) {
+          console.error("[APP_SETTINGS_LOAD_ERROR]", error);
+          onSettingsLoadError?.(error);
+        }
 
         // Load Teknisi dari Supabase — fallback ke TEKNISI_DATA jika kosong/error
         try {

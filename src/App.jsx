@@ -2710,6 +2710,23 @@ export default function ACleanWebApp() {
   useEffect(() => {
     if (!isLoggedIn) return;
     let lastFullLoadAt = 0;
+    let settingsLoadAlerted = false;
+
+    const onSettingsLoadError = (error) => {
+      if (settingsLoadAlerted) return;
+      settingsLoadAlerted = true;
+      addAgentLog("APP_SETTINGS_LOAD_FAILED", `Konfigurasi sistem gagal dimuat: ${error?.message || "unknown"}`, "WARNING");
+      if (currentUser?.role === "Owner") {
+        showNotif("⚠️ Pengaturan sistem gagal dimuat. Nilai lama/default mungkin sedang dipakai — cek koneksi lalu refresh.", true);
+      }
+    };
+
+    const onSettingsLoadSuccess = () => {
+      if (!settingsLoadAlerted) return;
+      settingsLoadAlerted = false;
+      addAgentLog("APP_SETTINGS_LOAD_RECOVERED", "Konfigurasi sistem berhasil dimuat kembali", "INFO");
+      if (currentUser?.role === "Owner") showNotif("✅ Koneksi Pengaturan sistem pulih", true);
+    };
 
     // Wrapper (Fase 3, pola ctx): loadAll (bootstrap data) pindah ke lib/loadAllData.
     // Dipanggil dari initLoadAll (bawah) & auto-refresh polling.
@@ -2727,6 +2744,7 @@ export default function ACleanWebApp() {
       setOrdersData, setPaymentSuggestions, setPaymentsData, setPriceListData,
       setPriceListSyncedAt, setProjectDailyReports, setTeknisiData, setUserAccounts,
       setWaConversations, setWaProvider, supabase, today: TODAY,
+      onSettingsLoadError, onSettingsLoadSuccess,
     });
 
     const initLoadAll = async () => {

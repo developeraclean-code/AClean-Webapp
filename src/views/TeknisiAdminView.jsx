@@ -62,6 +62,12 @@ function fmtDate(d) {
   if (!d) return "-";
   return new Date(d + "T00:00:00").toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
 }
+
+// Akun yang dinonaktifkan (resign) tetap dipertahankan untuk histori order,
+// tetapi tidak boleh ikut KPI/SLA karyawan aktif.
+function isActiveFieldEmployee(employee) {
+  return employee?.active !== false && employee?.status !== "inactive";
+}
 // fullWeekBonusAmt/computeGross/kasbonOwed/kasbonSisa → src/lib/payroll.js
 // daysSinceDate/effBonusStatus (PENDING → ELIGIBLE otomatis 30 hari) → src/lib/bonus.js
 
@@ -116,7 +122,7 @@ teknisiData.forEach(t => {
 });
 
 // ── SLA Calculations (dipakai di tab SLA) ──
-const slaData = teknisiData.map(t => {
+const slaData = teknisiData.filter(isActiveFieldEmployee).map(t => {
   const allOrders = ordersData.filter(o => o.teknisi === t.name || o.helper === t.name);
   const completed = allOrders.filter(o => ["COMPLETED","REPORT_SUBMITTED","INVOICE_APPROVED","INVOICE_CREATED","PAID"].includes(o.status));
   const thisMonth = new Date().toISOString().slice(0, 7);

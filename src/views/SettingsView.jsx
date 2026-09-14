@@ -1,5 +1,6 @@
 import { memo, useState } from "react";
 import { cs } from "../theme/cs.js";
+import { saveAutomationToggle } from "../lib/settingsPersistence.js";
 
 // ── Role config ──────────────────────────────────────────────────────────────
 const ROLE_CFG = {
@@ -70,7 +71,9 @@ function UserManagementPanel({ userAccounts, setUserAccounts, setTeknisiData, cu
     if (!data.ok) { showNotif("⚠️ " + (data.error || "Gagal")); return; }
     setUserAccounts(prev => prev.map(acc => acc.id === u.id ? { ...acc, active: willActivate } : acc));
     if (["Teknisi", "Helper"].includes(u.role) && setTeknisiData) {
-      setTeknisiData(prev => prev.map(t => t.id === u.id ? { ...t, status: willActivate ? "active" : "inactive" } : t));
+      setTeknisiData(prev => prev.map(t => t.id === u.id
+        ? { ...t, active: willActivate, status: willActivate ? "active" : "inactive" }
+        : t));
     }
     addAgentLog(willActivate ? "USER_ACTIVATED" : "USER_DEACTIVATED", `Akun ${u.name} ${willActivate ? "diaktifkan" : "dinonaktifkan"}`, "WARNING");
     showNotif((willActivate ? "🔓 Diaktifkan: " : "🔒 Dinonaktifkan: ") + u.name);
@@ -471,6 +474,20 @@ const d = await r.json();
       showNotif("❌ Gagal load health data: " + e.message);
     } finally {
       setDbHealthLoading(false);
+    }
+  };
+
+  const persistAutomationToggle = async ({ key, enabled, job, successMessage }) => {
+    try {
+      const savedCronJobs = await saveAutomationToggle(supabase, { key, enabled, job });
+      setCronJobs(savedCronJobs);
+      setAppSettings(prev => ({ ...prev, [key]: enabled ? "true" : "false" }));
+      showNotif(successMessage);
+      return true;
+    } catch (error) {
+      console.error("[AUTOMATION_SETTING_SAVE_ERROR]", { key, error });
+      showNotif("❌ Pengaturan tidak berubah: " + error.message);
+      return false;
     }
   };
 
@@ -1006,9 +1023,23 @@ const d = await r.json();
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span style={{ fontSize: 11, fontWeight: 700, color: isOn ? cs.green : cs.muted, minWidth: 24 }}>{isOn ? "ON" : "OFF"}</span>
                   <div onClick={async () => {
+                    if (key === "wa_cleanup_enabled") {
+                      await persistAutomationToggle({
+                        key,
+                        enabled: !isOn,
+                        job: { id: Date.now(), name: label, icon, time: "03:00", days: "Setiap Hari", task: desc },
+                        successMessage: (isOn ? "⛔ " : "✅ ") + label + (isOn ? " dimatikan" : " diaktifkan"),
+                      });
+                      return;
+                    }
                     const newVal = isOn ? "false" : "true";
                     setAppSettings(prev => ({ ...prev, [key]: newVal }));
-                    await supabase.from("app_settings").upsert({ key, value: newVal }, { onConflict: "key" });
+                    const { error } = await supabase.from("app_settings").upsert({ key, value: newVal }, { onConflict: "key" });
+                    if (error) {
+                      setAppSettings(prev => ({ ...prev, [key]: isOn ? "true" : "false" }));
+                      showNotif("❌ Pengaturan tidak berubah: " + error.message);
+                      return;
+                    }
                     showNotif((isOn ? "⛔ " : "✅ ") + label + (isOn ? " dimatikan" : " diaktifkan"));
                   }}
                     style={{ width: 44, height: 24, borderRadius: 99, background: isOn ? "linear-gradient(135deg," + cs.green + ",#059669)" : cs.surface, border: "1px solid " + (isOn ? cs.green : cs.border), cursor: "pointer", position: "relative", transition: "all .2s" }}>
@@ -1047,16 +1078,12 @@ const d = await r.json();
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span style={{ fontSize: 11, fontWeight: 700, color: isOn ? cs.green : cs.muted, minWidth: 24 }}>{isOn ? "ON" : "OFF"}</span>
                   <div onClick={async () => {
-                    const newVal = isOn ? "false" : "true";
-                    setAppSettings(prev => ({ ...prev, [key]: newVal }));
-                    await supabase.from("app_settings").upsert({ key, value: newVal }, { onConflict: "key" });
-                    let updCronJobs = cronJobs.map(j => j.backendKey === key ? { ...j, active: newVal === "true" } : j);
-                    if (!updCronJobs.some(j => j.backendKey === key)) {
-                      updCronJobs = [...updCronJobs, { id: Date.now(), backendKey: key, name: label, icon, time: "03:00", days: "Setiap Hari", task: desc, active: newVal === "true" }];
-                    }
-                    setCronJobs(updCronJobs);
-                    await supabase.from("app_settings").upsert({ key: "cron_jobs", value: JSON.stringify(updCronJobs) }, { onConflict: "key" });
-                    showNotif((isOn ? "⛔ " : "✅ ") + label + (isOn ? " dimatikan" : " diaktifkan"));
+                    await persistAutomationToggle({
+                      key,
+                      enabled: !isOn,
+                      job: { id: Date.now(), name: label, icon, time: "03:00", days: "Setiap Hari", task: desc },
+                      successMessage: (isOn ? "⛔ " : "✅ ") + label + (isOn ? " dimatikan" : " diaktifkan"),
+                    });
                   }}
                     style={{ width: 44, height: 24, borderRadius: 99, background: isOn ? "linear-gradient(135deg," + cs.green + ",#059669)" : cs.surface, border: "1px solid " + (isOn ? cs.green : cs.border), cursor: "pointer", position: "relative", transition: "all .2s" }}>
                     <div style={{ position: "absolute", width: 18, height: 18, borderRadius: "50%", background: "#fff", top: 2, left: isOn ? 22 : 2, transition: "left .2s", boxShadow: "0 1px 3px #0004" }} />
@@ -1086,16 +1113,12 @@ const d = await r.json();
                 </div>
                 <span style={{ fontSize: 11, fontWeight: 700, color: isOn ? cs.green : cs.muted }}>{isOn ? "ON" : "OFF"}</span>
                 <div onClick={async () => {
-                  const newVal = isOn ? "false" : "true";
-                  setAppSettings(prev => ({ ...prev, [key]: newVal }));
-                  await supabase.from("app_settings").upsert({ key, value: newVal }, { onConflict: "key" });
-                  let updCronJobs = cronJobs.map(j => j.backendKey === key ? { ...j, active: newVal === "true" } : j);
-                  if (!updCronJobs.some(j => j.backendKey === key)) {
-                    updCronJobs = [...updCronJobs, { id: Date.now(), backendKey: key, name: "Alarm Kuota Infrastruktur", icon: "🚨", time: "07:00", days: "Setiap Hari", task: "Ukur DB Supabase dan storage R2", active: newVal === "true" }];
-                  }
-                  setCronJobs(updCronJobs);
-                  await supabase.from("app_settings").upsert({ key: "cron_jobs", value: JSON.stringify(updCronJobs) }, { onConflict: "key" });
-                  showNotif((isOn ? "⛔ Alarm kuota dimatikan" : "✅ Alarm kuota diaktifkan"));
+                  await persistAutomationToggle({
+                    key,
+                    enabled: !isOn,
+                    job: { id: Date.now(), name: "Alarm Kuota Infrastruktur", icon: "🚨", time: "07:00", days: "Setiap Hari", task: "Ukur DB Supabase dan storage R2" },
+                    successMessage: isOn ? "⛔ Alarm kuota dimatikan" : "✅ Alarm kuota diaktifkan",
+                  });
                 }} style={{ width: 44, height: 24, borderRadius: 99, background: isOn ? "linear-gradient(135deg," + cs.green + ",#059669)" : cs.surface, border: "1px solid " + (isOn ? cs.green : cs.border), cursor: "pointer", position: "relative" }}>
                   <div style={{ position: "absolute", width: 18, height: 18, borderRadius: "50%", background: "#fff", top: 2, left: isOn ? 22 : 2, transition: "left .2s" }} />
                 </div>
@@ -1233,19 +1256,13 @@ const d = await r.json();
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <span style={{ fontSize: 10, fontWeight: 700, color: isOn ? cs.green : cs.muted, minWidth: 22 }}>{isOn ? "ON" : "OFF"}</span>
                         <div onClick={async () => {
-                          const newVal = isOn ? "false" : "true";
-                          setAppSettings(prev => ({ ...prev, [key]: newVal }));
-                          // Wajib update KEDUANYA: standalone key + cron_jobs JSON (AND-logic di cron)
-                          await supabase.from("app_settings").upsert({ key, value: newVal }, { onConflict: "key" });
-                          let updCronJobs = cronJobs.map(j => j.backendKey === key ? { ...j, active: newVal === "true" } : j);
-                          if (!updCronJobs.some(j => j.backendKey === key)) {
-                            // Key belum ada di cron_jobs JSON — insert baru agar AND-logic cron bisa cek JSON
-                            const maxId = updCronJobs.reduce((m, j) => Math.max(m, j.id || 0), 0);
-                            updCronJobs = [...updCronJobs, { id: maxId + 1, backendKey: key, name: label, task: desc, active: newVal === "true", days: "Setiap Hari" }];
-                          }
-                          setCronJobs(updCronJobs);
-                          await supabase.from("app_settings").upsert({ key: "cron_jobs", value: JSON.stringify(updCronJobs) }, { onConflict: "key" });
-                          showNotif((isOn ? "⛔ " : "✅ ") + label + (isOn ? " dimatikan" : " diaktifkan"));
+                          const maxId = cronJobs.reduce((m, j) => Math.max(m, j.id || 0), 0);
+                          await persistAutomationToggle({
+                            key,
+                            enabled: !isOn,
+                            job: { id: maxId + 1, name: label, task: desc, days: "Setiap Hari" },
+                            successMessage: (isOn ? "⛔ " : "✅ ") + label + (isOn ? " dimatikan" : " diaktifkan"),
+                          });
                         }}
                           style={{ width: 40, height: 22, borderRadius: 99, background: isOn ? "linear-gradient(135deg," + cs.green + ",#059669)" : cs.surface, border: "1px solid " + (isOn ? cs.green : cs.border), cursor: "pointer", position: "relative", transition: "all .2s" }}>
                           <div style={{ position: "absolute", width: 16, height: 16, borderRadius: "50%", background: "#fff", top: 2, left: isOn ? 20 : 2, transition: "left .2s", boxShadow: "0 1px 3px #0004" }} />
@@ -1275,8 +1292,9 @@ const d = await r.json();
             <button onClick={async () => {
               const newJob = { id: Date.now(), name: "Job Baru", icon: "⚙️", time: "09:00", days: "Setiap Hari", active: false, backendKey: null, task: "Deskripsi tugas..." };
               const upd = [...cronJobs, newJob];
+              const { error } = await supabase.from("app_settings").upsert({ key: "cron_jobs", value: JSON.stringify(upd) }, { onConflict: "key" });
+              if (error) { showNotif("❌ Job tidak ditambahkan: " + error.message); return; }
               setCronJobs(upd);
-              await supabase.from("app_settings").upsert({ key: "cron_jobs", value: JSON.stringify(upd) }, { onConflict: "key" });
             }} style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
               + Tambah Job
             </button>
@@ -1299,11 +1317,16 @@ const d = await r.json();
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
                   <span style={{ fontSize: 11, fontWeight: 700, color: job.active ? cs.green : cs.muted, minWidth: 24 }}>{job.active ? "ON" : "OFF"}</span>
                   <div onClick={async () => {
+                    const successMessage = (job.active ? "⛔ " : "✅ ") + job.name + (job.active ? " dimatikan" : " diaktifkan");
+                    if (job.backendKey) {
+                      await persistAutomationToggle({ key: job.backendKey, enabled: !job.active, job, successMessage });
+                      return;
+                    }
                     const upd = cronJobs.map((j, ii) => ii === idx ? { ...j, active: !j.active } : j);
+                    const { error } = await supabase.from("app_settings").upsert({ key: "cron_jobs", value: JSON.stringify(upd) }, { onConflict: "key" });
+                    if (error) { showNotif("❌ Pengaturan tidak berubah: " + error.message); return; }
                     setCronJobs(upd);
-                    await supabase.from("app_settings").upsert({ key: "cron_jobs", value: JSON.stringify(upd) }, { onConflict: "key" });
-                    if (job.backendKey) await supabase.from("app_settings").upsert({ key: job.backendKey, value: job.active ? "false" : "true" }, { onConflict: "key" });
-                    showNotif((job.active ? "⛔ " : "✅ ") + job.name + (job.active ? " dimatikan" : " diaktifkan"));
+                    showNotif(successMessage);
                   }}
                     style={{ width: 44, height: 24, borderRadius: 99, background: job.active ? "linear-gradient(135deg," + cs.green + ",#059669)" : cs.surface, border: "1px solid " + (job.active ? cs.green : cs.border), cursor: "pointer", position: "relative", transition: "all .2s" }}>
                     <div style={{ position: "absolute", width: 18, height: 18, borderRadius: "50%", background: "#fff", top: 2, left: job.active ? 22 : 2, transition: "left .2s", boxShadow: "0 1px 3px #0004" }} />
@@ -1311,8 +1334,9 @@ const d = await r.json();
                   {!job.backendKey && (
                     <button onClick={async () => {
                       const upd = cronJobs.filter((_, ii) => ii !== idx);
+                      const { error } = await supabase.from("app_settings").upsert({ key: "cron_jobs", value: JSON.stringify(upd) }, { onConflict: "key" });
+                      if (error) { showNotif("❌ Job tidak dihapus: " + error.message); return; }
                       setCronJobs(upd);
-                      await supabase.from("app_settings").upsert({ key: "cron_jobs", value: JSON.stringify(upd) }, { onConflict: "key" });
                     }} style={{ background: "none", border: "none", color: cs.muted, cursor: "pointer", fontSize: 18, lineHeight: 1, padding: "0 2px" }}>×</button>
                   )}
                 </div>
