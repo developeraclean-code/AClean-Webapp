@@ -38,7 +38,7 @@ const FIELDS: Record<TableKey, Record<string, string>> = {
   expenses: { id: "id", projectId: "project_id", tanggal: "tanggal", kategori: "kategori", ket: "ket", nominal: "nominal", oleh: "oleh" },
   purchases: { id: "id", projectId: "project_id", tanggal: "tanggal", jenis: "jenis", item: "item", qty: "qty", total: "total", nota: "nota" },
   harian: { id: "id", projectId: "project_id", tanggal: "tanggal", oleh: "oleh", pagi: "pagi", sore: "sore", status: "status" },
-  documents: { id: "id", projectId: "project_id", jenis: "jenis", tanggal: "tanggal", nomor: "nomor", kepada: "kepada", periode: "periode", uraian: "uraian", items: "items", foto: "foto", ttdTeknisi: "ttd_teknisi", ttdCustomer: "ttd_customer", ttdCustomerImg: "ttd_customer_img", checklist: "checklist" },
+  documents: { id: "id", projectId: "project_id", jenis: "jenis", tanggal: "tanggal", nomor: "nomor", kepada: "kepada", periode: "periode", uraian: "uraian", items: "items", foto: "foto", attachments: "attachments", ttdTeknisi: "ttd_teknisi", ttdCustomer: "ttd_customer", ttdCustomerImg: "ttd_customer_img", checklist: "checklist" },
 };
 
 // Urutan load + insert optimistic. true = ascending (append), false = desc (newest-first / prepend).

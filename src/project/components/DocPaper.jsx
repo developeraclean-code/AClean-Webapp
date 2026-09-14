@@ -1,5 +1,6 @@
 import React from "react";
 import { sumDocTotal, fmtRp, docColumns, docUraianLabel, docSig } from "../utils/constants.js";
+import { normalizeDocumentAttachments } from "../utils/documentAttachments.js";
 
 // Preview format PDF-like (kertas A4) untuk semua jenis dokumen project.
 export default function DocPaper({ doc, project }) {
@@ -10,6 +11,7 @@ export default function DocPaper({ doc, project }) {
   const cols = docColumns(doc.jenis);
   const sig = docSig(doc.jenis);
   const penerima = (doc.kepada || "").split("—")[0];
+  const attachments = normalizeDocumentAttachments(doc.attachments);
   return (
     <div style={{ background: "#f8fafc", color: "#0f172a", borderRadius: 8, padding: "28px 30px", fontSize: 12.5, lineHeight: 1.55 }}>
       <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "2px solid #0f172a", paddingBottom: 10, marginBottom: 14 }}>
@@ -67,14 +69,18 @@ export default function DocPaper({ doc, project }) {
           {!allDone && <div style={{ color: "#b45309", fontSize: 11, marginTop: 4 }}>⚠️ Lengkapi semua poin sebelum TTD customer.</div>}
         </div>
       )}
-      {isBA && doc.foto > 0 && (
+      {attachments.length > 0 && (
         <div style={{ marginTop: 6 }}>
-          <b>Dokumentasi Foto:</b>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 6, marginTop: 8 }}>
-            {Array.from({ length: Math.min(4, doc.foto) }).map((_, i) => (
-              <div key={i} style={{ aspectRatio: "4/3", background: "#e2e8f0", border: "1px solid #cbd5e1", borderRadius: 5, display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b", fontSize: 10 }}>foto</div>
+          <b>Lampiran Dokumentasi ({attachments.length} foto):</b>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 8, marginTop: 8 }}>
+            {attachments.slice(0, 4).map((attachment, i) => (
+              <div key={attachment.id} style={{ border: "1px solid #cbd5e1", borderRadius: 5, padding: 4 }}>
+                <img src={attachment.url} alt={attachment.caption || `Foto ${i + 1}`} style={{ width: "100%", height: 130, objectFit: "cover", display: "block", borderRadius: 3 }} />
+                <div style={{ color: "#475569", fontSize: 9.5, marginTop: 3 }}>{i + 1}. {attachment.caption || attachment.name}</div>
+              </div>
             ))}
           </div>
+          {attachments.length > 4 && <div style={{ color: "#475569", fontSize: 10, marginTop: 5 }}>+ {attachments.length - 4} foto lain tersedia di halaman lampiran PDF.</div>}
         </div>
       )}
       <div style={{ display: "flex", justifyContent: "space-between", marginTop: 24, gap: 24 }}>

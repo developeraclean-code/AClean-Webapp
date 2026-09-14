@@ -10,6 +10,7 @@ import Modal from "../project/components/Modal.jsx";
 import DocPaper from "../project/components/DocPaper.jsx";
 import SignaturePad from "../project/components/SignaturePad.jsx";
 import ProjectDocPDF from "../project/components/ProjectDocPDF.jsx";
+import DocumentAttachmentsEditor from "../project/components/DocumentAttachmentsEditor.jsx";
 import { loadLogo } from "../project/components/ProjectPaperPDF.jsx";
 import {
   docColumns, docPrefix, docUraianLabel, docItemsLabel,
@@ -34,6 +35,8 @@ const toDocObj = (row) => ({
   tanggal: row.tanggal || "",
   items: row.items || [],
   checklist: row.checklist || [],
+  attachments: Array.isArray(row.attachments) ? row.attachments : [],
+  attachmentsSupported: Object.prototype.hasOwnProperty.call(row, "attachments"),
   ttdTeknisi: row.ttd_teknisi || "(teknisi)",
   ttdCustomer: row.ttd_customer || "(belum)",
   ttdCustomerImg: row.ttd_customer_img || null,
@@ -49,7 +52,7 @@ const th = { textAlign: "left", padding: "9px 10px", borderBottom: "1px solid " 
 const td = { padding: "9px 10px", borderBottom: "1px solid " + cs.border, color: cs.text };
 const pill = (bg, c) => ({ background: bg + "22", color: c, padding: "2px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700 });
 
-export default function MaintenanceDocsView({ clients = [], call, showNotif, showConfirm, isOwner, canManage = isOwner, appSettings = {}, onBack }) {
+export default function MaintenanceDocsView({ clients = [], call, apiFetch, showNotif, showConfirm, isOwner, canManage = isOwner, appSettings = {}, onBack }) {
   const [clientId, setClientId] = useState(clients[0]?.id || "");
   const [docs, setDocs] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -95,6 +98,28 @@ export default function MaintenanceDocsView({ clients = [], call, showNotif, sho
   const saveEdit = async (patch) => {
     try { await call("update-document", { id: editId, ...patch }); setEditId(null); await load(); showNotif("✅ Dokumen tersimpan"); }
     catch (e) { showNotif("❌ " + e.message); }
+  };
+
+  const uploadDocumentImages = async (files, docId) => {
+    if (!apiFetch) throw new Error("Uploader tidak tersedia");
+    const urls = [];
+    for (const file of files) {
+      const response = await apiFetch("/api/upload-foto", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          base64: file.dataUrl,
+          filename: file.name,
+          mimeType: "image/jpeg",
+          hash: file.hash,
+          folder: `maintenance/documents/${docId}`,
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || (!result.url && !result.key)) throw new Error(result.error || `Upload gagal HTTP ${response.status}`);
+      urls.push(result.key ? `/api/foto?key=${encodeURIComponent(result.key)}` : result.url);
+    }
+    return urls;
   };
 
   const saveSign = async ({ name, img }) => {
@@ -150,25 +175,26 @@ export default function MaintenanceDocsView({ clients = [], call, showNotif, sho
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead><tr>
             <th style={th}>Tgl</th><th style={th}>Jenis</th><th style={th}>Nomor</th>
-            <th style={th}>Kepada</th><th style={th}>TTD</th><th style={th}>Aksi</th>
+            <th style={th}>Kepada</th><th style={th}>Lampiran</th><th style={th}>TTD</th><th style={th}>Aksi</th>
           </tr></thead>
           <tbody>
             {loading ? (
-              <tr><td style={{ ...td, color: cs.muted }} colSpan={6}>Memuat…</td></tr>
+              <tr><td style={{ ...td, color: cs.muted }} colSpan={7}>Memuat…</td></tr>
             ) : docObjs.length === 0 ? (
-              <tr><td style={{ ...td, color: cs.muted }} colSpan={6}>Belum ada dokumen untuk customer ini. Klik "+ Buat Dokumen".</td></tr>
+              <tr><td style={{ ...td, color: cs.muted }} colSpan={7}>Belum ada dokumen untuk customer ini. Klik "+ Buat Dokumen".</td></tr>
             ) : docObjs.map((d) => (
               <tr key={d.id}>
                 <td style={td}>{(d.tanggal || "").slice(5)}</td>
                 <td style={td}><span style={pillFor(d.jenis)}>{d.jenis.replace("Surat ", "")}</span></td>
                 <td style={td}>{d.nomor}</td>
                 <td style={td}>{d.kepada}</td>
+                <td style={td}>{d.attachments.length ? `${d.attachments.length} 📷` : "—"}</td>
                 <td style={td}>{ttdStatus(d) === "lengkap" ? <span style={pill(cs.green, cs.green)}>lengkap</span> : <span style={pill(cs.yellow || "#eab308", cs.yellow || "#eab308")}>belum</span>}</td>
                 <td style={td}>
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                     <button style={miniBtn} onClick={() => setViewId(d.id)}>Lihat</button>
-                    <button style={miniBtn} onClick={() => setEditId(d.id)}>Edit</button>
-                    {ttdStatus(d) === "belum" && <button style={{ ...miniBtn, color: cs.green, borderColor: cs.green + "55" }} onClick={() => setSignId(d.id)}>Tanda Tangani</button>}
+                    {canManage && <button style={miniBtn} onClick={() => setEditId(d.id)}>Edit</button>}
+                    {canManage && ttdStatus(d) === "belum" && <button style={{ ...miniBtn, color: cs.green, borderColor: cs.green + "55" }} onClick={() => setSignId(d.id)}>Tanda Tangani</button>}
                     {canManage && <button style={{ ...miniBtn, color: cs.red }} onClick={() => removeDoc(d)}>🗑</button>}
                   </div>
                 </td>
@@ -180,7 +206,8 @@ export default function MaintenanceDocsView({ clients = [], call, showNotif, sho
 
       {createOpen && <CreatePicker onPick={createDoc} onClose={() => setCreateOpen(false)} />}
       {viewDoc && <DocViewer doc={viewDoc} project={project} onClose={() => setViewId(null)} onPrint={() => cetak(viewDoc)} />}
-      {editDoc && <DocEditor doc={editDoc} onClose={() => setEditId(null)} onSave={saveEdit} />}
+      {editDoc && <DocEditor doc={editDoc} onClose={() => setEditId(null)} onSave={saveEdit}
+        notify={showNotif} uploadFiles={(files) => uploadDocumentImages(files, editDoc.id)} />}
       {signDoc && <SignaturePad kepada={signDoc.kepada} initialName={signDoc.ttdCustomer} onClose={() => setSignId(null)} onSave={saveSign} />}
     </div>
   );
@@ -221,7 +248,7 @@ function DocViewer({ doc, project, onClose, onPrint }) {
 }
 
 // ─────────── editor (grid Excel, skema kolom per-jenis) ───────────
-function DocEditor({ doc, onClose, onSave }) {
+function DocEditor({ doc, onClose, onSave, uploadFiles, notify }) {
   const isBA = doc.jenis.includes("Berita");
   const cols = docColumns(doc.jenis);
   const [kepada, setKepada] = useState(doc.kepada || "");
@@ -231,6 +258,7 @@ function DocEditor({ doc, onClose, onSave }) {
   const [uraian, setUraian] = useState(doc.uraian || "");
   const [items, setItems] = useState(doc.items?.length ? doc.items.map((i) => ({ ...i })) : [{}, {}, {}]);
   const [checklist, setChecklist] = useState(doc.checklist?.length ? doc.checklist.map((c) => ({ ...c })) : (isBA ? [{ done: false, item: "" }] : []));
+  const [attachments, setAttachments] = useState(Array.isArray(doc.attachments) ? doc.attachments : []);
 
   const presetItems = () => setItems((DOC_PRESETS[doc.jenis] || []).map((x) => ({ ...x })));
   const presetCheck = () => setChecklist(BA_CHECK_PRESET.map((it) => ({ item: it, done: false })));
@@ -241,6 +269,7 @@ function DocEditor({ doc, onClose, onSave }) {
       kepada, nomor, tanggal, periode, uraian,
       items: items.filter((it) => keys.some((k) => String(it[k] ?? "").trim() !== "")),
     };
+    if (doc.attachmentsSupported) { patch.attachments = attachments; patch.foto = attachments.length; }
     if (isBA) patch.checklist = checklist.filter((c) => c.item);
     onSave(patch);
   };
@@ -330,6 +359,9 @@ function DocEditor({ doc, onClose, onSave }) {
           </table>
         </>
       )}
+
+      <DocumentAttachmentsEditor value={attachments} onChange={setAttachments} uploadFiles={uploadFiles} notify={notify}
+        disabled={!doc.attachmentsSupported} />
 
       <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 14 }}>
         <button style={btnGhost} onClick={onClose}>Batal</button>

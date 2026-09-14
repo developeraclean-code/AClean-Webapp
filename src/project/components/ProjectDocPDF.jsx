@@ -3,6 +3,7 @@
 import React from "react";
 import { Document, Page, View, Text, Image, StyleSheet } from "@react-pdf/renderer";
 import { sumDocTotal, fmtRp, docColumns, docUraianLabel, docSig } from "../utils/constants.js";
+import { absoluteAttachmentUrl, chunkDocumentAttachments } from "../utils/documentAttachments.js";
 
 const s = StyleSheet.create({
   page: { padding: 36, fontSize: 10, color: "#0f172a", fontFamily: "Helvetica" },
@@ -31,6 +32,12 @@ const s = StyleSheet.create({
   signSpacer: { flexGrow: 1 },
   signImg: { height: 38, marginBottom: 2, objectFit: "contain" },
   signLine: { borderTopWidth: 1, borderTopColor: "#0f172a", paddingTop: 3, fontWeight: 700, width: "100%", textAlign: "center" },
+  attachmentTitle: { textAlign: "center", fontSize: 13, fontFamily: "Helvetica-Bold", marginBottom: 4 },
+  attachmentSub: { textAlign: "center", fontSize: 8, color: "#64748b", marginBottom: 14 },
+  attachmentGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", gap: 10 },
+  attachmentCard: { width: "48%", height: 300, borderWidth: 1, borderColor: "#cbd5e1", padding: 5, marginBottom: 10 },
+  attachmentImage: { width: "100%", height: 265, objectFit: "contain", backgroundColor: "#f8fafc" },
+  attachmentCaption: { fontSize: 8.5, color: "#334155", marginTop: 5 },
 });
 
 export default function ProjectDocPDF({ doc, project, appSettings = {}, logoUrl = null }) {
@@ -44,6 +51,7 @@ export default function ProjectDocPDF({ doc, project, appSettings = {}, logoUrl 
   const cols = docColumns(doc.jenis);
   const sig = docSig(doc.jenis, companyName);
   const sumCol = cols.find((c) => c.sum);
+  const attachmentPages = chunkDocumentAttachments(doc.attachments, 4);
   return (
     <Document>
       <Page size="A4" style={s.page}>
@@ -120,6 +128,30 @@ export default function ProjectDocPDF({ doc, project, appSettings = {}, logoUrl 
           </View>
         </View>
       </Page>
+      {attachmentPages.map((attachments, pageIndex) => (
+        <Page size="A4" style={s.page} key={`attachment-page-${pageIndex}`}>
+          <View style={s.headRow} fixed>
+            <View style={s.kopLeft}>
+              {logoUrl ? <Image src={logoUrl} style={{ width: 34, height: 34, objectFit: "contain" }} /> : null}
+              <View>
+                <Text style={s.brand}>{companyName}</Text>
+                <Text style={s.brandSub}>{doc.nomor || "Dokumen"}</Text>
+              </View>
+            </View>
+            <Text style={s.metaR}>Lampiran {pageIndex + 1}/{attachmentPages.length}</Text>
+          </View>
+          <Text style={s.attachmentTitle}>LAMPIRAN DOKUMENTASI FOTO</Text>
+          <Text style={s.attachmentSub}>{doc.jenis} · {project?.nama || "-"} · {doc.tanggal || "-"}</Text>
+          <View style={s.attachmentGrid}>
+            {attachments.map((attachment, index) => (
+              <View style={s.attachmentCard} key={attachment.id} wrap={false}>
+                <Image style={s.attachmentImage} src={absoluteAttachmentUrl(attachment.url)} />
+                <Text style={s.attachmentCaption}>{pageIndex * 4 + index + 1}. {attachment.caption || attachment.name || "Dokumentasi"}</Text>
+              </View>
+            ))}
+          </View>
+        </Page>
+      ))}
     </Document>
   );
 }

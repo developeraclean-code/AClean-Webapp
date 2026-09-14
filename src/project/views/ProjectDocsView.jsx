@@ -9,6 +9,7 @@ import Modal from "../components/Modal.jsx";
 import DocPaper from "../components/DocPaper.jsx";
 import SignaturePad from "../components/SignaturePad.jsx";
 import ProjectDocPDF from "../components/ProjectDocPDF.jsx";
+import DocumentAttachmentsEditor from "../components/DocumentAttachmentsEditor.jsx";
 import { loadLogo } from "../components/ProjectPaperPDF.jsx";
 import { pdf } from "@react-pdf/renderer";
 
@@ -85,7 +86,7 @@ export default function ProjectDocsView() {
           <thead><tr>
             <th style={S.tableStyles.th}>Tgl</th><th style={S.tableStyles.th}>Jenis</th>
             <th style={S.tableStyles.th}>Nomor</th><th style={S.tableStyles.th}>Project</th>
-            <th style={S.tableStyles.th}>Kepada</th><th style={S.tableStyles.th}>TTD</th>
+            <th style={S.tableStyles.th}>Kepada</th><th style={S.tableStyles.th}>Lampiran</th><th style={S.tableStyles.th}>TTD</th>
             <th style={S.tableStyles.th}>Aksi</th>
           </tr></thead>
           <tbody>
@@ -98,6 +99,7 @@ export default function ProjectDocsView() {
                 <td style={S.tableStyles.td}>{d.nomor}</td>
                 <td style={S.tableStyles.td}>{pName(db, d.projectId)}</td>
                 <td style={S.tableStyles.td}>{d.kepada}</td>
+                <td style={S.tableStyles.td}>{d.attachments?.length ? `${d.attachments.length} 📷` : "—"}</td>
                 <td style={S.tableStyles.td}>
                   {ttdStatus(d) === "lengkap" ? <span style={S.pill("green")}>lengkap</span> : <span style={S.pill("yellow")}>belum</span>}
                 </td>
@@ -158,7 +160,7 @@ function DocViewer({ docId }) {
 
 // ============ DocEditor — grid Excel ============
 function DocEditor({ docId }) {
-  const { db, patchRow } = useProject();
+  const { db, patchRow, uploadPhotos } = useProject();
   const { close, toast } = useModal();
   const original = db.documents.find((x) => x.id === docId);
   const isBA = original.jenis.includes("Berita");
@@ -169,6 +171,7 @@ function DocEditor({ docId }) {
   const [uraian, setUraian] = useState(original.uraian || "");
   const [items, setItems] = useState(original.items?.length ? original.items.map((i) => ({ ...i })) : [{}, {}, {}]);
   const [checklist, setChecklist] = useState(original.checklist?.length ? original.checklist.map((c) => ({ ...c })) : (isBA ? [{ done: false, item: "" }] : []));
+  const [attachments, setAttachments] = useState(Array.isArray(original.attachments) ? original.attachments : []);
 
   const presetItems = () => {
     setItems((DOC_PRESETS[original.jenis] || []).map((x) => ({ ...x })));
@@ -181,6 +184,7 @@ function DocEditor({ docId }) {
   const cols = docColumns(original.jenis);
   const save = () => {
     const patch = { kepada, nomor, tanggal, periode, uraian };
+    if (original.attachments !== undefined) { patch.attachments = attachments; patch.foto = attachments.length; }
     const keys = cols.map((c) => c.key);
     patch.items = items.filter((it) => keys.some((k) => String(it[k] ?? "").trim() !== ""));
     if (isBA) patch.checklist = checklist.filter((c) => c.item);
@@ -274,6 +278,14 @@ function DocEditor({ docId }) {
           </table>
         </>
       )}
+
+      <DocumentAttachmentsEditor
+        value={attachments}
+        onChange={setAttachments}
+        notify={toast}
+        disabled={original.attachments === undefined}
+        uploadFiles={(files) => uploadPhotos(files, `project/${original.projectId || "general"}/documents/${docId}`)}
+      />
 
       <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 14 }}>
         <button style={S.btn("ghost")} onClick={close}>Batal</button>

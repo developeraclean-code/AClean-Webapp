@@ -452,6 +452,7 @@ export async function maintenance(req, res) {
             checklist: Array.isArray(body.checklist) ? body.checklist : [],
             foto: Number(body.foto) || 0,
           };
+          if (Array.isArray(body.attachments)) payload.attachments = body.attachments.slice(0, 8);
           const r = await fetch(REST("maintenance_documents"), { method: "POST", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(payload) });
           if (!r.ok) return res.status(400).json({ error: "Gagal buat dokumen", detail: await r.text() });
           return res.status(200).json({ document: (await r.json())[0] });
@@ -462,6 +463,10 @@ export async function maintenance(req, res) {
           ["jenis", "nomor", "tanggal", "kepada", "periode", "uraian", "ttd_teknisi", "ttd_customer", "ttd_customer_img"].forEach(k => { if (body[k] !== undefined) upd[k] = body[k] || null; });
           if (body.items !== undefined) upd.items = Array.isArray(body.items) ? body.items : [];
           if (body.checklist !== undefined) upd.checklist = Array.isArray(body.checklist) ? body.checklist : [];
+          if (body.attachments !== undefined) {
+            upd.attachments = Array.isArray(body.attachments) ? body.attachments.slice(0, 8) : [];
+            upd.foto = upd.attachments.length;
+          }
           if (body.foto !== undefined) upd.foto = Number(body.foto) || 0;
           const r = await fetch(REST("maintenance_documents?id=eq." + encodeURIComponent(body.id)), { method: "PATCH", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(upd) });
           if (!r.ok) return res.status(400).json({ error: "Gagal update dokumen", detail: await r.text() });
@@ -1620,4 +1625,3 @@ export async function projectPortal(req, res) {
         documents,
       });
 }
-
