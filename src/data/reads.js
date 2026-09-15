@@ -228,6 +228,17 @@ export const fetchServiceReportById = (supabase, id) =>
     .eq("id", id)
     .maybeSingle();
 
+// Detail Customer tidak membawa seluruh laporan historis saat halaman dibuka.
+// Ambil tepat satu laporan ketika kartu riwayat diexpand agar payload JSON dan foto
+// laporan lama tidak ikut membebani bootstrap/menu Customer.
+export const fetchServiceReportByJobId = (supabase, jobId) =>
+  supabase.from("service_reports")
+    .select(REPORT_COLS)
+    .eq("job_id", jobId)
+    .order("submitted_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
 // Rekap jenis pekerjaan (Dashboard) — proyeksi RINGAN (tanpa kolom foto/bap berat).
 // Hanya VERIFIED sejak `sinceDate` (YYYY-MM-DD) untuk navigasi minggu/bulan prev/next.
 // WAJIB paginate: PostgREST cap 1000 baris/response → tanpa .range() bulan-bulan

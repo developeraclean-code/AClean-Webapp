@@ -3,6 +3,8 @@ import { cs } from "../theme/cs.js";
 import { statusColor } from "../constants/status.js";
 import { normalizePhone, smartSearchNormalize, formatPhone } from "../lib/phone.js";
 import { useAppContext } from "../context/AppContext.js";
+import { fetchServiceReportByJobId } from "../data/reads.js";
+import { normalizeCustomerServiceReport } from "../lib/customerServiceReport.js";
 
 // Warna avatar deterministik berdasarkan nama
 const AVATAR_COLORS = [
@@ -59,7 +61,13 @@ const deactivateAcUnit = async (id, lokasi) => {
 // permanen, lalu fallback phone/nama utk order legacy tanpa customer_id.
 const [custOrders, setCustOrders] = React.useState(null);
 const [custInvoices, setCustInvoices] = React.useState(null);
+const [expandedReportJobId, setExpandedReportJobId] = React.useState(null);
+const [customerReportCache, setCustomerReportCache] = React.useState({});
+const reportRequestGeneration = React.useRef(0);
 React.useEffect(() => {
+  reportRequestGeneration.current += 1;
+  setExpandedReportJobId(null);
+  setCustomerReportCache({});
   if (!selectedCustomer?.id) { setCustOrders(null); setCustInvoices(null); return; }
   let cancelled = false;
   (async () => {
@@ -81,6 +89,40 @@ React.useEffect(() => {
   })();
   return () => { cancelled = true; };
 }, [selectedCustomer?.id, selectedCustomer?.name, selectedCustomer?.phone, supabase]);
+const loadCustomerServiceReport = React.useCallback(async (jobId, force = false) => {
+  if (!jobId) return;
+  const existing = customerReportCache[jobId];
+  if (!force && existing && existing.status !== "error") return;
+  const generation = reportRequestGeneration.current;
+  setCustomerReportCache(prev => ({
+    ...prev,
+    [jobId]: { status: "loading", data: prev[jobId]?.data || null, error: null },
+  }));
+  try {
+    const { data, error } = await fetchServiceReportByJobId(supabase, jobId);
+    if (generation !== reportRequestGeneration.current) return;
+    if (error) throw error;
+    setCustomerReportCache(prev => ({
+      ...prev,
+      [jobId]: data
+        ? { status: "loaded", data: normalizeCustomerServiceReport(data), error: null }
+        : { status: "empty", data: null, error: null },
+    }));
+  } catch (error) {
+    if (generation !== reportRequestGeneration.current) return;
+    const message = error?.message || "Service Report gagal dimuat";
+    setCustomerReportCache(prev => ({ ...prev, [jobId]: { status: "error", data: null, error: message } }));
+    addAgentLog?.("CUSTOMER_REPORT_LOAD_FAILED", `Service Report ${jobId} gagal dimuat: ${message}`, "ERROR");
+  }
+}, [addAgentLog, customerReportCache, supabase]);
+const toggleCustomerServiceReport = React.useCallback((jobId) => {
+  if (expandedReportJobId === jobId) {
+    setExpandedReportJobId(null);
+    return;
+  }
+  setExpandedReportJobId(jobId);
+  loadCustomerServiceReport(jobId);
+}, [expandedReportJobId, loadCustomerServiceReport]);
 const history = selectedCustomer
   ? buildCustomerHistory(selectedCustomer, custOrders ?? ordersData, laporanReports, custInvoices ?? invoicesData, customersData)
   : [];
@@ -600,8 +642,11 @@ return (
             {history.length === 0 ? (
               <div style={{ background: cs.card, borderRadius: 14, padding: 32, textAlign: "center", color: cs.muted }}>Belum ada riwayat servis</div>
             ) : history.map(svc => {
-              const hasLaporan = !!svc.laporan_id;
-              const unitDetails = svc.unit_detail || [];
+              const reportState = customerReportCache[svc.job_id];
+              const report = reportState?.data || null;
+              const isReportExpanded = expandedReportJobId === svc.job_id;
+              const hasLaporan = !!svc.laporan_id || reportState?.status === "loaded";
+              const unitDetails = report?.units || [];
               const svcColor = statusColor[svc.status] || cs.border;
               return (
                 <div key={svc.id} style={{ background: cs.card, border: "1px solid " + svcColor + "33", borderRadius: 14, overflow: "hidden" }}>
@@ -631,75 +676,94 @@ return (
                       {svc.notes && <span style={{ gridColumn: "1/-1", color: "#7dd3fc" }}>{svc.notes}</span>}
                     </div>
 
-                    {/* Detail unit AC */}
-                    {unitDetails.length > 0 && (
-                      <div style={{ background: cs.surface, borderRadius: 10, padding: "10px 12px", marginBottom: 10 }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: cs.accent, marginBottom: 8 }}>Detail Unit AC</div>
-                        {unitDetails.map((u, ui) => (
-                          <div key={ui} style={{ marginBottom: ui < unitDetails.length - 1 ? 10 : 0, paddingBottom: ui < unitDetails.length - 1 ? 10 : 0, borderBottom: ui < unitDetails.length - 1 ? "1px solid " + cs.border : "none" }}>
-                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
-                              <span style={{ fontWeight: 700, color: cs.text, fontSize: 12 }}>Unit {u.unit_no} — {u.label}</span>
-                              {u.merk && <span style={{ fontSize: 11, color: cs.muted }}>{u.merk}</span>}
-                              {u.pk && <span style={{ fontSize: 10, background: cs.accent + "12", color: cs.accent, padding: "1px 7px", borderRadius: 99 }}>{u.pk}</span>}
-                              {u.tipe && <span style={{ fontSize: 10, color: cs.muted }}>{u.tipe}</span>}
-                              {u.ampere_akhir && <span style={{ fontSize: 10, background: cs.green + "15", color: cs.green, padding: "1px 7px", borderRadius: 99 }}>{u.ampere_akhir}A</span>}
-                              {parseFloat(u.freon_ditambah) > 0 && <span style={{ fontSize: 10, background: cs.yellow + "15", color: cs.yellow, padding: "1px 7px", borderRadius: 99 }}>{u.freon_ditambah} psi</span>}
-                            </div>
-                            {safeArr(u.kondisi_sebelum).length > 0 && (
-                              <div style={{ marginBottom: 4 }}>
-                                <span style={{ fontSize: 10, color: cs.muted }}>Kondisi masuk: </span>
-                                {safeArr(u.kondisi_sebelum).map((k, ki) => (
-                                  <span key={ki} style={{ fontSize: 10, background: cs.yellow + "15", color: cs.yellow, padding: "1px 6px", borderRadius: 99, marginRight: 3 }}>{k}</span>
-                                ))}
-                              </div>
-                            )}
-                            {safeArr(u.pekerjaan).length > 0 && (
-                              <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 4 }}>
-                                <span style={{ fontSize: 10, color: cs.muted, alignSelf: "center" }}>Dikerjakan: </span>
-                                {safeArr(u.pekerjaan).map((p, pi) => (
-                                  <span key={pi} style={{ fontSize: 10, background: cs.accent + "15", color: cs.accent, padding: "1px 6px", borderRadius: 99 }}>{p}</span>
-                                ))}
-                              </div>
-                            )}
-                            {safeArr(u.kondisi_setelah).length > 0 && (
-                              <div style={{ marginBottom: 3 }}>
-                                <span style={{ fontSize: 10, color: cs.muted }}>Setelah: </span>
-                                {safeArr(u.kondisi_setelah).map((k, ki) => (
-                                  <span key={ki} style={{ fontSize: 10, background: cs.green + "15", color: cs.green, padding: "1px 6px", borderRadius: 99, marginRight: 3 }}>{k}</span>
-                                ))}
-                              </div>
-                            )}
-                            {u.catatan_unit && <div style={{ fontSize: 11, color: "#7dd3fc", marginTop: 3 }}>{u.catatan_unit}</div>}
+                    {/* Payload laporan dan foto benar-benar baru dirender setelah user membuka panel. */}
+                    {isReportExpanded && (
+                      <div style={{ marginBottom: 10, borderTop: "1px solid " + cs.border, paddingTop: 10 }}>
+                        {(!reportState || reportState.status === "loading") && (
+                          <div aria-live="polite" style={{ background: cs.surface, borderRadius: 9, padding: "12px 14px", color: cs.muted, fontSize: 11 }}>
+                            Memuat Service Report…
                           </div>
-                        ))}
-                      </div>
-                    )}
+                        )}
+                        {reportState?.status === "error" && (
+                          <div role="alert" style={{ background: cs.red + "10", border: "1px solid " + cs.red + "33", borderRadius: 9, padding: "10px 12px", color: cs.red, fontSize: 11 }}>
+                            <div style={{ marginBottom: 7 }}>Service Report gagal dimuat: {reportState.error}</div>
+                            <button onClick={() => loadCustomerServiceReport(svc.job_id, true)}
+                              style={{ fontSize: 10, padding: "4px 10px", borderRadius: 6, cursor: "pointer", background: cs.red + "18", border: "1px solid " + cs.red + "44", color: cs.red }}>
+                              Coba Lagi
+                            </button>
+                          </div>
+                        )}
+                        {reportState?.status === "empty" && (
+                          <div style={{ background: cs.surface, borderRadius: 9, padding: "12px 14px", color: cs.muted, fontSize: 11 }}>
+                            Belum ada Service Report untuk job ini.
+                          </div>
+                        )}
+                        {reportState?.status === "loaded" && report && (
+                          <div style={{ display: "grid", gap: 9 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", fontSize: 11 }}>
+                              <span style={{ fontWeight: 800, color: cs.accent }}>Service Report</span>
+                              <span style={{ padding: "2px 7px", borderRadius: 99, background: cs.green + "15", color: cs.green, fontWeight: 700 }}>{report.status}</span>
+                              {report.submitted_at && <span style={{ color: cs.muted }}>Dikirim {new Date(report.submitted_at).toLocaleString("id-ID")}</span>}
+                            </div>
 
-                    {svc.rekomendasi && (
-                      <div style={{ background: "#0ea5e910", border: "1px solid #0ea5e930", borderRadius: 8, padding: "8px 12px", marginBottom: 10, fontSize: 12, color: "#7dd3fc" }}>
-                        Rekomendasi: {svc.rekomendasi}
-                      </div>
-                    )}
-                    {safeArr(svc.materials).length > 0 && (
-                      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 8 }}>
-                        Material: {safeArr(svc.materials).map(m => `${m.nama} ${m.jumlah}${m.satuan}`).join(", ")}
-                      </div>
-                    )}
+                            {unitDetails.length > 0 && (
+                              <div style={{ background: cs.surface, borderRadius: 10, padding: "10px 12px" }}>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: cs.accent, marginBottom: 8 }}>Detail Unit AC</div>
+                                {unitDetails.map((u, ui) => (
+                                  <div key={ui} style={{ marginBottom: ui < unitDetails.length - 1 ? 10 : 0, paddingBottom: ui < unitDetails.length - 1 ? 10 : 0, borderBottom: ui < unitDetails.length - 1 ? "1px solid " + cs.border : "none" }}>
+                                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+                                      <span style={{ fontWeight: 700, color: cs.text, fontSize: 12 }}>Unit {u.unit_no} — {u.label}</span>
+                                      {u.merk && <span style={{ fontSize: 11, color: cs.muted }}>{u.merk}</span>}
+                                      {u.pk && <span style={{ fontSize: 10, background: cs.accent + "12", color: cs.accent, padding: "1px 7px", borderRadius: 99 }}>{u.pk}</span>}
+                                      {u.tipe && <span style={{ fontSize: 10, color: cs.muted }}>{u.tipe}</span>}
+                                      {u.ampere_akhir && <span style={{ fontSize: 10, background: cs.green + "15", color: cs.green, padding: "1px 7px", borderRadius: 99 }}>{u.ampere_akhir}A</span>}
+                                      {parseFloat(u.freon_ditambah) > 0 && <span style={{ fontSize: 10, background: cs.yellow + "15", color: cs.yellow, padding: "1px 7px", borderRadius: 99 }}>{u.freon_ditambah} psi</span>}
+                                    </div>
+                                    {safeArr(u.kondisi_sebelum).length > 0 && (
+                                      <div style={{ marginBottom: 4 }}>
+                                        <span style={{ fontSize: 10, color: cs.muted }}>Kondisi masuk: </span>
+                                        {safeArr(u.kondisi_sebelum).map((k, ki) => <span key={ki} style={{ fontSize: 10, background: cs.yellow + "15", color: cs.yellow, padding: "1px 6px", borderRadius: 99, marginRight: 3 }}>{k}</span>)}
+                                      </div>
+                                    )}
+                                    {safeArr(u.pekerjaan).length > 0 && (
+                                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 4 }}>
+                                        <span style={{ fontSize: 10, color: cs.muted, alignSelf: "center" }}>Dikerjakan: </span>
+                                        {safeArr(u.pekerjaan).map((p, pi) => <span key={pi} style={{ fontSize: 10, background: cs.accent + "15", color: cs.accent, padding: "1px 6px", borderRadius: 99 }}>{p}</span>)}
+                                      </div>
+                                    )}
+                                    {safeArr(u.kondisi_setelah).length > 0 && (
+                                      <div style={{ marginBottom: 3 }}>
+                                        <span style={{ fontSize: 10, color: cs.muted }}>Setelah: </span>
+                                        {safeArr(u.kondisi_setelah).map((k, ki) => <span key={ki} style={{ fontSize: 10, background: cs.green + "15", color: cs.green, padding: "1px 6px", borderRadius: 99, marginRight: 3 }}>{k}</span>)}
+                                      </div>
+                                    )}
+                                    {u.catatan_unit && <div style={{ fontSize: 11, color: "#7dd3fc", marginTop: 3 }}>{u.catatan_unit}</div>}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
 
-                    {/* Foto */}
-                    {safeArr(svc.foto_urls).length > 0 && (
-                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
-                        {safeArr(svc.foto_urls).slice(0, 5).map((url, fi) => (
-                          <img key={fi} src={fotoSrc(url)} alt={`Foto ${fi + 1}`}
-                            onClick={() => window.open(fotoSrc(url), "_blank")}
-                            style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 8, cursor: "pointer", border: "1px solid " + cs.border }}
-                            onMouseEnter={e => e.target.style.opacity = ".75"}
-                            onMouseLeave={e => e.target.style.opacity = "1"} />
-                        ))}
-                        {safeArr(svc.foto_urls).length > 5 && (
-                          <div style={{ width: 56, height: 56, borderRadius: 8, background: cs.surface, border: "1px solid " + cs.border, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: cs.muted, cursor: "pointer" }}
-                            onClick={() => window.open(fotoSrc(svc.foto_urls[5]), "_blank")}>
-                            +{safeArr(svc.foto_urls).length - 5}
+                            {report.rekomendasi && <div style={{ background: "#0ea5e910", border: "1px solid #0ea5e930", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#7dd3fc" }}>Rekomendasi: {report.rekomendasi}</div>}
+                            {report.catatan_global && <div style={{ fontSize: 11, color: cs.muted }}>Catatan laporan: <span style={{ color: cs.text }}>{report.catatan_global}</span></div>}
+                            {report.materials.length > 0 && <div style={{ fontSize: 11, color: cs.muted }}>Material: {report.materials.map(m => `${m.nama || m.name || "Material"} ${m.jumlah ?? m.qty ?? ""}${m.satuan || m.unit || ""}`).join(", ")}</div>}
+
+                            {report.foto_urls.length > 0 && (
+                              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                {report.foto_urls.slice(0, 5).map((url, fi) => (
+                                  <img key={fi} src={fotoSrc(url)} alt={`Foto ${fi + 1}`} loading="lazy"
+                                    onClick={() => window.open(fotoSrc(url), "_blank")}
+                                    style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 8, cursor: "pointer", border: "1px solid " + cs.border }}
+                                    onMouseEnter={e => e.currentTarget.style.opacity = ".75"}
+                                    onMouseLeave={e => e.currentTarget.style.opacity = "1"} />
+                                ))}
+                                {report.foto_urls.length > 5 && (
+                                  <button style={{ width: 56, height: 56, borderRadius: 8, background: cs.surface, border: "1px solid " + cs.border, fontSize: 11, color: cs.muted, cursor: "pointer" }}
+                                    onClick={() => window.open(fotoSrc(report.foto_urls[5]), "_blank")}>
+                                    +{report.foto_urls.length - 5}
+                                  </button>
+                                )}
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -707,8 +771,12 @@ return (
 
                     {/* Tombol aksi */}
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      <button onClick={() => toggleCustomerServiceReport(svc.job_id)} aria-expanded={isReportExpanded}
+                        style={{ fontSize: 11, padding: "5px 12px", borderRadius: 7, cursor: "pointer", background: isReportExpanded ? cs.accent + "22" : cs.surface, border: "1px solid " + cs.accent + "44", color: cs.accent }}>
+                        {isReportExpanded ? "▲ Tutup Service Report" : "▼ Lihat Service Report"}
+                      </button>
                       {isOwnerAdmin && svc.invoice_id && (
-                        <button onClick={() => { const inv = invoicesData.find(i => i.id === svc.invoice_id); if (inv) { setSelectedInvoice(inv); setModalPDF(true); } else showNotif("Invoice tidak ada di cache. Buka tab Invoice untuk mencari."); }}
+                        <button onClick={() => { const inv = (custInvoices ?? invoicesData).find(i => i.id === svc.invoice_id); if (inv) { setSelectedInvoice(inv); setModalPDF(true); } else showNotif("Invoice tidak ada di cache. Buka tab Invoice untuk mencari."); }}
                           style={{ fontSize: 11, padding: "5px 12px", borderRadius: 7, cursor: "pointer", background: cs.green + "15", border: "1px solid " + cs.green + "33", color: cs.green }}>
                           Lihat Invoice
                         </button>
@@ -719,8 +787,8 @@ return (
                           Order Ulang
                         </button>
                       )}
-                      {downloadServiceReportPDF && svc.laporan_id && (
-                        <button onClick={() => { const fullLap = laporanReports.find(r => r.id === svc.laporan_id); if (!fullLap) return; const relInv = invoicesData.find(i => i.job_id === fullLap.job_id) || {}; downloadServiceReportPDF(fullLap, relInv); }}
+                      {downloadServiceReportPDF && reportState?.status === "loaded" && report && (
+                        <button onClick={() => { const relInv = (custInvoices ?? invoicesData).find(i => i.job_id === report.job_id) || {}; downloadServiceReportPDF(report, relInv); }}
                           style={{ fontSize: 11, padding: "5px 12px", borderRadius: 7, cursor: "pointer", background: "#1e3a5f22", border: "1px solid #1e3a5f44", color: "#93c5fd" }}>
                           Report Card
                         </button>
