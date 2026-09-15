@@ -136,6 +136,9 @@ const _todayLap = getLocalDate?.() || new Date().toISOString().slice(0, 10);
 const [lapViewMode, setLapViewMode] = useState("detail"); // "rekap" | "detail" — default detail
 const [rekapDate, setRekapDate]     = useState(_todayLap);
 const [surveyKirimModal, setSurveyKirimModal] = useState(null);
+// Hanya satu galeri foto aktif. Selama tertutup tidak ada elemen <img>, sehingga
+// browser sama sekali belum meminta file foto ke R2/proxy.
+const [expandedPhotoReportId, setExpandedPhotoReportId] = useState(null);
 
 // Terima event dari LaporanDetailModal yang minta buka SurveyKirimModal
 useEffect(() => {
@@ -1212,21 +1215,32 @@ return (
           {/* ── Foto grid untuk Admin/Owner ── */}
           {(() => {
             const fotoWithUrl = safeArr(r.fotos).filter(f => f.url);
+            const isPhotoOpen = expandedPhotoReportId === r.id;
             return fotoWithUrl.length > 0 ? (
               <div style={{ marginBottom: 8 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: cs.green, marginBottom: 6 }}>📸 Foto Laporan ({fotoWithUrl.length})</div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(80px,1fr))", gap: 6 }}>
-                  {fotoWithUrl.map((f, fi) => {
-                    const url = typeof f === "string" ? f : f.url;
-                    const label = typeof f === "string" ? `Foto ${fi + 1}` : f.label || `Foto ${fi + 1}`;
-                    return (
-                      <div key={fi} style={{ position: "relative", cursor: "pointer" }} onClick={() => window.open(fotoSrc(url), "_blank")}>
-                        <img src={fotoSrc(url)} alt={label} style={{ width: "100%", aspectRatio: "1/1", objectFit: "cover", borderRadius: 7, border: "1px solid " + cs.border }} />
-                        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "#000a", borderRadius: "0 0 7px 7px", padding: "2px 4px", fontSize: 9, color: "#fff", textAlign: "center", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>{label}</div>
-                      </div>
-                    );
-                  })}
-                </div>
+                <button
+                  type="button"
+                  data-testid="report-photo-toggle"
+                  aria-expanded={isPhotoOpen}
+                  onClick={() => setExpandedPhotoReportId(prev => prev === r.id ? null : r.id)}
+                  style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, background: isPhotoOpen ? cs.green + "12" : cs.surface, border: "1px solid " + cs.green + "33", borderRadius: 8, padding: "8px 11px", color: cs.green, cursor: "pointer", fontSize: 11, fontWeight: 700, textAlign: "left" }}>
+                  <span>📸 Foto Laporan ({fotoWithUrl.length})</span>
+                  <span>{isPhotoOpen ? "▲ Tutup" : "▼ Lihat Foto"}</span>
+                </button>
+                {isPhotoOpen && (
+                  <div data-testid="report-photo-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(80px,1fr))", gap: 6, marginTop: 7 }}>
+                    {fotoWithUrl.map((f, fi) => {
+                      const url = typeof f === "string" ? f : f.url;
+                      const label = typeof f === "string" ? `Foto ${fi + 1}` : f.label || `Foto ${fi + 1}`;
+                      return (
+                        <div key={fi} style={{ position: "relative", cursor: "pointer" }} onClick={() => window.open(fotoSrc(url), "_blank")}>
+                          <img src={fotoSrc(url)} alt={label} loading="lazy" decoding="async" style={{ width: "100%", aspectRatio: "1/1", objectFit: "cover", borderRadius: 7, border: "1px solid " + cs.border }} />
+                          <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "#000a", borderRadius: "0 0 7px 7px", padding: "2px 4px", fontSize: 9, color: "#fff", textAlign: "center", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>{label}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             ) : null;
           })()}
