@@ -33,6 +33,8 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
   const [pakai, setPakai] = useState([]);      // entri 'pakai' {row, jobOptions, unitsByType}
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
+  // State disabled baru terlihat setelah render; ref menahan klik kedua pada tick yang sama.
+  const confirmingRows = useRef(new Set());
   // Input mewakili teknisi — jalur bantuan admin saat teknisi lupa mengisi.
   // Sengaja BUKAN dengan membuka menu "Material Harian" untuk admin: sesinya
   // dibuat di sini sebagai draft 'pakai' PENDING, lalu diisi & dikonfirmasi
@@ -215,6 +217,8 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
   // overrides = koreksi admin { [lineKey]: qtyTerpakai }, alasan = wajib bila ada koreksi.
   const confirm = async (entry, overrides = {}, alasan = "", splitMap = {}) => {
     const row = entry.pulang;
+    if (confirmingRows.current.has(row.id)) return;
+    confirmingRows.current.add(row.id);
     setBusy(row.id);
     try {
       // Gerbang pertama: barang yang ditulis di sesi pulang tapi tidak pernah dibawa pagi.
@@ -298,7 +302,7 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
       await refreshStock();
       await load();
     } catch (e) { showNotif("❌ Konfirmasi dibatalkan seluruhnya — tidak ada stok parsial: " + (e?.message || e)); }
-    finally { setBusy(""); }
+    finally { confirmingRows.current.delete(row.id); setBusy(""); }
   };
 
   // ── BUKA KOREKSI — kembalikan stok sesi yang sudah dikonfirmasi, lalu set
@@ -443,17 +447,22 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
 
   // ── CONFIRM PAKAI (draft AI) — potong qty per baris dari unit terpilih ──
   const confirmPakai = async (row, editedLines) => {
+    if (confirmingRows.current.has(row.id)) return;
+    confirmingRows.current.add(row.id);
     // Validasi: baris tracked (pipa/kabel/freon) wajib punya unit_id + qty>0.
     const tracked = editedLines.filter((l) => ["pipa", "kabel", "freon"].includes(l.material_type));
     // Baris tambahan admin bisa saja belum diberi nama — tanpa nama, transaksi
     // stoknya tidak bisa dibaca siapa pun nanti.
     const tanpaNama = editedLines.filter((l) => Number(l.qty) > 0 && !String(l.label || "").trim());
-    if (tanpaNama.length) { showNotif("⚠️ Isi nama material dulu untuk semua baris"); return; }
+    if (tanpaNama.length) { showNotif("⚠️ Isi nama material dulu untuk semua baris"); confirmingRows.current.delete(row.id); return; }
     const missing = tracked.filter((l) => Number(l.qty) > 0 && !l.unit_id);
-    if (missing.length) { showNotif(`⚠️ Pilih tabung/roll dulu untuk: ${missing.map((l) => l.label).join(", ")}`); return; }
-    const kurang = hitungKekuranganStok(tracked, await ambilStokUnit(tracked));
+    if (missing.length) { showNotif(`⚠️ Pilih tabung/roll dulu untuk: ${missing.map((l) => l.label).join(", ")}`); confirmingRows.current.delete(row.id); return; }
+    let kurang;
+    try { kurang = hitungKekuranganStok(tracked, await ambilStokUnit(tracked)); }
+    catch (e) { confirmingRows.current.delete(row.id); showNotif("❌ Gagal memeriksa stok: " + (e?.message || e)); return; }
     if (kurang.length) {
       showNotif("⚠️ Melebihi stok — " + pesanKekuranganStok(kurang) + ". Betulkan qty atau pilih tabung/roll lain.");
+      confirmingRows.current.delete(row.id);
       return;
     }
     setBusy(row.id);
@@ -486,7 +495,7 @@ function MaterialConfirmTab({ supabase, currentUser, showNotif, fetchInventoryUn
       await refreshStock();
       await load();
     } catch (e) { showNotif("❌ Konfirmasi dibatalkan seluruhnya — tidak ada stok parsial: " + (e?.message || e)); }
-    finally { setBusy(""); }
+    finally { confirmingRows.current.delete(row.id); setBusy(""); }
   };
 
   const photosOf = (entry) => {

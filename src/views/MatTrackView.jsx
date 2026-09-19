@@ -1,4 +1,4 @@
-import { memo, useState, useMemo, useEffect } from "react";
+import { memo, useState, useMemo, useEffect, useRef } from "react";
 import { cs } from "../theme/cs.js";
 import { useAppContext } from "../context/AppContext.js";
 import { displayStock, computeStockStatus } from "../lib/inventory.js";
@@ -10,6 +10,7 @@ import MaterialConfirmTab from "./MaterialConfirmTab.jsx";
 import MaterialBroughtRecapTab from "./MaterialBroughtRecapTab.jsx";
 import { downloadCsv } from "../lib/exportUtils.js";
 import { shortInventoryUnitId, transactionsForInventoryUnit } from "../lib/inventoryUnitHistory.js";
+import { createInventoryUnit } from "../lib/createInventoryUnit.js";
 
 // ───────────────────────────────────────────────
 // Pending AI Material — manual approve only (no auto-insert)
@@ -791,6 +792,9 @@ const kabelReport = useMemo(() => buildMatReport("kabel", kabelReportMonth, kabe
 // ── State untuk inline mini-form unit fisik ──
 const [addUnitFor, setAddUnitFor]   = useState(null); // inventory_code sedang tambah unit
 const [addUnitForm, setAddUnitForm] = useState({ label: "", capacity: "", minVisible: "", purchaseDate: "", notes: "" });
+const [addingUnit, setAddingUnit] = useState(false);
+const addUnitPending = useRef(false);
+const addUnitRequestId = useRef(null);
 const [editUnitId, setEditUnitId]   = useState(null); // unit.id sedang diedit stok
 const [editUnitVal, setEditUnitVal] = useState("");   // nilai stok baru
 const [showArchived, setShowArchived] = useState(false); // tampilkan unit archived
@@ -965,29 +969,38 @@ const reloadUnits = async () => {
 };
 
 const addUnit = async (invCode) => {
+  if (addUnitPending.current) return; // kunci sinkron, sebelum React sempat render ulang
   const label = addUnitForm.label.trim();
   const cap   = parseFloat(addUnitForm.capacity) || 0;
   const minV  = parseFloat(addUnitForm.minVisible) || 3;
   if (!label) { showNotif("❌ Label unit harus diisi"); return; }
   if (cap <= 0) { showNotif("❌ Kapasitas harus > 0"); return; }
-  const { error } = await supabase.from("inventory_units").insert({
-    inventory_code: invCode,
-    unit_label: label,
-    stock: cap,
-    capacity: cap,
-    min_visible: minV,
-    is_active: true,
-    // Dikosongkan (NULL) kalau tidak diisi — tanggal karangan lebih berbahaya
-    // daripada kolom kosong saat mencocokkan pemakaian dengan nota pembelian.
-    purchase_date: addUnitForm.purchaseDate || null,
-    notes: addUnitForm.notes.trim() || null,
-  });
-  if (!error) {
-    await reloadUnits();
-    showNotif("✅ Unit " + label + " ditambahkan");
+  addUnitPending.current = true;
+  setAddingUnit(true);
+  // ID tetap pada retry form yang sama; insert ambigu tidak pernah menambah unit kedua.
+  const requestId = addUnitRequestId.current || crypto.randomUUID();
+  addUnitRequestId.current = requestId;
+  try {
+    await createInventoryUnit(supabase, {
+      inventory_code: invCode,
+      unit_label: label,
+      stock: cap,
+      capacity: cap,
+      min_visible: minV,
+      is_active: true,
+      purchase_date: addUnitForm.purchaseDate || null,
+      notes: addUnitForm.notes.trim() || null,
+    }, requestId);
+    // Commit sudah pasti berhasil. Tutup form sebelum refresh, agar kegagalan
+    // membaca ulang daftar tidak mengizinkan klik Simpan kedua dengan ID baru.
+    addUnitRequestId.current = null;
     setAddUnitFor(null);
     setAddUnitForm({ label: "", capacity: "", minVisible: "", purchaseDate: "", notes: "" });
-  } else showNotif("❌ " + error.message);
+    showNotif("✅ Unit " + label + " ditambahkan");
+    try { await reloadUnits(); }
+    catch { showNotif("⚠️ Unit tersimpan, tetapi daftar belum termuat ulang. Refresh halaman untuk melihatnya."); }
+  } catch (error) { showNotif("❌ Unit belum terkonfirmasi. Coba Simpan lagi: " + error.message); }
+  finally { addUnitPending.current = false; setAddingUnit(false); }
 };
 
 const updateUnitStock = async (unitId, newStock) => {
@@ -1739,7 +1752,7 @@ return (
             </div>
             {/* Tombol + tambah (hanya di tab aktif/semua) */}
             {isOwnerAdmin && (archiveTabFilter === "aktif" || archiveTabFilter === "semua") && (
-              <button onClick={() => { setAddUnitFor(isAddingHere ? null : item.code); setAddUnitForm({ label: "", capacity: "", minVisible: "" }); }}
+              <button disabled={addingUnit} onClick={() => { addUnitRequestId.current = null; setAddUnitFor(isAddingHere ? null : item.code); setAddUnitForm({ label: "", capacity: "", minVisible: "", purchaseDate: "", notes: "" }); }}
                 style={{ fontSize: 12, padding: "6px 14px", borderRadius: 8, background: isAddingHere ? cs.red + "22" : cs.accent + "22", border: "1px solid " + (isAddingHere ? cs.red : cs.accent) + "55", color: isAddingHere ? cs.red : cs.accent, cursor: "pointer", fontWeight: 700, whiteSpace: "nowrap" }}>
                 {isAddingHere ? "✕ Batal" : "+ Tambah Unit"}
               </button>
@@ -1783,9 +1796,9 @@ return (
                     onChange={e => setAddUnitForm(f => ({ ...f, notes: e.target.value }))}
                     style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: "8px 10px", color: cs.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
                 </div>
-                <button onClick={() => addUnit(item.code)}
-                  style={{ background: cs.accent, border: "none", color: "#0a0f1e", padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12, whiteSpace: "nowrap" }}>
-                  ✓ Simpan
+                <button disabled={addingUnit} onClick={() => addUnit(item.code)}
+                  style={{ background: cs.accent, border: "none", color: "#0a0f1e", padding: "8px 16px", borderRadius: 8, cursor: addingUnit ? "wait" : "pointer", fontWeight: 700, fontSize: 12, whiteSpace: "nowrap", opacity: addingUnit ? 0.6 : 1 }}>
+                  {addingUnit ? "⏳ Menyimpan…" : "✓ Simpan"}
                 </button>
               </div>
               <div style={{ fontSize: 10, color: cs.muted, marginTop: 6 }}>

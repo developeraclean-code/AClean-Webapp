@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { cs } from "../theme/cs.js";
 import { summarizeTools } from "../lib/officeTools.js";
 
@@ -15,6 +15,7 @@ function OfficeToolsView({ supabase, currentUser, showNotif, showConfirm }) {
   const [expand, setExpand] = useState(null);   // tool id riwayat terbuka
   const [form, setForm] = useState(null);        // {id?, nama, kategori, qty, kondisi, catatan}
   const [busy, setBusy] = useState(false);
+  const busyNow = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -30,7 +31,9 @@ function OfficeToolsView({ supabase, currentUser, showNotif, showConfirm }) {
   const status = summarizeTools(activeTools, moves.filter((m) => m.status === "OUT"));
 
   const save = async () => {
+    if (busyNow.current) return;
     if (!form?.nama?.trim()) return showNotif("Nama alat wajib diisi");
+    busyNow.current = true;
     setBusy(true);
     try {
       const row = {
@@ -42,7 +45,7 @@ function OfficeToolsView({ supabase, currentUser, showNotif, showConfirm }) {
       else { const { error } = await supabase.from("office_tools").insert(row); if (error) throw error; }
       showNotif("✅ Alat tersimpan"); setForm(null); await load();
     } catch (e) { showNotif("❌ Gagal: " + (e?.message || e)); }
-    finally { setBusy(false); }
+    finally { busyNow.current = false; setBusy(false); }
   };
 
   const del = (t) => {

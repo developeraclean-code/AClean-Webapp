@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { cs } from "../theme/cs.js";
 import { movingAvgCost, unitCostFromPack, qtyFromPack, hppLabel } from "../lib/hpp.js";
 
@@ -40,6 +40,7 @@ export default function RestockModal({
 }) {
   const [form, setForm] = useState({ ...EMPTY_FORM, tanggal: TODAY });
   const [saving, setSaving] = useState(false);
+  const savingNow = useRef(false);
 
   useEffect(() => {
     if (open && item) {
@@ -76,15 +77,19 @@ export default function RestockModal({
   const hppBerubah = hargaNum > 0 && Math.abs(hppBaru - hppLama) >= 0.01;
 
   const handleClose = () => {
+    if (savingNow.current) return;
     setForm({ ...EMPTY_FORM, tanggal: TODAY });
     onClose();
   };
 
   const handleSave = async () => {
+    if (savingNow.current) return;
     if (qtyNum <= 0) { showNotif("❌ Qty harus lebih dari 0"); return; }
+    savingNow.current = true;
     setSaving(true);
 
     // Satu RPC: ledger, stok, HPP, dan biaya (opsional) commit/rollback bersama.
+    try {
     const { data: result, error: invErr } = await supabase.rpc("restock_inventory_atomic", {
       p_code: item.code,
       p_qty: qtyNum,
@@ -97,7 +102,6 @@ export default function RestockModal({
     if (invErr) {
       showNotif("❌ Restock dibatalkan seluruhnya: " + invErr.message);
       addAgentLog("STOCK_RESTOCK", `Restock ${item.name}: +${qtyNum} → ${stokBaru} ${item.unit} — GAGAL`, "ERROR");
-      setSaving(false);
       return;
     }
 
@@ -112,8 +116,11 @@ export default function RestockModal({
     if (result?.expense_created) addAgentLog("RESTOCK_EXPENSE", `Restock ${item.name} +${qtyNum} ${item.unit} — Rp${totalBeli.toLocaleString("id-ID")} dicatat ke biaya`, "SUCCESS");
 
     showNotif("✅ Restock " + item.name + " +" + qtyNum + " " + item.unit + (form.catetBiaya && totalBeli > 0 ? " · biaya Rp" + totalBeli.toLocaleString("id-ID") + " dicatat" : ""));
-    setSaving(false);
-    handleClose();
+    setForm({ ...EMPTY_FORM, tanggal: TODAY });
+    onClose();
+    } catch (error) {
+      showNotif("❌ Restock gagal: " + (error?.message || error));
+    } finally { savingNow.current = false; setSaving(false); }
   };
 
   const stokColor = item.status === "OUT" ? cs.red : item.status === "CRITICAL" ? cs.yellow : cs.green;

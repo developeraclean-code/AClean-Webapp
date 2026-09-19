@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { cs } from "../theme/cs.js";
 import { reconcileDay, sumReportedUsage, reconStatus, RECON_TOLERANCE } from "../lib/materialRecon.js";
 
@@ -139,6 +139,7 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
   const [savedPulang, setSavedPulang] = useState(null);
   const [pagiFromJob, setPagiFromJob] = useState(false); // pagi auto-seed dari job_materials_brought
   const [busy, setBusy] = useState("");
+  const savingSessionNow = useRef(new Set());
 
   const byKat = (k) => materials.filter((m) => m.kategori === k);
 
@@ -220,6 +221,14 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
   const removePhoto = (setSess, id) => setSess((s) => ({ ...s, photos: s.photos.filter((p) => p.id !== id) }));
 
   const saveSession = async (session) => {
+    if (savingSessionNow.current.has(session)) return;
+    savingSessionNow.current.add(session);
+    try {
+      await saveSessionOnce(session);
+    } finally { savingSessionNow.current.delete(session); }
+  };
+
+  const saveSessionOnce = async (session) => {
     const sess = session === "pagi" ? pagi : pulang;
     const saved = session === "pagi" ? savedPagi : savedPulang;
     // Sesi yang sudah dikonfirmasi Owner/Admin dikunci di database (migrasi 147):

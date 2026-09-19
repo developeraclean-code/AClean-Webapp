@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { cs } from "../theme/cs.js";
 
 const inp = {
@@ -43,6 +43,7 @@ export default function MaterialFormModal({
 }) {
   const [form, setForm] = useState(mode === "edit" ? EMPTY_EDIT : EMPTY_ADD);
   const [saving, setSaving] = useState(false);
+  const savingNow = useRef(false);
 
   useEffect(() => {
     if (!open) return;
@@ -73,11 +74,13 @@ export default function MaterialFormModal({
   const stCol = statusAdd === "OK" ? cs.green : statusAdd === "OUT" ? cs.red : cs.yellow;
 
   const handleClose = () => {
+    if (savingNow.current) return;
     setForm(mode === "edit" ? EMPTY_EDIT : EMPTY_ADD);
     onClose();
   };
 
   const handleSaveAdd = async () => {
+    if (savingNow.current) return;
     if (!form.name || form.name.trim().length < 2 || form.name.trim().length > 100) {
       showNotif("❌ Nama material harus 2-100 karakter"); return;
     }
@@ -104,7 +107,9 @@ export default function MaterialFormModal({
       status: stokStatus,
       material_type: form.material_type || "other",
     };
+    savingNow.current = true;
     setSaving(true);
+    try {
     const { data: saved, error: invErr } = await supabase.rpc("create_inventory_item_atomic", {
       p_code: newCode,
       p_name: newItem.name,
@@ -118,23 +123,27 @@ export default function MaterialFormModal({
     });
     if (invErr) {
       showNotif("❌ Gagal menyimpan material: " + invErr.message);
-      setSaving(false);
       return;
     }
     // RPC membuat master dengan stok 0 lalu ledger menambah stok awal tepat satu kali.
     setInventoryData(prev => [...prev, { ...newItem, ...(saved || {}) }]);
     addAgentLog("STOCK_ADDED", `Material baru: ${newItem.name} [${newCode}] stok: ${stokAwal} ${newItem.unit}`, "SUCCESS");
     showNotif("✅ " + newItem.name + " ditambahkan [" + newCode + "]");
-    setSaving(false);
-    handleClose();
+    setForm(EMPTY_ADD);
+    onClose();
+    } catch (error) { showNotif("❌ Gagal menyimpan material: " + (error?.message || error)); }
+    finally { savingNow.current = false; setSaving(false); }
   };
 
   const handleSaveEdit = async () => {
+    if (savingNow.current) return;
     if (!editItem) return;
     if (stokFinal < 0) { showNotif("❌ Stok tidak boleh negatif"); return; }
     const hargaBaru = parseInt(form.price ?? editItem.price) || 0;
     const reorderBaru = parseInt(form.reorder ?? editItem.reorder) || 5;
+    savingNow.current = true;
     setSaving(true);
+    try {
     const { data: saved, error: eErr } = await supabase.rpc("adjust_inventory_item_atomic", {
       p_code: editItem.code,
       p_target_stock: stokFinal,
@@ -144,7 +153,6 @@ export default function MaterialFormModal({
     });
     if (eErr) {
       showNotif("❌ Perubahan dibatalkan seluruhnya: " + eErr.message);
-      setSaving(false);
       return;
     }
     else {
@@ -153,8 +161,10 @@ export default function MaterialFormModal({
       addAgentLog("STOCK_UPDATED", `Stok ${editItem.name}: ${editItem.stock}→${stokFinal} ${editItem.unit} (${statusBaru})`, "SUCCESS");
       showNotif("✅ Stok " + editItem.name + " diupdate → " + stokFinal + " " + editItem.unit);
     }
-    setSaving(false);
-    handleClose();
+    setForm(EMPTY_EDIT);
+    onClose();
+    } catch (error) { showNotif("❌ Perubahan stok gagal: " + (error?.message || error)); }
+    finally { savingNow.current = false; setSaving(false); }
   };
 
   const statusColor = (s) => s === "OK" ? cs.green : s === "OUT" ? cs.red : cs.yellow;

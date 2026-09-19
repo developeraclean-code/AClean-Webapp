@@ -1,4 +1,4 @@
-import { memo, useState, useMemo, useEffect } from "react";
+import { memo, useState, useMemo, useEffect, useRef } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor, INVOICE_UNPAID_STATUSES } from "../constants/status.js";
 import { smartSearchNormalize, samePhone, formatPhone } from "../lib/phone.js";
@@ -302,6 +302,8 @@ const [payHistory, setPayHistory]       = useState([]);   // invoice_payments ro
 const [payLoading, setPayLoading]       = useState(false);
 const [payForm, setPayForm]             = useState({ amount: "", method: "transfer", notes: "", paid_at: "" });
 const [paySaving, setPaySaving]         = useState(false);
+const paySavingNow = useRef(false);
+const paymentRequests = useRef(new Map()); // invoice.id → isi request tetap sampai hasil pasti
 
 const openPayPanel = async (inv) => {
   setPayPanelInvId(inv.id);
@@ -323,46 +325,45 @@ const openPayPanel = async (inv) => {
 };
 
 const savePayment = async (inv) => {
+  if (paySavingNow.current) return;
   const amt = Number(payForm.amount);
   if (!amt || amt <= 0) { showNotif("⚠️ Jumlah tidak valid"); return; }
-  const remaining = Math.max(0, (inv.remaining_amount ?? inv.total) - amt);
-  const newPaidAmount = (Number(inv.paid_amount) || 0) + amt;
-  const newStatus = remaining <= 0 ? "PAID" : "PARTIAL_PAID";
+  const request = {
+    p_invoice_id: inv.id,
+    p_amount: amt,
+    p_method: payForm.method,
+    p_notes: payForm.notes?.trim() || null,
+    p_paid_at: payForm.paid_at || getLocalDate(),
+    p_actor_name: currentUser?.name || null,
+  };
+  const prior = paymentRequests.current.get(inv.id);
+  if (prior && JSON.stringify({ ...prior, p_payment_id: null }) !== JSON.stringify({ ...request, p_payment_id: null })) {
+    showNotif("⚠️ Hasil pembayaran sebelumnya belum pasti. Kembalikan isian semula dan coba lagi, atau periksa riwayat pembayaran dahulu.");
+    return;
+  }
+  paySavingNow.current = true;
   setPaySaving(true);
+  const payload = prior || { ...request, p_payment_id: crypto.randomUUID() };
+  paymentRequests.current.set(inv.id, payload);
   try {
-    // Insert ke invoice_payments
-    const { error: e1 } = await supabase.from("invoice_payments").insert({
-      invoice_id: inv.id,
-      amount: amt,
-      method: payForm.method,
-      notes: payForm.notes || null,
-      paid_at: payForm.paid_at || getLocalDate(),
-      recorded_by_name: currentUser?.name || "Admin",
-    });
-    if (e1) throw e1;
-
-    // Update invoice aggregate
-    const updateFields = {
-      paid_amount: newPaidAmount,
-      remaining_amount: remaining,
-      status: newStatus,
-    };
-    if (newStatus === "PAID") updateFields.paid_at = payForm.paid_at || getLocalDate();
-    const { error: e2 } = await supabase.from("invoices").update(updateFields).eq("id", inv.id);
-    if (e2) throw e2;
-
-    setInvoicesData(prev => prev.map(i => i.id === inv.id ? { ...i, ...updateFields } : i));
+    const { data: result, error } = await supabase.rpc("record_invoice_partial_payment_atomic", payload);
+    if (error) throw error;
+    const savedInvoice = result?.invoice;
+    if (!savedInvoice) throw new Error("RPC tidak mengembalikan invoice; periksa pembayaran sebelum mengulang.");
+    paymentRequests.current.delete(inv.id);
+    setInvoicesData(prev => prev.map(i => i.id === inv.id ? { ...i, ...savedInvoice } : i));
     // Refresh history
     const { data } = await supabase.from("invoice_payments")
       .select("id,amount,method,notes,paid_at,recorded_by_name,created_at")
       .eq("invoice_id", inv.id).order("paid_at", { ascending: true });
     setPayHistory(data || []);
     setPayForm({ amount: "", method: "transfer", notes: "", paid_at: getLocalDate() });
-    showNotif(`✅ Pembayaran ${fmt(amt)} tercatat — ${remaining > 0 ? "sisa " + fmt(remaining) : "LUNAS"}`);
-    if (newStatus === "PAID") setPayPanelInvId(null);
+    showNotif(`✅ Pembayaran ${fmt(amt)} tercatat — ${Number(savedInvoice.remaining_amount) > 0 ? "sisa " + fmt(savedInvoice.remaining_amount) : "LUNAS"}`);
+    if (savedInvoice.status === "PAID") setPayPanelInvId(null);
   } catch (err) {
-    showNotif("❌ Gagal simpan: " + err.message, "error");
+    showNotif("❌ Gagal simpan: " + err.message + ". Jika koneksi terputus, jangan ubah isian sebelum mencoba lagi.", "error");
   } finally {
+    paySavingNow.current = false;
     setPaySaving(false);
   }
 };

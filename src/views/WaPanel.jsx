@@ -1,3 +1,4 @@
+import { useRef, useState } from "react";
 import { cs } from "../theme/cs.js";
 import { normalizePhone, samePhone, smartSearchNormalize } from "../lib/phone.js";
 import { fetchWaConversations } from "../data/reads.js";
@@ -22,6 +23,37 @@ export default function WaPanel({
   waProvider, isMobile, currentUser,
   supabase, showNotif, sendWA, addAgentLog, setActiveMenu,
 }) {
+  const sendingNow = useRef(false);
+  const lastSent = useRef({ key: "", at: 0 });
+  const [sendingManual, setSendingManual] = useState(false);
+  const handleManualSend = async () => {
+    if (sendingNow.current || !waInput.trim() || !selectedConv) return;
+    const sendKey = `${selectedConv.phone}:${waInput.trim()}`;
+    if (lastSent.current.key === sendKey && Date.now() - lastSent.current.at < 5000) {
+      showNotif("⚠️ Pesan yang sama baru saja terkirim; tunggu sebentar sebelum mengirim ulang.");
+      return;
+    }
+    sendingNow.current = true;
+    setSendingManual(true);
+    const txt = waInput.trim();
+    const conv = selectedConv;
+    try {
+      const ok = await sendWA(conv.phone, txt);
+      if (!ok) { showNotif("⚠️ Pengiriman belum terkonfirmasi; pesan tetap di kotak. Cek WA/customer sebelum mencoba lagi."); return; }
+      lastSent.current = { key: sendKey, at: Date.now() };
+      const nowIso = new Date().toISOString();
+      setWaInput(prev => prev.trim() === txt ? "" : prev);
+      setWaMessages(prev => [...prev, { id: Date.now(), phone: conv.phone, name: currentUser?.name || "Admin", content: txt, role: "admin", created_at: nowIso }]);
+      const { error: logError } = await supabase.from("wa_messages").insert({ phone: conv.phone, name: currentUser?.name || "Admin", content: txt, role: "admin" });
+      if (logError) showNotif("⚠️ WA terkirim, tetapi riwayat gagal disimpan: " + logError.message);
+      await supabase.from("wa_conversations").update({ last_reply: txt.slice(0, 80), updated_at: nowIso }).eq("phone", conv.phone);
+      setWaConversations(prev => prev.map(cv => cv.id === conv.id ? { ...cv, last_reply: txt.slice(0, 80) } : cv));
+      addAgentLog("WA_SENT_MANUAL", `Manual reply ke ${conv.name}: "${txt.slice(0, 40)}"`, "SUCCESS");
+      showNotif("✅ Pesan terkirim via Fonnte");
+    } catch (error) {
+      showNotif("⚠️ Status kirim WA belum pasti; periksa percakapan sebelum mencoba lagi: " + (error?.message || error));
+    } finally { sendingNow.current = false; setSendingManual(false); }
+  };
   if (!open) return null;
 
   const isOwnerAdmin = currentUser?.role === "Owner" || currentUser?.role === "Admin";
@@ -202,38 +234,11 @@ export default function WaPanel({
                 </div>
                 <div style={{ padding: "10px 14px", borderTop: "1px solid " + cs.border, display: "flex", gap: 8, flexShrink: 0 }}>
                   <input id="waInput" value={waInput} onChange={e => setWaInput(e.target.value)}
-                    onKeyDown={async e => {
-                      if (e.key === "Enter" && waInput.trim() && selectedConv) {
-                        const txt = waInput; setWaInput("");
-                        const ok = await sendWA(selectedConv.phone, txt);
-                        if (ok) {
-                          const nowIso = new Date().toISOString();
-                          setWaMessages(prev => [...prev, { id: Date.now(), phone: selectedConv.phone, name: currentUser?.name || "Admin", content: txt, role: "admin", created_at: nowIso }]);
-                          supabase.from("wa_messages").insert({ phone: selectedConv.phone, name: currentUser?.name || "Admin", content: txt, role: "admin" }).then(() => {});
-                          supabase.from("wa_conversations").update({ last_reply: txt.slice(0, 80), updated_at: nowIso }).eq("phone", selectedConv.phone).then(() => {});
-                          setWaConversations(prev => prev.map(cv => cv.id === selectedConv.id ? { ...cv, last_reply: txt.slice(0, 80) } : cv));
-                        }
-                        addAgentLog("WA_SENT_MANUAL", `Manual reply ke ${selectedConv.name}: "${txt.slice(0, 40)}"`, "SUCCESS");
-                        showNotif(ok ? "✅ Pesan terkirim via Fonnte" : "📱 Fonnte gagal — cek koneksi");
-                      }
-                    }}
+                    onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); handleManualSend(); } }}
+                    disabled={sendingManual}
                     placeholder="Balas manual..." style={{ flex: 1, background: cs.bg, border: "1px solid " + cs.border, borderRadius: 10, padding: "8px 12px", color: cs.text, fontSize: 12, outline: "none" }} />
-                  <button onClick={async () => {
-                    if (waInput.trim() && selectedConv) {
-                      const txt = waInput; setWaInput("");
-                      const ok = await sendWA(selectedConv.phone, txt);
-                      if (ok) {
-                        const nowIso = new Date().toISOString();
-                        setWaMessages(prev => [...prev, { id: Date.now(), phone: selectedConv.phone, name: currentUser?.name || "Admin", content: txt, role: "admin", created_at: nowIso }]);
-                        supabase.from("wa_messages").insert({ phone: selectedConv.phone, name: currentUser?.name || "Admin", content: txt, role: "admin" }).then(() => {});
-                        supabase.from("wa_conversations").update({ last_reply: txt.slice(0, 80), updated_at: nowIso }).eq("phone", selectedConv.phone).then(() => {});
-                        setWaConversations(prev => prev.map(cv => cv.id === selectedConv.id ? { ...cv, last_reply: txt.slice(0, 80) } : cv));
-                      }
-                      addAgentLog("WA_SENT_MANUAL", `Manual reply ke ${selectedConv.name}: "${txt.slice(0, 40)}"`, "SUCCESS");
-                      showNotif(ok ? "✅ Pesan terkirim via Fonnte" : "📱 Fonnte gagal — cek koneksi");
-                    }
-                  }}
-                    style={{ background: "#25D366", border: "none", color: "#fff", padding: "8px 14px", borderRadius: 10, cursor: "pointer", fontWeight: 700 }}>Kirim</button>
+                  <button onClick={handleManualSend} disabled={sendingManual || !waInput.trim()}
+                    style={{ background: "#25D366", border: "none", color: "#fff", padding: "8px 14px", borderRadius: 10, cursor: sendingManual ? "wait" : "pointer", fontWeight: 700 }}>{sendingManual ? "Mengirim…" : "Kirim"}</button>
                 </div>
               </>
             ) : (

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { cs } from "../theme/cs.js";
 import { toolStatus, outMovementsForRef } from "../lib/officeTools.js";
 
@@ -16,6 +16,7 @@ function OfficeToolModal({ job, scope = "order", mode = "bawa", onClose, supabas
   const [carriedBy, setCarriedBy] = useState(currentUser?.name || "");
   const [retSel, setRetSel] = useState({});   // {movementId: true} yang akan dikembalikan
   const [busy, setBusy] = useState(false);
+  const busyNow = useRef(false);
 
   const load = useCallback(async () => {
     const { data: t } = await supabase.from("office_tools").select("*").eq("aktif", true).order("nama");
@@ -33,6 +34,7 @@ function OfficeToolModal({ job, scope = "order", mode = "bawa", onClose, supabas
   };
 
   const saveBawa = async () => {
+    if (busyNow.current) return;
     const rows = tools
       .map((t) => ({ t, q: take[t.id] || 0 }))
       .filter((x) => x.q > 0)
@@ -43,6 +45,7 @@ function OfficeToolModal({ job, scope = "order", mode = "bawa", onClose, supabas
       }));
     if (!rows.length) return showNotif("Pilih minimal 1 alat (qty > 0)");
     if (!carriedBy.trim()) return showNotif("Isi siapa yang membawa alat");
+    busyNow.current = true;
     setBusy(true);
     try {
       const { error } = await supabase.from("office_tool_movement").insert(rows);
@@ -50,21 +53,24 @@ function OfficeToolModal({ job, scope = "order", mode = "bawa", onClose, supabas
       showNotif(`✅ ${rows.reduce((s, r) => s + r.qty, 0)} alat tercatat dibawa ${carriedBy}`);
       onClose();
     } catch (e) { showNotif("❌ Gagal: " + (e?.message || e)); }
-    finally { setBusy(false); }
+    finally { busyNow.current = false; setBusy(false); }
   };
 
   const saveKembali = async () => {
+    if (busyNow.current) return;
     const ids = Object.keys(retSel).filter((k) => retSel[k]);
     if (!ids.length) return showNotif("Pilih alat yang dikembalikan");
+    busyNow.current = true;
     setBusy(true);
     try {
       const patch = { status: "RETURNED", returned_at: new Date().toISOString(), returned_by: currentUser?.name || "", kondisi_in: "baik", updated_at: new Date().toISOString() };
-      const { error } = await supabase.from("office_tool_movement").update(patch).in("id", ids);
+      const { data, error } = await supabase.from("office_tool_movement").update(patch).in("id", ids).eq("status", "OUT").select("id");
       if (error) throw error;
-      showNotif(`✅ ${ids.length} alat dikembalikan`);
+      if (!data?.length) { showNotif("⚠️ Alat sudah dikembalikan oleh pengguna lain"); return; }
+      showNotif(`✅ ${data.length} alat dikembalikan`);
       onClose();
     } catch (e) { showNotif("❌ Gagal: " + (e?.message || e)); }
-    finally { setBusy(false); }
+    finally { busyNow.current = false; setBusy(false); }
   };
 
   const inp = { background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 10px", color: cs.text, fontSize: 14, outline: "none" };

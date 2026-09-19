@@ -8,7 +8,7 @@
 // Anti dobel-restock: nota yang sudah pernah ditautkan punya `stock_linked_at` terisi dan
 // tombolnya hilang dari ExpensesView. Kolom itu juga yang membuat autosum biaya material
 // (src/lib/hpp.js) melewati nota ini — biayanya sudah terhitung lewat pemakaian stok.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { cs } from "../theme/cs.js";
 import { movingAvgCost, unitCostFromPack, qtyFromPack, hppLabel } from "../lib/hpp.js";
 
@@ -53,6 +53,7 @@ export default function TautkanStokModal({
   const [qty, setQty] = useState("");
   const [perPack, setPerPack] = useState(false);
   const [saving, setSaving] = useState(false);
+  const savingNow = useRef(false);
 
   const item = useMemo(() => inventoryData.find(i => i.code === code) || null, [inventoryData, code]);
 
@@ -86,6 +87,14 @@ export default function TautkanStokModal({
   const bisaSimpan = !!item && qtyDasar > 0 && unitCost > 0 && !saving;
 
   const simpan = async () => {
+    if (savingNow.current) return;
+    savingNow.current = true;
+    try { await simpanOnce(); }
+    catch (error) { showNotif("❌ Gagal menautkan nota: " + (error?.message || error)); setSaving(false); }
+    finally { savingNow.current = false; }
+  };
+
+  const simpanOnce = async () => {
     if (!bisaSimpan) return;
     setSaving(true);
     const now = new Date().toISOString();

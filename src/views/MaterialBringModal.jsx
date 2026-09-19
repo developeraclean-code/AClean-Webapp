@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { cs } from "../theme/cs.js";
 
 // MaterialBringModal — teknisi/helper declare material yang dibawa per job sebelum berangkat.
@@ -21,6 +21,7 @@ export default function MaterialBringModal({
   const [picked, setPicked] = useState({}); // unit_id → { qty_estimate, notes }
   const [existing, setExisting] = useState([]); // existing brought rows for this job
   const [saving, setSaving] = useState(false);
+  const savingNow = useRef(false);
   const [loading, setLoading] = useState(false);
   const [showLowStock, setShowLowStock] = useState(false); // toggle: tampilkan stok rendah/kosong
 
@@ -146,6 +147,8 @@ export default function MaterialBringModal({
   };
 
   const handleSave = async () => {
+    if (savingNow.current) return;
+    savingNow.current = true;
     setSaving(true);
     try {
       const now = new Date().toISOString();
@@ -213,6 +216,7 @@ export default function MaterialBringModal({
     } catch (e) {
       showNotif("❌ Gagal simpan: " + (e?.message || e), "error");
     } finally {
+      savingNow.current = false;
       setSaving(false);
     }
   };

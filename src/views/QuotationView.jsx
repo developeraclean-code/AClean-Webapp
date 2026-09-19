@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { cs } from "../theme/cs.js";
 import { formatPhone } from "../lib/phone.js";
 import QuotationModal from "./QuotationModal.jsx";
@@ -46,6 +46,7 @@ export default function QuotationView({
   const [showModal, setShowModal]     = useState(false);
   const [editData, setEditData]       = useState(null);
   const [approvingId, setApprovingId] = useState(null);
+  const approvingNow = useRef(new Set());
   const [approveTargetId, setApproveTargetId] = useState(null);
   const [approveDate, setApproveDate]          = useState("");
 
@@ -79,6 +80,8 @@ export default function QuotationView({
   // ── Approve: convert quotation → order saja (masuk Planning Order) ──
   // Invoice TIDAK dibuat di sini. Flow: order → teknisi report → invoice (flow normal) → sent
   const handleApprove = async (quo, scheduledDate) => {
+    if (approvingNow.current.has(quo.id)) return;
+    approvingNow.current.add(quo.id);
     setApprovingId(quo.id);
     setApproveTargetId(null);
     setApproveDate("");
@@ -122,30 +125,27 @@ export default function QuotationView({
         // approve ikut tertaut ke kontrak (tanpa perlu resolve ulang lewat customer_id).
         ...(quo.maintenance_client_id ? { maintenance_client_id: quo.maintenance_client_id } : {}),
       };
-      const { error: orderErr } = await supabase.from("orders").insert(orderPayload);
-      if (orderErr) throw new Error("Gagal buat order: " + orderErr.message);
-
-      // 2. Update quotation: status APPROVED + link ke order (job_id). Invoice belum ada.
-      const { error: quoErr } = await supabase.from("quotations").update({
-        status: "APPROVED", job_id: jobId, updated_at: new Date().toISOString()
-      }).eq("id", quo.id);
-      if (quoErr) {
-        // Rollback: hapus order yang sudah terbuat
-        await supabase.from("orders").delete().eq("id", jobId);
-        throw new Error("Gagal update quotation: " + quoErr.message);
-      }
+      // DB mengunci quotation dan membuat order+link bersama. Jika respons hilang,
+      // retry akan mengembalikan order yang sudah ada, bukan membuat order kedua.
+      const { data: result, error: approveErr } = await supabase.rpc("approve_quotation_order_atomic", {
+        p_quotation_id: quo.id, p_job_id: jobId, p_order: orderPayload,
+      });
+      if (approveErr) throw new Error("Gagal approve quotation: " + approveErr.message);
+      const savedOrder = result?.order;
+      if (!savedOrder?.id) throw new Error("Order hasil approve tidak terbaca; muat ulang sebelum mencoba lagi");
 
       // 3. Update local state
       setQuotationsData?.(prev => prev.map(q => q.id === quo.id
-        ? { ...q, status: "APPROVED", job_id: jobId }
+        ? { ...q, status: "APPROVED", job_id: savedOrder.id }
         : q
       ));
-      setOrdersData?.(prev => prev.some(o => o.id === jobId) ? prev : [orderPayload, ...prev]);
+      setOrdersData?.(prev => prev.some(o => o.id === savedOrder.id) ? prev : [savedOrder, ...prev]);
 
-      showNotif?.(`✅ ${quo.id} approved — Order ${jobId} masuk Planning Order. Invoice dibuat setelah laporan teknisi.`);
+      showNotif?.(`✅ ${quo.id} approved — Order ${savedOrder.id} masuk Planning Order. Invoice dibuat setelah laporan teknisi.`);
     } catch (err) {
       showNotif?.("❌ " + (err.message || err));
     } finally {
+      approvingNow.current.delete(quo.id);
       setApprovingId(null);
     }
   };
@@ -180,8 +180,16 @@ export default function QuotationView({
 
   // ── Kirim WA + PDF attachment ──
   const [sendingWAId, setSendingWAId] = useState(null);
+  const sendingWaNow = useRef(new Set());
+  const recentlySentWA = useRef(new Map());
   const handleSendWA = async (quo) => {
+    if (sendingWaNow.current.has(quo.id)) return;
+    if (Date.now() - (recentlySentWA.current.get(quo.id) || 0) < 5000) {
+      showNotif?.("⚠️ Quotation ini baru saja dikirim; tunggu sebentar sebelum mengirim ulang.");
+      return;
+    }
     if (!quo.phone) { showNotif?.("⚠️ Tidak ada nomor HP customer"); return; }
+    sendingWaNow.current.add(quo.id);
     setSendingWAId(quo.id);
     try {
       const msg =
@@ -199,15 +207,19 @@ export default function QuotationView({
         }
       }
 
-      await sendWAFn?.(quo.phone, msg, pdfAttachment ? { url: pdfAttachment.url, filename: pdfAttachment.filename } : {});
+      const sent = await sendWAFn?.(quo.phone, msg, pdfAttachment ? { url: pdfAttachment.url, filename: pdfAttachment.filename } : {});
+      if (sent !== true) { showNotif?.("⚠️ Quotation belum terkirim via WA. Status tidak diubah."); return; }
+      recentlySentWA.current.set(quo.id, Date.now());
 
       // Update status ke SENT jika masih DRAFT
       if (quo.status === "DRAFT") {
-        await supabase.from("quotations").update({ status: "SENT", updated_at: new Date().toISOString() }).eq("id", quo.id);
+        const { error: statusError } = await supabase.from("quotations").update({ status: "SENT", updated_at: new Date().toISOString() }).eq("id", quo.id);
+        if (statusError) { showNotif?.("⚠️ WA terkirim, tetapi status quotation gagal disimpan: " + statusError.message); return; }
         setQuotationsData?.(prev => prev.map(q => q.id === quo.id ? { ...q, status: "SENT" } : q));
       }
       showNotif?.(`📱 WA dikirim ke ${formatPhone(quo.phone)}${pdfAttachment ? " 📎 PDF terlampir" : ""}`);
     } finally {
+      sendingWaNow.current.delete(quo.id);
       setSendingWAId(null);
     }
   };

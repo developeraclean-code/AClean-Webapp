@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { cs } from "../theme/cs.js";
 import { normalizePhone } from "../lib/phone.js";
 
@@ -79,6 +79,8 @@ const emptyUnit = () => ({
 });
 
 export default function AcUnitInvoiceModal({ onClose, supabase, customersData, ordersData, showNotif, setInvoicesData, setOrdersData, getLocalDate, priceListData = [] }) {
+  const creatingNow = useRef(false);
+  const creationAttempted = useRef(false);
   const [activeTab, setActiveTab] = useState("customer");
   const [saving, setSaving] = useState(false);
 
@@ -270,11 +272,18 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, o
 
   // ── Buat invoice ke Supabase ──
   const handleBuatInvoice = async () => {
+    if (creatingNow.current) return;
+    if (creationAttempted.current) {
+      showNotif?.("⚠️ Hasil penyimpanan sebelumnya belum pasti. Tutup lalu periksa daftar invoice sebelum membuat lagi.");
+      return;
+    }
     if (!supabase) return;
     if (!custDisplay) { showNotif?.("⚠️ Pilih customer dahulu"); return; }
     if (!canNext.paket) { showNotif?.("⚠️ Pilih paket pemasangan"); return; }
     if (dpMelebihi) return;
 
+    creatingNow.current = true;
+    creationAttempted.current = true;
     setSaving(true);
     try {
       const today = getLocalDate?.() || new Date().toISOString().slice(0, 10);
@@ -512,6 +521,7 @@ export default function AcUnitInvoiceModal({ onClose, supabase, customersData, o
     } catch (err) {
       showNotif?.("❌ Gagal buat invoice: " + (err.message || err));
     } finally {
+      creatingNow.current = false;
       setSaving(false);
     }
   };
