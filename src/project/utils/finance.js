@@ -35,7 +35,7 @@ export function calc(db, pid) {
   // COGS material dari gudang project (pemakaian stok ber-materialId). Pembelian on-site
   // (manual, tanpa materialId) tidak dibebankan di sini — sudah masuk lewat Pembelian.
   const stokBiaya = db.usage
-    .filter((u) => u.projectId === pid && u.materialId)
+    .filter((u) => u.projectId === pid && u.materialId && !u.voidedAt)
     .reduce((s, u) => s + usageCost(db, u), 0);
   if (stokBiaya > 0) byCat["Material (stok gudang)"] = (byCat["Material (stok gudang)"] || 0) + stokBiaya;
   const aktualBiaya = Object.values(byCat).reduce((s, v) => s + v, 0);
@@ -68,7 +68,7 @@ export function matRecon(db, pid) {
     .map((a) => {
       const m = db.materials.find((x) => x.id === a.materialId) || {};
       const terpakai = db.usage
-        .filter((u) => u.projectId === pid && u.materialId === a.materialId)
+        .filter((u) => u.projectId === pid && u.materialId === a.materialId && !u.voidedAt)
         .reduce((s, u) => s + (u.qtyNum != null ? Number(u.qtyNum) : parseNum(u.qty)), 0);
       const sisa = Number(a.qty) || 0;
       return {

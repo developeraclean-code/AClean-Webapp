@@ -1,7 +1,7 @@
 // Konstanta modul Project — di-share antar view.
 export const CATS = ["Pemasangan + Pipa", "Ducting Split Duct", "Di luar Service Reguler"];
 export const EXP_CATS = ["Material", "Alat / Sewa Alat", "Upah Harian", "Transport", "Konsumsi", "Lain-lain"];
-export const MAT_SUBS = ["Pipa & Ducting", "Refrigerant & Kelistrikan", "Aksesoris & Bracket"];
+export const MAT_SUBS = ["Pipa & Ducting", "Refrigerant & Kelistrikan", "Aksesoris & Bracket", "Consumable", "Lainnya"];
 export const DOC_TYPES = [
   "Surat Penerimaan Barang",
   "Surat Pengiriman Barang",

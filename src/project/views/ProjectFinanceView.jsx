@@ -78,7 +78,7 @@ export default function ProjectFinanceView() {
       .select("tanggal,teknisi_name,helper_names,pekerjaan,kendala")
       .eq("project_id", p.id).eq("status", "VERIFIED").order("tanggal", { ascending: false }).limit(200);
     const m = {};
-    db.usage.filter((u) => u.projectId === p.id).forEach((u) => {
+    db.usage.filter((u) => u.projectId === p.id && !u.voidedAt).forEach((u) => {
       const key = (u.material || "") + "|" + (u.satuan || "");
       if (!m[key]) m[key] = { nama: u.material, satuan: u.satuan || "", qty: 0 };
       m[key].qty += Number(u.qty) || 0;

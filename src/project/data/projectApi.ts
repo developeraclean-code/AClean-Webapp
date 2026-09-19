@@ -31,9 +31,9 @@ const TABLE: Record<TableKey, string> = {
 const FIELDS: Record<TableKey, Record<string, string>> = {
   projects: { id: "id", nama: "nama", kategori: "kategori", lokasi: "lokasi", pic: "pic", status: "status", progress: "progress", mulai: "mulai", target: "target", nilai: "nilai", rab: "rab", tim: "tim", _prev: "prev_status", portalToken: "portal_token", tokenActive: "token_active", selesaiAt: "selesai_at", catatanSelesai: "catatan_selesai" },
   dp: { id: "id", projectId: "project_id", tanggal: "tanggal", jumlah: "jumlah", ket: "ket" },
-  materials: { id: "id", nama: "nama", sub: "sub", satuan: "satuan", gudang: "gudang", min: "min_qty", harga: "harga" },
+  materials: { id: "id", nama: "nama", sub: "sub", satuan: "satuan", gudang: "gudang", min: "min_qty", harga: "harga", groupName: "group_name", variantLabel: "variant_label", isActive: "is_active", archivedAt: "archived_at", archivedBy: "archived_by", archivedReason: "archived_reason", updatedAt: "updated_at" },
   alokasi: { id: "id", materialId: "material_id", projectId: "project_id", qty: "qty" },
-  usage: { id: "id", projectId: "project_id", tanggal: "tanggal", material: "material", materialId: "material_id", qty: "qty", qtyNum: "qty_num", satuan: "satuan", harga: "harga", oleh: "oleh" },
+  usage: { id: "id", projectId: "project_id", tanggal: "tanggal", material: "material", materialId: "material_id", qty: "qty", qtyNum: "qty_num", satuan: "satuan", harga: "harga", oleh: "oleh", notes: "notes", mutationKey: "mutation_key", voidedAt: "voided_at", voidedBy: "voided_by", voidReason: "void_reason" },
   tools: { id: "id", nama: "nama", jumlah: "jumlah", status: "status", lokasi: "lokasi", projectId: "project_id", pemegang: "pemegang", kondisi: "kondisi" },
   expenses: { id: "id", projectId: "project_id", tanggal: "tanggal", kategori: "kategori", ket: "ket", nominal: "nominal", oleh: "oleh" },
   purchases: { id: "id", projectId: "project_id", tanggal: "tanggal", jenis: "jenis", item: "item", qty: "qty", total: "total", nota: "nota" },
@@ -109,5 +109,25 @@ export const api = {
     const payload = rows.map((r) => toRow(key, r));
     const { error } = await supabase.from(TABLE[key]).upsert(payload, onConflict ? { onConflict } : undefined);
     if (error) throw new Error(`upsert ${key}: ${error.message}`);
+  },
+  async rpc(name: string, params: Row): Promise<Row> {
+    const { data, error } = await supabase.rpc(name, params);
+    if (error) throw new Error(error.message || `RPC ${name} gagal`);
+    return (data || {}) as Row;
+  },
+  async materialHistory(materialId: string): Promise<Row[]> {
+    const { data, error } = await supabase
+      .from("project_material_transactions")
+      .select("id,material_id,project_id,usage_id,movement_type,warehouse_delta,allocation_delta,qty,unit,unit_cost,notes,actor_name,created_at")
+      .eq("material_id", materialId)
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (error) throw new Error(`riwayat material: ${error.message}`);
+    return (data || []) as Row[];
+  },
+  async materialReconciliation(): Promise<Row> {
+    const { data, error } = await supabase.rpc("get_project_material_reconciliation");
+    if (error) throw new Error(`rekonsiliasi stok: ${error.message}`);
+    return (data || {}) as Row;
   },
 };

@@ -55,6 +55,26 @@ export function ProjectProvider({ currentUser, apiFetch, appSettings = {}, child
     catch (e) { reportError("project.guard.persist", e); setSyncError("Gagal menyimpan ke server — data dimuat ulang."); await reload(); }
   }, [reload]);
 
+  // Mutasi stok Project selalu diselesaikan di PostgreSQL (saldo + ledger dalam
+  // satu transaksi), lalu state dimuat ulang. mutation key mencegah double-click.
+  const runStockMutation = useCallback(async (rpcName, params = {}) => {
+    try {
+      const result = await api.rpc(rpcName, {
+        ...params,
+        p_actor_name: currentUser?.name || currentUser?.email || role,
+        p_mutation_key: params.p_mutation_key || `project:${rpcName}:${Date.now()}:${Math.random().toString(36).slice(2, 9)}`,
+      });
+      setSyncError(null);
+      await reload();
+      return result;
+    } catch (e) {
+      reportError(`project.${rpcName}`, e);
+      setSyncError(e.message || "Mutasi stok Project gagal");
+      await reload();
+      throw e;
+    }
+  }, [currentUser, role, reload]);
+
   // ── aksi generik (optimistic + persist) ───────────────────────────────────
   // tambah baris ke tabel; id di-generate bila belum ada
   const addRows = useCallback((key, rows) => {
@@ -88,34 +108,15 @@ export function ProjectProvider({ currentUser, apiFetch, appSettings = {}, child
 
   // Tutup project (SELESAI): kembalikan SISA alokasi material ke gudang + tarik semua alat
   // dari lokasi kembali ke gudang, lalu set status + timestamp. Satu transaksi optimistic.
-  const completeProject = useCallback((pid, { catatan } = {}) => {
+  const completeProject = useCallback(async (pid, { catatan } = {}) => {
     const p = db.projects.find((x) => x.id === pid);
     if (!p) return;
-    const allocs = db.alokasi.filter((a) => a.projectId === pid && (Number(a.qty) || 0) > 0);
-    const matAdd = {};
-    allocs.forEach((a) => { matAdd[a.materialId] = (matAdd[a.materialId] || 0) + (Number(a.qty) || 0); });
-    const materialUpdates = Object.entries(matAdd).map(([id, add]) => {
-      const m = db.materials.find((x) => x.id === id);
-      return { id, gudang: (m?.gudang || 0) + add };
+    const returnedTools = db.tools.filter((t) => t.lokasi === pid).length;
+    const result = await runStockMutation("complete_project_stock_atomic", {
+      p_project_id: pid, p_notes: catatan || null,
     });
-    const alokasiUpdates = allocs.map((a) => ({ id: a.id, qty: 0 }));
-    const toolUpdates = db.tools.filter((t) => t.lokasi === pid).map((t) => ({ id: t.id, lokasi: "", status: "tersedia" }));
-    const projPatch = { status: "SELESAI", selesaiAt: new Date().toISOString(), catatanSelesai: catatan || null };
-
-    update((cur) => {
-      cur.materials = cur.materials.map((m) => { const u = materialUpdates.find((x) => x.id === m.id); return u ? { ...m, ...u } : m; });
-      cur.alokasi = cur.alokasi.map((a) => (alokasiUpdates.find((x) => x.id === a.id) ? { ...a, qty: 0 } : a));
-      cur.tools = cur.tools.map((t) => (toolUpdates.find((x) => x.id === t.id) ? { ...t, lokasi: "", status: "tersedia" } : t));
-      cur.projects = cur.projects.map((x) => (x.id === pid ? { ...x, ...projPatch } : x));
-    });
-    guard(Promise.all([
-      ...materialUpdates.map(({ id, ...patch }) => api.update("materials", id, patch)),
-      ...alokasiUpdates.map(({ id, ...patch }) => api.update("alokasi", id, patch)),
-      ...toolUpdates.map(({ id, ...patch }) => api.update("tools", id, patch)),
-      api.update("projects", pid, projPatch),
-    ]));
-    return { returnedMaterials: materialUpdates.length, returnedTools: toolUpdates.length };
-  }, [db, update, guard]);
+    return { returnedMaterials: Number(result?.returned_materials) || 0, returnedTools };
+  }, [db.projects, db.tools, runStockMutation]);
 
   // alokasi material: materialUpdates = [{id, gudang}], alokasiRows = [{id?, materialId, projectId, qty}]
   const allocateMaterials = useCallback((materialUpdates, alokasiRows) => {
@@ -191,6 +192,7 @@ export function ProjectProvider({ currentUser, apiFetch, appSettings = {}, child
     db, loading, syncError, reload,
     update, addRows, patchRow, patchRows,
     updateProject, toggleHold, setProjectStatus, completeProject, allocateMaterials, upsertHarian,
+    runStockMutation,
     deleteRow, uploadPhotos, genId,
     role, can, today,
     activeView, setActiveView,

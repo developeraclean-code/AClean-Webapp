@@ -1613,7 +1613,7 @@ export async function projectPortal(req, res) {
       // 3) Pemakaian material — HANYA untuk tanggal yang Berita Acara-nya VERIFIED (ikut gate approval)
       let usage = [];
       if (verifiedDates.size > 0) {
-        const uRes = await fetch(`${SU}/rest/v1/project_usage?project_id=eq.${proj.id}&select=id,tanggal,material,qty,satuan,oleh&order=tanggal.desc`, { headers });
+        const uRes = await fetch(`${SU}/rest/v1/project_usage?project_id=eq.${proj.id}&voided_at=is.null&select=id,tanggal,material,qty,satuan,oleh&order=tanggal.desc`, { headers });
         const uRows = uRes.ok ? await uRes.json() : [];
         usage = uRows.filter(u => verifiedDates.has(u.tanggal)).map(u => ({ tanggal: u.tanggal, material: u.material, qty: u.qty, satuan: u.satuan || "", oleh: u.oleh }));
       }

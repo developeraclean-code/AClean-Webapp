@@ -125,10 +125,17 @@ export default function ProjectDetailView() {
               )}
               <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
                 <button style={S.btn("ghost")} onClick={close}>Batal</button>
-                <button style={S.btn()} onClick={() => {
-                  const res = completeProject(p.id);
-                  close();
-                  toast(`✅ Project SELESAI · ${res?.returnedMaterials || 0} material & ${res?.returnedTools || 0} alat kembali ke gudang`);
+                <button style={S.btn()} onClick={async (e) => {
+                  if (e.currentTarget.disabled) return;
+                  e.currentTarget.disabled = true;
+                  try {
+                    const res = await completeProject(p.id);
+                    close();
+                    toast(`✅ Project SELESAI · ${res?.returnedMaterials || 0} material & ${res?.returnedTools || 0} alat kembali ke gudang`);
+                  } catch (err) {
+                    toast(`Gagal menyelesaikan project: ${err.message || err}`);
+                    e.currentTarget.disabled = false;
+                  }
                 }}>Selesaikan Sekarang</button>
               </div>
             </>
@@ -268,7 +275,7 @@ export default function ProjectDetailView() {
           <table style={S.tableStyles.table}>
             <tbody>
               {(() => {
-                const rows = db.usage.filter((u) => u.projectId === p.id);
+                const rows = db.usage.filter((u) => u.projectId === p.id && !u.voidedAt);
                 if (!rows.length) return <tr><td colSpan={2} style={{ ...S.tableStyles.td, ...S.muted }}>belum ada</td></tr>;
                 return rows.map((u, i) => (
                   <tr key={i}><td style={S.tableStyles.td}>{u.material}</td><td style={S.tableStyles.td}>{u.qty}{u.satuan ? ` ${u.satuan}` : ""}</td></tr>
