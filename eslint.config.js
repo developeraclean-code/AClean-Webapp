@@ -48,4 +48,10 @@ export default [
       "react-hooks/exhaustive-deps": "off",
     },
   },
+  {
+    // Modul bootstrap dan Pengaturan berdampak luas. Undefined identifier pada
+    // dua file ini pernah lolos build Vite dan baru crash saat runtime.
+    files: ["src/lib/loadAllData.js", "src/views/SettingsView.jsx"],
+    rules: { "no-undef": "error" },
+  },
 ];

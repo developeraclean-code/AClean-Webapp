@@ -2,6 +2,12 @@ import { memo, useState } from "react";
 import { cs } from "../theme/cs.js";
 import { saveAutomationToggle } from "../lib/settingsPersistence.js";
 
+const settingsInputStyle = {
+  width: "100%", background: cs.surface, border: "1px solid " + cs.border,
+  borderRadius: 8, padding: "8px 10px", color: cs.text, fontSize: 12,
+  outline: "none", boxSizing: "border-box",
+};
+
 // ── Role config ──────────────────────────────────────────────────────────────
 const ROLE_CFG = {
   Owner:   { icon: "👑", color: "#f59e0b" },
@@ -1318,7 +1324,7 @@ const d = await r.json();
                     setAppSettings(prev => ({ ...prev, maintenance_followup_repeat_days: previous }));
                     showNotif("❌ Interval tidak berubah: " + error.message);
                   } else showNotif(`✅ Pengingat ulang setiap ${value} hari`);
-                }} style={inp}>
+                }} style={settingsInputStyle}>
                   {[1,3,7,14,30].map(d => <option key={d} value={d}>{d === 1 ? "Setiap hari" : `Setiap ${d} hari`}</option>)}
                 </select>
               </label>

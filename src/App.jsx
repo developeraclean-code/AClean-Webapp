@@ -2744,6 +2744,7 @@ export default function ACleanWebApp() {
       setCustomersData, setDispatchLogs, setInvTxData, setInvUnitsData, setInventoryData,
       setInvoicesData, setLaporanReports, setLlmApiKey, setLlmModel, setLlmProvider,
       setOrdersData, setPaymentSuggestions, setPaymentsData, setPriceListData,
+      setPriceListCache: (nextPriceList) => { PRICE_LIST = nextPriceList; },
       setPriceListSyncedAt, setProjectDailyReports, setTeknisiData, setUserAccounts,
       setWaConversations, setWaProvider, supabase, today: TODAY,
       onSettingsLoadError, onSettingsLoadSuccess,

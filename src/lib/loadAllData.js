@@ -5,6 +5,17 @@
 import { recordPerfMetric } from "./perfMetrics.js";
 import { requireAppSettingsResult } from "./settingsPersistence.js";
 
+export function hydratePriceListCache(rows, {
+  buildPriceListFromDB, setPriceListData, setPriceListCache, setPriceListSyncedAt,
+}) {
+  setPriceListData(rows);
+  const activeRows = rows.filter(row => row.is_active !== false);
+  const nextPriceList = buildPriceListFromDB(activeRows);
+  setPriceListCache(nextPriceList);
+  setPriceListSyncedAt(new Date());
+  return nextPriceList;
+}
+
 export async function loadAllData({
   _ls, _lsSave, buildPriceListFromDB, cachedFetch, currentUser, dedupReportsByJob,
   fetchAppSettings, fetchAraBrain, fetchCustomers, fetchDispatchLogs, fetchInventory,
@@ -16,7 +27,7 @@ export async function loadAllData({
   setCustomersData, setDispatchLogs, setInvTxData, setInvUnitsData, setInventoryData,
   setInvoicesData, setLaporanReports, setLlmApiKey, setLlmModel, setLlmProvider,
   setOrdersData, setPaymentSuggestions, setPaymentsData, setPriceListData,
-  setPriceListSyncedAt, setProjectDailyReports, setTeknisiData, setUserAccounts,
+  setPriceListCache, setPriceListSyncedAt, setProjectDailyReports, setTeknisiData, setUserAccounts,
   setWaConversations, setWaProvider, supabase, bootstrapMode = "full",
   onCriticalReady, onSettingsLoadError, onSettingsLoadSuccess, today,
 }) {
@@ -267,12 +278,11 @@ export async function loadAllData({
         try {
           const plRes = await _pPL;
           if (!plRes.error && plRes.data && plRes.data.length > 0) {
-            // Set state untuk renderPriceList UI
-            setPriceListData(plRes.data);
-            // Build PRICE_LIST map untuk kalkulasi invoice
-            const activePL = plRes.data.filter(r => r.is_active !== false);
-            PRICE_LIST = buildPriceListFromDB(activePL);
-            setPriceListSyncedAt(new Date());
+            // Satu jalur resmi: state UI dan cache kalkulasi invoice diperbarui
+            // bersama. Modul ini tidak boleh menulis variabel global milik App.
+            hydratePriceListCache(plRes.data, {
+              buildPriceListFromDB, setPriceListData, setPriceListCache, setPriceListSyncedAt,
+            });
           }
         } catch (e) { console.warn("price_list DB fallback to default:", e?.message); }
 
