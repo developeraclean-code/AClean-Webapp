@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
+
+// projectApi hanya diimpor untuk memeriksa daftar lazy-bootstrap. Hindari
+// inisialisasi klien Supabase/browser pada unit test tanpa secrets.
+vi.mock("../../supabaseClient.js", () => ({ supabase: {} }));
+
 import {
   createOrderWorkflowAtomic,
   finalizeServiceReportAtomic,

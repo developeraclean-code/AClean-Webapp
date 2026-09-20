@@ -1,5 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+// Helper WA berada di modul cron bersama. Jangan membangun koneksi Supabase
+// sungguhan saat unit test—CI tidak membawa secret dan test ini hanya menguji
+// kontrak hasil provider WA.
+vi.mock("@supabase/supabase-js", () => ({
+  createClient: vi.fn(() => ({})),
+}));
+
 describe("sendWAWithResult", () => {
   let sendWAWithResult;
   const originalOwner = process.env.OWNER_PHONE;
