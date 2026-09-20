@@ -18,7 +18,7 @@ export function hasR2Config() {
 
 // Hitung pemakaian bucket dengan ListObjectsV2. Dipanggil maksimal sekali sehari
 // oleh alarm infrastruktur; tidak dipakai pada setiap render Monitoring.
-export async function getR2BucketUsage({ maxPages = 100 } = {}) {
+export async function getR2BucketUsage({ maxPages = 100, requestTimeoutMs = 8000, totalTimeoutMs = 20000 } = {}) {
   const { accessKeyId, secretAccessKey, accountId, bucket } = R2_ENV();
   if (!accessKeyId || !secretAccessKey || !accountId) {
     return { ok: false, err: "R2 env not configured" };
@@ -30,9 +30,13 @@ export async function getR2BucketUsage({ maxPages = 100 } = {}) {
   let bytes = 0;
   let objects = 0;
   let requests = 0;
+  const startedAt = Date.now();
 
   try {
     for (let page = 0; page < maxPages; page++) {
+      if (Date.now() - startedAt >= totalTimeoutMs) {
+        return { ok: false, err: `R2 listing timeout >${totalTimeoutMs}ms`, bytes, objects, requests, partial: true };
+      }
       const host = accountId + ".r2.cloudflarestorage.com";
       const now = new Date();
       const dateStr = now.toISOString().replace(/[:-]|\.\d{3}/g, "").slice(0, 8);
@@ -51,9 +55,17 @@ export async function getR2BucketUsage({ maxPages = 100 } = {}) {
       const signingKey = hmac(hmac(hmac(hmac("AWS4" + secretAccessKey, dateStr), "auto"), "s3"), "aws4_request");
       const signature = createHmac("sha256", signingKey).update(strToSign).digest("hex");
       const authorization = `AWS4-HMAC-SHA256 Credential=${accessKeyId}/${credScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
-      const response = await fetch(`https://${host}${canonicalUri}?${canonicalQuery}`, {
-        headers: { Authorization: authorization, "x-amz-date": amzDate, "x-amz-content-sha256": payloadHash },
-      });
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), Math.max(1000, Number(requestTimeoutMs) || 8000));
+      let response;
+      try {
+        response = await fetch(`https://${host}${canonicalUri}?${canonicalQuery}`, {
+          headers: { Authorization: authorization, "x-amz-date": amzDate, "x-amz-content-sha256": payloadHash },
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
       requests++;
       if (!response.ok) return { ok: false, err: `R2 LIST ${response.status}`, bytes, objects, requests };
       const xml = await response.text();

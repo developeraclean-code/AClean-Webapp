@@ -46,7 +46,7 @@ export async function monitor(req, res) {
           totalWarnings: warningCount,
           errorRate: Number(logs.total_24h) > 0 ? errorCount / Number(logs.total_24h) : 0,
           totalLogsChecked: Number(logs.total_24h) || 0,
-          recentErrors: (logs.recent_problems || []).map(l => ({ ...l, time: l.created_at })),
+          recentErrors: (logs.recent_problems || []).map(l => ({ ...l, time: l.created_at, classification: classifyMonitorEvent(l) })),
           cron: {
             total: Number(cron.total_7d) || 0,
             success: Number(cron.success_7d) || 0,
@@ -137,7 +137,8 @@ export async function monitor(req, res) {
         severity: l.severity || null,
         category: l.category || null,
         detail: (l.detail || "").slice(0, 200),
-        time: l.created_at || new Date().toISOString()
+        time: l.created_at || new Date().toISOString(),
+        classification: classifyMonitorEvent(l),
       })),
       cron: {
         total: cronArray.length,
@@ -182,4 +183,20 @@ export async function monitor(req, res) {
       timestamp: new Date().toISOString()
     });
   }
+}
+
+const ACTION_REQUIRED_EVENTS = new Set([
+  "MAINTENANCE_NEW_UNIT_PROPOSED", "MAINTENANCE_UNIT_SELECT_NEEDED", "MAINTENANCE_AUTOLOG_SKIP",
+  "SCAN_BUKTI_FUZZY", "STOCK_INSUFFICIENT", "STOCK_MATCH_AMBIGUOUS",
+]);
+const AUDIT_EVENTS = new Set([
+  "ADMIN_EDIT_GRATIS_APPROVED", "ORDER_DELETED", "MATERIAL_KOREKSI_ADMIN",
+  "MATERIAL_BUKA_KOREKSI", "STOK_UNIT_ARSIP", "INVOICE_DELETED", "CUSTOMER_DELETED",
+]);
+
+export function classifyMonitorEvent(event) {
+  if (ACTION_REQUIRED_EVENTS.has(event?.action)) return "action_required";
+  if (AUDIT_EVENTS.has(event?.action)) return "audit";
+  const severity = event?.severity || (event?.status === "ERROR" ? "error" : event?.status === "WARNING" ? "warn" : "info");
+  return ["error", "critical"].includes(severity) ? "system_error" : "warning";
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo, lazy, Suspense } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef, lazy, Suspense } from "react";
 import { cs } from "../theme/cs.js";
 import { unitHealth, borosRanking, BOROS_LEVEL_GANTI, HEALTH_META } from "../lib/maintenanceHealth.js";
 import { daysUntil } from "../lib/dateTime.js";
@@ -2744,6 +2744,9 @@ function FollowupTab({ sel, units, logs, call, showNotif, showConfirm, isOwner, 
   const [loading, setLoading] = useState(true);
   const [catFilter, setCatFilter] = useState("open");
   const [addModal, setAddModal] = useState(false);
+  const [statusEdit, setStatusEdit] = useState(null); // { followup, status, resolution }
+  const [statusBusy, setStatusBusy] = useState(false);
+  const statusBusyRef = useRef(false);
   const [orderBusy, setOrderBusy] = useState(null); // followup id yang sedang dibuatkan order
   // Temuan yang SUDAH dibuatkan order di sesi ini → tombol terkunci walau PATCH
   // status gagal (tanpa ini: insert order sukses + patch gagal → baris tetap tampak
@@ -2829,16 +2832,33 @@ function FollowupTab({ sel, units, logs, call, showNotif, showConfirm, isOwner, 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [sel?.id, catFilter]);
 
-  const updateStatus = async (id, newStatus) => {
+  const updateStatus = async (id, newStatus, resolution = "") => {
+    if (statusBusyRef.current) return;
+    statusBusyRef.current = true;
+    setStatusBusy(true);
     try {
       const patch = { id, status: newStatus };
-      if (newStatus === "done") patch.resolved_by = currentUser?.name || "Admin";
+      if (["done", "cancelled"].includes(newStatus)) {
+        patch.resolved_by = currentUser?.name || "Admin";
+        patch.resolution = resolution.trim();
+      }
       await call("update-followup", patch);
       setFollowups(p => catFilter !== "all"
         ? p.filter(x => x.id !== id)
         : p.map(x => x.id === id ? { ...x, status: newStatus } : x));
       showNotif("✅ Status diperbarui");
+      setStatusEdit(null);
     } catch (e) { showNotif("❌ " + e.message); }
+    finally { statusBusyRef.current = false; setStatusBusy(false); }
+  };
+
+  const requestStatusUpdate = (followup, newStatus) => {
+    if (newStatus === followup.status) return;
+    if (["done", "cancelled"].includes(newStatus)) {
+      setStatusEdit({ followup, status: newStatus, resolution: followup.resolution || "" });
+      return;
+    }
+    updateStatus(followup.id, newStatus);
   };
 
   return (
@@ -2877,16 +2897,21 @@ function FollowupTab({ sel, units, logs, call, showNotif, showConfirm, isOwner, 
                     <div style={{ color: cs.muted, fontSize: 12, marginTop: 4 }}>
                       Ditemukan: {fmtDate(f.found_date)}{f.found_by ? ` oleh ${f.found_by}` : ""}
                     </div>
+                    {f.wa_alerted_at && f.status === "open" && (
+                      <div style={{ color: cs.yellow || "#eab308", fontSize: 11, marginTop: 3 }}>
+                        🔔 Terakhir diingatkan ke Owner: {new Date(f.wa_alerted_at).toLocaleString("id-ID")}
+                      </div>
+                    )}
                     {f.estimated_cost > 0 && <div style={{ fontSize: 12, color: cs.yellow || "#eab308", marginTop: 2 }}>💰 Est. biaya: {fmtRp(f.estimated_cost)}</div>}
-                    {f.status === "done" && f.resolution && (
-                      <div style={{ marginTop: 8, padding: "6px 10px", background: cs.green + "11", borderRadius: 8, fontSize: 12, color: cs.green }}>
-                        ✅ Resolusi: {f.resolution} {f.resolved_date ? `(${fmtDate(f.resolved_date)})` : ""}
+                    {["done", "cancelled"].includes(f.status) && f.resolution && (
+                      <div style={{ marginTop: 8, padding: "6px 10px", background: (f.status === "done" ? cs.green : cs.muted) + "11", borderRadius: 8, fontSize: 12, color: f.status === "done" ? cs.green : cs.muted }}>
+                        {f.status === "done" ? "✅ Resolusi" : "🚫 Alasan"}: {f.resolution} {f.resolved_date ? `(${fmtDate(f.resolved_date)})` : ""}
                       </div>
                     )}
                   </div>
                   {f.status !== "done" && f.status !== "cancelled" && (
                     <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0, alignItems: "stretch" }}>
-                      <select value={f.status} onChange={e => updateStatus(f.id, e.target.value)}
+                      <select value={f.status} onChange={e => requestStatusUpdate(f, e.target.value)}
                         style={{ ...inp, width: "auto", fontSize: 12, padding: "5px 8px" }}>
                         {["open","scheduled","in_progress","done","cancelled"].map(s => (
                           <option key={s} value={s}>{FU_STATUS_LABELS[s]}</option>
@@ -2916,6 +2941,31 @@ function FollowupTab({ sel, units, logs, call, showNotif, showConfirm, isOwner, 
         <FollowupModal units={units} sel={sel} call={call} showNotif={showNotif}
           onClose={() => setAddModal(false)}
           onSave={f => { if (catFilter === "open" || catFilter === "all") setFollowups(p => [f, ...p]); setAddModal(false); showNotif("✅ Temuan dicatat"); }} />
+      )}
+
+      {statusEdit && (
+        <Overlay onClose={() => setStatusEdit(null)}>
+          <div style={{ fontWeight: 800, color: cs.text, fontSize: 16, marginBottom: 6 }}>
+            {statusEdit.status === "done" ? "✅ Selesaikan Follow-up" : "🚫 Batalkan Follow-up"}
+          </div>
+          <div style={{ color: cs.muted, fontSize: 12, lineHeight: 1.5, marginBottom: 12 }}>
+            {ISSUE_LABELS[statusEdit.followup.issue_type] || statusEdit.followup.issue_type}. Catatan wajib disimpan agar keputusan dapat diaudit dan tidak muncul lagi dalam WA pengingat.
+          </div>
+          <Field l={statusEdit.status === "done" ? "Resolusi / tindakan yang dilakukan *" : "Alasan pembatalan *"}>
+            <textarea autoFocus rows={4} value={statusEdit.resolution}
+              onChange={e => setStatusEdit(p => ({ ...p, resolution: e.target.value }))}
+              placeholder={statusEdit.status === "done" ? "Contoh: kapasitor diganti dan unit sudah diuji normal" : "Contoh: customer menolak pekerjaan / temuan duplikat"}
+              style={{ ...inp, resize: "vertical" }} />
+          </Field>
+          <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end" }}>
+            <button onClick={() => setStatusEdit(null)} style={btnGhost}>Kembali</button>
+            <button disabled={statusBusy || statusEdit.resolution.trim().length < 3}
+              onClick={() => updateStatus(statusEdit.followup.id, statusEdit.status, statusEdit.resolution)}
+              style={{ ...btn, opacity: statusBusy || statusEdit.resolution.trim().length < 3 ? .5 : 1 }}>
+              {statusBusy ? "Menyimpan…" : "Simpan Status"}
+            </button>
+          </div>
+        </Overlay>
       )}
     </div>
   );

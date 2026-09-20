@@ -1567,6 +1567,7 @@ export default function ACleanWebApp() {
     { id: 3, name: "Laporan Mingguan",  icon: "📅", time: "20:00", days: "Sabtu",       active: true,  backendKey: null,                        task: "Rekap mingguan order & pendapatan ke Owner via WA" },
     { id: 4, name: "Overdue Detection", icon: "🔔", time: "17:05", days: "Setiap Hari", active: true,  backendKey: null,                        task: "Tandai invoice UNPAID melewati due date menjadi OVERDUE" },
     { id: 5, name: "Stok Alert",        icon: "⚠️", time: "08:00", days: "Setiap Hari", active: true,  backendKey: "stock_alert_enabled",       task: "Cek stok inventory HABIS/KRITIS & notif Owner via WA" },
+    { id: 11, name: "Follow-up Maintenance", icon: "🔧", time: "10:00", days: "Setiap Hari", active: true, backendKey: "maintenance_followup_alert_enabled", task: "WA Owner untuk temuan maintenance open >3 hari" },
   ]);
 
   // ── Tanggal dinamis ──

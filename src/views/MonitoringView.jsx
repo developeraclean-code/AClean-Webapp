@@ -36,6 +36,22 @@ const SEVERITY_COLOR = {
   critical: { bg: "#dc2626", label: "CRITICAL" },
 };
 const CATEGORIES = ["wa","payment","inventory","ai","auth","cron","portal","security","customer","order","invoice"];
+const ACTION_REQUIRED_EVENTS = new Set([
+  "MAINTENANCE_NEW_UNIT_PROPOSED", "MAINTENANCE_UNIT_SELECT_NEEDED", "MAINTENANCE_AUTOLOG_SKIP",
+  "SCAN_BUKTI_FUZZY", "STOCK_INSUFFICIENT", "STOCK_MATCH_AMBIGUOUS",
+]);
+const AUDIT_EVENTS = new Set([
+  "ADMIN_EDIT_GRATIS_APPROVED", "ORDER_DELETED", "MATERIAL_KOREKSI_ADMIN",
+  "MATERIAL_BUKA_KOREKSI", "STOK_UNIT_ARSIP", "INVOICE_DELETED", "CUSTOMER_DELETED",
+]);
+
+function eventKind(event) {
+  if (event?.classification) return event.classification;
+  if (ACTION_REQUIRED_EVENTS.has(event?.action)) return "action_required";
+  if (AUDIT_EVENTS.has(event?.action)) return "audit";
+  const sev = event?.severity || (event?.status === "ERROR" ? "error" : event?.status === "WARNING" ? "warn" : "info");
+  return ["error", "critical"].includes(sev) ? "system_error" : "warning";
+}
 
 const rpcUnavailable = (error) => error?.code === "PGRST202" || error?.code === "42883"
   || /(schema cache|does not exist|not found)/i.test(error?.message || "");
@@ -72,7 +88,7 @@ function TabOverview({ data, onRefresh }) {
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12 }}>
           <Card label="Errors (24h)"   value={metrics.totalErrors || 0}   color={cs.red} />
-          <Card label="Warnings (24h)" value={metrics.totalWarnings || 0} color={cs.yellow} />
+          <Card label="Notices/Audit (24h)" value={metrics.totalWarnings || 0} color={cs.yellow} />
           <Card label="Error Rate"     value={(errorRate * 100).toFixed(1) + "%"} color={errorRate > 0.1 ? cs.red : errorRate > 0.05 ? cs.yellow : cs.green} />
           <Card label="Logs Checked"   value={metrics.totalLogsChecked || 0} color={cs.accent} />
         </div>
@@ -141,7 +157,8 @@ function TabOverview({ data, onRefresh }) {
       </div>
 
       <div style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 14, padding: 16 }}>
-        <div style={{ fontWeight: 700, color: cs.text, marginBottom: 12, fontSize: 14 }}>📋 Recent Errors & Warnings</div>
+        <div style={{ fontWeight: 700, color: cs.text, marginBottom: 4, fontSize: 14 }}>📋 Error & Tindakan Terbaru</div>
+        <div style={{ color: cs.muted, marginBottom: 12, fontSize: 11 }}>Error sistem dipisahkan dari antrean tindakan dan catatan audit agar indikator tidak menyesatkan.</div>
         {(!metrics.recentErrors || metrics.recentErrors.length === 0) ? (
           <div style={{ color: cs.muted, fontSize: 12, textAlign: "center", padding: 20 }}>✅ No errors or warnings found</div>
         ) : (
@@ -625,7 +642,10 @@ function Badge({ color, children }) {
 
 function ErrorRow({ err }) {
   const sev = err.severity || (err.status === "ERROR" ? "error" : err.status === "WARNING" ? "warn" : "info");
-  const cfg = SEVERITY_COLOR[sev] || SEVERITY_COLOR.info;
+  const kind = eventKind(err);
+  const cfg = kind === "system_error" ? SEVERITY_COLOR.error : kind === "action_required"
+    ? { bg: cs.yellow, label: "TINDAKAN" } : kind === "audit"
+      ? { bg: cs.accent, label: "AUDIT" } : (SEVERITY_COLOR[sev] || SEVERITY_COLOR.info);
   return (
     <div style={{ background: cfg.bg + "12", border: `1px solid ${cfg.bg}33`, borderRadius: 8, padding: 10, fontSize: 12 }}>
       <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>

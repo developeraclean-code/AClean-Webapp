@@ -1279,6 +1279,57 @@ const d = await r.json();
           </Card>
         )}
 
+        {/* Follow-up Maintenance — kontrol backend + cron_jobs atomik */}
+        {isOwner && (
+        <Card>
+          <CardHeader icon="🔧" title="Pengingat Follow-up Maintenance" subtitle="WA Owner untuk temuan maintenance terbuka lebih dari 3 hari" />
+          {(() => {
+            const key = "maintenance_followup_alert_enabled";
+            const isOn = appSettings[key] === "true";
+            const repeatDays = Math.max(1, Math.min(30, Number(appSettings.maintenance_followup_repeat_days) || 7));
+            const job = {
+              id: 11, name: "Follow-up Maintenance", icon: "🔧", time: "10:00",
+              days: "Setiap Hari", task: "WA Owner untuk temuan maintenance open >3 hari",
+            };
+            return <>
+              <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "8px 0 14px", borderBottom: "1px solid " + cs.border }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, color: isOn ? cs.text : cs.muted, fontSize: 13 }}>Notifikasi WA Owner</div>
+                  <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>Status Terjadwal, Dikerjakan, Selesai, dan Dibatalkan tidak ikut dikirim.</div>
+                </div>
+                <span style={{ fontSize: 11, fontWeight: 700, color: isOn ? cs.green : cs.muted }}>{isOn ? "ON" : "OFF"}</span>
+                <div onClick={async () => {
+                  await persistAutomationToggle({
+                    key, enabled: !isOn, job,
+                    successMessage: isOn ? "⛔ Pengingat follow-up maintenance dimatikan" : "✅ Pengingat follow-up maintenance diaktifkan",
+                  });
+                }} style={{ width: 44, height: 24, borderRadius: 99, background: isOn ? "linear-gradient(135deg," + cs.green + ",#059669)" : cs.surface, border: "1px solid " + (isOn ? cs.green : cs.border), cursor: "pointer", position: "relative" }}>
+                  <div style={{ position: "absolute", width: 18, height: 18, borderRadius: "50%", background: "#fff", top: 2, left: isOn ? 22 : 2, transition: "left .2s" }} />
+                </div>
+              </div>
+              <label style={{ display: "grid", gap: 5, marginTop: 14, maxWidth: 260, fontSize: 11, color: cs.muted }}>
+                <span style={{ fontWeight: 700 }}>Kirim ulang bila masih terbuka</span>
+                <select value={repeatDays} onChange={async e => {
+                  const previous = String(repeatDays);
+                  const value = String(Number(e.target.value));
+                  setAppSettings(prev => ({ ...prev, maintenance_followup_repeat_days: value }));
+                  const { error } = await supabase.from("app_settings").upsert({ key: "maintenance_followup_repeat_days", value }, { onConflict: "key" });
+                  if (error) {
+                    setAppSettings(prev => ({ ...prev, maintenance_followup_repeat_days: previous }));
+                    showNotif("❌ Interval tidak berubah: " + error.message);
+                  } else showNotif(`✅ Pengingat ulang setiap ${value} hari`);
+                }} style={inp}>
+                  {[1,3,7,14,30].map(d => <option key={d} value={d}>{d === 1 ? "Setiap hari" : `Setiap ${d} hari`}</option>)}
+                </select>
+              </label>
+              <div style={{ marginTop: 12, padding: "10px 12px", background: cs.surface, borderRadius: 8, color: cs.muted, fontSize: 11, lineHeight: 1.5 }}>
+                Marker pengiriman hanya disimpan setelah provider WA sukses. Jika gagal, Monitoring mencatat kegagalan dan cron boleh mencoba kembali.
+              </div>
+            </>;
+          })()}
+        </Card>
+        )}
+
         {/* Cron Jobs */}
         <Card>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
@@ -1301,7 +1352,9 @@ const d = await r.json();
           </div>
 
           <div style={{ display: "grid", gap: 8 }}>
-            {cronJobs.map((job, idx) => (
+            {cronJobs.map((job, idx) => ({ job, idx }))
+              .filter(({ job }) => job.backendKey !== "maintenance_followup_alert_enabled")
+              .map(({ job, idx }) => (
               <div key={job.id} style={{ background: cs.surface, border: "1px solid " + (job.active ? cs.green + "66" : cs.border), borderRadius: 10, padding: "12px 14px", display: "flex", gap: 12, alignItems: "center", opacity: job.active ? 1 : 0.65, transition: "all .2s" }}>
                 <span style={{ fontSize: 20, minWidth: 28, textAlign: "center" }}>{job.icon || "⚙️"}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>

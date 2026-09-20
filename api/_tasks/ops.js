@@ -1,6 +1,6 @@
 // api/_tasks/ops.js — Task cron grup ops (dipindah APA ADANYA dari
 // api/cron-reminder.js, pemecahan _tasks/ Jul 2026). Entry & jadwal tetap di cron-reminder.js.
-import { sb, sendWA, isCronJobEnabled, fmt, log, deleteR2Object, OWNER_PHONE } from "./_shared.js";
+import { sb, sendWA, sendWAWithResult, isCronJobEnabled, fmt, log, deleteR2Object, OWNER_PHONE } from "./_shared.js";
 import * as Sentry from "@sentry/node";
 import { createHmac, createHash } from "crypto";
 import { getR2BucketUsage } from "../_r2-upload.js";
@@ -377,26 +377,34 @@ export async function taskMaintenanceContractExpiry() {
 // ══════════════════════════════════════════════════
 export async function taskMaintenanceFollowupAlert() {
   const { data: togData } = await sb.from("app_settings").select("key,value")
-    .in("key", ["maintenance_followup_alert_enabled", "cron_jobs"]);
+    .in("key", ["maintenance_followup_alert_enabled", "maintenance_followup_repeat_days", "cron_jobs"]);
   const togMap = Object.fromEntries((togData || []).map(s => [s.key, s.value]));
   if (!isCronJobEnabled(togMap, "maintenance_followup_alert_enabled") || togMap["maintenance_followup_alert_enabled"] !== "true") {
     await log("MAINTENANCE_FOLLOWUP_ALERT", "Dilewati — maintenance_followup_alert_enabled OFF", "INFO");
     return { skipped: true };
   }
 
+  const repeatDays = Math.max(1, Math.min(30, Number(togMap.maintenance_followup_repeat_days) || 7));
   const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const { data: stale } = await sb
+  const alertCutoff = new Date(Date.now() - repeatDays * 24 * 60 * 60 * 1000).toISOString();
+  const { data: staleRows, error: staleError } = await sb
     .from("maintenance_followups")
-    .select("id,issue_type,description,found_date,found_by,priority,maintenance_units(unit_code,location),maintenance_clients(name)")
+    .select("id,issue_type,description,found_date,found_by,priority,wa_alerted_at,maintenance_units(unit_code,location),maintenance_clients(name)")
     .eq("status", "open")
     .lte("found_date", threeDaysAgo)
-    .order("priority", { ascending: true })   // critical dulu
+    .or(`wa_alerted_at.is.null,wa_alerted_at.lte.${alertCutoff}`)
     .order("found_date", { ascending: true })
-    .limit(30);
+    .limit(100);
+  if (staleError) throw new Error("Query follow-up maintenance gagal: " + staleError.message);
+  const priorityRank = { critical: 0, high: 1, normal: 2, low: 3 };
+  const stale = (staleRows || [])
+    .sort((a, b) => (priorityRank[a.priority] ?? 9) - (priorityRank[b.priority] ?? 9)
+      || String(a.found_date).localeCompare(String(b.found_date)))
+    .slice(0, 30);
 
   if (!stale?.length) {
     await log("MAINTENANCE_FOLLOWUP_ALERT", "Tidak ada followup open >3 hari", "INFO");
-    return { checked: true, staleCount: 0 };
+    return { checked: true, items_processed: 0, staleCount: 0, repeatDays };
   }
 
   const ISSUE_LABEL = {
@@ -432,16 +440,27 @@ export async function taskMaintenanceFollowupAlert() {
 
   msg += `_Segera tindak lanjuti atau buat quotasi ke klien. — ARA AClean_`;
 
-  // Tandai wa_alerted_at untuk semua yang baru saja di-alert (anti spam harian)
+  const delivery = await sendWAWithResult(OWNER_PHONE, msg, { retries: 1, timeoutMs: 10000 });
+  if (!delivery.ok) {
+    await log("MAINTENANCE_FOLLOWUP_ALERT", `Gagal kirim ${stale.length} follow-up setelah ${delivery.attempts} percobaan: ${delivery.error}`, "ERROR");
+    // Lempar error supaya cron_runs jujur berstatus FAILED dan tick berikutnya boleh retry.
+    throw new Error("WA follow-up maintenance gagal: " + delivery.error);
+  }
+
+  // Audit baru ditulis SETELAH provider mengonfirmasi sukses. Update dibatasi status
+  // open agar perubahan status oleh Admin saat request berlangsung tidak tertimpa.
   const alertIds = stale.map(f => f.id);
-  await sb.from("maintenance_followups")
+  const { error: markError } = await sb.from("maintenance_followups")
     .update({ wa_alerted_at: new Date().toISOString() })
     .in("id", alertIds)
-    .is("wa_alerted_at", null);   // hanya yang belum pernah di-alert hari ini
+    .eq("status", "open");
+  if (markError) {
+    await log("MAINTENANCE_FOLLOWUP_ALERT_AUDIT_FAIL", `WA terkirim tetapi marker ${stale.length} follow-up gagal: ${markError.message}`, "ERROR");
+    throw new Error("WA terkirim, tetapi marker follow-up gagal disimpan: " + markError.message);
+  }
 
-  const waSent = await sendWA(OWNER_PHONE, msg);
-  await log("MAINTENANCE_FOLLOWUP_ALERT", `Alert: ${stale.length} followup open >3 hari`, waSent ? "SUCCESS" : "WARNING");
-  return { staleCount: stale.length, waSent };
+  await log("MAINTENANCE_FOLLOWUP_ALERT", `Terkirim: ${stale.length} follow-up open >3 hari; cooldown ${repeatDays} hari`, "SUCCESS");
+  return { items_processed: stale.length, staleCount: stale.length, waSent: true, attempts: delivery.attempts, repeatDays };
 }
 
 

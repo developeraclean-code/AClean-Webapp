@@ -14,17 +14,40 @@ if (!OWNER_PHONE) {
 }
 export const FONNTE_TOKEN = process.env.FONNTE_TOKEN  || "";
 
+export async function sendWAWithResult(phone, message, { retries = 0, timeoutMs = 12000 } = {}) {
+  if (!FONNTE_TOKEN) return { ok: false, attempts: 0, error: "FONNTE_TOKEN belum dikonfigurasi" };
+  if (!phone) return { ok: false, attempts: 0, error: "Nomor tujuan WA kosong" };
+
+  const maxAttempts = Math.max(1, Math.min(3, Number(retries) + 1));
+  let lastError = "Provider WA tidak merespons sukses";
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), Math.max(1000, Number(timeoutMs) || 12000));
+    try {
+      const r = await fetch("https://api.fonnte.com/send", {
+        method: "POST",
+        headers: { "Authorization": FONNTE_TOKEN, "Content-Type": "application/json" },
+        body: JSON.stringify({ target: phone, message, countryCode: "62" }),
+        signal: controller.signal,
+      });
+      let d = null;
+      try { d = await r.json(); } catch (_) { d = null; }
+      if (r.ok && d?.status === true) return { ok: true, attempts: attempt, httpStatus: r.status };
+      lastError = `Fonnte HTTP ${r.status}: ${String(d?.reason || d?.detail || d?.message || "status=false").slice(0, 180)}`;
+    } catch (e) {
+      lastError = e?.name === "AbortError" ? `Fonnte timeout >${timeoutMs}ms` : String(e?.message || e).slice(0, 180);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return { ok: false, attempts: maxAttempts, error: lastError };
+}
+
+// Kompatibilitas semua task lama: caller tetap menerima boolean. Task yang perlu
+// audit alasan gagal memakai sendWAWithResult secara langsung.
 export async function sendWA(phone, message) {
-  if (!FONNTE_TOKEN || !phone) return false;
-  try {
-    const r = await fetch("https://api.fonnte.com/send", {
-      method: "POST",
-      headers: { "Authorization": FONNTE_TOKEN, "Content-Type": "application/json" },
-      body: JSON.stringify({ target: phone, message, countryCode: "62" }),
-    });
-    const d = await r.json();
-    return d.status === true;
-  } catch(e) { return false; }
+  const result = await sendWAWithResult(phone, message);
+  return result.ok;
 }
 
 // Cek toggle dari cron_jobs JSON (sumber utama) atau key lama (fallback)
@@ -109,4 +132,3 @@ export async function deleteR2Object(key) {
     return false;
   }
 }
-

@@ -27,11 +27,15 @@ initSentry();
 // bukti-bayar: jalan tiap tick jam kerja (idempoten internal, tak perlu guard harian).
 // ══════════════════════════════════════════════════
 async function taskTick() {
+  const tickStartedAt = Date.now();
   const nowWib = new Date(Date.now() + 7 * 3600000);
   const hour = nowWib.getUTCHours();   // jam WIB
   const dow  = nowWib.getUTCDay();     // 0=Min..6=Sab (WIB)
   const dom  = nowWib.getUTCDate();    // tanggal WIB
-  const CAP  = 6;                       // maks task non-bukti per tick
+  const CAP  = 3;                       // jaga durasi aman pada Vercel Hobby
+  // Vercel membatasi endpoint ini 30 detik. Sisakan waktu untuk menutup
+  // cron_runs, menulis log, dan mengirim response sebelum platform mematikan proses.
+  const TIME_BUDGET_MS = 22_000;
 
   // Jadwal: jam WIB tiap task (konversi dari skema lama UTC+7). dow/dom opsional.
   const schedule = [
@@ -87,19 +91,23 @@ async function taskTick() {
 
   // Mana yang BELUM jalan hari ini (cron_runs since WIB-midnight) → catch-up idempoten
   const midnightWibUtc = new Date(Date.UTC(nowWib.getUTCFullYear(), nowWib.getUTCMonth(), nowWib.getUTCDate()) - 7 * 3600000).toISOString();
-  const { data: todayRuns } = await sb.from("cron_runs").select("task_name").gte("started_at", midnightWibUtc);
-  const alreadyRan = new Set((todayRuns || []).map(r => r.task_name));
+  const { data: todayRuns } = await sb.from("cron_runs").select("task_name,status,started_at").gte("started_at", midnightWibUtc);
+  const recentRunningCutoff = Date.now() - 20 * 60 * 1000;
+  const alreadyRan = new Set((todayRuns || [])
+    .filter(r => r.status === "SUCCESS" || r.status === "SKIPPED"
+      || (r.status === "RUNNING" && new Date(r.started_at).getTime() >= recentRunningCutoff))
+    .map(r => r.task_name));
 
   let count = 0, pending = 0;
   for (const s of due) {
     if (alreadyRan.has(s.t)) continue;
-    if (count >= CAP) { pending++; continue; }
+    if (count >= CAP || Date.now() - tickStartedAt >= TIME_BUDGET_MS) { pending++; continue; }
     try { await runWithCronLogging(sb, s.t, () => s.fn()); ran.push(s.t); count++; }
     catch (e) { console.error("[TICK]", s.t, e.message); }
   }
 
   await log("TICK", `${hour}:00 WIB — jalan: ${ran.join(", ") || "(tidak ada/selesai)"}${pending ? ` | sisa ${pending} (tick berikutnya)` : ""}`, "INFO");
-  return { hourWib: hour, ran, pending };
+  return { hourWib: hour, ran, pending, items_processed: ran.length };
 }
 
 
