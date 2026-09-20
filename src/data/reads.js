@@ -359,6 +359,27 @@ export const fetchAiUsage = (supabase, { since, provider, feature, limit = 200 }
 export const fetchWaDeliverySummary = (supabase) =>
   supabase.from("wa_delivery_summary").select("*").order("day", { ascending: false }).limit(30);
 
+// Mission Control — ketiganya read-only dari sisi browser. Rekonsiliasi dan
+// retensi selalu dipanggil dengan dry-run agar halaman audit tidak mengubah data.
+export const fetchQueryHealthSnapshot = (supabase) =>
+  supabase.rpc("get_query_health_snapshot");
+
+export const previewOrderInvoiceReconciliation = (supabase) =>
+  supabase.rpc("reconcile_order_invoice_links", { p_apply: false });
+
+export const previewOperationalLogRetention = (supabase, batchSize = 2000) =>
+  supabase.rpc("cleanup_operational_logs", {
+    p_apply: false,
+    p_batch_size: batchSize,
+  });
+
+// Deployment gate untuk workflow invoice multi-team. Bila migration 179 belum
+// tersedia, verifikasi grup harus berhenti (jangan jatuh ke RPC versi lama).
+export const probeTeamInvoiceWorkflow = (supabase) =>
+  supabase.from("team_invoice_parts")
+    .select("report_id", { head: true, count: "exact" })
+    .limit(1);
+
 // Dispatch logs detail dengan delivery status
 export const fetchDispatchLogsDetailed = (supabase, { since, limit = 100 } = {}) => {
   let q = supabase.from("dispatch_logs")

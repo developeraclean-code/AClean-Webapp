@@ -5,6 +5,9 @@ import {
   fetchAiUsage,
   fetchAgentLogsFiltered,
   fetchWaDeliverySummary,
+  fetchQueryHealthSnapshot,
+  previewOrderInvoiceReconciliation,
+  previewOperationalLogRetention,
 } from "../data/reads.js";
 import { auditInvoices, auditQuoteDeviation } from "../lib/invoicing.js";
 
@@ -33,6 +36,9 @@ const SEVERITY_COLOR = {
   critical: { bg: "#dc2626", label: "CRITICAL" },
 };
 const CATEGORIES = ["wa","payment","inventory","ai","auth","cron","portal","security","customer","order","invoice"];
+
+const rpcUnavailable = (error) => error?.code === "PGRST202" || error?.code === "42883"
+  || /(schema cache|does not exist|not found)/i.test(error?.message || "");
 
 // ─────────────────────────────────────────────
 // Tab: Overview (existing health + cron + AI summary)
@@ -1078,6 +1084,109 @@ function TabMaintLink({ apiHeaders }) {
   );
 }
 
+function TabDataHealth({ supabase }) {
+  const [state, setState] = useState({ loading: true, error: "", query: null, links: null, retention: null });
+
+  const load = async () => {
+    setState(prev => ({ ...prev, loading: true, error: "" }));
+    const [queryRes, linkRes, retentionRes] = await Promise.all([
+      fetchQueryHealthSnapshot(supabase),
+      previewOrderInvoiceReconciliation(supabase),
+      previewOperationalLogRetention(supabase),
+    ]);
+    const error = queryRes.error || linkRes.error || retentionRes.error;
+    if (error) {
+      setState({
+        loading: false,
+        error: rpcUnavailable(error)
+          ? "Migration 179 belum diterapkan. Tab ini tetap aman dan tidak melakukan fallback write."
+          : (error.message || "Gagal memuat data health"),
+        query: queryRes.data || null,
+        links: linkRes.data || null,
+        retention: retentionRes.data || null,
+      });
+      return;
+    }
+    setState({ loading: false, error: "", query: queryRes.data, links: linkRes.data, retention: retentionRes.data });
+  };
+
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const tables = Array.isArray(state.query?.tables) ? state.query.tables : [];
+  const retention = state.retention?.candidates || {};
+  const retentionTotal = Object.values(retention).reduce((sum, value) => sum + (Number(value) || 0), 0);
+  const watchCount = tables.filter(row => row.health !== "OK").length;
+  const legacyTeamReports = Number(state.query?.team_invoice_health?.legacy_verified_without_part || 0);
+
+  return (
+    <div style={{ display: "grid", gap: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+        <div>
+          <div style={{ color: cs.text, fontWeight: 800 }}>🩺 Data & Query Health</div>
+          <div style={{ color: cs.muted, fontSize: 11, marginTop: 3 }}>
+            Hanya observasi dan dry-run. Tidak menghapus log, mengubah invoice, atau membuat index.
+          </div>
+        </div>
+        <button onClick={load} disabled={state.loading} style={{ padding: "8px 14px", borderRadius: 8, background: cs.accent + "22", border: `1px solid ${cs.accent}44`, color: cs.accent, cursor: state.loading ? "wait" : "pointer", fontWeight: 700 }}>
+          {state.loading ? "⏳ Memuat" : "🔄 Refresh"}
+        </button>
+      </div>
+
+      {state.error && <div style={{ border: `1px solid ${cs.yellow}55`, background: cs.yellow + "12", color: cs.yellow, borderRadius: 10, padding: 12, fontSize: 12 }}>{state.error}</div>}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 12 }}>
+        <Card label="Ukuran Database" value={fmtBytes(state.query?.database_bytes)} color={cs.accent} />
+        <Card label="Tabel Perlu Diamati" value={watchCount} color={watchCount ? cs.yellow : cs.green} />
+        <Card label="Link Invoice Bisa Direkonsiliasi" value={state.links?.candidate_count ?? "—"} color={(state.links?.candidate_count || 0) ? cs.yellow : cs.green} />
+        <Card label="Log Lewat Retensi" value={state.retention ? retentionTotal : "—"} color={retentionTotal ? cs.yellow : cs.green} />
+        <Card label="Laporan Multi-team Legacy" value={legacyTeamReports} color={legacyTeamReports ? cs.yellow : cs.green} />
+      </div>
+
+      <div style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ padding: 14, borderBottom: `1px solid ${cs.border}`, color: cs.text, fontWeight: 800, fontSize: 13 }}>Query table statistics</div>
+        {tables.length === 0 ? <Empty msg={state.loading ? "⏳ Membaca statistik database..." : "Belum ada statistik tabel."} /> : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+              <thead><tr style={{ color: cs.muted, textAlign: "left" }}>
+                {["Tabel","Ukuran","Live","Dead","Seq Scan","Index Scan","Health"].map(h => <th key={h} style={{ padding: "10px 12px", borderBottom: `1px solid ${cs.border}` }}>{h}</th>)}
+              </tr></thead>
+              <tbody>{tables.map(row => <tr key={row.table_name} style={{ color: cs.text }}>
+                <td style={{ padding: "9px 12px", borderBottom: `1px solid ${cs.border}` }}>{row.table_name}</td>
+                <td style={{ padding: "9px 12px", borderBottom: `1px solid ${cs.border}` }}>{fmtBytes(row.total_bytes)}</td>
+                <td style={{ padding: "9px 12px", borderBottom: `1px solid ${cs.border}` }}>{Number(row.live_rows || 0).toLocaleString("id-ID")}</td>
+                <td style={{ padding: "9px 12px", borderBottom: `1px solid ${cs.border}` }}>{Number(row.dead_rows || 0).toLocaleString("id-ID")}</td>
+                <td style={{ padding: "9px 12px", borderBottom: `1px solid ${cs.border}` }}>{Number(row.seq_scan || 0).toLocaleString("id-ID")}</td>
+                <td style={{ padding: "9px 12px", borderBottom: `1px solid ${cs.border}` }}>{Number(row.idx_scan || 0).toLocaleString("id-ID")}</td>
+                <td style={{ padding: "9px 12px", borderBottom: `1px solid ${cs.border}`, color: row.health === "OK" ? cs.green : cs.yellow, fontWeight: 800 }}>{row.health}</td>
+              </tr>)}</tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: 12 }}>
+        <div style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 12, padding: 14 }}>
+          <div style={{ color: cs.text, fontWeight: 800, fontSize: 13 }}>🔗 Preview rekonsiliasi order → invoice</div>
+          <div style={{ color: cs.muted, fontSize: 11, marginTop: 5, lineHeight: 1.5 }}>Hanya link kosong/putus yang memiliki invoice aktif dan pasangan job yang jelas. Data yatim tidak dihapus.</div>
+          <div style={{ color: (state.links?.candidate_count || 0) ? cs.yellow : cs.green, fontWeight: 900, fontSize: 22, marginTop: 10 }}>{state.links?.candidate_count ?? "—"}</div>
+        </div>
+        <div style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 12, padding: 14 }}>
+          <div style={{ color: cs.text, fontWeight: 800, fontSize: 13 }}>🧹 Preview retensi log</div>
+          <div style={{ color: cs.muted, fontSize: 11, marginTop: 5, lineHeight: 1.5 }}>Eksekusi hanya dapat dilakukan service-role cron dan dibatasi maksimum 2.000 baris per tabel per run.</div>
+          <div style={{ display: "grid", gap: 5, marginTop: 10 }}>{Object.entries(retention).map(([key, value]) => (
+            <div key={key} style={{ display: "flex", justifyContent: "space-between", color: cs.muted, fontSize: 11 }}><span>{key}</span><b style={{ color: value ? cs.yellow : cs.green }}>{Number(value || 0).toLocaleString("id-ID")}</b></div>
+          ))}</div>
+        </div>
+      </div>
+
+      <div style={{ color: cs.muted, fontSize: 10 }}>{state.query?.recommendation || "Tambahkan index hanya berdasarkan bukti pola query lambat yang konsisten."}</div>
+      {legacyTeamReports > 0 && <div style={{ color: cs.yellow, fontSize: 11, lineHeight: 1.5 }}>
+        ⚠️ Ada {legacyTeamReports} laporan multi-team lama yang sudah VERIFIED tetapi belum mempunyai billing part/invoice grup. Data tidak diubah otomatis agar nilai historis tidak ditebak; tampilkan untuk review manual.
+      </div>}
+    </div>
+  );
+}
+
 function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHeaders, supabase }) {
   const [activeTab, setActiveTab] = useState("overview");
 
@@ -1105,6 +1214,7 @@ function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHe
     { id: "observations", label: "🧪 AI Observations" },
     { id: "recon",        label: "🧾 Rekonsiliasi Invoice" },
     { id: "maintlink",    label: "🏢 Link Maintenance" },
+    { id: "datahealth",   label: "🩺 Data Health" },
     { id: "audit",        label: "📜 Audit Log" },
   ];
 
@@ -1143,6 +1253,7 @@ function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHe
       {activeTab === "observations" && <TabWaObservations supabase={supabase} />}
       {activeTab === "recon"     && <TabInvoiceRecon supabase={supabase} />}
       {activeTab === "maintlink" && <TabMaintLink apiHeaders={_apiHeaders} />}
+      {activeTab === "datahealth" && <TabDataHealth supabase={supabase} />}
       {activeTab === "audit"     && <TabAudit supabase={supabase} />}
     </div>
   );

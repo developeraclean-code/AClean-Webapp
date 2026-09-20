@@ -38,7 +38,8 @@ async function taskTick() {
     { t: "cleanup",                  fn: taskCleanup,                h: 2,  dom: 1 },
     { t: "r2-cleanup-90d",           fn: taskR2Cleanup90d,           h: 3 },
     { t: "expense-foto-cleanup",     fn: taskExpenseFotoCleanup30d,  h: 3 },
-    { t: "log-cleanup",              fn: taskLogCleanup,             h: 3,  dow: 0 },
+    // Bounded 2.000 baris/tabel; harian agar backlog turun bertahap tanpa spike DB.
+    { t: "log-cleanup",              fn: taskLogCleanup,             h: 3 },
     { t: "payment-proof-cleanup",    fn: taskPaymentProofCleanup90d, h: 3 },
     { t: "stock",                    fn: taskStock,                  h: 8 },
     { t: "servis-reminder",          fn: taskServisReminder,         h: 8,  dow: 1 },

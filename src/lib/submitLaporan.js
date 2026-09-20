@@ -4,6 +4,7 @@
 // Body verbatim (behavior-preserving). JALUR UANG — test ketat.
 import { isHarianManagedItem } from "./materialRecon.js";
 import { submitServiceReportAtomic } from "../data/writes.js";
+import { isTeamSplitOrder } from "./teamSplitWorkflow.js";
 
 const isMissingAtomicReportRpc = (error) => error?.code === "PGRST202" || error?.code === "42883"
   || /submit_service_report_atomic.*(schema cache|does not exist|not found)/i.test(error?.message || "");
@@ -531,6 +532,16 @@ export async function submitLaporan({
       }, 800);
     }
 
+    // Team split: teknisi hanya mengirim laporan aktual. Billing part dan satu invoice
+    // grup dibentuk oleh RPC finalisasi setelah seluruh laporan tim diverifikasi.
+    // Ini mencegah tim pertama membekukan nilai invoice sebelum tim lain melapor.
+    const deferTeamSplitInvoice = isTeamSplitOrder(laporanModal);
+    if (deferTeamSplitInvoice) {
+      addAgentLog("TEAM_SPLIT_REPORT_SUBMITTED",
+        `Laporan ${newReport.id} masuk untuk grup ${laporanModal.job_group_id}; invoice menunggu seluruh tim diverifikasi`,
+        "INFO");
+      showNotif("✅ Laporan tim tersimpan. Invoice grup dibuat setelah seluruh laporan tim diverifikasi Owner/Admin.");
+    } else {
     // ── 12. Auto-generate invoice ──
     // Hitung labor & material — harga freon dari inventory DULU, fallback PRICE_LIST
     // Untuk Install: labor = 0 karena semua jasa sudah masuk INSTALL_ITEMS → materials_detail
@@ -683,25 +694,9 @@ export async function submitLaporan({
 
     } else {
       // BUAT invoice
-      // Team-split: invoice B2B tunggal per project, di-key ke job_group_id untuk SEMUA
-      // anggota grup. Tim mana pun yang diverifikasi duluan membuat invoice; sisanya menemukan
-      // invoice itu via job_id = job_group_id → skip (anti invoice ganda).
       // Multi-hari TIDAK punya perlakuan khusus lagi (kebijakan Owner 11 Agu 2026):
       // tiap hari kerja = 1 order = 1 invoice sendiri, sama seperti job biasa. Penagihan
       // dikirim per-invoice; kalau customer bayar sekaligus, dipakai Group Payment.
-      const isTeamSplit = !!laporanModal.is_team_split && !!laporanModal.job_group_id;
-      if (isTeamSplit) {
-        const groupInv = invoicesData.find(i => i.job_id === laporanModal.job_group_id);
-        if (groupInv && !["CANCELLED", "PAID"].includes(groupInv.status)) {
-          // Invoice grup sudah ada & masih aktif — notif saja, jangan buat invoice baru
-          showNotif(`ℹ️ Laporan tim project terkirim. Invoice grup ${groupInv.id} sudah ada — minta Admin/Owner update total jika ada tambahan.`);
-          addAgentLog("GROUP_CHILD_LAPORAN",
-            `Laporan ${laporanModal.id} (tim project) — invoice grup ${groupInv.id} sudah ada, skip buat invoice baru`,
-            "INFO");
-          setLaporanModal(null);
-          return;
-        }
-      }
 
       const invSeq = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
       const invId = "INV-" + todayInv.replace(/-/g, "").slice(0, 8) + "-" + invSeq;
@@ -763,11 +758,8 @@ export async function submitLaporan({
       const detailToStore = normalizeLines(mDetail);
       const newInvoice = {
         id: invId,
-        // Team-split → job_group_id (1 invoice B2B per project, tim mana pun yang duluan).
-        // Sisanya (termasuk multi-hari) → id order sendiri = 1 order 1 invoice.
-        job_id: (laporanModal.is_team_split && laporanModal.job_group_id)
-          ? laporanModal.job_group_id
-          : laporanModal.id,
+        // Team split tidak masuk jalur ini; billing grup diproses oleh finalisasi atomik.
+        job_id: laporanModal.id,
         customer: laporanModal.customer,
         phone: laporanModal.phone || customersData.find(c => c.name === laporanModal.customer)?.phone || "",
         // Alamat pekerjaan dari order — tampil di blok "Tagihan Kepada" invoice PDF
@@ -940,6 +932,8 @@ export async function submitLaporan({
       }
       } // ── tutup if (!skipInvoiceCreate) — pembuatan invoice baru ──
     }
+
+    } // ── akhir invoice job biasa; team split diproses saat verifikasi atomik ──
 
     // ── Sync job_materials_brought: tandai USED / RETURNED ──
     // Item barang yang masih dipakai → USED + qty_used

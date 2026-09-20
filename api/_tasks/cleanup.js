@@ -4,37 +4,25 @@ import { sb, isCronJobEnabled, log, deleteR2Object } from "./_shared.js";
 import { logStructured } from "../_logger.js";
 
 // ══════════════════════════════════════════════════
-// TASK 4: Cleanup LOG DB lama (BUKAN foto/R2)
-// agent_logs 30h, audit_log 30h, dispatch_logs 90h, payment_suggestions 30h.
+// TASK 4: Cleanup metadata operasional non-log.
+// Retensi log teknis dipusatkan di taskLogCleanup → cleanup_operational_logs RPC.
+// Di sini hanya dispatch_logs 90h dan payment_suggestions selesai 30h.
 // Penghapusan file R2 ada di task terpisah: r2-cleanup-90d, expense-foto-cleanup,
 // snapshot-cleanup, payment-proof-cleanup.
 // ══════════════════════════════════════════════════
 export async function taskCleanup() {
-  const result = { agent_logs: 0, audit_log: 0, dispatch_logs: 0, payment_suggestions: 0 };
+  const result = { dispatch_logs: 0, payment_suggestions: 0 };
 
-  // Cutoffs retensi: agent_logs & audit_log = 30 hari, dispatch_logs = 90 hari
   const cutoff30 = new Date(Date.now() - 30 * 86400000).toISOString();
   const cutoff90 = new Date(Date.now() - 90 * 86400000).toISOString();
 
-  // 1. Cleanup agent_logs > 30 hari (diperpendek dari 90 — kurangi ukuran tabel & beban DB)
-  const { error: logDelErr, count: logCount } = await sb.from("agent_logs")
-    .delete({ count: "exact" }).lt("created_at", cutoff30);
-  if (logDelErr) console.error("[CLEANUP_AGENT_LOGS]", logDelErr.message);
-  else result.agent_logs = logCount || 0;
-
-  // 2. Cleanup audit_log > 30 hari (tumbuh paling cepat ~15MB/bulan)
-  const { error: auditDelErr, count: auditCount } = await sb.from("audit_log")
-    .delete({ count: "exact" }).lt("changed_at", cutoff30);
-  if (auditDelErr) console.error("[CLEANUP_AUDIT_LOG]", auditDelErr.message);
-  else result.audit_log = auditCount || 0;
-
-  // 3. Cleanup dispatch_logs > 90 hari
+  // 1. Cleanup dispatch_logs > 90 hari
   const { error: dispDelErr, count: dispCount } = await sb.from("dispatch_logs")
     .delete({ count: "exact" }).lt("sent_at", cutoff90);
   if (dispDelErr) console.error("[CLEANUP_DISPATCH_LOGS]", dispDelErr.message);
   else result.dispatch_logs = dispCount || 0;
 
-  // 4. Cleanup payment_suggestions yang SUDAH selesai > 30 hari.
+  // 2. Cleanup payment_suggestions yang SUDAH selesai > 30 hari.
   //    Nilai status sebelumnya ditulis "RESOLVED"/"REJECTED" — keduanya TIDAK PERNAH ADA
   //    di tabel ini (nilai nyata: CONFIRMED / PENDING / DISMISSED), jadi sejak lahir cron
   //    ini menghapus 0 baris sambil tetap melapor sukses (audit 29 Agu 2026).
@@ -47,7 +35,7 @@ export async function taskCleanup() {
   if (suggDelErr) console.error("[CLEANUP_PAYMENT_SUGGESTIONS]", suggDelErr.message);
   else result.payment_suggestions = suggCount || 0;
 
-  const summary = `agent_logs: ${result.agent_logs} | audit_log: ${result.audit_log} | dispatch_logs: ${result.dispatch_logs} | payment_suggestions: ${result.payment_suggestions}`;
+  const summary = `dispatch_logs: ${result.dispatch_logs} | payment_suggestions: ${result.payment_suggestions} | log teknis: dikelola task log-cleanup`;
   await log("CLEANUP", summary, "SUCCESS");
   return result;
 }
@@ -290,56 +278,56 @@ export async function taskWaCleanup() {
   const { error: convErr, count: convsDeleted } = await convQ;
   if (convErr) console.error("[WA_CLEANUP_CONV]", convErr.message);
 
-  // wa_webhook_raw: retensi 30 hari. Tabel firehose (130k+ insert/batch) — tanpa retensi jadi
-  // storage hog ~20 MB+. Tidak ada data sensitif di sini (hanya raw payload webhook Fonnte).
-  const rawCutoff = new Date(Date.now() - 30 * 86400000).toISOString();
-  const { error: rawErr, count: rawDeleted } = await sb
-    .from("wa_webhook_raw").delete({ count: "exact" }).lt("created_at", rawCutoff);
-  if (rawErr) console.error("[WA_CLEANUP_RAW]", rawErr.message);
-
-  await log("WA_CLEANUP", `${msgsDeleted || 0} pesan & ${convsDeleted || 0} conversations dihapus (>14 hari). ${protectedPhones.length} phone dilindungi. ${rawDeleted || 0} wa_webhook_raw dihapus (>30 hari).`);
-  return { msgsDeleted: msgsDeleted || 0, convsDeleted: convsDeleted || 0, protectedPhones: protectedPhones.length, rawDeleted: rawDeleted || 0 };
+  await log("WA_CLEANUP", `${msgsDeleted || 0} pesan & ${convsDeleted || 0} conversations dihapus (>14 hari). ${protectedPhones.length} phone dilindungi. Raw webhook dikelola task log-cleanup.`);
+  return { msgsDeleted: msgsDeleted || 0, convsDeleted: convsDeleted || 0, protectedPhones: protectedPhones.length };
 }
 
 // ══════════════════════════════════════════════════
-// TASK 14: Log Cleanup — retention agent_logs, cron_runs, ai_usage (90 hari)
-// Dipanggil weekly via vercel.json cron (lihat juga task=cleanup untuk audit_log + R2)
+// TASK 14: Log Cleanup — satu kebijakan database, bounded per batch.
+// Tidak pernah menyentuh order, laporan, invoice, payment, expense, atau ledger stok.
 // ══════════════════════════════════════════════════
 export async function taskLogCleanup() {
   try {
-    const { data, error } = await sb.rpc("cleanup_observability_logs", { retention_days: 90 });
+    const { data, error } = await sb.rpc("cleanup_operational_logs", {
+      p_apply: true,
+      p_batch_size: 2000,
+    });
     if (error) {
+      // Jeda deployment aman: bila kode API tiba sebelum migration 179 tersedia,
+      // pakai RPC observability lama untuk satu siklus. Tidak ada direct delete.
+      const missingNewRpc = error.code === "PGRST202" || error.code === "42883"
+        || /cleanup_operational_logs.*(schema cache|does not exist|not found)/i.test(error.message || "");
+      if (missingNewRpc) {
+        const legacy = await sb.rpc("cleanup_observability_logs", { retention_days: 90 });
+        if (!legacy.error) {
+          const summary = (legacy.data || []).map(r => `${r.table_name}=${r.deleted_count}`).join(", ");
+          await logStructured(sb, {
+            action: "LOG_CLEANUP_LEGACY_FALLBACK",
+            severity: "warn",
+            category: "cron",
+            detail: summary || "Migration 179 belum aktif; fallback lama tidak menemukan log",
+            metadata: { deleted: legacy.data || [] },
+          });
+          return { deleted: legacy.data || [], fallback: true, summary };
+        }
+      }
       await logStructured(sb, {
         action: "LOG_CLEANUP",
         severity: "error",
         category: "cron",
-        detail: "RPC cleanup_observability_logs failed: " + error.message,
+        detail: "RPC cleanup_operational_logs failed: " + error.message,
       });
       return { error: error.message };
     }
-    // Tabel di luar RPC observability — bersihkan langsung supaya tidak tumbuh tanpa batas:
-    // audit_log (retensi 60h via changed_at) & wa_webhook_raw (payload mentah Fonnte, retensi 7h).
-    const extra = [];
-    try {
-      const auditCutoff = new Date(Date.now() - 60 * 86400000).toISOString();
-      const { count: auditDel } = await sb.from("audit_log").delete({ count: "exact" }).lt("changed_at", auditCutoff);
-      extra.push(`audit_log=${auditDel || 0}`);
-    } catch (e) { console.error("[LOG_CLEANUP_AUDIT]", e.message); }
-    try {
-      const rawCutoff = new Date(Date.now() - 7 * 86400000).toISOString();
-      const { count: rawDel } = await sb.from("wa_webhook_raw").delete({ count: "exact" }).lt("created_at", rawCutoff);
-      extra.push(`wa_webhook_raw=${rawDel || 0}`);
-    } catch (e) { console.error("[LOG_CLEANUP_RAW]", e.message); }
-
-    const summary = [...(data || []).map(r => `${r.table_name}=${r.deleted_count}`), ...extra].join(", ");
+    const summary = Object.entries(data?.deleted || {}).map(([table, count]) => `${table}=${count}`).join(", ");
     await logStructured(sb, {
       action: "LOG_CLEANUP",
       severity: "info",
       category: "cron",
       detail: summary || "Tidak ada log yang perlu dihapus",
-      metadata: { deleted: data, extra },
+      metadata: data,
     });
-    return { deleted: data, extra, summary };
+    return { ...data, summary };
   } catch (err) {
     await logStructured(sb, {
       action: "LOG_CLEANUP",
@@ -350,4 +338,3 @@ export async function taskLogCleanup() {
     return { error: err.message };
   }
 }
-

@@ -3,8 +3,9 @@ import { cs } from "../theme/cs.js";
 import { normalizePhone } from "../lib/phone.js";
 import { summarize, checkInvoiceConsistency, describeInconsistency, normalizeLines, buildWarrantyDiscountLine, categoryFromCatalog } from "../lib/invoicing.js";
 import { clientCleaningUnitPrice } from "../lib/maintClientPrice.js";
-import { fetchServiceReportsPage } from "../data/reads.js";
+import { fetchServiceReportsPage, probeTeamInvoiceWorkflow } from "../data/reads.js";
 import { finalizeServiceReportAtomic } from "../data/writes.js";
+import { getTeamFinalizationOutcome, isTeamSplitOrder } from "../lib/teamSplitWorkflow.js";
 
 const isMissingFinalizeRpc = (error) => error?.code === "PGRST202" || error?.code === "42883"
   || /finalize_service_report_atomic.*(schema cache|does not exist|not found)/i.test(error?.message || "");
@@ -611,6 +612,16 @@ const verifyLaporan = async (r) => {
   // Harga deal per-klien maintenance — dijamin ter-fetch SEBELUM invoice dibangun
   // (prefetch badge bisa belum selesai kalau admin verify cepat).
   const _ordDeal = ordersData.find(o => o.id === r.job_id);
+  if (isTeamSplitOrder(_ordDeal)) {
+    const { error: workflowError } = await probeTeamInvoiceWorkflow(supabase);
+    if (workflowError) {
+      addAgentLog("TEAM_SPLIT_WORKFLOW_NOT_READY",
+        `Verifikasi ${r.job_id} diblokir aman karena migration 179 belum tersedia: ${workflowError.message}`,
+        "WARNING");
+      showNotif("⚠️ Workflow invoice multi-team belum aktif di database (migration 179). Laporan aman tersimpan, tetapi verifikasi ditahan agar invoice tidak salah hitung.");
+      return;
+    }
+  }
   const dealPricesV = _ordDeal?.maintenance_client_id ? await ensureMaintPrices(_ordDeal.maintenance_client_id) : null;
 
   const afterVerified = () => {
@@ -638,15 +649,22 @@ const verifyLaporan = async (r) => {
   };
 
   const commitFinalization = async (invoicePayload = null) => {
-    const mutationKey = `report-finalize:${r.id}`;
+    const mutationKey = isTeamSplitOrder(_ordDeal)
+      ? `report-finalize-team-v2:${r.id}`
+      : `report-finalize:${r.id}`;
     const { data, error } = await finalizeServiceReportAtomic(
       supabase, r.id, invoicePayload, auditUserName(), mutationKey
     );
     if (!error) {
       afterVerified();
       const savedOrder = data?.order;
+      const savedOrders = Array.isArray(data?.orders) ? data.orders : [];
       const savedInvoice = data?.invoice;
       if (savedOrder) setOrdersData(prev => prev.map(o => o.id === savedOrder.id ? { ...o, ...savedOrder } : o));
+      if (savedOrders.length > 0) {
+        const byId = new Map(savedOrders.map(o => [o.id, o]));
+        setOrdersData(prev => prev.map(o => byId.has(o.id) ? { ...o, ...byId.get(o.id) } : o));
+      }
       if (savedInvoice) setInvoicesData(prev => prev.some(i => i.id === savedInvoice.id)
         ? prev.map(i => i.id === savedInvoice.id ? { ...i, ...savedInvoice } : i)
         : [...prev, savedInvoice]);
@@ -803,19 +821,35 @@ const verifyLaporan = async (r) => {
     const finalized = await commitFinalization(newInv);
     if (!finalized.ok) return;
     if (finalized.atomic) {
+      const groupOutcome = getTeamFinalizationOutcome(finalized.data);
       const savedInvoice = finalized.data?.invoice;
       const createdNow = savedInvoice?.id === invId;
       if (updateCustomerTierAfterOrder && ord) updateCustomerTierAfterOrder(ord).catch(() => {});
+      if (groupOutcome && !groupOutcome.ready) {
+        addAgentLog("TEAM_SPLIT_PART_VERIFIED",
+          `Grup ${groupOutcome.groupId}: ${groupOutcome.verifiedCount}/${groupOutcome.teamCount} laporan verified; invoice belum dibuat`,
+          "INFO");
+        showNotif(`✅ Laporan tim diverifikasi (${groupOutcome.verifiedCount}/${groupOutcome.teamCount}). Invoice grup menunggu ${groupOutcome.waitingCount} tim lagi.`);
+        return;
+      }
       if (!createdNow) {
         showNotif(`✅ Laporan verified! Invoice ${savedInvoice?.id || "existing"} sudah ada dan tidak diduplikasi.`);
         return;
       }
-      addAgentLog("AUTO_INVOICE", `Invoice ${invId} auto-dibuat atomik dari laporan ${r.job_id}`, "SUCCESS");
-      showNotif(totalInv === 0
-        ? `✅ Invoice ${invId} GRATIS — langsung LUNAS`
-        : `✅ Invoice ${invId} dibuat (${fmt(totalInv)}) — tunggu approval Owner/Admin`);
+      addAgentLog(groupOutcome ? "TEAM_SPLIT_INVOICE_CREATED" : "AUTO_INVOICE",
+        groupOutcome
+          ? `Invoice grup ${invId} dibuat setelah ${groupOutcome.verifiedCount}/${groupOutcome.teamCount} laporan verified`
+          : `Invoice ${invId} auto-dibuat atomik dari laporan ${r.job_id}`,
+        "SUCCESS");
+      const notificationTotal = Number(savedInvoice?.total ?? totalInv);
+      showNotif(notificationTotal === 0
+        ? `✅ Invoice ${groupOutcome ? "grup " : ""}${invId} GRATIS — langsung LUNAS`
+        : groupOutcome
+          ? `✅ Semua laporan tim lengkap. Invoice grup ${invId} dibuat dari ${groupOutcome.teamCount} laporan.`
+          : `✅ Invoice ${invId} dibuat (${fmt(totalInv)}) — tunggu approval Owner/Admin`);
       const owners = userAccounts.filter(u => (u.role === "Owner" || u.role === "Admin") && u.active !== false);
-      owners.forEach(o => { if (o?.phone) sendWA(o.phone, `⚡ *Invoice Auto-Generated*\n\nJob: *${r.job_id}*\nCustomer: ${r.customer}\nService: ${r.service}\nTotal: *${fmt(totalInv)}*\n\nMohon cek dan approve invoice di menu Invoice. — AClean`); });
+      const notificationJobId = groupOutcome?.groupId || r.job_id;
+      owners.forEach(o => { if (o?.phone) sendWA(o.phone, `⚡ *Invoice Auto-Generated*\n\nJob: *${notificationJobId}*\nCustomer: ${r.customer}\nService: ${r.service}\nTotal: *${fmt(notificationTotal)}*\n\nMohon cek dan approve invoice di menu Invoice. — AClean`); });
       return;
     }
 
