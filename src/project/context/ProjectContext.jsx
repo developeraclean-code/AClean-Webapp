@@ -1,6 +1,6 @@
-import React, { createContext, useContext, useState, useCallback, useEffect } from "react";
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from "react";
 import { initialData } from "../data/sampleData.js";
-import { loadAll, api, genId, ASC } from "../data/projectApi";
+import { loadTables, PROJECT_VIEW_KEYS, api, genId, ASC } from "../data/projectApi";
 import { reportError } from "../../lib/reportError.js";
 
 const Ctx = createContext(null);
@@ -9,9 +9,12 @@ export const useProject = () => useContext(Ctx);
 export function ProjectProvider({ currentUser, apiFetch, appSettings = {}, children }) {
   const [db, setDb] = useState(() => initialData());
   const [loading, setLoading] = useState(true);
+  const [moduleLoading, setModuleLoading] = useState(false);
   const [syncError, setSyncError] = useState(null);
   const [activeView, setActiveView] = useState("dashboard");
   const [activeProject, setActiveProject] = useState(null);
+  const loadedKeys = useRef(new Set());
+  const pendingKeys = useRef(new Set());
   const role = currentUser?.role || "Owner";
   const can = {
     finance: role === "Owner",
@@ -25,8 +28,12 @@ export function ProjectProvider({ currentUser, apiFetch, appSettings = {}, child
   // ── load awal dari Supabase ───────────────────────────────────────────────
   const reload = useCallback(async () => {
     try {
-      const data = await loadAll();
-      setDb(data);
+      const keys = loadedKeys.current.size
+        ? [...loadedKeys.current]
+        : (PROJECT_VIEW_KEYS.dashboard || ["projects"]);
+      const data = await loadTables(keys);
+      setDb((cur) => ({ ...cur, ...data }));
+      keys.forEach((k) => loadedKeys.current.add(k));
       setSyncError(null);
     } catch (e) {
       reportError("project.reload", e);
@@ -39,6 +46,35 @@ export function ProjectProvider({ currentUser, apiFetch, appSettings = {}, child
     (async () => { setLoading(true); await reload(); if (alive) setLoading(false); })();
     return () => { alive = false; };
   }, [reload]);
+
+  // Data view lain dimuat on-demand satu kali per sesi Project. Pergantian tab yang
+  // sudah pernah dibuka tidak melakukan query ulang; tombol/aksi reload hanya memuat
+  // ulang tabel yang memang sudah aktif di sesi tersebut.
+  useEffect(() => {
+    if (loading) return;
+    const required = PROJECT_VIEW_KEYS[activeView] || ["projects"];
+    const missing = required.filter((k) => !loadedKeys.current.has(k) && !pendingKeys.current.has(k));
+    if (!missing.length) return;
+    let alive = true;
+    missing.forEach((k) => pendingKeys.current.add(k));
+    setModuleLoading(true);
+    (async () => {
+      try {
+        const data = await loadTables(missing);
+        if (!alive) return;
+        setDb((cur) => ({ ...cur, ...data }));
+        missing.forEach((k) => loadedKeys.current.add(k));
+        setSyncError(null);
+      } catch (e) {
+        reportError("project.lazyLoad", e, { activeView, tables: missing });
+        if (alive) setSyncError(e.message || `Gagal memuat data ${activeView}`);
+      } finally {
+        missing.forEach((k) => pendingKeys.current.delete(k));
+        if (alive) setModuleLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [activeView, loading]);
 
   // Default activeProject ke project pertama bila belum ada yang dipilih
   // (mis. user klik langsung "Keuangan Project"/"Detail Project" dari menu, belum lewat Daftar Project).
@@ -189,7 +225,7 @@ export function ProjectProvider({ currentUser, apiFetch, appSettings = {}, child
   }, [apiFetch]);
 
   const value = {
-    db, loading, syncError, reload,
+    db, loading, moduleLoading, syncError, reload,
     update, addRows, patchRow, patchRows,
     updateProject, toggleHold, setProjectStatus, completeProject, allocateMaterials, upsertHarian,
     runStockMutation,

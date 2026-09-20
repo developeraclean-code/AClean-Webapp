@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { cs } from "../theme/cs.js";
 import { getLocalDate } from "../lib/dateTime.js";
-import { fetchAllInvoices, fetchAllExpenses } from "../data/reads.js";
+import { fetchFinanceSnapshot } from "../data/reads.js";
 import { GajiTab } from "./TeknisiAdminView.jsx";
 import { downloadBlob, buildCsv, printDocument, htmlTable, rp, fmtTanggal, escapeHtml } from "../lib/exportUtils.js";
 
@@ -23,6 +23,8 @@ const loadTarget = () => {
   try { const v = localStorage.getItem(LS_KEY); return v ? Number(v) : 100000000; } catch { return 100000000; }
 };
 const saveTarget = (v) => { try { localStorage.setItem(LS_KEY, String(v)); } catch { /* localStorage opsional (penuh/private mode) — abaikan */ } };
+const financeCache = new Map();
+const FINANCE_CACHE_MS = 2 * 60 * 1000;
 
 const TABS = [
   { id: "dashboard", label: "Dashboard", icon: "📊" },
@@ -33,7 +35,8 @@ const TABS = [
 // Uang yang BENAR-BENAR diterima dari sebuah invoice (basis kas):
 // PAID → total penuh; PARTIAL_PAID → paid_amount (cicilan yang sudah masuk). Selain itu 0.
 const cashReceived = (i) =>
-  i?.status === "PAID" ? Number(i.total || 0)
+  i?.cash_amount != null ? Number(i.cash_amount)
+    : i?.status === "PAID" ? Number(i.total || 0)
     : i?.status === "PARTIAL_PAID" ? Number(i.paid_amount || 0)
       : 0;
 
@@ -81,7 +84,7 @@ const orderStatusBadge = (status) => {
 const DashboardTab = ({
   ordersData, invoicesData, allInvoices, todayStr,
   currentDate, onPrevDay, onNextDay, onToday,
-  setPaymentProofModal, currentUser, supabase,
+  setPaymentProofModal, currentUser, supabase, financeSnapshot,
 }) => {
   const [mutasiChecked, setMutasiChecked] = useState({});
   const [mutasiLoading, setMutasiLoading] = useState(false);
@@ -166,17 +169,18 @@ const DashboardTab = ({
 
   // Pemasukan hari ini = basis KAS (uang diterima hari ini by paid_at), termasuk cicilan
   // PARTIAL_PAID — konsisten dgn PlanningTab. Bukan lagi by tanggal job.
-  const todayCashInv = (allInvoices || []).filter(i =>
+  const fallbackTodayCashInv = (allInvoices || []).filter(i =>
     (i.paid_at || "").slice(0, 10) === todayStr && (i.status === "PAID" || i.status === "PARTIAL_PAID"));
-  const todayPemasukan = todayCashInv.reduce((s, i) => s + cashReceived(i), 0);
+  const todayCashInv = financeSnapshot?.day_cash_rows || fallbackTodayCashInv;
+  const todayPemasukan = Number(financeSnapshot?.summary?.day_cash ?? todayCashInv.reduce((s, i) => s + cashReceived(i), 0));
   const todayPaid = todayCashInv; // untuk label "n invoice dibayar hari ini"
   const todayBelumLunas = rows.filter(r => r.inv && (r.inv.status === "UNPAID" || r.inv.status === "OVERDUE")).length;
   const todayPendingAPV = rows.filter(r => r.inv && (r.inv.status || "").toUpperCase().includes("PENDING")).length;
   const belumMutasi = rows.filter(r => r.inv?.status === "PAID" && !mutasiChecked[r.order?.id]?.checked).length;
 
   // All-time untuk referensi (basis kas — termasuk cicilan partial)
-  const allTimePaid = (allInvoices || []).reduce((s, i) => s + cashReceived(i), 0);
-  const allUnpaid = (allInvoices || []).filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length;
+  const allTimePaid = Number(financeSnapshot?.summary?.cash_all_time ?? (allInvoices || []).reduce((s, i) => s + cashReceived(i), 0));
+  const allUnpaid = Number(financeSnapshot?.summary?.unpaid_count ?? (allInvoices || []).filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length);
 
   return (
     <div>
@@ -345,7 +349,7 @@ const DashboardTab = ({
 };
 
 // ─── Financial Planning Tab ──────────────────────────────────────
-const PlanningTab = ({ allInvoices, allExpenses, showNotif }) => {
+const PlanningTab = ({ allInvoices, allExpenses, showNotif, financeSnapshot }) => {
   const [targetBulan, setTargetBulan] = useState(loadTarget);
 
   // bulanIni dalam WIB — reaktif via useMemo bukan top-level const
@@ -362,51 +366,40 @@ const PlanningTab = ({ allInvoices, allExpenses, showNotif }) => {
     saveTarget(n);
   };
 
-  const paidThisMonth = useMemo(() =>
+  const paidThisMonth = useMemo(() => financeSnapshot?.month_invoices ||
     (allInvoices || []).filter(i =>
       (i.status === "PAID" || i.status === "PARTIAL_PAID") && (i.paid_at || i.created_at || "").slice(0, 7) === bulanIni
-    ), [allInvoices, bulanIni]);
+    ), [allInvoices, bulanIni, financeSnapshot]);
 
-  const totalIn = useMemo(() =>
-    paidThisMonth.reduce((s, i) => s + cashReceived(i), 0),
-    [paidThisMonth]);
+  const totalIn = Number(financeSnapshot?.summary?.month_cash ?? paidThisMonth.reduce((s, i) => s + cashReceived(i), 0));
 
   // Biaya sah = bukan menunggu approval Admin (≥500rb) & bukan draft AI belum di-review.
-  const expensesBulanIni = useMemo(() =>
+  const expensesBulanIni = useMemo(() => financeSnapshot?.month_expenses ||
     (allExpenses || []).filter(e => e.approval_status !== "PENDING_APPROVAL" && e.validation_status !== "PENDING_AI" && (e.date || e.created_at || "").slice(0, 7) === bulanIni),
-    [allExpenses, bulanIni]);
+    [allExpenses, bulanIni, financeSnapshot]);
 
-  const totalOut = useMemo(() =>
-    expensesBulanIni.reduce((s, e) => s + (e.amount || 0), 0),
-    [expensesBulanIni]);
+  const totalOut = Number(financeSnapshot?.summary?.month_expenses ?? expensesBulanIni.reduce((s, e) => s + (e.amount || 0), 0));
 
-  const totalInAll = useMemo(() =>
-    (allInvoices || []).reduce((s, i) => s + cashReceived(i), 0),
-    [allInvoices]);
+  const totalInAll = Number(financeSnapshot?.summary?.cash_all_time ?? (allInvoices || []).reduce((s, i) => s + cashReceived(i), 0));
 
-  const totalOutAll = useMemo(() =>
-    (allExpenses || []).reduce((s, e) => s + ((e.approval_status === "PENDING_APPROVAL" || e.validation_status === "PENDING_AI") ? 0 : (e.amount || 0)), 0),
-    [allExpenses]);
+  const totalOutAll = Number(financeSnapshot?.summary?.expenses_all_time ?? (allExpenses || []).reduce((s, e) => s + ((e.approval_status === "PENDING_APPROVAL" || e.validation_status === "PENDING_AI") ? 0 : (e.amount || 0)), 0));
 
   const netProfit = totalIn - totalOut;
   const netProfitAll = totalInAll - totalOutAll;
   const pct = targetBulan > 0 ? Math.min(100, (totalIn / targetBulan) * 100) : 0;
-  const unpaidCount = useMemo(() =>
-    (allInvoices || []).filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length,
-    [allInvoices]);
-  const overdueCount = useMemo(() =>
-    (allInvoices || []).filter(i => i.status === "OVERDUE").length,
-    [allInvoices]);
+  const unpaidCount = Number(financeSnapshot?.summary?.unpaid_count ?? (allInvoices || []).filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length);
+  const overdueCount = Number(financeSnapshot?.summary?.overdue_count ?? (allInvoices || []).filter(i => i.status === "OVERDUE").length);
 
   // Breakdown pengeluaran bulan ini by subcategory (data real dari DB)
   const topExpenses = useMemo(() => {
+    if (financeSnapshot?.top_expenses) return financeSnapshot.top_expenses.map(x => [x.name, Number(x.total || 0)]).slice(0,5);
     const acc = {};
     expensesBulanIni.forEach(e => {
       const kat = e.subcategory || e.category || "Lain-lain";
       acc[kat] = (acc[kat] || 0) + (e.amount || 0);
     });
     return Object.entries(acc).sort((a, b) => b[1] - a[1]).slice(0, 5);
-  }, [expensesBulanIni]);
+  }, [expensesBulanIni, financeSnapshot]);
 
   // ── Export Arus Kas bulan ini (CSV + PDF) ──
   const exportArusKasCsv = () => {
@@ -643,31 +636,44 @@ export default function FinanceView({ currentUser, ordersData, invoicesData, exp
   const [paymentProofModal, setPaymentProofModal] = useState(null);
   const [dateOffset, setDateOffset] = useState(0);
 
-  // Prop invoicesData(cap 300)/expensesData(cap 1000) TIDAK cukup untuk total finansial
-  // all-time & bulanan (1922 invoice / 1509 expense) → angka undercount parah. Fetch penuh
-  // (paginated) sekali saat buka Finance. Fallback ke prop capped selama loading.
-  const [finAllInv, setFinAllInv] = useState(null);
-  const [finAllExp, setFinAllExp] = useState(null);
-  useEffect(() => {
-    if (!supabase) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const [{ data: inv }, { data: exp }] = await Promise.all([
-          fetchAllInvoices(supabase), fetchAllExpenses(supabase),
-        ]);
-        if (cancelled) return;
-        setFinAllInv(inv || []); setFinAllExp(exp || []);
-      } catch (e) { console.warn("[FINANCE] gagal muat data penuh:", e?.message || e); }
-    })();
-    return () => { cancelled = true; };
-  }, [supabase]);
-  const allInv = finAllInv || invoicesData;
-  const allExp = finAllExp || expensesData;
+  const allInv = invoicesData || [];
+  const allExp = expensesData || [];
+  const [financeSnapshot, setFinanceSnapshot] = useState(null);
+  const [financeLoading, setFinanceLoading] = useState(false);
+  const [financeError, setFinanceError] = useState(null);
 
   // Gunakan WIB helper — bukan toISOString() mentah yang UTC
   const todayStr = useMemo(() => getWIBDateStr(dateOffset), [dateOffset]);
   const currentDate = useMemo(() => getWIBDateLabel(dateOffset), [dateOffset]);
+  const currentMonth = getLocalDate().slice(0, 7);
+  const monthStart = `${currentMonth}-01`;
+  const monthEnd = useMemo(() => {
+    const [year, month] = currentMonth.split("-").map(Number);
+    return `${currentMonth}-${String(new Date(year, month, 0).getDate()).padStart(2,"0")}`;
+  }, [currentMonth]);
+
+  useEffect(() => {
+    if (!supabase) return;
+    const key = `${todayStr}:${monthStart}:${monthEnd}`;
+    const cached = financeCache.get(key);
+    if (cached && Date.now() - cached.at < FINANCE_CACHE_MS) {
+      setFinanceSnapshot(cached.data); setFinanceError(null); return;
+    }
+    let cancelled = false;
+    setFinanceLoading(true); setFinanceError(null);
+    fetchFinanceSnapshot(supabase, todayStr, monthStart, monthEnd)
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) throw error;
+        financeCache.set(key, { at: Date.now(), data });
+        setFinanceSnapshot(data || null);
+      })
+      .catch(error => {
+        if (!cancelled) { setFinanceSnapshot(null); setFinanceError(error?.message || "Finance gagal dimuat"); }
+      })
+      .finally(() => { if (!cancelled) setFinanceLoading(false); });
+    return () => { cancelled = true; };
+  }, [supabase, todayStr, monthStart, monthEnd]);
 
   const filteredOrders = useMemo(() =>
     (ordersData || []).filter(o => (o.date || "").slice(0, 10) === todayStr),
@@ -692,10 +698,19 @@ export default function FinanceView({ currentUser, ordersData, invoicesData, exp
           </div>
         </div>
         <div style={{ fontSize: 11, color: cs.muted, textAlign: "right" }}>
-          {(allInv || []).filter(i => i.status === "PAID").length} invoice PAID
-          {" · "}{(allInv || []).filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length} belum lunas
+          {Number(financeSnapshot?.summary?.paid_count ?? allInv.filter(i => i.status === "PAID").length)} invoice PAID
+          {" · "}{Number(financeSnapshot?.summary?.unpaid_count ?? allInv.filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length)} belum lunas
         </div>
       </div>
+
+      {(financeLoading || financeError) && (
+        <div style={{ marginBottom: 12, padding: "9px 12px", borderRadius: 9, fontSize: 11,
+          color: financeError ? cs.yellow : cs.accent,
+          background: (financeError ? cs.yellow : cs.accent) + "12",
+          border: "1px solid " + (financeError ? cs.yellow : cs.accent) + "33" }}>
+          {financeError ? `⚠️ Snapshot Finance belum tersedia — sementara memakai data lokal: ${financeError}` : "⏳ Menghitung Finance di database…"}
+        </div>
+      )}
 
       {/* Tab Bar */}
       <div style={{ display: "flex", gap: 2, marginBottom: 18, borderBottom: "1px solid " + cs.border, overflowX: "auto" }}>
@@ -728,6 +743,7 @@ export default function FinanceView({ currentUser, ordersData, invoicesData, exp
           setPaymentProofModal={setPaymentProofModal}
           currentUser={currentUser}
           supabase={supabase}
+          financeSnapshot={financeSnapshot}
         />
       )}
       {activeTab === "planning" && (
@@ -735,6 +751,7 @@ export default function FinanceView({ currentUser, ordersData, invoicesData, exp
           allInvoices={allInv}
           allExpenses={allExp}
           showNotif={showNotif}
+          financeSnapshot={financeSnapshot}
         />
       )}
 

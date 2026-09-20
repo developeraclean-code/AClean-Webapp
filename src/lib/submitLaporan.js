@@ -3,6 +3,10 @@
 // order & state. Diekstrak dari App.jsx (Fase 3, pola ctx). 67 dependency via ctx.
 // Body verbatim (behavior-preserving). JALUR UANG — test ketat.
 import { isHarianManagedItem } from "./materialRecon.js";
+import { submitServiceReportAtomic } from "../data/writes.js";
+
+const isMissingAtomicReportRpc = (error) => error?.code === "PGRST202" || error?.code === "42883"
+  || /submit_service_report_atomic.*(schema cache|does not exist|not found)/i.test(error?.message || "");
 
 export async function submitLaporan({
   INSTALL_ITEMS, _apiHeaders, addAgentLog, appSettings, auditUserName, buildInvoiceDetail,
@@ -88,19 +92,27 @@ export async function submitLaporan({
       };
       setLaporanReports(prev => [...prev.filter(r => r.job_id !== laporanModal.id), surveyReport]);
       showNotif("⏳ Menyimpan laporan survey...");
-      try {
-        await supabase.from("service_reports").delete().eq("job_id", reportId).neq("id", reportId);
-      } catch { /* hapus laporan duplikat best-effort */ }
-      const { error: sErr } = await supabase.from("service_reports").upsert({
-        id: reportId, job_id: laporanModal.id, teknisi: laporanModal.teknisi,
-        helper: laporanModal.helper || null, customer: laporanModal.customer,
-        service: "Survey", date: laporanModal.date, status: "SUBMITTED",
-        total_units: 0, total_freon: 0, submitted_at: new Date().toISOString(),
-        foto_urls: surveyFotoUrls, rekomendasi: "", catatan_global: "",
-        hasil_survey: laporanSurveyHasil.trim(),
-        catatan_rekomendasi: laporanSurveyCatatan.trim(),
-        submitted: now,
-      }, { onConflict: "id" });
+      const surveyPayload = {
+        ...surveyReport,
+        submitted_at: new Date().toISOString(),
+        materials_used: [],
+      };
+      let { error: sErr } = await submitServiceReportAtomic(
+        supabase, surveyPayload, auditUserName(), `report-submit:${reportId}`
+      );
+      if (sErr && isMissingAtomicReportRpc(sErr)) {
+        // Fallback khusus trial lokal sebelum migration 177 dipasang.
+        ({ error: sErr } = await supabase.from("service_reports").upsert({
+          id: reportId, job_id: laporanModal.id, teknisi: laporanModal.teknisi,
+          helper: laporanModal.helper || null, customer: laporanModal.customer,
+          service: "Survey", date: laporanModal.date, status: "SUBMITTED",
+          total_units: 0, total_freon: 0, submitted_at: surveyPayload.submitted_at,
+          foto_urls: surveyFotoUrls, fotos: surveyReport.fotos,
+          rekomendasi: "", catatan_global: "", hasil_survey: laporanSurveyHasil.trim(),
+          catatan_rekomendasi: laporanSurveyCatatan.trim(), submitted: now,
+        }, { onConflict: "id" }));
+        if (!sErr) await updateOrderStatus(supabase, laporanModal.id, "REPORT_SUBMITTED", auditUserName());
+      }
       if (sErr) { showNotif("⚠️ Tersimpan lokal, sync gagal: " + sErr.message); }
       else { showNotif("✅ Laporan Survey terkirim!"); }
       const admR2 = userAccounts.filter(u => (u.role === "Admin" || u.role === "Owner") && u.active !== false);
@@ -269,7 +281,8 @@ export async function submitLaporan({
 
     setLaporanReports(prev => [...prev.filter(r => r.job_id !== laporanModal.id), newReport]);
 
-    // ── 6. WA notif ke Admin/Owner ──
+    // ── 6. Siapkan WA notif. Pengiriman dilakukan setelah transaksi database sukses,
+    // supaya Admin/Owner tidak menerima notifikasi untuk laporan yang gagal tersimpan.
     const adminUsers = userAccounts.filter(u => u.role === "Owner" && u.active !== false);
     const matCount = isInstall
       ? INSTALL_ITEMS.filter(it => parseFloat(laporanInstallItems[it.key] || 0) > 0).length
@@ -281,17 +294,8 @@ export async function submitLaporan({
       + "\nLayanan: " + laporanModal?.service + " - " + laporanUnits.length + " unit"
       + "\nMaterial: " + matCount + " item  Foto: " + laporanFotos.filter(f => f.url).length + " foto"
       + "\n\nSilakan cek invoice di menu Invoice.";
-    adminUsers.forEach(u => { if (u.phone) sendWA(u.phone, notifMsg); });
-
-    // ── 7. Simpan laporan ke Supabase (multi-attempt with fallback fields) ──
+    // ── 7. Simpan laporan + status order secara atomik ──
     showNotif("⏳ Menyimpan laporan ke server...");
-    // ✨ DEDUP: hapus ghost rows dgn job_id yg sama tapi id berbeda (prevent double laporan)
-    try {
-      await supabase.from("service_reports")
-        .delete()
-        .eq("job_id", newReport.job_id)
-        .neq("id", newReport.id);
-    } catch (dx) { console.warn("[LAPORAN_DEDUP] cleanup ghost rows failed:", dx.message); }
     const basePayload = {
       id: newReport.id,
       job_id: newReport.job_id,
@@ -312,7 +316,33 @@ export async function submitLaporan({
 
     let savedOk = false;
     let lastError = null;
-    { // Attempt 1: dengan materials_json & units_json & units (jsonb)
+    const atomicPayload = {
+      ...newReport,
+      submitted_at: new Date().toISOString(),
+      materials_used: effectiveMaterials,
+      foto_urls: basePayload.foto_urls,
+    };
+    {
+      const { error: atomicError } = await submitServiceReportAtomic(
+        supabase, atomicPayload, auditUserName(), `report-submit:${newReport.id}`
+      );
+      if (!atomicError) {
+        savedOk = true;
+      } else if (isMissingAtomicReportRpc(atomicError)) {
+        // Migration belum terpasang pada trial lokal: lanjutkan jalur kompatibilitas.
+        lastError = atomicError;
+      } else {
+        reportError("laporan.save.atomicFailed", atomicError, { jobId: newReport.job_id, reportId: newReport.id });
+        showNotif("❌ Laporan dibatalkan: " + atomicError.message);
+        return;
+      }
+    }
+    if (!savedOk && lastError && isMissingAtomicReportRpc(lastError)) {
+      try {
+        await supabase.from("service_reports").delete().eq("job_id", newReport.job_id).neq("id", newReport.id);
+      } catch (dx) { console.warn("[LAPORAN_DEDUP] legacy cleanup failed:", dx.message); }
+    }
+    if (!savedOk) { // Legacy attempt 1: dengan materials_json & units_json & units (jsonb)
       try {
         const { error: e1 } = await supabase.from("service_reports").upsert({
           ...basePayload,
@@ -380,6 +410,8 @@ export async function submitLaporan({
       return; // Don't proceed to reload/notify if save failed
     }
 
+    adminUsers.forEach(u => { if (u.phone) sendWA(u.phone, notifMsg); });
+
     // ── 8. Sinkronkan hanya laporan yang baru disimpan ──
     // Dulu seluruh service_reports diunduh DUA kali (800ms + 3s) untuk satu submit.
     // Upsert sudah selesai pada titik ini, jadi satu lookup by ID cukup dan deterministik.
@@ -410,7 +442,7 @@ export async function submitLaporan({
     setOrdersData(prev => prev.map(o =>
       o.id === laporanModal.id ? { ...o, status: "REPORT_SUBMITTED" } : o
     ));
-    {
+    if (lastError && isMissingAtomicReportRpc(lastError)) {
       const { error: ordErr } = await supabase.from("orders")
         .update({ status: "REPORT_SUBMITTED" }).eq("id", laporanModal.id);
       if (ordErr) {

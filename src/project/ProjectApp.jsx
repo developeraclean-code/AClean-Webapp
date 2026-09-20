@@ -49,7 +49,7 @@ export default function ProjectApp({ currentUser, apiFetch, appSettings, onBack 
 }
 
 function Shell({ onBack }) {
-  const { role, activeView, setActiveView, loading, syncError } = useProject();
+  const { role, activeView, setActiveView, loading, moduleLoading, syncError } = useProject();
   const isOwner = role === "Owner";
   const allowed = MENU.filter((m) => !m.ownerOnly || isOwner);
   const View = VIEWS[activeView] || ProjectDashboard;
@@ -100,7 +100,7 @@ function Shell({ onBack }) {
             ⚠️ {syncError}
           </div>
         )}
-        {loading ? (
+        {loading || moduleLoading ? (
           <div style={{ padding: 22, color: cs.muted }}>Memuat data Project…</div>
         ) : (
           <Suspense fallback={<div style={{ padding: 22, color: cs.muted }}>Memuat…</div>}>

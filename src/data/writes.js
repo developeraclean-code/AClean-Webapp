@@ -39,36 +39,49 @@ export const updateInvoice = (supabase, id, fields, userName) => {
     .eq("id", id);
 };
 
-export const markInvoicePaid = async (supabase, id, paidAt, userName) => {
-  const { data: inv } = await supabase
-    .from("invoices").select("total,status").eq("id", id).single();
+export const markInvoicePaid = async (supabase, id, paidAt, userName, options = {}) => {
+  const paymentId = options.paymentId || globalThis.crypto?.randomUUID?.()
+    || `00000000-0000-4000-8000-${Date.now().toString().padStart(12,"0").slice(-12)}`;
+  const { data, error } = await supabase.rpc("settle_invoice_atomic", {
+    p_invoice_id: id,
+    p_payment_id: paymentId,
+    p_paid_at: String(paidAt || "").slice(0,10),
+    p_method: options.method || "transfer",
+    p_notes: options.notes || null,
+    p_payment_proof_url: options.paymentProofUrl || null,
+    p_actor_name: userName || null,
+    p_mutation_key: options.mutationKey || `invoice-settle:${paymentId}`,
+  });
+  if (!error) return { data: data?.invoice || data || null, error: null, result: data || null };
 
-  if (!inv) return { data: null, error: { message: "Invoice tidak ditemukan" } };
+  // Trial lokal sebelum migration 177 dipasang: pertahankan perilaku lama. Error bisnis
+  // dari RPC TIDAK boleh difallback karena dapat menembus guard double-payment.
+  const rpcMissing = error.code === "PGRST202" || error.code === "42883"
+    || /settle_invoice_atomic.*(schema cache|does not exist|not found)/i.test(error.message || "");
+  if (!rpcMissing) return { data: null, error, result: null };
 
-  const PAYABLE_STATUSES = ["UNPAID", "OVERDUE", "PARTIAL_PAID", "PENDING_APPROVAL"];
-  if (!PAYABLE_STATUSES.includes(inv.status)) {
-    return { data: null, error: { message: `Invoice sudah ${inv.status} — tidak bisa dibayar ulang` } };
+  const { data: inv, error: readError } = await supabase.from("invoices")
+    .select("id,job_id,phone,total,paid_amount,status").eq("id",id).single();
+  if (readError || !inv) return { data:null,error:readError || { message:"Invoice tidak ditemukan" } };
+  if (!["UNPAID","OVERDUE","PARTIAL_PAID","PENDING_APPROVAL"].includes(inv.status)) {
+    return { data:null,error:{ message:`Invoice sudah ${inv.status} — tidak bisa dibayar ulang` } };
   }
-
-  const total = Number(inv.total) || 0;
-  // BUG FIX: cache PDF (pdf_url) sebelumnya tidak di-invalidate saat status → PAID —
-  // fungsi ini menulis langsung ke DB, bypass mekanisme auto-invalidate di updateInvoice()
-  // (baris ~33). Akibatnya generateInvoicePDFBlob() Layer 2 (R2 fast-path) terus menyajikan
-  // PDF lama berlabel "MENUNGGU PEMBAYARAN" walau invoice sudah lunas di sistem.
-  const { data, error } = await supabase.from("invoices").update({
-    status: "PAID",
-    paid_at: paidAt,
-    paid_amount: total,
-    remaining_amount: 0,
-    pdf_url: null,
-    pdf_generated_at: null,
-    last_changed_by: userName,
-  }).eq("id", id).in("status", PAYABLE_STATUSES).select("id");
-
-  if (!error && (!data || data.length === 0)) {
-    return { data: null, error: { message: "Invoice sudah diproses oleh pengguna lain — refresh halaman" } };
-  }
-  return { data, error };
+  const total=Number(inv.total)||0;
+  const legacy = await supabase.from("invoices").update({
+    status:"PAID",paid_at:paidAt,paid_method:options.method || "transfer",
+    paid_amount:total,remaining_amount:0,pdf_url:null,pdf_generated_at:null,
+    ...(options.paymentProofUrl ? { payment_proof_url:options.paymentProofUrl } : {}),
+    last_changed_by:userName,
+  }).eq("id",id).in("status",["UNPAID","OVERDUE","PARTIAL_PAID","PENDING_APPROVAL"]).select().single();
+  if (legacy.error) return legacy;
+  await supabase.from("orders").update({ status:"PAID",last_changed_by:userName }).or(`id.eq.${inv.job_id},invoice_id.eq.${id}`);
+  const remaining=Math.max(0,total-Number(inv.paid_amount||0));
+  if (remaining>0) await supabase.from("invoice_payments").insert({
+    id:paymentId,invoice_id:id,amount:remaining,method:options.method || "transfer",
+    notes:options.notes || "Lunas",paid_at:String(paidAt||"").slice(0,10),recorded_by_name:userName,
+  });
+  if (inv.phone) await supabase.from("customers").update({ last_service:String(paidAt||"").slice(0,10) }).eq("phone",inv.phone);
+  return { data:legacy.data,error:null,result:{ invoice:legacy.data,replayed:false,legacy_fallback:true } };
 };
 
 // Revert invoice PAID/PARTIAL_PAID → UNPAID/OVERDUE (Owner only — untuk koreksi nilai).
@@ -119,6 +132,29 @@ export const deleteInvoice = async (supabase, id, userName, reason = "MANUAL_DEL
 // ───── SERVICE REPORTS ─────
 export const updateServiceReport = (supabase, id, fields, userName) =>
   supabase.from("service_reports").update({ ...fields, last_changed_by: userName }).eq("id", id);
+
+export const submitServiceReportAtomic = (supabase, report, userName, mutationKey) =>
+  supabase.rpc("submit_service_report_atomic", {
+    p_report: report,
+    p_actor_name: userName || null,
+    p_mutation_key: mutationKey || `report-submit:${report?.id}`,
+  });
+
+export const finalizeServiceReportAtomic = (supabase, reportId, invoice, userName, mutationKey) =>
+  supabase.rpc("finalize_service_report_atomic", {
+    p_report_id: reportId,
+    p_invoice: invoice || null,
+    p_actor_name: userName || null,
+    p_mutation_key: mutationKey || `report-finalize:${reportId}`,
+  });
+
+export const createOrderWorkflowAtomic = (supabase, order, autoDispatch, userName, mutationKey) =>
+  supabase.rpc("create_order_workflow_atomic", {
+    p_order: order,
+    p_auto_dispatch: !!autoDispatch,
+    p_actor_name: userName || null,
+    p_mutation_key: mutationKey || `order-create:${order?.id}`,
+  });
 
 export const deleteServiceReport = async (supabase, id, userName) => {
   await supabase.from("service_reports").update({ last_changed_by: userName }).eq("id", id);

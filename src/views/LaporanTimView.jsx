@@ -3,6 +3,11 @@ import { cs } from "../theme/cs.js";
 import { normalizePhone } from "../lib/phone.js";
 import { summarize, checkInvoiceConsistency, describeInconsistency, normalizeLines, buildWarrantyDiscountLine, categoryFromCatalog } from "../lib/invoicing.js";
 import { clientCleaningUnitPrice } from "../lib/maintClientPrice.js";
+import { fetchServiceReportsPage } from "../data/reads.js";
+import { finalizeServiceReportAtomic } from "../data/writes.js";
+
+const isMissingFinalizeRpc = (error) => error?.code === "PGRST202" || error?.code === "42883"
+  || /finalize_service_report_atomic.*(schema cache|does not exist|not found)/i.test(error?.message || "");
 
 // ── Survey Kirim Modal ─────────────────────────────────────────────────────────
 function SurveyKirimModal({ r, onClose, sendWA, showNotif, addAgentLog, auditUserName, updateServiceReport, supabase, fotoSrc, downloadServiceReportPDF, invoicesData }) {
@@ -139,6 +144,60 @@ const [surveyKirimModal, setSurveyKirimModal] = useState(null);
 // Hanya satu galeri foto aktif. Selama tertutup tidak ada elemen <img>, sehingga
 // browser sama sekali belum meminta file foto ke R2/proxy.
 const [expandedPhotoReportId, setExpandedPhotoReportId] = useState(null);
+const [serverReportPage, setServerReportPage] = useState(null);
+const [serverReportTotal, setServerReportTotal] = useState(null);
+const [serverStatusCounts, setServerStatusCounts] = useState(null);
+const [serverPageLoading, setServerPageLoading] = useState(false);
+const [serverPageError, setServerPageError] = useState(null);
+
+// Filter tanggal diterjemahkan ke parameter RPC. Detail per laporan (termasuk objek
+// foto lengkap) tetap di-hydrate on demand oleh App.jsx saat kartu dibuka.
+useEffect(() => {
+  if (!supabase || lapViewMode !== "detail") return;
+  const today = getLocalDate();
+  let dateFrom = null; let dateTo = null;
+  if (laporanDateFilter === "Hari Ini") dateFrom = dateTo = today;
+  else if (laporanDateFilter === "Minggu Ini") dateFrom = new Date(Date.now() - 7 * 86400000).toISOString().slice(0,10);
+  else if (laporanDateFilter === "Bulan Ini") dateFrom = new Date(Date.now() - 30 * 86400000).toISOString().slice(0,10);
+  else if (laporanDateFilter === "Range") { dateFrom = laporanDateFrom || null; dateTo = laporanDateTo || null; }
+
+  const role = (currentUser?.role || "").toLowerCase();
+  const status = ["teknisi","helper"].includes(role) && laporanStatusFilter === "Semua"
+    ? "BELUM_VERIFIED" : laporanStatusFilter;
+  let cancelled = false;
+  const timer = setTimeout(() => {
+    setServerPageLoading(true); setServerPageError(null);
+    fetchServiceReportsPage(supabase, {
+      dateFrom, dateTo,
+      service: laporanSvcFilter === "Semua" ? null : laporanSvcFilter,
+      status: status === "Semua" ? null : status,
+      team: laporanTeamFilter === "Semua" ? null : laporanTeamFilter,
+      search: searchLaporan.trim() || null,
+      page: laporanPage, pageSize: LAP_PAGE_SIZE,
+    }).then(({ data, error }) => {
+      if (cancelled) return;
+      if (error) throw error;
+      const rows = (data?.rows || []).map(r => ({
+        ...r,
+        materials: r.materials_used || [],
+        editLog: r.edit_log || [],
+        fotos: (r.foto_urls || []).map((url,i) => ({ id:i,label:`Foto ${i+1}`,url })),
+        _detailLoaded: false,
+      }));
+      setServerReportPage(rows);
+      setServerReportTotal(Number(data?.total_count || 0));
+      setServerStatusCounts(data?.status_counts || {});
+    }).catch(error => {
+      if (!cancelled) {
+        setServerPageError(error?.message || "Pagination laporan gagal");
+        setServerReportPage(null); setServerReportTotal(null); setServerStatusCounts(null);
+      }
+    }).finally(() => { if (!cancelled) setServerPageLoading(false); });
+  }, searchLaporan.trim() ? 300 : 0);
+  return () => { cancelled = true; clearTimeout(timer); };
+}, [supabase, lapViewMode, laporanDateFilter, laporanDateFrom, laporanDateTo,
+  laporanSvcFilter, laporanStatusFilter, laporanTeamFilter, searchLaporan,
+  laporanPage, LAP_PAGE_SIZE, currentUser?.role, getLocalDate]);
 
 // Terima event dari LaporanDetailModal yang minta buka SurveyKirimModal
 useEffect(() => {
@@ -403,9 +462,10 @@ if (searchLaporan.trim()) {
   );
 }
 filtered.sort((a, b) => { const dA = a.submitted_at || a.date || "", dB = b.submitted_at || b.date || ""; if (dB !== dA) return dB.localeCompare(dA); return getStatusOrder(a.status) - getStatusOrder(b.status); });
-const totPgL = Math.ceil(filtered.length / LAP_PAGE_SIZE) || 1;
+const totalReportCount = serverReportTotal ?? filtered.length;
+const totPgL = Math.ceil(totalReportCount / LAP_PAGE_SIZE) || 1;
 const curPgL = Math.min(laporanPage, totPgL);
-const pageLap = filtered.slice((curPgL - 1) * LAP_PAGE_SIZE, curPgL * LAP_PAGE_SIZE);
+const pageLap = serverReportPage || filtered.slice((curPgL - 1) * LAP_PAGE_SIZE, curPgL * LAP_PAGE_SIZE);
 
 // Pembangun detail invoice dari laporan (jalur VERIFY) — SATU sumber untuk approve (verifyLaporan)
 // DAN badge estimasi total di kartu laporan (hindari drift). Murni: hanya komputasi, tanpa efek samping.
@@ -553,22 +613,13 @@ const verifyLaporan = async (r) => {
   const _ordDeal = ordersData.find(o => o.id === r.job_id);
   const dealPricesV = _ordDeal?.maintenance_client_id ? await ensureMaintPrices(_ordDeal.maintenance_client_id) : null;
 
-  const { error: vErr } = await updateServiceReport(supabase, r.id, { status: "VERIFIED" }, auditUserName());
-  if (vErr) {
-    console.warn("❌ verify laporan failed:", vErr.message);
-    const { error: retryErr } = await supabase.from("service_reports").update({ status: "VERIFIED" }).eq("id", r.id);
-    if (retryErr) {
-      console.warn("retry also failed:", retryErr.message);
-      showNotif("❌ Gagal verifikasi laporan: " + retryErr.message.slice(0, 60));
-      return;
-    }
-  }
-  setLaporanReports(p => p.map(x => x.id === r.id ? { ...x, status: "VERIFIED" } : x));
-  addAgentLog("LAPORAN_VERIFIED", `Laporan ${r.job_id} (${r.customer}) diverifikasi`, "SUCCESS");
-
-  // Maintenance korporat (Opsi B): jika order ini ditautkan ke klien maintenance,
-  // auto-create log servis per unit (idempotent di backend). Non-blocking.
-  if (apiFetch && r.job_id) {
+  const afterVerified = () => {
+    setLaporanReports(p => p.map(x => x.id === r.id ? { ...x, status: "VERIFIED" } : x));
+    setServerReportPage(p => p?.map(x => x.id === r.id ? { ...x, status: "VERIFIED" } : x) || p);
+    addAgentLog("LAPORAN_VERIFIED", `Laporan ${r.job_id} (${r.customer}) diverifikasi`, "SUCCESS");
+    // Maintenance korporat tetap non-blocking, tetapi baru berjalan setelah transaksi
+    // finalisasi berhasil sehingga tidak ada history dari laporan yang gagal diverifikasi.
+    if (!apiFetch || !r.job_id) return;
     (async () => {
       try {
         const resp = await apiFetch("/api/maintenance", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "autolog-from-order", order_id: r.job_id, created_by: auditUserName() }) });
@@ -584,7 +635,36 @@ const verifyLaporan = async (r) => {
         }
       } catch (_) { /* non-blocking — verifikasi tetap sukses */ }
     })();
-  }
+  };
+
+  const commitFinalization = async (invoicePayload = null) => {
+    const mutationKey = `report-finalize:${r.id}`;
+    const { data, error } = await finalizeServiceReportAtomic(
+      supabase, r.id, invoicePayload, auditUserName(), mutationKey
+    );
+    if (!error) {
+      afterVerified();
+      const savedOrder = data?.order;
+      const savedInvoice = data?.invoice;
+      if (savedOrder) setOrdersData(prev => prev.map(o => o.id === savedOrder.id ? { ...o, ...savedOrder } : o));
+      if (savedInvoice) setInvoicesData(prev => prev.some(i => i.id === savedInvoice.id)
+        ? prev.map(i => i.id === savedInvoice.id ? { ...i, ...savedInvoice } : i)
+        : [...prev, savedInvoice]);
+      return { ok: true, atomic: true, data };
+    }
+    if (!isMissingFinalizeRpc(error)) {
+      showNotif("❌ Finalisasi laporan dibatalkan: " + (error.message || "transaksi database gagal"));
+      return { ok: false, atomic: true, error };
+    }
+    // Trial lokal sebelum migration 177: hanya fallback bila fungsi memang belum ada.
+    const { error: legacyError } = await updateServiceReport(supabase, r.id, { status: "VERIFIED" }, auditUserName());
+    if (legacyError) {
+      showNotif("❌ Gagal verifikasi laporan: " + legacyError.message.slice(0, 80));
+      return { ok: false, atomic: false, error: legacyError };
+    }
+    afterVerified();
+    return { ok: true, atomic: false };
+  };
 
   // ── Anti-duplikat invoice (defense-in-depth) ──
   // Cegah laporan melahirkan invoice ke-2 untuk order yang SAMA (invoice gabungan
@@ -598,6 +678,12 @@ const verifyLaporan = async (r) => {
       ? invoicesData.find(i => i.id === _ordDup.invoice_id && String(i.status || "").toUpperCase() !== "CANCELLED")
       : null;
     if (r.service !== "Survey" && _linkedDup) {
+      const finalized = await commitFinalization(null);
+      if (!finalized.ok) return;
+      if (finalized.atomic) {
+        showNotif(`✅ Laporan verified & ditautkan ke invoice ${_linkedDup.id}.`);
+        return;
+      }
       // H-2 fix: cek hasil updateOrder
       const { error: _dupOrdE } = await updateOrder(supabase, r.job_id, { status: "COMPLETED", invoice_id: _linkedDup.id }, auditUserName());
       if (_dupOrdE) {
@@ -616,6 +702,12 @@ const verifyLaporan = async (r) => {
 
   const existInv = invoicesData.find(i => i.job_id === r.job_id);
   if (existInv) {
+    const finalized = await commitFinalization(null);
+    if (!finalized.ok) return;
+    if (finalized.atomic) {
+      showNotif(`✅ Laporan verified! Invoice ${existInv.id} sudah ada — status: ${existInv.status}`);
+      return;
+    }
     // Pastikan order status COMPLETED meski invoice sudah ada sebelumnya
     const ord0 = ordersData.find(o => o.id === r.job_id);
     if (ord0 && ["DISPATCHED","ON_SITE"].includes(ord0.status)) {
@@ -630,6 +722,16 @@ const verifyLaporan = async (r) => {
     }
     showNotif(`✅ Laporan verified! Invoice ${existInv.id} sudah ada — status: ${existInv.status}`);
   } else if (r.service === "Survey") {
+    const finalized = await commitFinalization(null);
+    if (!finalized.ok) return;
+    if (finalized.atomic) {
+      if (updateCustomerTierAfterOrder) {
+        const ord0 = ordersData.find(o => o.id === r.job_id);
+        if (ord0) updateCustomerTierAfterOrder(ord0).catch(() => {});
+      }
+      showNotif("✅ Laporan Survey terverifikasi — tidak ada invoice");
+      return;
+    }
     // Survey tidak buat invoice — hanya update order status ke COMPLETED
     const { error: survE } = await updateOrder(supabase, r.job_id, { status: "COMPLETED" }, auditUserName());
     if (survE) {
@@ -670,45 +772,6 @@ const verifyLaporan = async (r) => {
       maintenance_client_id: ord?.maintenance_client_id || null,
       sent: false, created_at: new Date().toISOString()
     };
-    const { data: oldDB, error: fetchOldErr } = await supabase
-      .from("invoices").select("id,invoice_type").eq("job_id", r.job_id);
-    if (fetchOldErr) {
-      console.error("[AUTO_INVOICE] gagal cek existing:", fetchOldErr.message);
-      showNotif("❌ Gagal verifikasi invoice existing — coba lagi.");
-      return;
-    }
-    // GUARD: jika ada invoice AC sale, JANGAN buat invoice baru atau hapus —
-    // invoice AC sale punya unit + paket + DP customer yang tidak boleh hilang
-    const acSaleInDB = (oldDB || []).find(o => o.invoice_type === "ac_unit_sale");
-    if (acSaleInDB) {
-      addAgentLog("INVOICE_AUTO_SKIP_AC_SALE",
-        `Verify laporan ${r.job_id} — invoice AC sale ${acSaleInDB.id} sudah ada, tidak diubah`,
-        "INFO");
-      showNotif(`✅ Laporan verified! Invoice AC sale ${acSaleInDB.id} sudah ada (tidak diubah)`);
-      // Tetap update order status COMPLETED
-      const ord0 = ordersData.find(o => o.id === r.job_id);
-      if (ord0 && ["DISPATCHED","ON_SITE"].includes(ord0.status)) {
-        const { error: acOrdE } = await updateOrder(supabase, r.job_id, { status: "COMPLETED" }, auditUserName());
-        if (acOrdE) {
-          addAgentLog("ORDER_STATUS_ERROR", `Gagal update order ${r.job_id} ke COMPLETED (AC sale path): ${acOrdE.message}`, "ERROR");
-        } else {
-          setOrdersData(prev => prev.map(o => o.id === r.job_id ? { ...o, status: "COMPLETED" } : o));
-          if (updateCustomerTierAfterOrder) updateCustomerTierAfterOrder(ord0).catch(() => {});
-        }
-      }
-      return;
-    }
-    if (oldDB && oldDB.length > 0) {
-      for (const oi of oldDB) {
-        const { error: delErr } = await deleteInvoice(supabase, oi.id, auditUserName(), "ADMIN_EDIT_LAPORAN");
-        if (delErr) {
-          console.error("[AUTO_INVOICE] gagal hapus", oi.id, delErr.message);
-          showNotif("❌ Gagal hapus invoice lama — coba lagi.");
-          return;
-        }
-      }
-      setInvoicesData(prev => prev.filter(inv => inv.job_id !== r.job_id));
-    }
     // Auto-discount membership tier (Gold: jasa 5%, Platinum: jasa 5% + material 5%)
     if (customersData) {
       const custPhone2 = r.phone || ord?.phone || customersData.find(c => c.name === r.customer)?.phone;
@@ -736,6 +799,44 @@ const verifyLaporan = async (r) => {
         addAgentLog("INVOICE_INVARIANT", _desc + " (verify laporan)", "WARNING");
         showNotif("⚠️ Invoice dibuat tapi total tidak konsisten dengan item — cek di Monitoring. " + _desc.slice(0, 60));
       }
+    }
+    const finalized = await commitFinalization(newInv);
+    if (!finalized.ok) return;
+    if (finalized.atomic) {
+      const savedInvoice = finalized.data?.invoice;
+      const createdNow = savedInvoice?.id === invId;
+      if (updateCustomerTierAfterOrder && ord) updateCustomerTierAfterOrder(ord).catch(() => {});
+      if (!createdNow) {
+        showNotif(`✅ Laporan verified! Invoice ${savedInvoice?.id || "existing"} sudah ada dan tidak diduplikasi.`);
+        return;
+      }
+      addAgentLog("AUTO_INVOICE", `Invoice ${invId} auto-dibuat atomik dari laporan ${r.job_id}`, "SUCCESS");
+      showNotif(totalInv === 0
+        ? `✅ Invoice ${invId} GRATIS — langsung LUNAS`
+        : `✅ Invoice ${invId} dibuat (${fmt(totalInv)}) — tunggu approval Owner/Admin`);
+      const owners = userAccounts.filter(u => (u.role === "Owner" || u.role === "Admin") && u.active !== false);
+      owners.forEach(o => { if (o?.phone) sendWA(o.phone, `⚡ *Invoice Auto-Generated*\n\nJob: *${r.job_id}*\nCustomer: ${r.customer}\nService: ${r.service}\nTotal: *${fmt(totalInv)}*\n\nMohon cek dan approve invoice di menu Invoice. — AClean`); });
+      return;
+    }
+
+    // Jalur kompatibilitas sebelum migration 177: pertahankan guard DB lama.
+    const { data: oldDB, error: fetchOldErr } = await supabase
+      .from("invoices").select("id,invoice_type").eq("job_id", r.job_id);
+    if (fetchOldErr) {
+      showNotif("❌ Gagal verifikasi invoice existing — coba lagi.");
+      return;
+    }
+    const acSaleInDB = (oldDB || []).find(o => o.invoice_type === "ac_unit_sale");
+    if (acSaleInDB) {
+      showNotif(`✅ Laporan verified! Invoice AC sale ${acSaleInDB.id} sudah ada (tidak diubah)`);
+      return;
+    }
+    if (oldDB?.length) {
+      for (const oi of oldDB) {
+        const { error: delErr } = await deleteInvoice(supabase, oi.id, auditUserName(), "ADMIN_EDIT_LAPORAN");
+        if (delErr) { showNotif("❌ Gagal hapus invoice lama — coba lagi."); return; }
+      }
+      setInvoicesData(prev => prev.filter(inv => inv.job_id !== r.job_id));
     }
     // H-1 fix: DB write DULU, state update SETELAH konfirmasi berhasil (tidak ada ghost invoice)
     const { error: iErr } = await insertInvoice(supabase, newInv);
@@ -776,7 +877,7 @@ return (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10 }}>
       <div>
         <div style={{ fontWeight: 800, fontSize: 18, color: cs.text, display: "flex", alignItems: "center", gap: 8 }}>
-          Laporan Tim Teknisi <span style={{ fontSize: 13, color: cs.muted, fontWeight: 400 }}>({filtered.length})</span>
+          Laporan Tim Teknisi <span style={{ fontSize: 13, color: cs.muted, fontWeight: 400 }}>({totalReportCount})</span>
           {liveActive && (
             <span title="Auto-refresh aktif (polling 90 dtk)" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, color: cs.green, background: cs.green + "18", border: `1px solid ${cs.green}33`, borderRadius: 99, padding: "2px 8px" }}>
               <span style={{ width: 6, height: 6, borderRadius: "50%", background: cs.green, display: "inline-block", animation: "pulse 1.5s ease-in-out infinite" }} />
@@ -792,7 +893,7 @@ return (
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         {[["SUBMITTED", cs.accent, "Baru"], ["VERIFIED", cs.green, "Verified"], ["REVISION", cs.yellow, "Revisi"], ["REJECTED", cs.red, "Ditolak"]].map(([s, col, lbl]) => (
           <span key={s} style={{ fontSize: 11, padding: "5px 11px", borderRadius: 99, background: col + "18", color: col, border: "1px solid " + col + "33", fontWeight: 700 }}>
-            {laporanReports.filter(r => (r.status || "").toUpperCase() === s).length} {lbl}
+            {Number(serverStatusCounts?.[s] ?? laporanReports.filter(r => (r.status || "").toUpperCase() === s).length)} {lbl}
           </span>
         ))}
       </div>
@@ -872,7 +973,7 @@ return (
       {searchLaporan && <button onClick={() => { setSearchLaporan(""); setLaporanPage(1); }} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: cs.muted, cursor: "pointer", fontSize: 16 }}>✕</button>}
       {searchLaporan.trim().length >= 2 && (
         <div style={{ fontSize: 11, color: cs.muted, marginTop: 5, paddingLeft: 4 }}>
-          {searchLoading ? "⏳ Mencari di seluruh arsip laporan…" : "🗂️ Termasuk laporan lama (di luar 1000 terbaru)"}
+          {(searchLoading || serverPageLoading) ? "⏳ Mencari di seluruh arsip laporan…" : "🗂️ Pencarian server — seluruh arsip laporan"}
         </div>
       )}
     </div>
@@ -923,7 +1024,7 @@ return (
       {laporanDateFilter === "Range" && (laporanDateFrom || laporanDateTo) && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto" }}>
           <span style={{ fontSize: 11, color: cs.accent, fontWeight: 600 }}>
-            {filtered.length} laporan
+            {totalReportCount} laporan
           </span>
           <button
             onClick={() => {
@@ -1027,8 +1128,9 @@ return (
     })()}
 
     {/* List */}
-    {filtered.length === 0
-      ? <div style={{ background: cs.card, borderRadius: 14, padding: 40, textAlign: "center", color: cs.muted }}>Tidak ada laporan</div>
+    {serverPageError && <div style={{ color: cs.yellow, fontSize: 11 }}>⚠️ Pagination server belum tersedia — memakai data lokal: {serverPageError}</div>}
+    {pageLap.length === 0
+      ? <div style={{ background: cs.card, borderRadius: 14, padding: 40, textAlign: "center", color: cs.muted }}>{serverPageLoading ? "Memuat laporan…" : "Tidak ada laporan"}</div>
       : pageLap.map(r => (
         <div key={r.id} style={{ background: cs.card, border: "1px solid " + (sMap[r.status] ? sMap[r.status][0] : cs.border) + "33", borderRadius: 12, padding: "14px 16px" }}>
           {/* Card header — responsive */}
@@ -1451,7 +1553,7 @@ return (
         <span style={{ fontSize: 12, color: cs.text }}>Hal {curPgL}/{totPgL}</span>
         <button onClick={() => setLaporanPage(p => Math.min(totPgL, p + 1))} disabled={curPgL === totPgL}
           style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid " + cs.border, background: curPgL === totPgL ? cs.surface : cs.card, color: curPgL === totPgL ? cs.muted : cs.text, cursor: curPgL === totPgL ? "not-allowed" : "pointer", fontSize: 12 }}>Next →</button>
-        <span style={{ fontSize: 11, color: cs.muted }}>{filtered.length} laporan</span>
+        <span style={{ fontSize: 11, color: cs.muted }}>{totalReportCount} laporan</span>
       </div>
     )}
   </div>

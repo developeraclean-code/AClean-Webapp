@@ -3,6 +3,10 @@
 // objek ctx → fungsi lepas dari closure App.jsx. Body verbatim (behavior-preserving).
 // Return newId (atau null bila gagal).
 import { withMaintenanceLink } from "./maintenanceLink.js";
+import { createOrderWorkflowAtomic } from "../data/writes.js";
+
+const isMissingOrderWorkflowRpc = (error) => error?.code === "PGRST202" || error?.code === "42883"
+  || /create_order_workflow_atomic.*(schema cache|does not exist|not found)/i.test(error?.message || "");
 
 export async function createOrder(form, {
   supabase, currentUser, showNotif, addAgentLog, auditUserName,
@@ -75,6 +79,7 @@ export async function createOrder(form, {
     const newOrder = {
       id: newId,
       customer: form.customer, phone: normalizePhone(form.phone), address: form.address,
+      area: form.area || "",
       customer_id: preExistCust?.id || null,
       service: form.service, type: form.type, units: parseInt(form.units) || 1,
       teknisi: form.teknisi, helper: form.helper || null,
@@ -87,6 +92,7 @@ export async function createOrder(form, {
       is_multi_day: form.is_multi_day || false,
       maintenance_client_id: form.maintenance_client_id || null,
       maintenance_unit_ids: Array.isArray(form.maintenance_unit_ids) ? form.maintenance_unit_ids : [],
+      source: form.source || "manual",
     };
 
     // ── Auto-link kontrak: customer yang terdaftar sbg klien maintenance otomatis
@@ -99,6 +105,41 @@ export async function createOrder(form, {
     // maintenance_client_id → jangan bilang "ditautkan" kalau row akhirnya tak punya.
     const _maintLink = withMaintenanceLink(newOrder, maintClients).linked;
     if (_maintLink) newOrder.maintenance_client_id = _maintLink.id;
+
+    // Jalur utama: customer, order, klaim slot dan dispatch marker berada dalam satu
+    // transaksi PostgreSQL. mutation_key yang stabil membuat double-click hanya
+    // mengembalikan hasil pertama, bukan membuat order kedua.
+    const autoDispatch = !!form.teknisi && (currentUser?.role === "Owner" || currentUser?.role === "Admin");
+    const atomic = await createOrderWorkflowAtomic(
+      supabase, newOrder, autoDispatch, auditUserName(), `order-create:${newId}`
+    );
+    if (!atomic.error) {
+      const savedOrder = atomic.data?.order || newOrder;
+      const savedCustomer = atomic.data?.customer || null;
+      invalidateCache("orders");
+      setOrdersData(prev => prev.some(o => o.id === savedOrder.id) ? prev : [...prev, savedOrder]);
+      if (savedCustomer) {
+        setCustomersData(prev => {
+          const exists = prev.some(c => c.id === savedCustomer.id);
+          return exists ? prev.map(c => c.id === savedCustomer.id ? { ...c, ...savedCustomer } : c) : [...prev, savedCustomer];
+        });
+      }
+      if (_maintLink) showNotif(`🏢 Order ditautkan ke kontrak ${_maintLink.name}`);
+      addAgentLog("ORDER_CREATED", `Order baru ${newId} — ${form.customer} (${form.service} ${form.units} unit)`, "SUCCESS");
+      if (autoDispatch) {
+        await sendDispatchWA(savedOrder);
+        showNotif(`✅ Order ${newId} dibuat & WA dispatch dikirim ke ${form.teknisi}!`);
+        addAgentLog("AUTO_DISPATCH", `Auto-dispatch ${newId} → ${form.teknisi}`, "SUCCESS");
+      } else {
+        showNotif(`✅ Order ${newId} berhasil dibuat!`);
+      }
+      return newId;
+    }
+    if (!isMissingOrderWorkflowRpc(atomic.error)) {
+      showNotif("❌ Gagal membuat order: " + (atomic.error?.message || "transaksi database gagal"));
+      return null;
+    }
+    console.warn("[ORDER_ATOMIC] migration 177 belum aktif; memakai jalur kompatibilitas lokal");
 
     // ── Fallback insert: coba full → minimal (BEFORE updating state) ──
     let orderSaved = false;

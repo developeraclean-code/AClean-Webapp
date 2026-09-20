@@ -80,19 +80,42 @@ const EMPTY = (): ProjectDb => ({
   tools: [], expenses: [], purchases: [], harian: [], documents: [],
 });
 
+// Tiap view hanya meminta tabel yang benar-benar dipakai. Dashboard tetap mendapat
+// angka lengkap, sedangkan tabel berat (dokumen/foto dan alat) baru dibaca saat tabnya
+// dibuka. Proyeksi kolom juga mencegah payload melebar diam-diam bila skema bertambah.
+export const PROJECT_VIEW_KEYS: Record<string, TableKey[]> = {
+  dashboard: ["projects", "materials", "harian", "dp", "expenses", "purchases", "usage"],
+  list: ["projects"],
+  detail: ["projects", "materials", "alokasi", "usage", "tools", "harian", "expenses", "purchases", "dp"],
+  harian: ["projects", "harian", "tools"],
+  material: ["projects", "materials", "alokasi"],
+  usage: ["projects", "materials", "alokasi", "usage"],
+  tools: ["projects", "tools"],
+  expense: ["projects", "expenses"],
+  purchase: ["projects", "purchases"],
+  finance: ["projects", "materials", "dp", "expenses", "purchases", "usage"],
+  docs: ["projects", "documents"],
+};
+
+export async function loadTables(keys: TableKey[]): Promise<Partial<ProjectDb>> {
+  const unique = [...new Set(keys)];
+  const results = await Promise.all(unique.map((k) => {
+    const columns = [...new Set(Object.values(FIELDS[k]))].join(",");
+    return supabase.from(TABLE[k]).select(columns).order("created_at", { ascending: ASC[k] });
+  }));
+  const out: Partial<ProjectDb> = {};
+  results.forEach((res, i) => {
+    const k = unique[i];
+    if (res.error) throw new Error(`load ${k}: ${res.error.message}`);
+    out[k] = (res.data || []).map((r) => fromRow(k, r as unknown as Row));
+  });
+  return out;
+}
+
 // Load semua tabel sekaligus → bentuk sama dgn initialData().
 export async function loadAll(): Promise<ProjectDb> {
   const keys = Object.keys(TABLE) as TableKey[];
-  const results = await Promise.all(
-    keys.map((k) => supabase.from(TABLE[k]).select("*").order("created_at", { ascending: ASC[k] }))
-  );
-  const out = EMPTY();
-  results.forEach((res, i) => {
-    const k = keys[i];
-    if (res.error) throw new Error(`load ${k}: ${res.error.message}`);
-    out[k] = (res.data || []).map((r) => fromRow(k, r as Row));
-  });
-  return out;
+  return { ...EMPTY(), ...(await loadTables(keys)) } as ProjectDb;
 }
 
 export const api = {

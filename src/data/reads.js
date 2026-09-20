@@ -222,6 +222,40 @@ export const fetchBootstrapServiceReports = async (supabase, sinceDate) => {
 export const fetchDashboardSnapshot = (supabase, sinceDate) =>
   supabase.rpc("get_dashboard_snapshot", { p_since: sinceDate });
 
+export const fetchDashboardSnapshotV2 = (supabase, date) =>
+  supabase.rpc("get_dashboard_snapshot_v2", { p_date: date });
+
+// Statistik dihitung penuh di PostgreSQL. Browser hanya menerima agregat dan maksimal
+// 50 invoice overdue untuk tindakan cepat, bukan ribuan baris transaksi historis.
+export const fetchStatisticsSnapshot = (supabase, dateFrom = null, dateTo = null) =>
+  supabase.rpc("get_statistics_snapshot", {
+    p_from: dateFrom || null,
+    p_to: dateTo || null,
+  });
+
+// Finance read-model: ringkasan all-time + rincian bulan/tanggal yang sedang dilihat.
+export const fetchFinanceSnapshot = (supabase, day, monthStart, monthEnd) =>
+  supabase.rpc("get_finance_snapshot", {
+    p_day: day,
+    p_month_start: monthStart,
+    p_month_end: monthEnd,
+  });
+
+// Laporan Tim memakai pagination server-side agar tidak terpotong hard-cap 1000 row.
+export const fetchServiceReportsPage = (supabase, {
+  dateFrom = null, dateTo = null, service = null, status = null,
+  team = null, search = null, page = 1, pageSize = 20,
+} = {}) => supabase.rpc("get_service_reports_page", {
+  p_date_from: dateFrom || null,
+  p_date_to: dateTo || null,
+  p_service: service || null,
+  p_status: status || null,
+  p_team: team || null,
+  p_search: search || null,
+  p_page: page,
+  p_page_size: pageSize,
+});
+
 export const fetchServiceReportById = (supabase, id) =>
   supabase.from("service_reports")
     .select(REPORT_COLS)

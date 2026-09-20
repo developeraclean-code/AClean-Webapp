@@ -41,49 +41,30 @@ export async function markPaid(inv, method = "transfer", notes = "", sendCustNot
     ));
     await setAuditUser();
     {
-      const { error: mpErr } = await markInvoicePaid(supabase, inv.id, paidAt, auditUserName());
+      const paymentId = globalThis.crypto?.randomUUID?.();
+      const { error: mpErr } = await markInvoicePaid(supabase, inv.id, paidAt, auditUserName(), {
+        paymentId,
+        method,
+        notes: notes || "Lunas",
+        paymentProofUrl,
+        mutationKey: paymentId ? `invoice-settle:${paymentId}` : undefined,
+      });
       if (mpErr) {
-        // Guard errors dari markInvoicePaid (status conflict/race condition) — jangan fallback
-        const isGuardError = mpErr.message?.includes("sudah") || mpErr.message?.includes("tidak ditemukan");
-        if (isGuardError) {
-          setInvoicesData(prev => prev.map(i =>
-            i.id === inv.id ? { ...i, status: originalInvStatus, paid_at: inv.paid_at || null } : i
+        // Jangan pernah menembus guard atomik dengan update langsung. markInvoicePaid
+        // sendiri hanya memakai jalur legacy bila RPC belum terpasang; semua error lain
+        // wajib menghentikan pelunasan agar double-click/race tidak mencatat dua kali.
+        reportError("invoice.markPaid.dbFailed", mpErr, { invoiceId: inv.id, jobId: inv.job_id });
+        setInvoicesData(prev => prev.map(i =>
+          i.id === inv.id ? { ...i, status: originalInvStatus, paid_at: inv.paid_at || null } : i
+        ));
+        if (originalOrderStatus) {
+          setOrdersData(prev => prev.map(o =>
+            (o.id === inv.job_id || o.invoice_id === inv.id) ? { ...o, status: originalOrderStatus } : o
           ));
-          if (originalOrderStatus) {
-            setOrdersData(prev => prev.map(o =>
-              (o.id === inv.job_id || o.invoice_id === inv.id) ? { ...o, status: originalOrderStatus } : o
-            ));
-          }
-          showNotif(`❌ ${mpErr.message}`);
-          return;
         }
-        console.warn("mark paid with paid_at failed, trying fallback:", mpErr.message);
-        const { error: fbErr } = await updateInvoice(supabase, inv.id, { status: "PAID" }, auditUserName());
-        if (fbErr) {
-          // H-04: Rollback state jika semua DB update gagal
-          reportError("invoice.markPaid.dbFailed", fbErr, { invoiceId: inv.id, jobId: inv.job_id });
-          setInvoicesData(prev => prev.map(i =>
-            i.id === inv.id ? { ...i, status: originalInvStatus, paid_at: inv.paid_at || null } : i
-          ));
-          if (originalOrderStatus) {
-            setOrdersData(prev => prev.map(o =>
-              (o.id === inv.job_id || o.invoice_id === inv.id) ? { ...o, status: originalOrderStatus } : o
-            ));
-          }
-          showNotif("❌ Gagal simpan ke database. Status dikembalikan. Coba lagi.");
-          return;
-        }
+        showNotif(`❌ Pelunasan dibatalkan: ${mpErr.message || "gagal menyimpan ke database"}`);
+        return;
       }
-    }
-    // Sync order status ke DB — React state sudah update di atas, tapi DB perlu diupdate juga
-    if (inv.job_id) {
-      supabase.from("orders").update({ status: "PAID" }).eq("id", inv.job_id).then(() => {});
-    }
-    // Juga update order yang dilink via invoice_id (edge case AC unit sale)
-    supabase.from("orders").update({ status: "PAID" }).eq("invoice_id", inv.id).then(() => {});
-    // Simpan bukti bayar URL ke invoice jika ada (dari WA payment detection)
-    if (paymentProofUrl) {
-      supabase.from("invoices").update({ payment_proof_url: paymentProofUrl }).eq("id", inv.id).then(() => {});
     }
 
     // Notif WA ke customer — hanya jika admin/owner menyetujui (sendCustNotif=true)
@@ -98,25 +79,6 @@ export async function markPaid(inv, method = "transfer", notes = "", sendCustNot
         "Pembayaran " + inv.id + " Rp " + (inv.total || 0).toLocaleString("id-ID") + " diterima. Terima kasih! — " + (appSettings.app_name || "AClean")
       );
     }
-    // GAP 1.6: Catat ke payments table untuk history + partial payment support
-    // amount = sisa yang dibayar (total - paid_amount sebelumnya), bukan total — hindari double-count saat ada DP
-    {
-      const sisaDibayar = (inv.total || 0) - (Number(inv.paid_amount) || 0);
-      const { error: pmtErr } = await supabase.from("payments").insert({
-        invoice_id: inv.id,
-        amount: sisaDibayar > 0 ? sisaDibayar : (inv.total || 0),
-        method: method,
-        notes: notes || "Lunas",
-        paid_at: paidAt,
-      });
-      if (pmtErr?.code === "23505" && pmtErr?.message?.includes("payment_proof")) {
-        showNotif("⚠️ Bukti pembayaran ini sudah pernah digunakan. Cek invoice yang terkait.");
-        return;
-      }
-      if (pmtErr) console.warn("payments insert skip:", pmtErr?.message);
-    }
-    // Update customer last_service
-    if (inv.phone) await supabase.from("customers").update({ last_service: paidAt.slice(0, 10) }).eq("phone", inv.phone);
     addAgentLog("PAYMENT_CONFIRMED", `Invoice ${inv.id} LUNAS — ${inv.customer} ${fmt(inv.total)} via ${method}`, "SUCCESS");
     showNotif(`💰 Invoice ${inv.id} LUNAS — ${fmt(inv.total)}`);
     // Retro-match: cari bukti bayar yang belum ter-link jika belum ada proof dari parameter

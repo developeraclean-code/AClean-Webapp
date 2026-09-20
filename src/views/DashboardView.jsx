@@ -1,7 +1,7 @@
 import { memo, useState, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor, statusLabel, ORDER_DONE_STATUSES } from "../constants/status.js";
-import { fetchAllOrders, fetchAllInvoices, fetchAllExpenses, fetchPayrollCost, fetchReportWorkStats, fetchDashboardSnapshot } from "../data/reads.js";
+import { fetchAllOrders, fetchAllInvoices, fetchAllExpenses, fetchPayrollCost, fetchReportWorkStats, fetchDashboardSnapshot, fetchDashboardSnapshotV2 } from "../data/reads.js";
 import { displayStock } from "../lib/inventory.js";
 import { measureAsync } from "../lib/perfMetrics.js";
 import AbsenBanner from "./AbsenBanner.jsx";
@@ -84,6 +84,7 @@ const role = currentUser?.role || "Admin";
 // menu Statistik dan sengaja tidak dimuat/ditampilkan di halaman ini.
 const showFinancialDashboard = false;
 const [gridDate, setGridDate] = useState(TODAY);
+const [dashboardDay, setDashboardDay] = useState(null);
 const hariIni = new Date(TODAY + "T00:00:00+07:00").toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
 // ── Data untuk Analitik Keuangan (Owner) — WAJIB dipanggil sebelum early-return
@@ -102,6 +103,25 @@ const [finExpenses, setFinExpenses] = useState(null);
 // Rekap jenis pekerjaan: mode ("minggu"/"bulan") + offset (0=periode berjalan, geser prev/next)
 const [workMode, setWorkMode] = useState("bulan");
 const [workOffset, setWorkOffset] = useState(0);
+useEffect(() => {
+  if (!bootstrapReady || !["Owner", "Admin"].includes(role) || !supabase) return;
+  let cancelled = false;
+  // Jangan tampilkan snapshot tanggal sebelumnya selama request tanggal baru berjalan.
+  // Data bootstrap lokal menjadi fallback sementara dan mencegah baris/tanggal tertukar.
+  setDashboardDay(null);
+  (async () => {
+    const { data, error } = await fetchDashboardSnapshotV2(supabase, gridDate);
+    if (cancelled) return;
+    if (error) {
+      // Migration 178 belum aktif saat local trial: grid lama tetap berfungsi.
+      console.warn("[DASHBOARD_V2] fallback data bootstrap:", error.message);
+      setDashboardDay(null);
+      return;
+    }
+    setDashboardDay(data || null);
+  })();
+  return () => { cancelled = true; };
+}, [bootstrapReady, gridDate, role, supabase]);
 useEffect(() => {
   if (!showFinancialDashboard || !bootstrapReady || !["Owner", "Admin"].includes(role) || !supabase) return;
   let cancelled = false;
@@ -667,10 +687,11 @@ return (
         }
       };
 
-      const hasPrev = orderDates.some(d => d < gridDate);
-      const hasNext = orderDates.some(d => d > gridDate);
+      const hasPrev = dashboardDay ? !!dashboardDay.previous_date : orderDates.some(d => d < gridDate);
+      const hasNext = dashboardDay ? !!dashboardDay.next_date : orderDates.some(d => d > gridDate);
 
-      const gridOrders = ordersData.filter(o => o.date === gridDate).sort((a, b) => {
+      const rpcRows = Array.isArray(dashboardDay?.rows) ? dashboardDay.rows : null;
+      const gridOrders = (rpcRows ? rpcRows.map(row => row.order) : ordersData.filter(o => o.date === gridDate)).sort((a, b) => {
         const tekA = (a.teknisi || "").toLowerCase();
         const tekB = (b.teknisi || "").toLowerCase();
         if (tekA !== tekB) return tekA.localeCompare(tekB);
@@ -680,10 +701,12 @@ return (
       // Build lookup: job_id → invoice
       const invByJob = {};
       invoicesData.forEach(i => { if (i.job_id) invByJob[i.job_id] = i; });
+      rpcRows?.forEach(row => { if (row.invoice?.job_id) invByJob[row.invoice.job_id] = row.invoice; });
 
       // Build lookup: job_id → laporan
       const lapByJob = {};
       laporanReports.forEach(r => { if (r.job_id) lapByJob[r.job_id] = r; });
+      rpcRows?.forEach(row => { if (row.report?.job_id) lapByJob[row.report.job_id] = row.report; });
 
       const gridDateLabel = new Date(gridDate + "T00:00:00+07:00").toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
       const isToday = gridDate === TODAY;
@@ -733,7 +756,7 @@ return (
 
           {/* Date navigation */}
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: "1px solid " + cs.border, flexWrap: "wrap" }}>
-            <button onClick={() => hasPrev && setGridDate(d => navDate(d, -1))}
+            <button onClick={() => hasPrev && setGridDate(dashboardDay?.previous_date || navDate(gridDate, -1))}
               style={{ background: cs.surface, border: "1px solid " + cs.border, color: hasPrev ? cs.text : cs.border, padding: "6px 12px", borderRadius: 8, cursor: hasPrev ? "pointer" : "default", fontSize: 12, fontWeight: 600, opacity: hasPrev ? 1 : 0.3 }}>◀</button>
             <div style={{ flex: 1, textAlign: "center" }}>
               <div style={{ fontWeight: 800, fontSize: 14, color: cs.text }}>
@@ -744,11 +767,11 @@ return (
                 {totalOrders} order · {gridOrders.filter(o => ORDER_DONE_STATUSES.includes(o.status)).length} selesai · {gridOrders.filter(o => o.status === "IN_PROGRESS").length} aktif · {gridOrders.filter(o => o.status === "PENDING").length} pending
               </div>
             </div>
-            {!isToday && orderDates.includes(TODAY) && (
+            {!isToday && (
               <button onClick={() => setGridDate(TODAY)}
                 style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>Hari Ini</button>
             )}
-            <button onClick={() => hasNext && setGridDate(d => navDate(d, 1))}
+            <button onClick={() => hasNext && setGridDate(dashboardDay?.next_date || navDate(gridDate, 1))}
               style={{ background: cs.surface, border: "1px solid " + cs.border, color: hasNext ? cs.text : cs.border, padding: "6px 12px", borderRadius: 8, cursor: hasNext ? "pointer" : "default", fontSize: 12, fontWeight: 600, opacity: hasNext ? 1 : 0.3 }}>▶</button>
           </div>
 
@@ -850,7 +873,7 @@ return (
                 {/* Aksi */}
                 <div style={{ padding: "8px 10px", display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
                   <button
-                    onClick={() => { if (inv) { setSelectedInvoice(inv); setModalPDF(true); } }}
+                    onClick={() => { if (inv) { setSelectedInvoice(invoicesData.find(x => x.id === inv.id) || inv); setModalPDF(true); } }}
                     title={inv ? "Buka Invoice" : "Invoice belum ada"}
                     style={{
                       display: "inline-flex", alignItems: "center", gap: 4,

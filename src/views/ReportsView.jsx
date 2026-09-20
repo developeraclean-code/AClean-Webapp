@@ -2,50 +2,34 @@ import { memo, useState, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { useAppContext } from "../context/AppContext.js";
 import { ORDER_DONE_STATUSES } from "../constants/status.js";
-import { fetchAllOrders, fetchAllInvoices } from "../data/reads.js";
+import { fetchStatisticsSnapshot } from "../data/reads.js";
 import { downloadBlob, buildCsv, printDocument, htmlTable, rp, fmtTanggal, escapeHtml } from "../lib/exportUtils.js";
+
+const statisticsCache = new Map();
+const STATISTICS_CACHE_MS = 2 * 60 * 1000;
 
 function ReportsView({ ordersData: ordersDataProp, invoicesData: invoicesDataProp, laporanReports, customersData, teknisiData, inventoryData, statsPeriod, setStatsPeriod, statsMingguOff, setStatsMingguOff, statsBulanOff, setStatsBulanOff, statsDateFrom, setStatsDateFrom, statsDateTo, setStatsDateTo, bulanIni, invoiceReminderWA, getTechColor, expensesData }) {
   // Fase 1: primitif global dari AppContext.
   const { isMobile, currentUser, fmt, TODAY, supabase, showNotif } = useAppContext();
 
-// ── Data historis PENUH, bukan array global yang di-cap (ordersData 500 / invoicesData 300
-// baris terbaru saja — cukup untuk operasional harian tapi bikin Statistik bulan-bulan lama
-// tampak kosong/salah begitu volume order/invoice lewat cap itu). Fetch sekali saat buka
-// Statistik; sementara loading, fallback ke prop yang sudah ada agar tidak flash kosong. ──
-const [fullOrders, setFullOrders] = useState(null);
-const [fullInvoices, setFullInvoices] = useState(null);
-useEffect(() => {
-  let cancelled = false;
-  (async () => {
-    const [{ data: ord }, { data: inv }] = await Promise.all([
-      fetchAllOrders(supabase), fetchAllInvoices(supabase),
-    ]);
-    if (!cancelled) { setFullOrders(ord || []); setFullInvoices(inv || []); }
-  })();
-  return () => { cancelled = true; };
-}, [supabase]);
-const ordersData = fullOrders || ordersDataProp;
-const invoicesData = fullInvoices || invoicesDataProp;
+// Data prop tetap menjadi fallback lokal selama migration 176 belum diterapkan. Jalur
+// normal memakai satu snapshot agregat sehingga ribuan transaksi tidak masuk browser.
+const ordersData = ordersDataProp || [];
+const invoicesData = invoicesDataProp || [];
+const [statsSnapshot, setStatsSnapshot] = useState(null);
+const [statsLoading, setStatsLoading] = useState(false);
+const [statsError, setStatsError] = useState(null);
 
 const techColors = Object.fromEntries([...new Set(ordersData.map(o => o.teknisi).filter(Boolean))].map(n => [n, getTechColor(n, teknisiData)]))
 
 // ── Rating Dashboard state ──
-const [ratings, setRatings] = useState([]);
-const [ratingLoaded, setRatingLoaded] = useState(false);
 const isOwnerOrAdmin = ["Owner","Admin"].includes(currentUser?.role);
 
-useEffect(() => {
-  if (!isOwnerOrAdmin || !supabase) return;
-  supabase.from("customer_feedback")
-    .select("id,order_id,phone,customer,teknisi,rating,comment,service,created_at")
-    .order("created_at", { ascending: false })
-    .limit(500)
-    .then(({ data }) => { setRatings(data || []); setRatingLoaded(true); });
-}, [isOwnerOrAdmin, supabase]);
+const ratings = statsSnapshot?.ratings?.recent || [];
+const ratingLoaded = !!statsSnapshot;
 
 // Agregasi rating per teknisi
-const ratingByTeknisi = Object.values(
+const fallbackRatingByTeknisi = Object.values(
   ratings.reduce((acc, r) => {
     const tek = r.teknisi || "Tidak Diketahui";
     if (!acc[tek]) acc[tek] = { teknisi: tek, total: 0, count: 0, reviews: [] };
@@ -57,10 +41,17 @@ const ratingByTeknisi = Object.values(
 ).map(t => ({ ...t, avg: (t.total / t.count).toFixed(1) }))
  .sort((a, b) => b.avg - a.avg);
 
-const totalRatings = ratings.length;
-const overallAvg = totalRatings > 0 ? (ratings.reduce((s, r) => s + r.rating, 0) / totalRatings).toFixed(1) : null;
+const ratingByTeknisi = statsSnapshot?.ratings?.by_technician?.map(r => ({
+  teknisi: r.teknisi, count: Number(r.count || 0), avg: Number(r.average || 0).toFixed(1), reviews: [],
+})) || fallbackRatingByTeknisi;
+const totalRatings = Number(statsSnapshot?.ratings?.count ?? ratings.length);
+const overallAvg = statsSnapshot?.ratings?.average != null
+  ? Number(statsSnapshot.ratings.average).toFixed(1)
+  : (totalRatings > 0 ? (ratings.reduce((s, r) => s + r.rating, 0) / Math.max(ratings.length,1)).toFixed(1) : null);
 const lowRatings = ratings.filter(r => r.rating <= 2);
-const starDist = [5,4,3,2,1].map(s => ({ star: s, count: ratings.filter(r => r.rating === s).length }));
+const positiveRatingCount = Number(statsSnapshot?.ratings?.positive ?? ratings.filter(r => r.rating >= 4).length);
+const lowRatingCount = Number(statsSnapshot?.ratings?.low ?? lowRatings.length);
+const starDist = [5,4,3,2,1].map(s => ({ star: s, count: Number(statsSnapshot?.ratings?.distribution?.[s] ?? ratings.filter(r => r.rating === s).length) }));
 // ── Filter helper berdasarkan periode yang dipilih ──
 const tahunIni = TODAY.slice(0, 4);
 
@@ -104,6 +95,45 @@ const periodLabel = statsPeriod === "hari" ? "Hari Ini (" + TODAY + ")"
           ? statsDateFrom + " s/d " + statsDateTo
           : "Semua Waktu";
 
+const snapshotRange = (() => {
+  if (statsPeriod === "hari") return { from: TODAY, to: TODAY };
+  if (statsPeriod === "minggu") return mingguRange;
+  if (statsPeriod === "bulan") {
+    const [y,m] = bulanStr.split("-").map(Number);
+    return { from: `${bulanStr}-01`, to: `${bulanStr}-${String(new Date(y,m,0).getDate()).padStart(2,"0")}` };
+  }
+  if (statsPeriod === "tahun") return { from: `${tahunIni}-01-01`, to: `${tahunIni}-12-31` };
+  if (statsPeriod === "custom") return { from: statsDateFrom || null, to: statsDateTo || null };
+  return { from: null, to: null };
+})();
+
+useEffect(() => {
+  if (!supabase || !["Owner","Admin","Finance"].includes(currentUser?.role)) return;
+  const key = `${snapshotRange.from || "all"}:${snapshotRange.to || "all"}`;
+  const cached = statisticsCache.get(key);
+  if (cached && Date.now() - cached.at < STATISTICS_CACHE_MS) {
+    setStatsSnapshot(cached.data); setStatsError(null); return;
+  }
+  let cancelled = false;
+  setStatsLoading(true); setStatsError(null);
+  fetchStatisticsSnapshot(supabase, snapshotRange.from, snapshotRange.to)
+    .then(({ data, error }) => {
+      if (cancelled) return;
+      if (error) throw error;
+      statisticsCache.set(key, { at: Date.now(), data });
+      setStatsSnapshot(data || null);
+    })
+    .catch((error) => {
+      if (!cancelled) {
+        setStatsError(error?.message || "Statistik gagal dimuat");
+        setStatsSnapshot(null);
+      }
+    })
+    .finally(() => { if (!cancelled) setStatsLoading(false); });
+  return () => { cancelled = true; };
+  // Primitive range values sengaja dipakai agar object snapshotRange tidak memicu fetch ulang.
+}, [supabase, currentUser?.role, snapshotRange.from, snapshotRange.to]);
+
 // Filter berdasarkan tanggal
 const inRange = (tgl) => {
   if (!tgl) return false;
@@ -129,30 +159,37 @@ const filterOrderByPeriod = (o) => inRange(String(o.date || ""));
 
 // ── Revenue & Invoice ──
 const allInv = invoicesData;
+const snapshotInvoiceStatus = (status) => (statsSnapshot?.invoice_status || []).find(x => x.status === status) || null;
 // paidInv: PAID di periode ini (by paid_at)
 const paidInv = allInv.filter(i => i.status === "PAID" && filterInvByPeriod(i));
 // billablePaidInv: exclude Complain gratis (total=0) agar tidak deflate avg
 const billablePaidInv = paidInv.filter(i => (i.total || 0) > 0);
 // AR: selalu semua outstanding (bukan filter periode)
 const unpaidInv = allInv.filter(i => i.status === "UNPAID");
-const overdueInv = allInv.filter(i => i.status === "OVERDUE");
+const overdueInv = statsSnapshot?.overdue_rows || allInv.filter(i => i.status === "OVERDUE");
 const pendingInv = allInv.filter(i => i.status === "PENDING_APPROVAL");
 // Passthrough unit AC: ac_unit_sale & quotation_converted (keduanya jual unit AC, harga unit tidak masuk omset AClean)
 const isAcSaleInvoice = (i) => i.invoice_type === "ac_unit_sale" || i.invoice_type === "quotation_converted";
-const totalRevenue = paidInv.reduce((a, b) => {
+const fallbackRevenue = paidInv.reduce((a, b) => {
   const passthrough = isAcSaleInvoice(b) ? (b.unit_ac_amount || 0) : 0;
   return a + (b.total || 0) - passthrough;
 }, 0);
-const totalLabor = paidInv.reduce((a, b) => a + (b.labor || 0), 0);
-const totalMaterial = paidInv.reduce((a, b) => a + (b.material || 0), 0);
-const totalDiscount = paidInv.reduce((a, b) => a + (b.discount || 0) + (b.trade_in ? (b.trade_in_amount || 0) : 0), 0);
+const totalRevenue = Number(statsSnapshot?.financial?.revenue ?? fallbackRevenue);
+const totalLabor = Number(statsSnapshot?.financial?.labor ?? paidInv.reduce((a, b) => a + (b.labor || 0), 0));
+const totalMaterial = Number(statsSnapshot?.financial?.material ?? paidInv.reduce((a, b) => a + (b.material || 0), 0));
+const totalDiscount = Number(statsSnapshot?.financial?.discount ?? paidInv.reduce((a, b) => a + (b.discount || 0) + (b.trade_in ? (b.trade_in_amount || 0) : 0), 0));
 // Biaya dihitung hanya bila SUDAH final: bukan menunggu approval Admin (≥500rb) dan bukan
 // draft AI yang belum di-review (PENDING_AI). Keduanya belum sah jadi pengeluaran.
-const totalExpenses = (expensesData || []).filter(e => e.approval_status !== "PENDING_APPROVAL" && e.validation_status !== "PENDING_AI" && inRange(String(e.date || e.created_at || ""))).reduce((a, b) => a + (b.amount || 0), 0);
-const totalAR = unpaidInv.reduce((a, b) => a + (b.total || 0), 0)
-  + overdueInv.reduce((a, b) => a + (b.total || 0), 0);
-const totalPending = pendingInv.reduce((a, b) => a + (b.total || 0), 0);
-const totalOverdue = overdueInv.reduce((a, b) => a + (b.total || 0), 0);
+const totalExpenses = Number(statsSnapshot?.financial?.expenses ?? (expensesData || []).filter(e => e.approval_status !== "PENDING_APPROVAL" && e.validation_status !== "PENDING_AI" && inRange(String(e.date || e.created_at || ""))).reduce((a, b) => a + (b.amount || 0), 0));
+const totalAR = Number(statsSnapshot?.financial?.ar ?? (unpaidInv.reduce((a, b) => a + (b.total || 0), 0)
+  + overdueInv.reduce((a, b) => a + (b.total || 0), 0)));
+const totalPending = Number(statsSnapshot?.financial?.pending ?? pendingInv.reduce((a, b) => a + (b.total || 0), 0));
+const totalOverdue = Number(statsSnapshot?.financial?.overdue ?? overdueInv.reduce((a, b) => a + (b.total || 0), 0));
+const paidCount = Number(statsSnapshot?.financial?.paid_count ?? paidInv.length);
+const billablePaidCount = Number(statsSnapshot?.financial?.billable_paid_count ?? billablePaidInv.length);
+const unpaidCount = Number(snapshotInvoiceStatus("UNPAID")?.count ?? unpaidInv.length);
+const overdueCount = Number(snapshotInvoiceStatus("OVERDUE")?.count ?? overdueInv.length);
+const pendingCount = Number(snapshotInvoiceStatus("PENDING_APPROVAL")?.count ?? pendingInv.length);
 
 // ── Orders — filter sesuai periode ──
 // Multi-hari: parent + child dianggap 1 job (jangan double-count completion rate)
@@ -162,21 +199,23 @@ const totalOverdue = overdueInv.reduce((a, b) => a + (b.total || 0), 0);
 const DONE_STATUSES = ORDER_DONE_STATUSES;
 const ordersPeriod = ordersData.filter(filterOrderByPeriod);  // orders di periode ini
 const ordersPeriodUnique = ordersPeriod.filter(o => !(o.parent_job_id && o.is_multi_day));  // hanya parent/standalone
-const ordersDone = ordersPeriodUnique.filter(o => DONE_STATUSES.includes(o.status) || o.status === "CONTINUED").length;
-const ordersAll = ordersPeriodUnique.length;
+const ordersDone = Number(statsSnapshot?.operations?.orders_done ?? ordersPeriodUnique.filter(o => DONE_STATUSES.includes(o.status) || o.status === "CONTINUED").length);
+const ordersAll = Number(statsSnapshot?.operations?.orders_total ?? ordersPeriodUnique.length);
 const completionRate = ordersAll > 0 ? Math.round(ordersDone / ordersAll * 100) : 0;
 // avgOrderVal pakai billable saja (exclude Complain gratis total=0)
-const avgOrderVal = billablePaidInv.length > 0 ? Math.round(totalRevenue / billablePaidInv.length) : 0;
+const avgOrderVal = billablePaidCount > 0 ? Math.round(totalRevenue / billablePaidCount) : 0;
 
 // ── Revenue per layanan (periode ini) ──
 // Untuk ac_unit_sale & quotation_converted: kurangi unit_ac_amount (passthrough) agar revenue Install hanya hitung paket+addon
 const effRevenue = (i) => (i.total || 0) - (isAcSaleInvoice(i) ? (i.unit_ac_amount || 0) : 0);
-const revBreakdown = [
+const fallbackRevBreakdown = [
   ["Cleaning", paidInv.filter(i => (i.service || "").toLowerCase().includes("cleaning")).reduce((a, b) => a + effRevenue(b), 0), cs.accent, paidInv.filter(i => (i.service || "").toLowerCase().includes("cleaning")).length],
   ["Install", paidInv.filter(i => (i.service || "").toLowerCase().includes("install")).reduce((a, b) => a + effRevenue(b), 0), cs.green, paidInv.filter(i => (i.service || "").toLowerCase().includes("install")).length],
   ["Repair", paidInv.filter(i => (i.service || "").toLowerCase().includes("repair")).reduce((a, b) => a + effRevenue(b), 0), cs.yellow, paidInv.filter(i => (i.service || "").toLowerCase().includes("repair")).length],
   ["Complain", paidInv.filter(i => (i.service || "").toLowerCase().includes("complain")).reduce((a, b) => a + effRevenue(b), 0), cs.red, paidInv.filter(i => (i.service || "").toLowerCase().includes("complain")).length],
 ].filter(([, rev, , cnt]) => rev > 0 || cnt > 0);
+const serviceColors = { Cleaning: cs.accent, Install: cs.green, Repair: cs.yellow, Complain: cs.red, Lainnya: cs.muted };
+const revBreakdown = statsSnapshot?.service_revenue?.map(r => [r.service, Number(r.revenue || 0), serviceColors[r.service] || cs.muted, Number(r.transactions || 0)]) || fallbackRevBreakdown;
 
 // ── Teknisi performance — filter sesuai periode ──
 // Multi-hari: tiap hari child dianggap "1 job teknisi" (karena teknisi memang bekerja di hari itu).
@@ -203,15 +242,19 @@ const helperPerf = [...new Set(ordersPeriod.map(o => o.helper).filter(Boolean))]
     return { name, done: myDone, total: myOrders.length, rev: 0, isHelper: true };
   }).filter(t => t.total > 0).sort((a, b) => b.done - a.done);
 
-const allTeamPerf = [...tekPerf, ...helperPerf];
+const allTeamPerf = statsSnapshot?.team?.map(t => ({
+  name: t.name, done: Number(t.done || 0), total: Number(t.total || 0),
+  rev: Number(t.revenue || 0), isHelper: !!t.is_helper,
+})) || [...tekPerf, ...helperPerf];
 const maxDone = Math.max(...allTeamPerf.map(t => t.done), 1);
 
 // ── Customer metrics ──
-const custTotal = customersData.length;
-const custVip = customersData.filter(c => c.is_vip).length;
-const custBaru = customersData.filter(c =>
+const custTotal = Number(statsSnapshot?.operations?.customers_total ?? customersData.length);
+const custVip = Number(statsSnapshot?.operations?.customers_vip ?? customersData.filter(c => c.is_vip).length);
+const fallbackCustBaru = customersData.filter(c =>
   inRange(String(c.joined || c.created_at || ""))
 ).length;
+const custBaru = Number(statsSnapshot?.operations?.customers_new ?? fallbackCustBaru);
 
 const fmtPct = (n, d) => d > 0 ? (n / d * 100).toFixed(1) + "%" : "—";
 const fmtRp = (n) => "Rp " + Math.round(n).toLocaleString("id-ID");
@@ -304,6 +347,13 @@ const exportStatistikPdf = () => {
 
 return (
   <div style={{ display: "grid", gap: 18 }}>
+    {(statsLoading || statsError) && (
+      <div style={{ padding: "9px 12px", borderRadius: 9, fontSize: 11,
+        color: statsError ? cs.yellow : cs.accent, background: (statsError ? cs.yellow : cs.accent) + "12",
+        border: "1px solid " + (statsError ? cs.yellow : cs.accent) + "33" }}>
+        {statsError ? `⚠️ Snapshot Statistik belum tersedia — sementara memakai data lokal: ${statsError}` : "⏳ Menghitung Statistik di database…"}
+      </div>
+    )}
     {/* Header + Filter */}
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
       <div>
@@ -404,7 +454,7 @@ return (
         <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 20 }}>
           <div style={{ fontWeight: 800, color: cs.text, fontSize: 14, marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span>💰 Profit & Loss — {periodLabel}</span>
-            <span style={{ fontSize: 11, color: cs.muted, fontWeight: 400 }}>Berdasarkan {billablePaidInv.length} invoice berbayar{paidInv.length > billablePaidInv.length ? " (+" + (paidInv.length - billablePaidInv.length) + " gratis)" : ""}</span>
+            <span style={{ fontSize: 11, color: cs.muted, fontWeight: 400 }}>Berdasarkan {billablePaidCount} invoice berbayar{paidCount > billablePaidCount ? " (+" + (paidCount - billablePaidCount) + " gratis)" : ""}</span>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
             {[
@@ -470,7 +520,7 @@ return (
                 <div style={{ fontSize: 10, color: cs.muted, fontWeight: 700 }}>Net Margin</div>
               </div>
               <div style={{ textAlign: "center", padding: "10px 16px", background: cs.accent + "12", borderRadius: 10, border: "1px solid " + cs.accent + "22" }}>
-                <div style={{ fontSize: 20, fontWeight: 800, color: cs.accent }}>{billablePaidInv.length}</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: cs.accent }}>{billablePaidCount}</div>
                 <div style={{ fontSize: 10, color: cs.muted, fontWeight: 700 }}>Invoice Berbayar</div>
               </div>
             </div>
@@ -501,9 +551,9 @@ return (
       <div style={{ fontWeight: 800, color: cs.text, fontSize: 14, marginBottom: 14 }}>📥 Accounts Receivable (Piutang)</div>
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(4,1fr)", gap: 10, marginBottom: 14 }}>
         {[
-          { label: "Piutang Aktif", val: fmt(totalAR), sub: (unpaidInv.length + overdueInv.length) + " invoice belum bayar", color: cs.yellow },
-          { label: "Overdue 🚨", val: fmt(totalOverdue), sub: overdueInv.length + " invoice terlambat", color: cs.red },
-          { label: "Menunggu Approval", val: fmt(totalPending), sub: pendingInv.length + " invoice pending", color: cs.ara },
+          { label: "Piutang Aktif", val: fmt(totalAR), sub: (unpaidCount + overdueCount) + " invoice belum bayar", color: cs.yellow },
+          { label: "Overdue 🚨", val: fmt(totalOverdue), sub: overdueCount + " invoice terlambat", color: cs.red },
+          { label: "Menunggu Approval", val: fmt(totalPending), sub: pendingCount + " invoice pending", color: cs.ara },
           { label: "Total Customer", val: custTotal, sub: custVip + " VIP · " + custBaru + " baru periode ini", color: cs.accent },
         ].map(k => (
           <div key={k.label} style={{ background: cs.surface, borderRadius: 10, padding: "12px 14px", border: "1px solid " + k.color + "22" }}>
@@ -575,12 +625,14 @@ return (
         <div style={{ fontWeight: 700, color: cs.text, marginBottom: 12, fontSize: 13 }}>🧾 Status Invoice (Semua)</div>
         {[["PAID", cs.green, "Lunas"], ["UNPAID", cs.yellow, "Belum Bayar"], ["OVERDUE", cs.red, "Terlambat"], ["PENDING_APPROVAL", cs.ara, "Menunggu Approve"]].map(([s, col, lbl]) => {
           const items = allInv.filter(i => i.status === s);
-          const total = items.reduce((a, b) => a + (b.total || 0), 0);
-          return items.length > 0 ? (
+          const snap = snapshotInvoiceStatus(s);
+          const count = Number(snap?.count ?? items.length);
+          const total = Number(snap?.total ?? items.reduce((a, b) => a + (b.total || 0), 0));
+          return count > 0 ? (
             <div key={s} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, paddingBottom: 8, borderBottom: "1px solid " + cs.border }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 99, background: col + "22", color: col, border: "1px solid " + col + "44", fontWeight: 700 }}>{lbl}</span>
-                <span style={{ fontSize: 11, color: cs.muted }}>{items.length}×</span>
+                <span style={{ fontSize: 11, color: cs.muted }}>{count}×</span>
               </div>
               <span style={{ fontWeight: 800, color: col, fontFamily: "monospace", fontSize: 12 }}>{fmt(total)}</span>
             </div>
@@ -591,7 +643,7 @@ return (
       <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 18 }}>
         <div style={{ fontWeight: 700, color: cs.text, marginBottom: 12, fontSize: 13 }}>📝 Status Laporan Teknisi</div>
         {[["SUBMITTED", cs.accent, "Baru"], ["VERIFIED", cs.green, "Terverifikasi"], ["REVISION", cs.yellow, "Perlu Revisi"], ["REJECTED", cs.red, "Ditolak"]].map(([s, col, lbl]) => {
-          const cnt = laporanReports.filter(r => r.status === s && inRange(r.date || r.submitted_at || "")).length;
+          const cnt = Number(statsSnapshot?.report_status?.[s] ?? laporanReports.filter(r => r.status === s && inRange(r.date || r.submitted_at || "")).length);
           return cnt > 0 ? (
             <div key={s} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, paddingBottom: 8, borderBottom: "1px solid " + cs.border }}>
               <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 99, background: col + "22", color: col, border: "1px solid " + col + "44", fontWeight: 700 }}>{lbl}</span>
@@ -622,12 +674,12 @@ return (
             <div style={{ fontSize: 10, color: cs.muted }}>dari customer</div>
           </div>
           <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: "14px 16px", textAlign: "center" }}>
-            <div style={{ fontSize: 28, fontWeight: 900, color: cs.green }}>{ratings.filter(r => r.rating >= 4).length}</div>
+            <div style={{ fontSize: 28, fontWeight: 900, color: cs.green }}>{positiveRatingCount}</div>
             <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>Review Positif</div>
             <div style={{ fontSize: 10, color: cs.muted }}>bintang 4-5</div>
           </div>
           <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: "14px 16px", textAlign: "center" }}>
-            <div style={{ fontSize: 28, fontWeight: 900, color: cs.red }}>{lowRatings.length}</div>
+            <div style={{ fontSize: 28, fontWeight: 900, color: cs.red }}>{lowRatingCount}</div>
             <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>Perlu Perhatian</div>
             <div style={{ fontSize: 10, color: cs.muted }}>bintang 1-2</div>
           </div>
@@ -681,10 +733,15 @@ return (
         </div>
 
         {/* Review negatif yang perlu ditindaklanjuti */}
-        {lowRatings.length > 0 && (
+        {lowRatingCount > 0 && (
           <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 12, padding: 16 }}>
-            <div style={{ fontWeight: 700, fontSize: 13, color: "#dc2626", marginBottom: 12 }}>⚠️ Review Negatif — Perlu Tindak Lanjut ({lowRatings.length})</div>
+            <div style={{ fontWeight: 700, fontSize: 13, color: "#dc2626", marginBottom: 12 }}>⚠️ Review Negatif — Perlu Tindak Lanjut ({lowRatingCount})</div>
             <div style={{ display: "grid", gap: 8 }}>
+              {lowRatings.length === 0 && (
+                <div style={{ background: "#fff", borderRadius: 8, padding: "10px 12px", border: "1px solid #fecaca", fontSize: 11, color: cs.muted }}>
+                  Ada review negatif pada periode ini. Detail terbaru tidak termasuk dalam ringkasan ringan; gunakan filter tanggal untuk audit rinci.
+                </div>
+              )}
               {lowRatings.slice(0, 10).map(r => (
                 <div key={r.id} style={{ background: "#fff", borderRadius: 8, padding: "10px 12px", border: "1px solid #fecaca" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
