@@ -1,7 +1,7 @@
-import { memo, useState, useEffect } from "react";
+import { memo, useState, useEffect, useRef } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor, statusLabel, ORDER_DONE_STATUSES } from "../constants/status.js";
-import { fetchAllOrders, fetchAllInvoices, fetchAllExpenses, fetchPayrollCost, fetchReportWorkStats, fetchDashboardSnapshot, fetchDashboardSnapshotV2 } from "../data/reads.js";
+import { fetchAllOrders, fetchAllInvoices, fetchAllExpenses, fetchPayrollCost, fetchReportWorkStats, fetchDashboardSnapshot, fetchDashboardSnapshotV2, fetchDashboardMonthlyWorkSummary } from "../data/reads.js";
 import { displayStock } from "../lib/inventory.js";
 import { measureAsync } from "../lib/perfMetrics.js";
 import AbsenBanner from "./AbsenBanner.jsx";
@@ -76,6 +76,37 @@ export function computeWorkStats(reports, invMap) {
   return s;
 }
 
+const EMPTY_MONTHLY_WORK = Object.freeze({
+  cleaning_total: 0,
+  cleaning_split_wall: 0,
+  cleaning_cassette: 0,
+  cleaning_split_duct: 0,
+  cleaning_standing: 0,
+  cleaning_other: 0,
+  installation_units: 0,
+  capacitor_units: 0,
+  freon_total: 0,
+  freon_paid: 0,
+  freon_warranty: 0,
+  freon_free: 0,
+  freon_unclassified: 0,
+  pipe_installation: 0,
+});
+
+const monthPeriod = (offset = 0) => {
+  const now = new Date();
+  const first = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+  return {
+    start: toISOLocal(first),
+    label: first.toLocaleDateString("id-ID", { month: "long", year: "numeric" }),
+  };
+};
+
+const normalizeMonthlyWorkSummary = (payload) => {
+  const raw = payload?.counts || payload || {};
+  return Object.fromEntries(Object.keys(EMPTY_MONTHLY_WORK).map(key => [key, Number(raw?.[key]) || 0]));
+};
+
 function DashboardView({ ordersData, invoicesData, inventoryData, teknisiData, omsetView, setOmsetView, waConversations, bulanIni, setActiveMenu, setInvoiceFilter, setModalOrder, setWaPanel, setWaTekTarget, setModalWaTek, getTechColor, triggerRekapHarian, openLaporanModal, openBAPModal, openMaterialBringModal, openJobReport, materialsBroughtMap, sendWA, dispatchWA, setSelectedInvoice, setModalPDF, customersData, laporanReports, findCustomer, setSelectedCustomer, setCustomerTab, setHistoryPreview, expensesData, apiHeaders, bapEnabled, bootstrapReady = true }) {
   // Fase 1: primitif global dari AppContext.
   const { currentUser, isMobile, fmt, showNotif, TODAY, addAgentLog, supabase } = useAppContext();
@@ -103,6 +134,11 @@ const [finExpenses, setFinExpenses] = useState(null);
 // Rekap jenis pekerjaan: mode ("minggu"/"bulan") + offset (0=periode berjalan, geser prev/next)
 const [workMode, setWorkMode] = useState("bulan");
 const [workOffset, setWorkOffset] = useState(0);
+const [workMonthOffset, setWorkMonthOffset] = useState(0);
+const [monthlyWork, setMonthlyWork] = useState(EMPTY_MONTHLY_WORK);
+const [monthlyWorkLoading, setMonthlyWorkLoading] = useState(false);
+const [monthlyWorkError, setMonthlyWorkError] = useState("");
+const monthlyWorkCache = useRef(new Map());
 useEffect(() => {
   if (!bootstrapReady || !["Owner", "Admin"].includes(role) || !supabase) return;
   let cancelled = false;
@@ -122,6 +158,43 @@ useEffect(() => {
   })();
   return () => { cancelled = true; };
 }, [bootstrapReady, gridDate, role, supabase]);
+useEffect(() => {
+  if (!bootstrapReady || !["Owner", "Admin"].includes(role) || !supabase) return;
+  const { start } = monthPeriod(workMonthOffset);
+  const cached = monthlyWorkCache.current.get(start);
+  if (cached) {
+    setMonthlyWork(cached);
+    setMonthlyWorkError("");
+    setMonthlyWorkLoading(false);
+    return;
+  }
+
+  let cancelled = false;
+  setMonthlyWorkLoading(true);
+  setMonthlyWorkError("");
+  (async () => {
+    try {
+      const { data, error } = await measureAsync(
+        "dashboard.monthly_work_summary",
+        () => fetchDashboardMonthlyWorkSummary(supabase, start),
+        { role, month: start },
+      );
+      if (error) throw error;
+      const normalized = normalizeMonthlyWorkSummary(data);
+      monthlyWorkCache.current.set(start, normalized);
+      if (!cancelled) setMonthlyWork(normalized);
+    } catch (error) {
+      console.error("[DASHBOARD_WORK_SUMMARY] gagal memuat agregasi:", error);
+      if (!cancelled) {
+        setMonthlyWork(EMPTY_MONTHLY_WORK);
+        setMonthlyWorkError(error?.message || "Rekap pekerjaan belum dapat dimuat");
+      }
+    } finally {
+      if (!cancelled) setMonthlyWorkLoading(false);
+    }
+  })();
+  return () => { cancelled = true; };
+}, [bootstrapReady, role, supabase, workMonthOffset]);
 useEffect(() => {
   if (!showFinancialDashboard || !bootstrapReady || !["Owner", "Admin"].includes(role) || !supabase) return;
   let cancelled = false;
@@ -392,6 +465,72 @@ return (
           <div style={{ fontSize: 11, color: cs.muted, fontWeight: 600 }}>{kpi.label}</div>
         </div>
       ))}
+    </div>
+
+    {/* Rekap pekerjaan aktual bulanan — angka unit dari laporan tim VERIFIED. */}
+    <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: isMobile ? 14 : 18 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+        <div>
+          <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>🧰 Rekap Pekerjaan Aktual</div>
+          <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>Berdasarkan unit pada laporan tim yang sudah terverifikasi</div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+          <button type="button" onClick={() => setWorkMonthOffset(offset => offset - 1)}
+            aria-label="Bulan sebelumnya"
+            style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid " + cs.border, background: cs.surface, color: cs.text, cursor: "pointer" }}>◀</button>
+          <div style={{ minWidth: isMobile ? 118 : 150, textAlign: "center", fontSize: 12, fontWeight: 800, color: cs.text }}>
+            {monthPeriod(workMonthOffset).label}
+          </div>
+          <button type="button" onClick={() => setWorkMonthOffset(offset => Math.min(0, offset + 1))}
+            disabled={workMonthOffset >= 0} aria-label="Bulan berikutnya"
+            style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid " + cs.border, background: cs.surface, color: cs.text, cursor: workMonthOffset >= 0 ? "default" : "pointer", opacity: workMonthOffset >= 0 ? 0.35 : 1 }}>▶</button>
+        </div>
+      </div>
+
+      {monthlyWorkError ? (
+        <div style={{ background: cs.red + "12", border: "1px solid " + cs.red + "44", color: cs.red, borderRadius: 10, padding: "12px 14px", fontSize: 12 }}>
+          Rekap belum tersedia. Pastikan migration 181 sudah diterapkan. <span style={{ color: cs.muted }}>{monthlyWorkError}</span>
+        </div>
+      ) : (
+        <div style={{ position: "relative", opacity: monthlyWorkLoading ? 0.55 : 1, transition: "opacity .2s" }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fit,minmax(190px,1fr))", gap: 10 }}>
+            <div style={{ background: cs.surface, border: "1px solid #38bdf844", borderRadius: 11, padding: 13 }}>
+              <div style={{ fontSize: 11, color: cs.muted }}>🧼 Cleaning AC</div>
+              <div style={{ fontSize: 25, lineHeight: 1.2, fontWeight: 900, color: "#38bdf8", margin: "5px 0 9px" }}>{monthlyWork.cleaning_total}<span style={{ fontSize: 11, color: cs.muted }}> unit</span></div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5, fontSize: 10.5 }}>
+                <span style={{ color: cs.muted }}>Split Wall <b style={{ color: cs.text }}>{monthlyWork.cleaning_split_wall}</b></span>
+                <span style={{ color: cs.muted }}>Cassette <b style={{ color: cs.text }}>{monthlyWork.cleaning_cassette}</b></span>
+                <span style={{ color: cs.muted }}>Split Duct <b style={{ color: cs.text }}>{monthlyWork.cleaning_split_duct}</b></span>
+                <span style={{ color: cs.muted }}>Standing <b style={{ color: cs.text }}>{monthlyWork.cleaning_standing}</b></span>
+              </div>
+              {monthlyWork.cleaning_other > 0 && <div style={{ fontSize: 10, color: cs.yellow, marginTop: 6 }}>Belum dikategorikan: {monthlyWork.cleaning_other}</div>}
+            </div>
+
+            {[
+              { icon: "🔧", label: "Pemasangan Unit", value: monthlyWork.installation_units, unit: "unit", color: "#a78bfa" },
+              { icon: "⚡", label: "Pergantian Kapasitor", value: monthlyWork.capacitor_units, unit: "unit", color: "#f59e0b" },
+              { icon: "🧵", label: "Instalasi Pipa AC", value: monthlyWork.pipe_installation, unit: "pekerjaan", color: "#fb7185" },
+            ].map(item => (
+              <div key={item.label} style={{ background: cs.surface, border: "1px solid " + item.color + "44", borderRadius: 11, padding: 13 }}>
+                <div style={{ fontSize: 11, color: cs.muted }}>{item.icon} {item.label}</div>
+                <div style={{ fontSize: 25, lineHeight: 1.2, fontWeight: 900, color: item.color, marginTop: 7 }}>{item.value}<span style={{ fontSize: 11, color: cs.muted }}> {item.unit}</span></div>
+              </div>
+            ))}
+
+            <div style={{ background: cs.surface, border: "1px solid #34d39944", borderRadius: 11, padding: 13 }}>
+              <div style={{ fontSize: 11, color: cs.muted }}>❄️ Pekerjaan Freon</div>
+              <div style={{ fontSize: 25, lineHeight: 1.2, fontWeight: 900, color: "#34d399", margin: "5px 0 9px" }}>{monthlyWork.freon_total}<span style={{ fontSize: 11, color: cs.muted }}> unit</span></div>
+              <div style={{ display: "flex", gap: 5, flexWrap: "wrap", fontSize: 10 }}>
+                <span style={{ color: cs.green, background: cs.green + "18", padding: "3px 7px", borderRadius: 99 }}>Bayar {monthlyWork.freon_paid}</span>
+                <span style={{ color: "#a78bfa", background: "#a78bfa18", padding: "3px 7px", borderRadius: 99 }}>Garansi {monthlyWork.freon_warranty}</span>
+                <span style={{ color: cs.accent, background: cs.accent + "18", padding: "3px 7px", borderRadius: 99 }}>Gratis {monthlyWork.freon_free}</span>
+                {monthlyWork.freon_unclassified > 0 && <span style={{ color: cs.yellow, background: cs.yellow + "18", padding: "3px 7px", borderRadius: 99 }}>Belum invoice {monthlyWork.freon_unclassified}</span>}
+              </div>
+            </div>
+          </div>
+          {monthlyWorkLoading && <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", fontSize: 12, fontWeight: 700, color: cs.accent }}>Memuat rekap…</div>}
+        </div>
+      )}
     </div>
 
     {/* ── STATISTIK OMSET PER HARI/MINGGU/BULAN (Owner & Admin) ── */}

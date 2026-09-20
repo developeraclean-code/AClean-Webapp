@@ -225,6 +225,11 @@ export const fetchDashboardSnapshot = (supabase, sinceDate) =>
 export const fetchDashboardSnapshotV2 = (supabase, date) =>
   supabase.rpc("get_dashboard_snapshot_v2", { p_date: date });
 
+// Rekap pekerjaan aktual bulanan untuk Dashboard. RPC hanya mengirim angka agregat
+// (tanpa foto/JSON laporan) agar perpindahan bulan tetap ringan di free tier.
+export const fetchDashboardMonthlyWorkSummary = (supabase, monthStart) =>
+  supabase.rpc("get_dashboard_monthly_work_summary", { p_month: monthStart });
+
 // Statistik dihitung penuh di PostgreSQL. Browser hanya menerima agregat dan maksimal
 // 50 invoice overdue untuk tindakan cepat, bukan ribuan baris transaksi historis.
 export const fetchStatisticsSnapshot = (supabase, dateFrom = null, dateTo = null) =>

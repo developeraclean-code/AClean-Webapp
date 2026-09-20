@@ -6,8 +6,15 @@ import { isHarianManagedItem } from "./materialRecon.js";
 import { submitServiceReportAtomic } from "../data/writes.js";
 import { isTeamSplitOrder } from "./teamSplitWorkflow.js";
 
-const isMissingAtomicReportRpc = (error) => error?.code === "PGRST202" || error?.code === "42883"
-  || /submit_service_report_atomic.*(schema cache|does not exist|not found)/i.test(error?.message || "");
+export const shouldFallbackAtomicReportSubmit = (error) => {
+  const message = error?.message || "";
+  return error?.code === "PGRST202" || error?.code === "42883"
+    || /submit_service_report_atomic.*(schema cache|does not exist|not found)/i.test(message)
+    // Migration 177 lama mengirim jsonb langsung ke kolom foto_urls text[].
+    // Jalur legacy PostgREST dapat menyimpan array string dengan tipe yang benar,
+    // sehingga Helper tetap bisa submit sambil menunggu migration 182 diterapkan.
+    || (error?.code === "42804" && /foto_urls.*text\[\].*jsonb|foto_urls.*jsonb.*text\[\]/i.test(message));
+};
 
 export async function submitLaporan({
   INSTALL_ITEMS, _apiHeaders, addAgentLog, appSettings, auditUserName, buildInvoiceDetail,
@@ -101,7 +108,7 @@ export async function submitLaporan({
       let { error: sErr } = await submitServiceReportAtomic(
         supabase, surveyPayload, auditUserName(), `report-submit:${reportId}`
       );
-      if (sErr && isMissingAtomicReportRpc(sErr)) {
+      if (sErr && shouldFallbackAtomicReportSubmit(sErr)) {
         // Fallback khusus trial lokal sebelum migration 177 dipasang.
         ({ error: sErr } = await supabase.from("service_reports").upsert({
           id: reportId, job_id: laporanModal.id, teknisi: laporanModal.teknisi,
@@ -329,7 +336,7 @@ export async function submitLaporan({
       );
       if (!atomicError) {
         savedOk = true;
-      } else if (isMissingAtomicReportRpc(atomicError)) {
+      } else if (shouldFallbackAtomicReportSubmit(atomicError)) {
         // Migration belum terpasang pada trial lokal: lanjutkan jalur kompatibilitas.
         lastError = atomicError;
       } else {
@@ -338,7 +345,7 @@ export async function submitLaporan({
         return;
       }
     }
-    if (!savedOk && lastError && isMissingAtomicReportRpc(lastError)) {
+    if (!savedOk && lastError && shouldFallbackAtomicReportSubmit(lastError)) {
       try {
         await supabase.from("service_reports").delete().eq("job_id", newReport.job_id).neq("id", newReport.id);
       } catch (dx) { console.warn("[LAPORAN_DEDUP] legacy cleanup failed:", dx.message); }
@@ -443,7 +450,7 @@ export async function submitLaporan({
     setOrdersData(prev => prev.map(o =>
       o.id === laporanModal.id ? { ...o, status: "REPORT_SUBMITTED" } : o
     ));
-    if (lastError && isMissingAtomicReportRpc(lastError)) {
+    if (lastError && shouldFallbackAtomicReportSubmit(lastError)) {
       const { error: ordErr } = await supabase.from("orders")
         .update({ status: "REPORT_SUBMITTED" }).eq("id", laporanModal.id);
       if (ordErr) {

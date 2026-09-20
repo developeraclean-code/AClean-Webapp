@@ -123,7 +123,13 @@ BEGIN
     (p_report->>'date')::date,'SUBMITTED',coalesce((p_report->>'total_units')::integer,0),coalesce((p_report->>'total_freon')::numeric,0),
     coalesce(nullif(p_report->>'submitted_at','')::timestamptz,now()),p_report->>'submitted',
     coalesce(p_report->'units','[]'::jsonb),coalesce(p_report->'materials_used',p_report->'materials','[]'::jsonb),
-    coalesce(p_report->'foto_urls','[]'::jsonb),coalesce(p_report->'fotos','[]'::jsonb),coalesce(p_report->>'rekomendasi',''),
+    CASE WHEN jsonb_typeof(p_report->'foto_urls')='array' THEN ARRAY(
+      SELECT photo.value
+      FROM jsonb_array_elements_text(p_report->'foto_urls') WITH ORDINALITY AS photo(value, ordinality)
+      WHERE nullif(trim(photo.value),'') IS NOT NULL
+      ORDER BY photo.ordinality
+    ) ELSE ARRAY[]::text[] END,
+    coalesce(p_report->'fotos','[]'::jsonb),coalesce(p_report->>'rekomendasi',''),
     coalesce(p_report->>'catatan_global',''),coalesce((p_report->>'unit_mismatch')::boolean,false),
     coalesce((p_report->>'is_substitute')::boolean,false),p_report->>'hasil_survey',p_report->>'catatan_rekomendasi',actor
   ) ON CONFLICT(id) DO UPDATE SET
