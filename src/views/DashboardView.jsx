@@ -507,7 +507,7 @@ return (
             </div>
 
             {[
-              { icon: "🔧", label: "Pemasangan Unit", value: monthlyWork.installation_units, unit: "unit", color: "#a78bfa" },
+              { icon: "🔧", label: "Pemasangan AC (Global)", value: monthlyWork.installation_units, unit: "unit", color: "#a78bfa" },
               { icon: "⚡", label: "Pergantian Kapasitor", value: monthlyWork.capacitor_units, unit: "unit", color: "#f59e0b" },
               { icon: "🧵", label: "Instalasi Pipa AC", value: monthlyWork.pipe_installation, unit: "pekerjaan", color: "#fb7185" },
             ].map(item => (
