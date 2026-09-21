@@ -104,12 +104,14 @@ export function buildBonusRekap({ month, bonuses = [], orders = [], invMap = {},
     const lainDetail = [];
     const statuses = new Set();
     let totalBonus = 0, perOrang = 0, memberCount = 0;
+    const readyBonusIds = [];
     const team = new Set();
 
     for (const b of aktif) {
       const est = effBonusStatus(b);
       const amt = Number(b.total_amount || 0);
       statuses.add(est);
+      if (est === "ELIGIBLE" && amt > 0 && (b.team_members || []).length > 0) readyBonusIds.push(b.id);
       totalBonus += amt;
       perOrang = Math.max(perOrang, Number(b.amount_per_person || 0));
       memberCount = Math.max(memberCount, Number(b.member_count || (b.team_members || []).length || 0));
@@ -143,6 +145,7 @@ export function buildBonusRekap({ month, bonuses = [], orders = [], invMap = {},
       perOrang: memberCount > 0 ? totalBonus / memberCount : totalBonus,
       statusLabel: [...statuses].map(s => REKAP_STATUS_LABELS[s] || s).join(" / "),
       statuses: [...statuses],
+      readyBonusIds,
       catatan: aktif.map(b => b.note).filter(Boolean).join(" · "),
     });
   }
@@ -187,7 +190,14 @@ export function buildBonusRekap({ month, bonuses = [], orders = [], invMap = {},
     .map(p => ({ nama: p.nama, jobCount: p.jobIds.size, total: p.total, paid: p.paid, eligible: p.eligible, pending: p.pending }))
     .sort((a, b) => b.total - a.total);
 
-  const sumBy = (pred) => included.filter(pred).reduce((s, r) => s + r.totalBonus, 0);
+  // Hitung per ENTRI bonus, bukan per baris order. Satu order bisa memiliki bonus
+  // campuran (mis. satu sudah PAID dan satu masih ELIGIBLE); menjumlahkan total baris
+  // akan membuat kedua bucket terlalu besar.
+  const countableBonuses = bonuses.filter(b => b.bonus_type !== "dismissed" && effBonusStatus(b) !== "VOID");
+  const sumStatus = (status) => countableBonuses
+    .filter(b => effBonusStatus(b) === status)
+    .reduce((sum, b) => sum + Number(b.total_amount || 0), 0);
+  const readyBonusIds = [...new Set(included.flatMap(r => r.readyBonusIds || []).filter(Boolean))];
 
   return {
     month,
@@ -203,9 +213,11 @@ export function buildBonusRekap({ month, bonuses = [], orders = [], invMap = {},
       totalKapasitor: included.reduce((s, r) => s + r.kapasitor, 0),
       totalLain:      included.reduce((s, r) => s + r.lain, 0),
       totalNilaiTrx:  included.reduce((s, r) => s + r.nilai, 0),
-      totalDibayar:   sumBy(r => r.statuses.includes("PAID")),
-      totalSiapCair:  sumBy(r => r.statuses.includes("ELIGIBLE")),
-      totalWarranty:  sumBy(r => r.statuses.includes("PENDING")),
+      totalDibayar:   sumStatus("PAID"),
+      totalSiapCair:  sumStatus("ELIGIBLE"),
+      totalWarranty:  sumStatus("PENDING"),
+      readyBonusIds,
+      readyBonusCount: readyBonusIds.length,
       byCategory:     Object.values(byCategoryMap).sort((a, b) => b.amount - a.amount),
       excludedCount:  excluded.length,
       excludedByKategori: excluded.reduce((acc, e) => { acc[e.kategori] = (acc[e.kategori] || 0) + 1; return acc; }, {}),

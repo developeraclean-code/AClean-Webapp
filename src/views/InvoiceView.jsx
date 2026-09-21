@@ -5,6 +5,7 @@ import { smartSearchNormalize, samePhone, formatPhone } from "../lib/phone.js";
 import { useAppContext } from "../context/AppContext.js";
 import { categoryOf, LINE_CATEGORY } from "../lib/invoicing.js";
 import { downloadCsv } from "../lib/exportUtils.js";
+import { acknowledgePaidInvoicesWithoutProofAtomic } from "../data/writes.js";
 import AcUnitInvoiceModal from "./AcUnitInvoiceModal.jsx";
 import QuotationView from "./QuotationView.jsx";
 import { BlobProvider } from "@react-pdf/renderer";
@@ -292,9 +293,57 @@ const quoCompare = (inv) => {
 };
 const [scanningBukti, setScanningBukti] = useState(false);
 const [confirmingCash, setConfirmingCash] = useState(false);
+const [confirmingNoProof, setConfirmingNoProof] = useState(false);
 const [showAcUnitModal, setShowAcUnitModal] = useState(false);
 const [dpInvId, setDpInvId] = useState(null);
 const [dpAmount, setDpAmount] = useState("");
+
+// Invoice pada tab ini SUDAH PAID; aksi berikut hanya mengesahkan alasan tidak
+// adanya bukti. Semua target diproses atomik agar klik ganda / race tidak membuat
+// sebagian invoice hilang dari daftar tanpa jejak.
+const acknowledgeWithoutProof = async (mode, targets) => {
+  if (!targets.length || confirmingCash || confirmingNoProof) return;
+  const isCash = mode === "cash";
+  const title = isCash ? "Konfirmasi Pembayaran Cash" : "Lunas Tanpa Bukti";
+  const ok = await showConfirm({
+    title,
+    message: `${targets.length} invoice PAID akan dikeluarkan dari daftar Tanpa Bukti.\n\n${isCash
+      ? "Metode pembayaran dicatat sebagai CASH."
+      : "Tidak ada file bukti yang dibuat; keputusan manual ini tetap tercatat untuk audit."}\nTidak ada WA yang dikirim.`,
+    confirmText: isCash ? "Ya, Konfirmasi Cash" : "Ya, Lunas Tanpa Bukti",
+  });
+  if (!ok) return;
+
+  const setBusy = isCash ? setConfirmingCash : setConfirmingNoProof;
+  setBusy(true);
+  try {
+    const ids = targets.map(i => i.id);
+    const mutationKey = `invoice-${mode}:${globalThis.crypto?.randomUUID?.() || Date.now()}`;
+    const { data, error } = await acknowledgePaidInvoicesWithoutProofAtomic(
+      supabase, ids, mode, currentUser?.name, mutationKey,
+    );
+    if (error) throw error;
+    const auditNote = isCash
+      ? `Pembayaran cash dikonfirmasi oleh ${currentUser?.name || currentUser?.role || "User"}`
+      : `Lunas tanpa bukti dikonfirmasi oleh ${currentUser?.name || currentUser?.role || "User"}`;
+    setInvoicesData(prev => prev.map(i => ids.includes(i.id) ? {
+      ...i,
+      payment_proof_url: "verified-no-proof",
+      paid_method: isCash ? "cash" : (i.paid_method || "manual_no_proof"),
+      notes: [i.notes, auditNote].filter(Boolean).join("\n"),
+    } : i));
+    addAgentLog(
+      isCash ? "FINANCE_CONFIRM_CASH" : "CONFIRM_PAID_NO_PROOF",
+      `${data?.updated_count || ids.length} invoice ${isCash ? "cash" : "lunas tanpa bukti"}: ${ids.slice(0, 3).join(", ")}${ids.length > 3 ? "..." : ""}`,
+      "SUCCESS",
+    );
+    showNotif(`✅ ${data?.updated_count || ids.length} invoice dikonfirmasi ${isCash ? "sebagai cash" : "lunas tanpa bukti"}`);
+  } catch (error) {
+    showNotif("❌ Verifikasi dibatalkan: " + (error?.message || "gagal menyimpan ke database"));
+  } finally {
+    setBusy(false);
+  }
+};
 
 // ── Multi-payment panel ──
 const [payPanelInvId, setPayPanelInvId] = useState(null); // invoice.id yang panel terbuka
@@ -1422,42 +1471,37 @@ return (
           }}>
           {scanningBukti ? "Sedang scan R2..." : "Scan Bukti Sekarang"}
         </button>
-        {/* Konfirmasi Cash — hanya Finance & Owner */}
+        {/* Verifikasi pembayaran tanpa file bukti — hanya Finance & Owner. */}
         {(currentUser?.role === "Finance" || currentUser?.role === "Owner") && (() => {
           const targets = filteredInv.filter(i => i.status === "PAID" && i.total > 0 && !i.repair_gratis && !i.payment_proof_url);
           if (targets.length === 0) return null;
           return (
-            <button
-              disabled={confirmingCash}
-              onClick={async () => {
-                setConfirmingCash(true);
-                try {
-                  const ids = targets.map(i => i.id);
-                  const { error } = await supabase.from("invoices")
-                    .update({ payment_proof_url: "verified-no-proof", notes: "Dikonfirmasi cash oleh Finance" })
-                    .in("id", ids);
-                  if (error) throw error;
-                  setInvoicesData(prev => prev.map(i => ids.includes(i.id)
-                    ? { ...i, payment_proof_url: "verified-no-proof", notes: "Dikonfirmasi cash oleh Finance" }
-                    : i));
-                  addAgentLog("FINANCE_CONFIRM_CASH", `${ids.length} invoice dikonfirmasi cash: ${ids.slice(0,3).join(", ")}${ids.length > 3 ? "..." : ""}`, "SUCCESS");
-                  showNotif(`✅ ${ids.length} invoice dikonfirmasi sebagai cash`);
-                } catch (e) {
-                  showNotif("❌ Gagal konfirmasi: " + e.message);
-                } finally {
-                  setConfirmingCash(false);
-                }
-              }}
-              style={{
-                padding: "7px 16px", borderRadius: 8, border: "1px solid #10b98166",
-                background: confirmingCash ? cs.surface : "#10b98118", color: confirmingCash ? cs.muted : "#10b981",
-                cursor: confirmingCash ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 600,
-              }}>
-              {confirmingCash ? "Memproses..." : `✓ Konfirmasi Cash (${targets.length})`}
-            </button>
+            <>
+              <button
+                disabled={confirmingCash || confirmingNoProof}
+                onClick={() => acknowledgeWithoutProof("cash", targets)}
+                style={{
+                  padding: "7px 16px", borderRadius: 8, border: "1px solid #10b98166",
+                  background: confirmingCash ? cs.surface : "#10b98118", color: confirmingCash ? cs.muted : "#10b981",
+                  cursor: confirmingCash || confirmingNoProof ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 600,
+                }}>
+                {confirmingCash ? "Memproses..." : `✓ Konfirmasi Cash (${targets.length})`}
+              </button>
+              <button
+                disabled={confirmingCash || confirmingNoProof}
+                onClick={() => acknowledgeWithoutProof("no_proof", targets)}
+                title="Sahkan bahwa invoice memang lunas walau file bukti tidak tersedia"
+                style={{
+                  padding: "7px 16px", borderRadius: 8, border: "1px solid #f59e0b66",
+                  background: confirmingNoProof ? cs.surface : "#f59e0b18", color: confirmingNoProof ? cs.muted : "#f59e0b",
+                  cursor: confirmingCash || confirmingNoProof ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700,
+                }}>
+                {confirmingNoProof ? "Memproses..." : `✓ Lunas Tanpa Bukti (${targets.length})`}
+              </button>
+            </>
           );
         })()}
-        <span style={{ fontSize: 11, color: cs.muted }}>Cari bukti transfer di R2 dan link ke invoice PAID tanpa bukti</span>
+        <span style={{ fontSize: 11, color: cs.muted }}>Scan bukti R2, konfirmasi Cash, atau sahkan Lunas Tanpa Bukti secara manual</span>
       </div>
     )}
 
@@ -2003,7 +2047,7 @@ return (
             {inv.status === "PAID" && inv.total > 0 && (
               inv.payment_proof_url === "verified-no-proof" ? (
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#0ea5e918", border: "1px solid #0ea5e944", color: "#0ea5e9", padding: "7px 12px", borderRadius: 8, fontSize: 11, fontWeight: 700 }}>
-                  ✅ Dikonfirmasi Manual
+                  {inv.paid_method === "cash" ? "✅ Cash dikonfirmasi" : "✅ Lunas tanpa bukti"}
                 </span>
               ) : inv.payment_proof_url === "purged-90d" ? (
                 <span title="File bukti bayar dihapus otomatis setelah 90 hari untuk hemat storage. Invoice tetap lunas." style={{ display: "inline-flex", alignItems: "center", gap: 5, background: cs.surface, border: "1px solid " + cs.border, color: cs.muted, padding: "7px 12px", borderRadius: 8, fontSize: 11, fontWeight: 700 }}>
@@ -2016,29 +2060,11 @@ return (
                 >📷 Bukti Bayar ✓</button>
               ) : currentUser?.role === "Owner" ? (
                 <button
-                  onClick={async () => {
-                    const ok = await showConfirm({
-                      title: "Konfirmasi Lunas Tanpa Bukti",
-                      message: `Tandai invoice ${inv.id} (${inv.customer} · ${fmt(inv.total)}) sebagai lunas tanpa bukti bayar?\n\nTidak ada notifikasi WA yang dikirim. Invoice akan keluar dari daftar "Tanpa Bukti".`,
-                    });
-                    if (!ok) return;
-                    try {
-                      const { error } = await supabase.from("invoices")
-                        .update({ payment_proof_url: "verified-no-proof", notes: "Lunas paksa tanpa bukti oleh Owner" })
-                        .eq("id", inv.id);
-                      if (error) throw error;
-                      setInvoicesData(prev => prev.map(i => i.id === inv.id
-                        ? { ...i, payment_proof_url: "verified-no-proof", notes: "Lunas paksa tanpa bukti oleh Owner" }
-                        : i));
-                      addAgentLog("OWNER_CONFIRM_NO_PROOF", `Invoice ${inv.id} dikonfirmasi lunas tanpa bukti oleh Owner`, "SUCCESS");
-                      showNotif(`✅ ${inv.id} dikonfirmasi lunas tanpa bukti`);
-                    } catch (e) {
-                      showNotif("❌ Gagal konfirmasi: " + e.message);
-                    }
-                  }}
-                  title="Belum ada bukti bayar — klik untuk tandai lunas paksa (tanpa kirim WA)"
+                  disabled={confirmingCash || confirmingNoProof}
+                  onClick={() => acknowledgeWithoutProof("no_proof", [inv])}
+                  title="Invoice sudah PAID — sahkan bahwa bukti pembayaran memang tidak tersedia"
                   style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#f43f5e18", border: "1px solid #f43f5e66", color: "#f43f5e", padding: "7px 12px", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
-                  ⚠️ Lunas Paksa
+                  ⚠️ Lunas Tanpa Bukti
                 </button>
               ) : currentUser?.role === "Admin" ? (
                 <span title="Belum ada bukti bayar" style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#f43f5e18", border: "1px solid #f43f5e44", color: "#f43f5e", padding: "7px 12px", borderRadius: 8, fontSize: 11, fontWeight: 700 }}>

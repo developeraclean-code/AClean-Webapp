@@ -36,6 +36,7 @@ function Card({ label, value, color }) {
 export default function BonusRekapPanel({
   rekap, bonusMonth, setBonusMonth, addMonths, todayYearMonth,
   loading, onReload, showNotif, addAgentLog, currentUser,
+  canBulkPay = false, bulkPaying = false, onMarkAllPaid,
 }) {
   const [lastAction, setLastAction] = useState(null); // { label, at }
   const [showExcluded, setShowExcluded] = useState(true);
@@ -85,6 +86,23 @@ export default function BonusRekapPanel({
         <button onClick={() => setBonusMonth(todayYearMonth())} style={{ ...btn(), color: cs.accent }}>Bulan Ini</button>
         <button onClick={onReload} style={btn()}>🔄 Refresh</button>
         <div style={{ flex: 1 }} />
+        {canBulkPay && (
+          <button
+            onClick={onMarkAllPaid}
+            disabled={loading || bulkPaying || s.readyBonusCount === 0}
+            title={s.readyBonusCount === 0
+              ? "Tidak ada bonus Siap Cair pada bulan ini"
+              : `Tandai ${s.readyBonusCount} entri Siap Cair sebagai sudah dibayar`}
+            style={{
+              ...btn(), background: s.readyBonusCount > 0 ? "#16a34a" : cs.surface,
+              border: "1px solid " + (s.readyBonusCount > 0 ? "#22c55e" : cs.border),
+              color: s.readyBonusCount > 0 ? "#fff" : cs.muted, fontWeight: 800,
+              cursor: loading || bulkPaying || s.readyBonusCount === 0 ? "not-allowed" : "pointer",
+              opacity: loading || bulkPaying ? 0.6 : 1,
+            }}>
+            {bulkPaying ? "⏳ Menyimpan..." : `💵 Sudah Dibayarkan Semua (${s.readyBonusCount})`}
+          </button>
+        )}
         <button onClick={handleCSV} disabled={loading} style={{ ...btn(), background: cs.accent, border: "none", color: "#fff", fontWeight: 700, opacity: loading ? 0.5 : 1 }}>
           📥 Download CSV / Excel
         </button>

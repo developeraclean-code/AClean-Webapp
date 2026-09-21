@@ -270,6 +270,25 @@ export const markBonusPaid = (supabase, id, paidBy) =>
     updated_at: new Date().toISOString()
   }).eq("id", id);
 
+// Pencairan massal dari Rekap & Cetak. Validasi status/nilai/tim dan proteksi
+// double-click dilakukan dalam satu transaksi PostgreSQL (migration 185).
+export const markBonusesPaidBulkAtomic = (supabase, bonusIds, paidBy, mutationKey) =>
+  supabase.rpc("mark_order_bonuses_paid_bulk_atomic", {
+    p_bonus_ids: bonusIds,
+    p_actor_name: paidBy || null,
+    p_mutation_key: mutationKey || null,
+  });
+
+// Invoice di tab Tanpa Bukti sudah berstatus PAID. RPC ini hanya mengesahkan
+// klasifikasi buktinya (cash / memang tanpa bukti), tanpa membuat pembayaran baru.
+export const acknowledgePaidInvoicesWithoutProofAtomic = (supabase, invoiceIds, mode, actorName, mutationKey) =>
+  supabase.rpc("acknowledge_paid_invoices_without_proof_atomic", {
+    p_invoice_ids: invoiceIds,
+    p_mode: mode,
+    p_actor_name: actorName || null,
+    p_mutation_key: mutationKey || null,
+  });
+
 export const voidBonus = (supabase, id, reason, voidedBy) =>
   supabase.from("order_bonuses").update({
     status: "VOID",

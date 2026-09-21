@@ -53,6 +53,21 @@ describe("buildBonusRekap", () => {
     expect(j1.statuses).toEqual(["ELIGIBLE"]);
     expect(r.summary.totalSiapCair).toBe(60000);
     expect(r.summary.totalDibayar).toBe(35000);
+    expect(r.summary.readyBonusIds).toEqual(["b1", "b2"]);
+    expect(r.summary.readyBonusCount).toBe(2);
+  });
+
+  it("status campuran dijumlah per entri tanpa menggandakan total order", () => {
+    const r = buildBonusRekap({
+      month: "2020-01", bonusCategories: CATS, orders: [orders[0]], invMap,
+      bonuses: [
+        { ...bonuses[0], status: "PAID" },
+        { ...bonuses[1], status: "ELIGIBLE" },
+      ],
+    });
+    expect(r.summary.totalDibayar).toBe(25000);
+    expect(r.summary.totalSiapCair).toBe(35000);
+    expect(r.summary.readyBonusIds).toEqual(["b2"]);
   });
 
   it("job dismissed & belum di-input masuk daftar TIDAK termasuk dengan alasannya", () => {

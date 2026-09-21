@@ -5,8 +5,10 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("../../supabaseClient.js", () => ({ supabase: {} }));
 
 import {
+  acknowledgePaidInvoicesWithoutProofAtomic,
   createOrderWorkflowAtomic,
   finalizeServiceReportAtomic,
+  markBonusesPaidBulkAtomic,
   submitServiceReportAtomic,
 } from "../writes.js";
 import { PROJECT_VIEW_KEYS } from "../../project/data/projectApi.ts";
@@ -44,6 +46,29 @@ describe("atomic workflow RPC contracts", () => {
       p_auto_dispatch: true,
       p_actor_name: "Admin",
       p_mutation_key: "order-create:JOB-1",
+    });
+  });
+
+  it("bulk bonus memakai satu RPC dengan daftar id dan mutation key", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: { updated_count: 2 }, error: null });
+    await markBonusesPaidBulkAtomic({ rpc }, ["b1", "b2"], "Owner", "bonus-bulk:test");
+    expect(rpc).toHaveBeenCalledWith("mark_order_bonuses_paid_bulk_atomic", {
+      p_bonus_ids: ["b1", "b2"],
+      p_actor_name: "Owner",
+      p_mutation_key: "bonus-bulk:test",
+    });
+  });
+
+  it("verifikasi tanpa bukti membedakan mode cash dan no_proof", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: { updated_count: 1 }, error: null });
+    await acknowledgePaidInvoicesWithoutProofAtomic(
+      { rpc }, ["INV-1"], "no_proof", "Owner", "invoice-no-proof:test",
+    );
+    expect(rpc).toHaveBeenCalledWith("acknowledge_paid_invoices_without_proof_atomic", {
+      p_invoice_ids: ["INV-1"],
+      p_mode: "no_proof",
+      p_actor_name: "Owner",
+      p_mutation_key: "invoice-no-proof:test",
     });
   });
 });

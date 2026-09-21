@@ -25,7 +25,7 @@ import {
 } from "../data/reads.js";
 import {
   updateUserDailyRate, upsertWeeklyPayroll, updateWeeklyPayroll,
-  markPayrollPaid, insertOrderBonus, updateOrderBonus, markBonusPaid, voidBonus,
+  markPayrollPaid, insertOrderBonus, updateOrderBonus, markBonusPaid, markBonusesPaidBulkAtomic, voidBonus,
 } from "../data/writes.js";
 
 // ── Payroll helpers ──
@@ -551,6 +551,7 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
   // Order Complain periode + 30 hari sesudahnya — bahan peringatan "ada komplain setelah job".
   const [periodKomplain, setPeriodKomplain] = useState([]);
   const [loadingBonus, setLoadingBonus] = useState(false);
+  const [payingBonusBulk, setPayingBonusBulk] = useState(false);
   const [openBonusIds, setOpenBonusIds] = useState(() => new Set()); // order2 yg panel input bonusnya terbuka (multi, inline)
   const [voidForm, setVoidForm]         = useState(null); // { id, reason }
   const [editBonusForm, setEditBonusForm] = useState(null);
@@ -1086,6 +1087,38 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
         loadBonuses();
         showNotif?.("✅ Bonus ditandai dibayar");
       }
+    });
+  };
+
+  const handleMarkAllReadyBonusesPaid = () => {
+    const ids = bonusRekap.summary.readyBonusIds || [];
+    if (!bolehBayar || ids.length === 0 || payingBonusBulk) return;
+    showConfirm?.({
+      title: "Bayarkan Semua Bonus Siap Cair",
+      message: `Tandai ${ids.length} bonus siap cair pada ${bonusRekap.monthLabel} sebagai SUDAH DIBAYAR?\n\nTotal: ${fmtRp(bonusRekap.summary.totalSiapCair)}. Bonus dalam masa warranty, void, dan yang sudah dibayar tidak akan disentuh.`,
+      confirmText: "Ya, Sudah Dibayarkan Semua",
+      onConfirm: async () => {
+        setPayingBonusBulk(true);
+        try {
+          const mutationKey = `bonus-bulk:${bonusMonth}:${globalThis.crypto?.randomUUID?.() || Date.now()}`;
+          const { data, error } = await markBonusesPaidBulkAtomic(
+            supabase, ids, currentUser?.name, mutationKey,
+          );
+          if (error) throw error;
+          await loadBonuses();
+          addAgentLog?.(
+            "BONUS_BULK_PAID",
+            `${data?.updated_count || ids.length} bonus ${bonusRekap.monthLabel} ditandai dibayar (${fmtRp(data?.total_paid || bonusRekap.summary.totalSiapCair)}) oleh ${currentUser?.name || "-"}`,
+            "SUCCESS",
+          );
+          showNotif?.(`✅ ${data?.updated_count || ids.length} bonus ditandai sudah dibayar`);
+        } catch (error) {
+          showNotif?.("❌ Pembayaran bonus dibatalkan: " + (error?.message || "gagal menyimpan ke database"));
+          await loadBonuses();
+        } finally {
+          setPayingBonusBulk(false);
+        }
+      },
     });
   };
 
@@ -1891,6 +1924,9 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
           showNotif={showNotif}
           addAgentLog={addAgentLog}
           currentUser={currentUser}
+          canBulkPay={bolehBayar}
+          bulkPaying={payingBonusBulk}
+          onMarkAllPaid={handleMarkAllReadyBonusesPaid}
         />
       )}
 

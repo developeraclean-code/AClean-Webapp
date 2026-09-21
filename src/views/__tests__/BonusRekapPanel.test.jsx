@@ -33,4 +33,18 @@ describe("BonusRekapPanel render smoke", () => {
     expect(html).toContain("Mulyadi");
     expect(html).toContain("Rp 25.000");
   });
+
+  it("menampilkan bulk bayar hanya untuk bonus siap cair", () => {
+    const rekap = mk({
+      orders: [{ id: "J1", date: "2020-01-08", customer: "Budi", service: "Service", units: 1, teknisi: "Mulyadi", invoice_id: "I1" }],
+      invMap: { I1: { total: 1500000, materials_detail: "[]" } },
+      bonuses: [{ id: "b1", order_id: "J1", order_date: "2020-01-08", bonus_type: "freon", total_amount: 25000, amount_per_person: 25000, member_count: 1, team_members: ["Mulyadi"], status: "ELIGIBLE" }],
+    });
+    const html = renderToString(
+      <BonusRekapPanel rekap={rekap} bonusMonth="2026-07" setBonusMonth={() => {}}
+        addMonths={() => "2026-06"} todayYearMonth={() => "2026-08"} loading={false}
+        onReload={() => {}} canBulkPay onMarkAllPaid={() => {}} />
+    );
+    expect(html).toContain("Sudah Dibayarkan Semua (1)");
+  });
 });
