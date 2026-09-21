@@ -90,7 +90,6 @@ const EMPTY_MONTHLY_WORK = Object.freeze({
   freon_warranty: 0,
   freon_free: 0,
   freon_unclassified: 0,
-  pipe_installation: 0,
 });
 
 const monthPeriod = (offset = 0) => {
@@ -509,7 +508,6 @@ return (
             {[
               { icon: "🔧", label: "Pemasangan AC (Global)", value: monthlyWork.installation_units, unit: "unit", color: "#a78bfa" },
               { icon: "⚡", label: "Pergantian Kapasitor", value: monthlyWork.capacitor_units, unit: "unit", color: "#f59e0b" },
-              { icon: "🧵", label: "Instalasi Pipa AC", value: monthlyWork.pipe_installation, unit: "pekerjaan", color: "#fb7185" },
             ].map(item => (
               <div key={item.label} style={{ background: cs.surface, border: "1px solid " + item.color + "44", borderRadius: 11, padding: 13 }}>
                 <div style={{ fontSize: 11, color: cs.muted }}>{item.icon} {item.label}</div>
