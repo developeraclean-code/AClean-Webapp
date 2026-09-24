@@ -7,6 +7,12 @@ import { getTechColor } from "../lib/techColor.js";
 import { detectContinuationCandidates, calcContinuationDayNum, multiDayProgress } from "../lib/orders.js";
 import { withMaintenanceLink, findMaintClientByPhoneAddr } from "../lib/maintenanceLink.js";
 import { planningDisplayStatus, submittedReportJobIds } from "../lib/planningStatus.js";
+import {
+  ORDER_TEKNISI_FIELDS,
+  ORDER_HELPER_FIELDS,
+  buildOrderTeamAssignment,
+  resolveRegularOrderTeam,
+} from "../lib/teamAssignment.js";
 import QuickScheduleModal from "../components/QuickScheduleModal.jsx";
 import MaintUnitPickerModal from "./MaintUnitPickerModal.jsx";
 import { useAppContext } from "../context/AppContext.js";
@@ -909,8 +915,8 @@ function ProjectPlanningPanel({ slotDate, runningProjects, ordersData, activeTek
   );
 }
 
-const TFIELDS = ["teknisi", "teknisi2", "teknisi3"];
-const HFIELDS = ["helper", "helper2", "helper3"];
+const TFIELDS = ORDER_TEKNISI_FIELDS;
+const HFIELDS = ORDER_HELPER_FIELDS;
 
 function ProjectCard({ project, slotDate, ordersData, personNames, fmtD, onAssign }) {
   const ord = ordersData.find(o => o.project_id === project.id && o.date === slotDate && o.status !== "CANCELLED");
@@ -1167,18 +1173,10 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   // 3 teknisi atau 3 helper, sisanya TETAP tercatat di roster tim (kehadiran/
   // payroll via daily_team_slots) tapi tidak ikut ditandai di baris order.
   function buildTeamPropagatePayload(members) {
-    let teknisiMembers = members.filter(m => (m.role || "").toLowerCase() === "teknisi");
-    let helperMembers = members.filter(m => (m.role || "").toLowerCase() !== "teknisi");
-    if (teknisiMembers.length === 0 && helperMembers.length > 0) {
-      // Fallback: order butuh minimal 1 penanggung jawab — kalau tak ada yg
-      // berperan teknisi, anggota pertama tetap dianggap teknisi utama.
-      teknisiMembers = [helperMembers[0]];
-      helperMembers = helperMembers.slice(1);
-    }
-    const payload = { last_changed_by: auditUserName() };
-    TFIELDS.forEach((f, i) => { payload[f] = teknisiMembers[i]?.name || null; });
-    HFIELDS.forEach((f, i) => { payload[f] = helperMembers[i]?.name || null; });
-    return payload;
+    return {
+      ...buildOrderTeamAssignment(members),
+      last_changed_by: auditUserName(),
+    };
   }
 
   async function saveSlot(date, slotName, fields) {
@@ -1759,25 +1757,30 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
 
     setSaving(true);
 
-    // Auto-populate teknisi & helper dari team_slot
-    // Prioritas: slot harian → teamPresets → form fields langsung → null
-    let autoTeknisi = form.teknisi || null;
-    let autoHelper = form.helper || null;
-    let autoHelper2 = form.helper2 || null;
-    let autoHelper3 = form.helper3 || null;
-    if (form.team_slot) {
-      const slot = getSlotData(form.date, form.team_slot);
-      const members = slotMemberRoles(slot);
-      if (members.length > 0) {
-        const utama = members.find(m => (m.role || "").toLowerCase() === "teknisi") || members[0];
-        const helpers = members.filter(m => m !== utama);
-        autoTeknisi = autoTeknisi || utama?.name || null;
-        autoHelper = helpers[0]?.name || autoHelper;
-        autoHelper2 = helpers[1]?.name || autoHelper2;
-        autoHelper3 = helpers[2]?.name || autoHelper3;
-      } else if (teamPresets[form.team_slot]) {
-        // Fallback ke preset bila slot harian belum diisi
-        autoTeknisi = autoTeknisi || teamPresets[form.team_slot];
+    // Order project boleh memakai susunan personel khusus. Order reguler harus selalu
+    // mengikuti roster slot secara utuh; personel lama tidak boleh menang saat tim pindah.
+    const previousOrder = editId ? ordersData.find(order => order.id === editId) : null;
+    const isProjectOrder = Boolean(previousOrder?.project_id);
+    let personnelPayload = {
+      teknisi: form.teknisi || null,
+      teknisi2: previousOrder?.teknisi2 || null,
+      teknisi3: previousOrder?.teknisi3 || null,
+      helper: form.helper || null,
+      helper2: form.helper2 || null,
+      helper3: form.helper3 || null,
+    };
+
+    if (!isProjectOrder) {
+      const slot = form.team_slot ? getSlotData(form.date, form.team_slot) : null;
+      personnelPayload = resolveRegularOrderTeam({
+        teamSlot: form.team_slot,
+        members: slot ? slotMemberRoles(slot) : [],
+        presetTeknisi: form.team_slot ? teamPresets[form.team_slot] : "",
+      });
+      if (!personnelPayload) {
+        setSaving(false);
+        unlock();
+        return showNotif(`⚠️ ${form.team_slot} belum memiliki roster atau preset teknisi. Isi Tim Harian dahulu.`, "error");
       }
     }
 
@@ -1789,10 +1792,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       address: form.address.trim() || null,
       date: form.date,
       time: form.time || "09:00",
-      teknisi: autoTeknisi,
-      helper: autoHelper,
-      helper2: autoHelper2,
-      helper3: autoHelper3,
+      ...personnelPayload,
       notes: form.notes.trim() || null,
       status: form.status,
       units: Number(form.units) || 1,
@@ -1997,27 +1997,20 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     // JANGAN overwrite teknisi/helper yang sudah diisi lewat ProjectCard
     if (field === "team_slot" && order.project_id) {
       // hanya update team_slot, biarkan TFIELDS/HFIELDS tetap
-    } else if (field === "team_slot" && value) {
-      // Regular order: propagate anggota slot → teknisi & helper
-      const slot = getSlotData(order.date, value);
-      const members = slot ? slotMemberRoles(slot) : [];
-      if (members.length > 0) {
-        // SATU sumber kebenaran dgn saveSlot/confirmSlot — dulu dua fungsi ini memetakan
-        // roster yang SAMA ke kolom BERBEDA (di sini orang-ke-2 → helper; di
-        // buildTeamPropagatePayload → teknisi2 bila role-nya "teknisi"), jadi hasil akhir
-        // tergantung tombol mana yang terakhir ditekan. buildTeamPropagatePayload juga
-        // menulis SEMUA 6 kolom orang, termasuk mengosongkan teknisi2/3 — mencegah sisa
-        // orang dari slot lama ikut terbawa saat order dipindah slot (insiden 13 Agu 2026:
-        // Ardi/Team 02 nyangkut sbg teknisi2 di order Team 06 → grid merah palsu).
-        update = { ...update, ...buildTeamPropagatePayload(members) };
-      } else if (teamPresets[value]) {
-        update = { ...update, teknisi: teamPresets[value], teknisi2: null, teknisi3: null, helper: null, helper2: null, helper3: null };
-      } else {
+    } else if (field === "team_slot") {
+      const slot = value ? getSlotData(order.date, value) : null;
+      const assignment = resolveRegularOrderTeam({
+        teamSlot: value,
+        members: slot ? slotMemberRoles(slot) : [],
+        presetTeknisi: value ? teamPresets[value] : "",
+      });
+      if (!assignment) {
         showNotif("⚠️ Tim " + value + " belum punya anggota & belum ada preset", "warning");
+        return false;
       }
-    } else if (field === "team_slot" && !value && !order.project_id) {
-      // Clear team_slot pada regular order → reset SEMUA kolom orang (6 kolom), bukan sebagian
-      update = { ...update, teknisi: null, teknisi2: null, teknisi3: null, helper: null, helper2: null, helper3: null };
+      // Tulis semua enam kolom supaya quick assign, drag, create, dan edit memakai
+      // aturan identik serta tidak menyisakan personel dari slot sebelumnya.
+      update = { ...update, ...assignment };
     }
 
     // P2: cek konflik jadwal SEBELUM menulis assignment (parity dgn jalur buat-order yang sudah
@@ -2025,7 +2018,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     // bukan blok keras. Reuse hasConflict (lokal, sudah cross-slot + semua peran setelah P4).
     if (order.date && hasValidTime(order.time)) {
       const assigned = (field === "team_slot")
-        ? [update.teknisi, update.helper, update.helper2, update.helper3]
+        ? [...TFIELDS, ...HFIELDS].map(personField => update[personField])
         : [value];
       const seen = new Set();
       const reasons = [];
