@@ -12,6 +12,36 @@ import { useAppContext } from "../context/AppContext.js";
 // FinanceView, ReportsView — kalau tidak, angka Dashboard tak sinkron dgn menu lain.
 const countsAsExpense = (e) => e?.approval_status !== "PENDING_APPROVAL" && e?.validation_status !== "PENDING_AI";
 
+const WEEK_CONFIRMED_STATUSES = new Set([
+  "CONFIRMED", "DISPATCHED", "ON_SITE", "WORKING", "IN_PROGRESS",
+  "REPORT_SUBMITTED", "INVOICE_CREATED", "INVOICE_APPROVED", "COMPLETED", "PAID", "CONTINUED",
+]);
+
+// Ringkasan card harus memakai himpunan status yang sama untuk jumlah dan nominal.
+// PARTIAL_PAID tetap ditangani di layar Invoice; card lama memang khusus UNPAID/OVERDUE.
+export function dashboardUnpaidSummary(invoices = []) {
+  const rows = invoices.filter(invoice => ["UNPAID", "OVERDUE"].includes(invoice?.status));
+  return {
+    count: rows.length,
+    total: rows.reduce((sum, invoice) => sum + (Number(invoice?.total) || 0), 0),
+  };
+}
+
+export function dashboardWeekConfirmedCount(orders = [], today) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(today || ""))) return 0;
+  const base = new Date(`${today}T12:00:00`);
+  if (Number.isNaN(base.getTime())) return 0;
+  const monday = new Date(base);
+  monday.setDate(base.getDate() - ((base.getDay() + 6) % 7));
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  const start = toISOLocal(monday);
+  const end = toISOLocal(sunday);
+  return orders.filter(order =>
+    order?.date >= start && order?.date <= end && WEEK_CONFIRMED_STATUSES.has(order?.status)
+  ).length;
+}
+
 // ── Rekap Jenis Pekerjaan (Dashboard) ──────────────────────────────
 const toISOLocal = (d) => { const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return z.toISOString().slice(0, 10); };
 const fmtDayMon = (d) => d.toLocaleDateString("id-ID", { day: "numeric", month: "short" });
@@ -353,7 +383,9 @@ function jobDate(inv) {
 }
 
 const todayOrders = ordersData.filter(o => o.date === TODAY);
-const unpaidCount = invoicesData.filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length;
+const unpaidSummary = dashboardUnpaidSummary(invoicesData);
+const unpaidCount = unpaidSummary.count;
+const weekConfirmedCount = dashboardWeekConfirmedCount(ordersData, TODAY);
 // Passthrough unit AC: ac_unit_sale & quotation_converted (keduanya jual unit AC, harga unit tidak masuk omset AClean)
 const isAcSaleInvoice = (i) => i.invoice_type === "ac_unit_sale" || i.invoice_type === "quotation_converted";
 const totalRevBulanIni = (finInvoices || invoicesData).filter(i => i.status === "PAID" && jobDate(i).startsWith(bulanIni)).reduce((a, b) => {
@@ -451,8 +483,8 @@ return (
     {/* KPI Cards */}
     <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(3,1fr)", gap: 14 }}>
       {[
-        { label: "Order Hari Ini", value: todayOrders.length, sub: `${todayOrders.filter(o => o.status === "IN_PROGRESS").length} aktif · ${todayOrders.filter(o => ORDER_DONE_STATUSES.includes(o.status)).length} selesai`, color: cs.accent, icon: "📋", onClick: () => setActiveMenu("orders") },
-        { label: "Invoice Unpaid", value: unpaidCount, sub: "Perlu follow-up", color: cs.yellow, icon: "🧾", onClick: () => { setActiveMenu("invoice"); setInvoiceFilter("UNPAID"); } },
+        { label: "Order Hari Ini", value: todayOrders.length, sub: `${todayOrders.filter(o => o.status === "IN_PROGRESS").length} aktif · ${todayOrders.filter(o => ORDER_DONE_STATUSES.includes(o.status)).length} selesai`, detail: `${weekConfirmedCount} order terkonfirmasi minggu ini`, color: cs.accent, icon: "📋", onClick: () => setActiveMenu("orders") },
+        { label: "Invoice Unpaid", value: unpaidCount, sub: "Perlu follow-up", detail: `Estimasi ${fmt(unpaidSummary.total)}`, color: cs.yellow, icon: "🧾", onClick: () => { setActiveMenu("invoice"); setInvoiceFilter("UNPAID"); } },
         { label: "Stok Kritis", value: lowStock, sub: "Perlu restock", color: cs.red, icon: "📦", onClick: () => setActiveMenu("inventory") },
       ].map(kpi => (
         <div key={kpi.label} onClick={kpi.onClick} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 18, cursor: "pointer" }}>
@@ -462,6 +494,11 @@ return (
           </div>
           <div style={{ fontWeight: 800, fontSize: 26, color: kpi.color, marginBottom: 4 }}>{kpi.value}</div>
           <div style={{ fontSize: 11, color: cs.muted, fontWeight: 600 }}>{kpi.label}</div>
+          {kpi.detail && (
+            <div style={{ fontSize: 11, color: kpi.color, fontWeight: 700, marginTop: 7 }}>
+              {kpi.detail}
+            </div>
+          )}
         </div>
       ))}
     </div>
