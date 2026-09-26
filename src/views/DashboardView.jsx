@@ -1,9 +1,9 @@
 import { memo, useState, useEffect, useRef } from "react";
 import { cs } from "../theme/cs.js";
 import { statusColor, statusLabel, ORDER_DONE_STATUSES } from "../constants/status.js";
-import { fetchAllOrders, fetchAllInvoices, fetchAllExpenses, fetchPayrollCost, fetchReportWorkStats, fetchDashboardSnapshot, fetchDashboardSnapshotV2, fetchDashboardMonthlyWorkSummary } from "../data/reads.js";
+import { fetchDashboardSnapshot, fetchDashboardSnapshotV2, fetchDashboardMonthlyWorkSummary } from "../data/reads.js";
 import { displayStock } from "../lib/inventory.js";
-import { measureAsync } from "../lib/perfMetrics.js";
+import { flushPerfMetrics, measureAsync } from "../lib/perfMetrics.js";
 import AbsenBanner from "./AbsenBanner.jsx";
 import { useAppContext } from "../context/AppContext.js";
 
@@ -175,7 +175,11 @@ useEffect(() => {
   // Data bootstrap lokal menjadi fallback sementara dan mencegah baris/tanggal tertukar.
   setDashboardDay(null);
   (async () => {
-    const { data, error } = await fetchDashboardSnapshotV2(supabase, gridDate);
+    const { data, error } = await measureAsync(
+      "dashboard.snapshot_v2",
+      () => fetchDashboardSnapshotV2(supabase, gridDate),
+      { role, date: gridDate },
+    );
     if (cancelled) return;
     if (error) {
       // Migration 178 belum aktif saat local trial: grid lama tetap berfungsi.
@@ -184,6 +188,7 @@ useEffect(() => {
       return;
     }
     setDashboardDay(data || null);
+    void flushPerfMetrics(supabase, role);
   })();
   return () => { cancelled = true; };
 }, [bootstrapReady, gridDate, role, supabase]);
@@ -212,6 +217,7 @@ useEffect(() => {
       const normalized = normalizeMonthlyWorkSummary(data);
       monthlyWorkCache.current.set(start, normalized);
       if (!cancelled) setMonthlyWork(normalized);
+      void flushPerfMetrics(supabase, role);
     } catch (error) {
       console.error("[DASHBOARD_WORK_SUMMARY] gagal memuat agregasi:", error);
       if (!cancelled) {
@@ -246,21 +252,10 @@ useEffect(() => {
       setFinReports(snapshot?.reports || []);
       setFinExpenses(snapshot?.expenses || []);
     } catch (e) {
-      // Migration 167 belum aktif: local trial tetap aman memakai jalur lama. Fallback
-      // ini dihapus pada fase berikut setelah RPC terverifikasi di production.
-      console.warn("[DASHBOARD_RPC] fallback ke query lama:", e?.message || e);
-      if (role !== "Owner") return;
-      const [{ data: ord }, { data: inv }, { data: pay }, { data: rep }, { data: exp }] = await measureAsync(
-        "dashboard.legacy_fallback",
-        () => Promise.all([
-          fetchAllOrders(supabase), fetchAllInvoices(supabase), fetchPayrollCost(supabase),
-          fetchReportWorkStats(supabase, sinceReports), fetchAllExpenses(supabase),
-        ]),
-        { role },
-      );
-      if (cancelled) return;
-      setFinOrders(ord || []); setFinInvoices(inv || []); setFinPayroll(pay || []);
-      setFinReports(rep || []); setFinExpenses(exp || []);
+      // Jangan kembali mengunduh seluruh tabel. Panel finansial memang nonaktif dan
+      // Statistik/Finance sudah punya RPC khusus. Nilai null mempertahankan fallback
+      // bootstrap ringan bila panel ini suatu hari diaktifkan kembali.
+      console.warn("[DASHBOARD_RPC] snapshot finansial tidak tersedia:", e?.message || e);
     }
   })();
   return () => { cancelled = true; };

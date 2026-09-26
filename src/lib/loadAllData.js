@@ -2,7 +2,7 @@
 // customers, inventory, laporan, settings, users, WA, dll) + hydrate cache & state.
 // Diekstrak dari App.jsx (Fase 3, pola ctx). 49 dependency dioper via ctx. Body
 // verbatim. Dipanggil dari efek init & auto-refresh polling (nama tetap `loadAll`).
-import { recordPerfMetric } from "./perfMetrics.js";
+import { flushPerfMetrics, recordPerfMetric } from "./perfMetrics.js";
 import { requireAppSettingsResult } from "./settingsPersistence.js";
 
 export function hydratePriceListCache(rows, {
@@ -317,5 +317,7 @@ export async function loadAllData({
         if (criticalBootstrap) {
           const current = typeof performance !== "undefined" ? performance.now() : Date.now();
           recordPerfMetric("bootstrap.background", current - startedAt);
+          // Sampling 10%, agregat harian; non-blocking dan gagal-silent selama rollout 186.
+          void flushPerfMetrics(supabase, currentUser?.role || "Unknown");
         }
 }

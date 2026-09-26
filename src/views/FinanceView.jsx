@@ -1,7 +1,8 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { cs } from "../theme/cs.js";
 import { getLocalDate } from "../lib/dateTime.js";
-import { fetchFinanceSnapshot } from "../data/reads.js";
+import { fetchFinanceMonthDetails, fetchFinanceSnapshot, fetchFinanceSummaryV2 } from "../data/reads.js";
+import { flushPerfMetrics, measureAsync } from "../lib/perfMetrics.js";
 import { GajiTab } from "./TeknisiAdminView.jsx";
 import { downloadBlob, buildCsv, printDocument, htmlTable, rp, fmtTanggal, escapeHtml } from "../lib/exportUtils.js";
 
@@ -349,7 +350,7 @@ const DashboardTab = ({
 };
 
 // ─── Financial Planning Tab ──────────────────────────────────────
-const PlanningTab = ({ allInvoices, allExpenses, showNotif, financeSnapshot }) => {
+const PlanningTab = ({ allInvoices, allExpenses, showNotif, financeSnapshot, detailsLoading }) => {
   const [targetBulan, setTargetBulan] = useState(loadTarget);
 
   // bulanIni dalam WIB — reaktif via useMemo bukan top-level const
@@ -366,17 +367,17 @@ const PlanningTab = ({ allInvoices, allExpenses, showNotif, financeSnapshot }) =
     saveTarget(n);
   };
 
-  const paidThisMonth = useMemo(() => financeSnapshot?.month_invoices ||
+  const paidThisMonth = useMemo(() => detailsLoading ? [] : (financeSnapshot?.month_invoices ||
     (allInvoices || []).filter(i =>
       (i.status === "PAID" || i.status === "PARTIAL_PAID") && (i.paid_at || i.created_at || "").slice(0, 7) === bulanIni
-    ), [allInvoices, bulanIni, financeSnapshot]);
+    )), [allInvoices, bulanIni, detailsLoading, financeSnapshot]);
 
   const totalIn = Number(financeSnapshot?.summary?.month_cash ?? paidThisMonth.reduce((s, i) => s + cashReceived(i), 0));
 
   // Biaya sah = bukan menunggu approval Admin (≥500rb) & bukan draft AI belum di-review.
-  const expensesBulanIni = useMemo(() => financeSnapshot?.month_expenses ||
-    (allExpenses || []).filter(e => e.approval_status !== "PENDING_APPROVAL" && e.validation_status !== "PENDING_AI" && (e.date || e.created_at || "").slice(0, 7) === bulanIni),
-    [allExpenses, bulanIni, financeSnapshot]);
+  const expensesBulanIni = useMemo(() => detailsLoading ? [] : (financeSnapshot?.month_expenses ||
+    (allExpenses || []).filter(e => e.approval_status !== "PENDING_APPROVAL" && e.validation_status !== "PENDING_AI" && (e.date || e.created_at || "").slice(0, 7) === bulanIni
+  )), [allExpenses, bulanIni, detailsLoading, financeSnapshot]);
 
   const totalOut = Number(financeSnapshot?.summary?.month_expenses ?? expensesBulanIni.reduce((s, e) => s + (e.amount || 0), 0));
 
@@ -461,16 +462,17 @@ const PlanningTab = ({ allInvoices, allExpenses, showNotif, financeSnapshot }) =
 
   return (
     <div>
+      {detailsLoading && <div style={{ marginBottom: 12, padding: "9px 12px", borderRadius: 9, background: cs.accent + "12", border: "1px solid " + cs.accent + "33", color: cs.accent, fontSize: 11 }}>⏳ Memuat rincian bulan saat tab dibuka…</div>}
       {/* Toolbar export */}
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-        <button onClick={exportArusKasPdf}
+        <button onClick={exportArusKasPdf} disabled={detailsLoading}
           title="Cetak / simpan PDF arus kas bulan ini (masuk, keluar, net, rincian)"
-          style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, padding: "8px 14px", borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+          style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, padding: "8px 14px", borderRadius: 9, cursor: detailsLoading ? "wait" : "pointer", opacity: detailsLoading ? 0.55 : 1, fontWeight: 700, fontSize: 12 }}>
           🖨️ PDF Arus Kas
         </button>
-        <button onClick={exportArusKasCsv}
+        <button onClick={exportArusKasCsv} disabled={detailsLoading}
           title="Unduh CSV arus kas bulan ini (buka di Excel)"
-          style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, padding: "8px 14px", borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+          style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, padding: "8px 14px", borderRadius: 9, cursor: detailsLoading ? "wait" : "pointer", opacity: detailsLoading ? 0.55 : 1, fontWeight: 700, fontSize: 12 }}>
           ⬇️ CSV
         </button>
       </div>
@@ -640,6 +642,7 @@ export default function FinanceView({ currentUser, ordersData, invoicesData, exp
   const allExp = expensesData || [];
   const [financeSnapshot, setFinanceSnapshot] = useState(null);
   const [financeLoading, setFinanceLoading] = useState(false);
+  const [financeDetailsLoading, setFinanceDetailsLoading] = useState(false);
   const [financeError, setFinanceError] = useState(null);
 
   // Gunakan WIB helper — bukan toISOString() mentah yang UTC
@@ -661,19 +664,51 @@ export default function FinanceView({ currentUser, ordersData, invoicesData, exp
     }
     let cancelled = false;
     setFinanceLoading(true); setFinanceError(null);
-    fetchFinanceSnapshot(supabase, todayStr, monthStart, monthEnd)
+    measureAsync("finance.summary_v2", () => fetchFinanceSummaryV2(supabase, todayStr, monthStart, monthEnd), { role: currentUser?.role || "Finance" })
       .then(({ data, error }) => {
         if (cancelled) return;
-        if (error) throw error;
-        financeCache.set(key, { at: Date.now(), data });
-        setFinanceSnapshot(data || null);
+        if (error) {
+          const unavailable = /get_finance_summary_v2|schema cache|could not find the function/i.test(error.message || "");
+          if (!unavailable) throw error;
+          return fetchFinanceSnapshot(supabase, todayStr, monthStart, monthEnd).then(legacy => {
+            if (legacy.error) throw legacy.error;
+            return { data: { ...(legacy.data || {}), _detailsLoaded: true } };
+          });
+        }
+        return { data: { ...(data || {}), _detailsLoaded: false } };
+      })
+      .then(result => {
+        if (cancelled || !result) return;
+        financeCache.set(key, { at: Date.now(), data: result.data });
+        setFinanceSnapshot(result.data || null);
+        void flushPerfMetrics(supabase, currentUser?.role || "Finance");
       })
       .catch(error => {
         if (!cancelled) { setFinanceSnapshot(null); setFinanceError(error?.message || "Finance gagal dimuat"); }
       })
       .finally(() => { if (!cancelled) setFinanceLoading(false); });
     return () => { cancelled = true; };
-  }, [supabase, todayStr, monthStart, monthEnd]);
+  }, [currentUser?.role, supabase, todayStr, monthStart, monthEnd]);
+
+  useEffect(() => {
+    if (!supabase || activeTab !== "planning" || financeSnapshot?._detailsLoaded) return;
+    let cancelled = false;
+    setFinanceDetailsLoading(true);
+    setFinanceError(null);
+    measureAsync("finance.month_details", () => fetchFinanceMonthDetails(supabase, monthStart, monthEnd), { role: currentUser?.role || "Finance" })
+      .then(({ data, error }) => {
+        if (error) throw error;
+        if (cancelled) return;
+        const merged = { ...(financeSnapshot || {}), ...(data || {}), _detailsLoaded: true };
+        const key = `${todayStr}:${monthStart}:${monthEnd}`;
+        financeCache.set(key, { at: Date.now(), data: merged });
+        setFinanceSnapshot(merged);
+        void flushPerfMetrics(supabase, currentUser?.role || "Finance");
+      })
+      .catch(error => { if (!cancelled) setFinanceError(error?.message || "Rincian Finance gagal dimuat"); })
+      .finally(() => { if (!cancelled) setFinanceDetailsLoading(false); });
+    return () => { cancelled = true; };
+  }, [activeTab, currentUser?.role, financeSnapshot, monthEnd, monthStart, supabase, todayStr]);
 
   const filteredOrders = useMemo(() =>
     (ordersData || []).filter(o => (o.date || "").slice(0, 10) === todayStr),
@@ -752,6 +787,7 @@ export default function FinanceView({ currentUser, ordersData, invoicesData, exp
           allExpenses={allExp}
           showNotif={showNotif}
           financeSnapshot={financeSnapshot}
+          detailsLoading={financeDetailsLoading}
         />
       )}
 

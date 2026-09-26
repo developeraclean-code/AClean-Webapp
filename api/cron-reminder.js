@@ -8,7 +8,7 @@
 import * as Sentry from "@sentry/node";
 import { timingSafeEqual } from "crypto";
 import { initSentry, setCronContext } from "./sentry-init.js";
-import { runWithCronLogging } from "./_logger.js";
+import { closeStaleCronRuns, runWithCronLogging } from "./_logger.js";
 import { verifyAppToken } from "./_auth.js";
 import { sb, sendWA, log, OWNER_PHONE } from "./_tasks/_shared.js";
 import { taskCleanup, taskR2Cleanup90d, taskExpenseFotoCleanup30d, taskPaymentProofCleanup90d, taskSnapshotCleanup, taskWaCleanup, taskLogCleanup } from "./_tasks/cleanup.js";
@@ -36,6 +36,9 @@ async function taskTick() {
   // Vercel membatasi endpoint ini 30 detik. Sisakan waktu untuk menutup
   // cron_runs, menulis log, dan mengirim response sebelum platform mematikan proses.
   const TIME_BUDGET_MS = 22_000;
+  // Tutup semua run basi, bukan hanya task yang kebetulan sedang dimulai lagi.
+  // Ini membuat Monitoring jujur setelah function Vercel pernah diputus paksa.
+  await closeStaleCronRuns(sb, 20 * 60 * 1000);
 
   // Jadwal: jam WIB tiap task (konversi dari skema lama UTC+7). dow/dom opsional.
   const schedule = [
@@ -78,8 +81,16 @@ async function taskTick() {
   const ran = [];
   // bukti-bayar: scan tiap tick jam kerja 9-18 WIB
   if (hour >= 9 && hour <= 18) {
-    try { await runWithCronLogging(sb, "bukti-bayar", () => taskScanBuktiBayar()); ran.push("bukti-bayar"); }
-    catch (e) { console.error("[TICK] bukti-bayar", e.message); }
+    try { await runWithCronLogging(sb, "bukti-bayar", () => taskScanBuktiBayar(), { timeoutMs: 6_500 }); ran.push("bukti-bayar"); }
+    catch (e) {
+      console.error("[TICK] bukti-bayar", e.message);
+      // Promise yang timeout tidak dapat dibatalkan secara paksa. Jangan mulai task
+      // lain pada invocation yang sama agar tidak terjadi overlap mutasi.
+      if (e?.code === "CRON_TIMEOUT") {
+        await log("TICK", `${hour}:00 WIB — scan bukti timeout; task lain ditunda ke tick berikutnya`, "WARNING");
+        return { hourWib: hour, ran, pending: 1, timedOut: "bukti-bayar", items_processed: ran.length };
+      }
+    }
   }
 
   // Task due hari ini (jamnya sudah tiba) & cocok dow/dom
@@ -102,8 +113,17 @@ async function taskTick() {
   for (const s of due) {
     if (alreadyRan.has(s.t)) continue;
     if (count >= CAP || Date.now() - tickStartedAt >= TIME_BUDGET_MS) { pending++; continue; }
-    try { await runWithCronLogging(sb, s.t, () => s.fn()); ran.push(s.t); count++; }
-    catch (e) { console.error("[TICK]", s.t, e.message); }
+    const remainingMs = Math.max(1_000, TIME_BUDGET_MS - (Date.now() - tickStartedAt));
+    try { await runWithCronLogging(sb, s.t, () => s.fn(), { timeoutMs: Math.min(6_500, remainingMs) }); ran.push(s.t); count++; }
+    catch (e) {
+      console.error("[TICK]", s.t, e.message);
+      if (e?.code === "CRON_TIMEOUT") {
+        const outstandingDue = due.filter(item => !alreadyRan.has(item.t)).length;
+        pending += Math.max(1, outstandingDue - count);
+        break;
+      }
+      pending++;
+    }
   }
 
   await log("TICK", `${hour}:00 WIB — jalan: ${ran.join(", ") || "(tidak ada/selesai)"}${pending ? ` | sisa ${pending} (tick berikutnya)` : ""}`, "INFO");
@@ -216,7 +236,9 @@ export default async function handler(req, res) {
     const handler = taskMap[task] || taskReminder;
     const taskKey = taskMap[task] ? task : "reminder";
 
-    const result = await runWithCronLogging(sb, taskKey, () => handler());
+    const result = await runWithCronLogging(sb, taskKey, () => handler(), {
+      timeoutMs: taskKey === "tick" ? 27_000 : 25_000,
+    });
 
     return res.json({ ok:true, task, timestamp:new Date().toISOString(), ...result });
   } catch(err) {

@@ -10,6 +10,7 @@ import {
   finalizeServiceReportAtomic,
   markBonusesPaidBulkAtomic,
   submitServiceReportAtomic,
+  updateOrderWorkflowAtomic,
 } from "../writes.js";
 import { PROJECT_VIEW_KEYS } from "../../project/data/projectApi.ts";
 
@@ -46,6 +47,18 @@ describe("atomic workflow RPC contracts", () => {
       p_auto_dispatch: true,
       p_actor_name: "Admin",
       p_mutation_key: "order-create:JOB-1",
+    });
+  });
+
+  it("edit order memakai satu RPC atomik bersama klaim jadwal", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: { order: { id: "JOB-1" } }, error: null });
+    const patch = { date: "2026-09-27", time: "09:00", time_end: "11:00", teknisi: "Dedi" };
+    await updateOrderWorkflowAtomic({ rpc }, "JOB-1", patch, "Owner", "order-edit:JOB-1:test");
+    expect(rpc).toHaveBeenCalledWith("update_order_workflow_atomic", {
+      p_order_id: "JOB-1",
+      p_patch: patch,
+      p_actor_name: "Owner",
+      p_mutation_key: "order-edit:JOB-1:test",
     });
   });
 

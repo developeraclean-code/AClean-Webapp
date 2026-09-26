@@ -313,17 +313,35 @@ export async function maintenance(req, res) {
 
         if (action === "link-order") {
           if (!body.order_id || !body.client_id) return res.status(400).json({ error: "order_id & client_id wajib" });
-          // Pastikan klien ada (hindari set FK sembarangan)
-          const cRes = await fetch(REST("maintenance_clients?id=eq." + encodeURIComponent(body.client_id) + "&select=id&limit=1"), { headers });
-          if (!cRes.ok || !(await cRes.json())[0]) return res.status(400).json({ error: "Perusahaan tidak ditemukan" });
-          const r = await fetch(REST("orders?id=eq." + encodeURIComponent(body.order_id)), {
-            method: "PATCH", headers: { ...headers, Prefer: "return=representation" },
-            body: JSON.stringify({ maintenance_client_id: body.client_id }),
+          // Migration 186: update order dan seluruh invoice aktif harus commit/rollback
+          // bersama. Guard default melarang overwrite link milik perusahaan lain.
+          const rpcRes = await fetch(REST("rpc/link_order_maintenance_atomic"), {
+            method: "POST",
+            headers: { ...headers, Prefer: "return=representation" },
+            body: JSON.stringify({
+              p_order_id: body.order_id,
+              p_client_id: body.client_id,
+              p_force_relink: body.force_relink === true,
+              // Nama dari token bertanda tangan lebih dipercaya daripada body.
+              p_actor_name: req.appClaims?.name || req.authUser?.user_metadata?.name || body.created_by || "maintenance-link",
+            }),
           });
-          if (!r.ok) return res.status(400).json({ error: "Gagal tautkan order", detail: await r.text() });
-          const updated = (await r.json())[0];
-          if (!updated) return res.status(404).json({ error: "Order tidak ditemukan" });
-          return res.status(200).json({ ok: true, order: updated });
+          const rpcBody = await rpcRes.json().catch(() => ({}));
+          if (!rpcRes.ok) {
+            const message = rpcBody.message || rpcBody.error || "Gagal tautkan order";
+            const unavailable = rpcRes.status === 404 || /link_order_maintenance_atomic|schema cache|not found/i.test(message);
+            return res.status(unavailable ? 503 : 409).json({ error: unavailable ? "Migration 186 belum aktif; link dibatalkan agar data tidak setengah tersimpan" : message });
+          }
+          return res.status(200).json({ ok: true, ...rpcBody });
+        }
+
+        if (action === "order-link-status") {
+          if (!body.order_id) return res.status(400).json({ error: "order_id wajib" });
+          const r = await fetch(REST("orders?id=eq." + encodeURIComponent(body.order_id) + "&select=id,customer,maintenance_client_id,maintenance_unit_ids&limit=1"), { headers });
+          if (!r.ok) return res.status(400).json({ error: "Gagal memeriksa link order" });
+          const order = (await r.json())[0];
+          if (!order) return res.status(404).json({ error: "Order tidak ditemukan" });
+          return res.status(200).json({ order });
         }
 
         // Ambil unit laporan (units_json) untuk modal "Petakan Unit" di tab Cek Link.

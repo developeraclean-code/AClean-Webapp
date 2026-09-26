@@ -2,7 +2,10 @@ import { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient.js";
 import { cs } from "../theme/cs.js";
 import { statusColor, statusLabel } from "../constants/status.js";
-import { updateOrder } from "../data/writes.js";
+import { updateOrder, updateOrderWorkflowAtomic } from "../data/writes.js";
+
+const isMissingUpdateWorkflowRpc = (error) => error?.code === "PGRST202" || error?.code === "42883"
+  || /update_order_workflow_atomic.*(schema cache|does not exist|not found)/i.test(error?.message || "");
 
 const inp = { width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 11px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" };
 const lbl = { fontSize: 11, color: cs.muted, marginBottom: 3, display: "block", fontWeight: 600 };
@@ -82,6 +85,45 @@ export default function EditOrderModal({
         ? hitungJamSelesai(form.time || "09:00", form.service || "Cleaning", form.units || 1)
         : form.time_end;
 
+      const dbUpd = {
+        customer: form.customer, phone: form.phone,
+        address: form.address, area: form.area || "",
+        service: form.service, type: form.type || "",
+        units: form.units, teknisi: form.teknisi,
+        helper: form.helper || null,
+        teknisi2: form.teknisi2 || null, helper2: form.helper2 || null,
+        teknisi3: form.teknisi3 || null, helper3: form.helper3 || null,
+        date: form.date, time: form.time, time_end: timeEnd,
+        status: form.status, notes: form.notes || "",
+      };
+      const auditName = auditUserName ? auditUserName() : "Admin";
+
+      // Migration 186: order + technician_schedule berubah dalam satu transaksi.
+      // Error bisnis (bentrok/validation) tidak boleh turun ke jalur lama karena itu
+      // dapat menyimpan separuh perubahan. Fallback hanya untuk masa rollout RPC.
+      const atomic = await updateOrderWorkflowAtomic(
+        supabase, editOrderItem.id, dbUpd, auditName, null,
+      );
+      if (!atomic.error) {
+        const savedOrder = atomic.data?.order || { ...editOrderItem, ...dbUpd };
+        setOrdersData(prev => prev.map(o => o.id === editOrderItem.id ? { ...o, ...savedOrder } : o));
+        if (addAgentLog) addAgentLog("ORDER_UPDATED", `Order ${editOrderItem.id} diedit atomik — ${form.teknisi} ${form.date} ${form.time}`, "SUCCESS");
+        if (sendWA && (tekChanged || dateChanged || timeChanged)) {
+          const tek = teknisiData.find(t => t.name === form.teknisi);
+          if (tek) sendWA(tek.phone,
+            `Halo ${form.teknisi}, ada *perubahan jadwal*:\n📋 ${editOrderItem.id} — ${form.customer || editOrderItem.customer}\n🔧 ${form.service} ${form.units} unit\n📅 ${form.date} jam ${form.time}–${timeEnd}\n📍 ${form.address || editOrderItem.address}\n${form.notes ? "📝 " + form.notes + "\n" : ""}Mohon konfirmasi. — ${appSettings.app_name || "AClean"}`
+          );
+        }
+        showNotif("✅ Order " + editOrderItem.id + " berhasil diupdate");
+        onClose();
+        return;
+      }
+      if (!isMissingUpdateWorkflowRpc(atomic.error)) {
+        showNotif("❌ Perubahan dibatalkan: " + (atomic.error.message || "transaksi jadwal gagal"));
+        return;
+      }
+      console.warn("[ORDER_UPDATE_ATOMIC] migration 186 belum aktif; memakai jalur kompatibilitas");
+
       // ── GERBANG ATOMIK (anti dobel-book saat edit) — klaim slot via RPC dulu ──
       // Lepas klaim lama order ini, lalu try_claim_teknisi_slot (advisory lock +
       // cek overlap + insert klaim dalam 1 transaksi, migrasi 070). Kalah race →
@@ -117,19 +159,6 @@ export default function EditOrderModal({
       const updated = { ...editOrderItem, ...form, time_end: timeEnd };
       setOrdersData(prev => prev.map(o => o.id === editOrderItem.id ? updated : o));
 
-      const dbUpd = {
-        customer: form.customer, phone: form.phone,
-        address: form.address, area: form.area || "",
-        service: form.service, type: form.type || "",
-        units: form.units, teknisi: form.teknisi,
-        helper: form.helper || null,
-        teknisi2: form.teknisi2 || null, helper2: form.helper2 || null,
-        teknisi3: form.teknisi3 || null, helper3: form.helper3 || null,
-        date: form.date, time: form.time, time_end: timeEnd,
-        status: form.status, notes: form.notes || "",
-      };
-
-      const auditName = auditUserName ? auditUserName() : "Admin";
       const { error: eoErr } = await updateOrder(supabase, editOrderItem.id, dbUpd, auditName);
 
       // Sync schedule — fallback manual HANYA kalau klaim RPC di atas tidak jalan

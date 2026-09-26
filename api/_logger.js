@@ -79,6 +79,23 @@ export async function logStructured(sb, {
 }
 
 // ── 2. Cron run tracking ──
+export async function closeStaleCronRuns(sb, maxAgeMs = 60 * 60 * 1000) {
+  if (!sb) return 0;
+  try {
+    const staleCutoff = new Date(Date.now() - Math.max(60_000, maxAgeMs)).toISOString();
+    const { data, error } = await sb.from("cron_runs").update({
+      status: "TIMEOUT",
+      finished_at: new Date().toISOString(),
+      error_message: "Auto-closed: run melewati batas waktu tanpa finish",
+    }).eq("status", "RUNNING").lt("started_at", staleCutoff).select("id");
+    if (error) throw error;
+    return data?.length || 0;
+  } catch (err) {
+    console.warn("[LOGGER] global stale cron cleanup failed:", err.message);
+    return 0;
+  }
+}
+
 export async function startCronRun(sb, taskName, metadata = null) {
   if (!sb) return null;
   try {
@@ -140,8 +157,23 @@ export async function finishCronRun(sb, runId, {
 export async function runWithCronLogging(sb, taskName, fn, opts = {}) {
   const runId = await startCronRun(sb, taskName, opts.metadata || null);
   const startedAtMs = Date.now();
+  let timer = null;
   try {
-    const result = await fn();
+    const timeoutMs = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : 0;
+    const taskPromise = Promise.resolve().then(fn);
+    const result = timeoutMs > 0
+      ? await Promise.race([
+          taskPromise,
+          new Promise((_, reject) => {
+            timer = setTimeout(() => {
+              const error = new Error(`Task ${taskName} melewati batas ${timeoutMs}ms`);
+              error.code = "CRON_TIMEOUT";
+              reject(error);
+            }, timeoutMs);
+          }),
+        ])
+      : await taskPromise;
+    if (timer) clearTimeout(timer);
     const items = (result && typeof opts.itemsFromResult === "function")
       ? Number(opts.itemsFromResult(result)) || 0
       : (result && typeof result.items_processed === "number" ? result.items_processed : 0);
@@ -156,8 +188,9 @@ export async function runWithCronLogging(sb, taskName, fn, opts = {}) {
     });
     return result;
   } catch (err) {
+    if (timer) clearTimeout(timer);
     await finishCronRun(sb, runId, {
-      status: "FAILED",
+      status: err?.code === "CRON_TIMEOUT" ? "TIMEOUT" : "FAILED",
       error_message: err.message || String(err),
       startedAtMs,
     });

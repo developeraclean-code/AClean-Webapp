@@ -15,6 +15,14 @@ export const insertOrder = (supabase, payload) =>
 export const updateOrder = (supabase, id, fields, userName) =>
   supabase.from("orders").update({ ...fields, last_changed_by: userName }).eq("id", id);
 
+export const updateOrderWorkflowAtomic = (supabase, id, fields, userName, mutationKey) =>
+  supabase.rpc("update_order_workflow_atomic", {
+    p_order_id: id,
+    p_patch: fields,
+    p_actor_name: userName || null,
+    p_mutation_key: mutationKey || null,
+  });
+
 export const updateOrderStatus = (supabase, id, status, userName, extra = {}) =>
   supabase.from("orders").update({ status, ...extra, last_changed_by: userName }).eq("id", id);
 
@@ -288,6 +296,11 @@ export const acknowledgePaidInvoicesWithoutProofAtomic = (supabase, invoiceIds, 
     p_actor_name: actorName || null,
     p_mutation_key: mutationKey || null,
   });
+
+// Hanya mengisi order.invoice_id yang kosong/putus bila pasangan invoice aktifnya
+// unik dan jelas. Tidak membuat/menghapus invoice atau laporan.
+export const applyOrderInvoiceReconciliation = (supabase) =>
+  supabase.rpc("reconcile_order_invoice_links", { p_apply: true });
 
 export const voidBonus = (supabase, id, reason, voidedBy) =>
   supabase.from("order_bonuses").update({

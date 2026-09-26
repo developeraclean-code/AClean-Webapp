@@ -246,6 +246,19 @@ export const fetchFinanceSnapshot = (supabase, day, monthStart, monthEnd) =>
     p_month_end: monthEnd,
   });
 
+export const fetchFinanceSummaryV2 = (supabase, day, monthStart, monthEnd) =>
+  supabase.rpc("get_finance_summary_v2", {
+    p_day: day,
+    p_month_start: monthStart,
+    p_month_end: monthEnd,
+  });
+
+export const fetchFinanceMonthDetails = (supabase, monthStart, monthEnd) =>
+  supabase.rpc("get_finance_month_details", {
+    p_month_start: monthStart,
+    p_month_end: monthEnd,
+  });
+
 // Laporan Tim memakai pagination server-side agar tidak terpotong hard-cap 1000 row.
 export const fetchServiceReportsPage = (supabase, {
   dateFrom = null, dateTo = null, service = null, status = null,
@@ -377,6 +390,16 @@ export const previewOperationalLogRetention = (supabase, batchSize = 2000) =>
     p_apply: false,
     p_batch_size: batchSize,
   });
+
+export const fetchTeamInvoiceReconciliationPreview = (supabase) =>
+  supabase.rpc("get_team_invoice_reconciliation_preview");
+
+export const fetchPerformanceDaily = (supabase, days = 14) => {
+  const since = new Date(Date.now() - Math.max(1, days) * 86400000).toISOString().slice(0, 10);
+  return supabase.from("performance_daily")
+    .select("day,metric,role,samples,successes,errors,duration_sum_ms,duration_min_ms,duration_max_ms,bucket_le_500,bucket_le_1000,bucket_le_3000,bucket_le_5000,bucket_gt_5000")
+    .gte("day", since).order("day", { ascending: false });
+};
 
 // Deployment gate untuk workflow invoice multi-team. Bila migration 179 belum
 // tersedia, verifikasi grup harus berhenti (jangan jatuh ke RPC versi lama).

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getPerfMetrics, measureAsync, recordPerfMetric, resetPerfMetrics } from "../perfMetrics.js";
+import { flushPerfMetrics, getPerfMetrics, measureAsync, recordPerfMetric, resetPerfMetrics } from "../perfMetrics.js";
 
 describe("perfMetrics", () => {
   beforeEach(() => resetPerfMetrics());
@@ -25,5 +25,31 @@ describe("perfMetrics", () => {
     for (let i = 0; i < 105; i++) recordPerfMetric(`m${i}`, i);
     expect(getPerfMetrics()).toHaveLength(100);
     expect(getPerfMetrics()[0].name).toBe("m5");
+  });
+
+  it("flushes a bounded aggregate batch through RPC", async () => {
+    recordPerfMetric("bootstrap.critical", 900, { outcome: "ok", rows: 20 });
+    recordPerfMetric("unrelated.metric", 10, { outcome: "ok" });
+    const rpc = vi.fn().mockResolvedValue({ data: 1, error: null });
+    const result = await flushPerfMetrics({ rpc }, "Owner", { force: true });
+    expect(result.recorded).toBe(1);
+    expect(rpc).toHaveBeenCalledWith("record_performance_metrics", {
+      p_metrics: [
+        { name: "bootstrap.critical", durationMs: 900, outcome: "ok" },
+      ],
+      p_role: "Owner",
+    });
+  });
+
+  it("does not resend a successful batch and keeps later metrics", async () => {
+    recordPerfMetric("bootstrap.critical", 900);
+    const rpc = vi.fn().mockResolvedValue({ data: 1, error: null });
+    await flushPerfMetrics({ rpc }, "Owner", { force: true });
+    recordPerfMetric("dashboard.snapshot_v2", 350);
+    await flushPerfMetrics({ rpc }, "Owner", { force: true });
+    expect(rpc).toHaveBeenNthCalledWith(2, "record_performance_metrics", {
+      p_metrics: [{ name: "dashboard.snapshot_v2", durationMs: 350, outcome: "ok" }],
+      p_role: "Owner",
+    });
   });
 });

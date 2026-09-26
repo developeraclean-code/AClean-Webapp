@@ -8,7 +8,10 @@ import {
   fetchQueryHealthSnapshot,
   previewOrderInvoiceReconciliation,
   previewOperationalLogRetention,
+  fetchTeamInvoiceReconciliationPreview,
+  fetchPerformanceDaily,
 } from "../data/reads.js";
+import { applyOrderInvoiceReconciliation } from "../data/writes.js";
 import { auditInvoices, auditQuoteDeviation } from "../lib/invoicing.js";
 
 // ─────────────────────────────────────────────
@@ -1105,15 +1108,20 @@ function TabMaintLink({ apiHeaders }) {
 }
 
 function TabDataHealth({ supabase }) {
-  const [state, setState] = useState({ loading: true, error: "", query: null, links: null, retention: null });
+  const [state, setState] = useState({ loading: true, error: "", query: null, links: null, retention: null, team: null, perf: [] });
+  const [repairingLinks, setRepairingLinks] = useState(false);
 
   const load = async () => {
     setState(prev => ({ ...prev, loading: true, error: "" }));
-    const [queryRes, linkRes, retentionRes] = await Promise.all([
+    const [queryRes, linkRes, retentionRes, teamRes, perfRes] = await Promise.all([
       fetchQueryHealthSnapshot(supabase),
       previewOrderInvoiceReconciliation(supabase),
       previewOperationalLogRetention(supabase),
+      fetchTeamInvoiceReconciliationPreview(supabase),
+      fetchPerformanceDaily(supabase, 14),
     ]);
+    // Team/perf berasal dari migration 186 dan masih opsional selama rollout lokal.
+    // Health lama tetap harus tampil ketika migration baru belum diterapkan.
     const error = queryRes.error || linkRes.error || retentionRes.error;
     if (error) {
       setState({
@@ -1124,10 +1132,12 @@ function TabDataHealth({ supabase }) {
         query: queryRes.data || null,
         links: linkRes.data || null,
         retention: retentionRes.data || null,
+        team: teamRes.data || null,
+        perf: perfRes.data || [],
       });
       return;
     }
-    setState({ loading: false, error: "", query: queryRes.data, links: linkRes.data, retention: retentionRes.data });
+    setState({ loading: false, error: "", query: queryRes.data, links: linkRes.data, retention: retentionRes.data, team: teamRes.data, perf: perfRes.data || [] });
   };
 
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1137,6 +1147,24 @@ function TabDataHealth({ supabase }) {
   const retentionTotal = Object.values(retention).reduce((sum, value) => sum + (Number(value) || 0), 0);
   const watchCount = tables.filter(row => row.health !== "OK").length;
   const legacyTeamReports = Number(state.query?.team_invoice_health?.legacy_verified_without_part || 0);
+  const teamGroups = Array.isArray(state.team?.groups) ? state.team.groups : [];
+  const perfRows = Array.isArray(state.perf) ? state.perf : [];
+  const perfSamples = perfRows.reduce((sum, row) => sum + Number(row.samples || 0), 0);
+  const perfAvg = perfSamples > 0
+    ? Math.round(perfRows.reduce((sum, row) => sum + Number(row.duration_sum_ms || 0), 0) / perfSamples)
+    : null;
+  const perfErrors = perfRows.reduce((sum, row) => sum + Number(row.errors || 0), 0);
+
+  const repairSafeLinks = async () => {
+    if (!(state.links?.candidate_count > 0)) return;
+    if (!window.confirm(`Isi ${state.links.candidate_count} link order → invoice yang kosong/putus? Tidak ada data yang dihapus.`)) return;
+    setRepairingLinks(true);
+    const { data, error } = await applyOrderInvoiceReconciliation(supabase);
+    setRepairingLinks(false);
+    if (error) { alert("❌ Rekonsiliasi dibatalkan: " + error.message); return; }
+    alert(`✅ ${Number(data?.repaired_count || 0)} link diperbaiki. Data invoice/laporan tidak dihapus.`);
+    load();
+  };
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
@@ -1144,7 +1172,7 @@ function TabDataHealth({ supabase }) {
         <div>
           <div style={{ color: cs.text, fontWeight: 800 }}>🩺 Data & Query Health</div>
           <div style={{ color: cs.muted, fontSize: 11, marginTop: 3 }}>
-            Hanya observasi dan dry-run. Tidak menghapus log, mengubah invoice, atau membuat index.
+            Default hanya observasi. Perbaikan link aman berjalan hanya setelah konfirmasi eksplisit dan tidak menghapus data.
           </div>
         </div>
         <button onClick={load} disabled={state.loading} style={{ padding: "8px 14px", borderRadius: 8, background: cs.accent + "22", border: `1px solid ${cs.accent}44`, color: cs.accent, cursor: state.loading ? "wait" : "pointer", fontWeight: 700 }}>
@@ -1160,6 +1188,7 @@ function TabDataHealth({ supabase }) {
         <Card label="Link Invoice Bisa Direkonsiliasi" value={state.links?.candidate_count ?? "—"} color={(state.links?.candidate_count || 0) ? cs.yellow : cs.green} />
         <Card label="Log Lewat Retensi" value={state.retention ? retentionTotal : "—"} color={retentionTotal ? cs.yellow : cs.green} />
         <Card label="Laporan Multi-team Legacy" value={legacyTeamReports} color={legacyTeamReports ? cs.yellow : cs.green} />
+        <Card label="Performa 14 Hari" value={perfAvg == null ? "Belum tersampel" : `${perfAvg} ms avg`} color={perfErrors ? cs.yellow : cs.green} />
       </div>
 
       <div style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 12, overflow: "hidden" }}>
@@ -1189,6 +1218,10 @@ function TabDataHealth({ supabase }) {
           <div style={{ color: cs.text, fontWeight: 800, fontSize: 13 }}>🔗 Preview rekonsiliasi order → invoice</div>
           <div style={{ color: cs.muted, fontSize: 11, marginTop: 5, lineHeight: 1.5 }}>Hanya link kosong/putus yang memiliki invoice aktif dan pasangan job yang jelas. Data yatim tidak dihapus.</div>
           <div style={{ color: (state.links?.candidate_count || 0) ? cs.yellow : cs.green, fontWeight: 900, fontSize: 22, marginTop: 10 }}>{state.links?.candidate_count ?? "—"}</div>
+          {(state.links?.candidate_count || 0) > 0 && <button onClick={repairSafeLinks} disabled={repairingLinks}
+            style={{ marginTop: 10, padding: "7px 10px", borderRadius: 8, border: `1px solid ${cs.green}55`, background: cs.green + "18", color: cs.green, cursor: repairingLinks ? "wait" : "pointer", fontWeight: 800, fontSize: 11 }}>
+            {repairingLinks ? "⏳ Memperbaiki…" : "🛠 Perbaiki link aman"}
+          </button>}
         </div>
         <div style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 12, padding: 14 }}>
           <div style={{ color: cs.text, fontWeight: 800, fontSize: 13 }}>🧹 Preview retensi log</div>
@@ -1198,6 +1231,23 @@ function TabDataHealth({ supabase }) {
           ))}</div>
         </div>
       </div>
+
+      {teamGroups.length > 0 && <div style={{ background: cs.card, border: `1px solid ${cs.yellow}55`, borderRadius: 12, padding: 14 }}>
+        <div style={{ color: cs.yellow, fontWeight: 800, fontSize: 13 }}>👥 Review invoice multi-team ({teamGroups.length} grup)</div>
+        <div style={{ color: cs.muted, fontSize: 11, marginTop: 4, lineHeight: 1.5 }}>Nilai historis tidak dibuat otomatis. Buka laporan yang belum memiliki billing part dan verifikasi berdasarkan pekerjaan aktual.</div>
+        <div style={{ display: "grid", gap: 8, marginTop: 10 }}>{teamGroups.map(group => (
+          <details key={group.group_id} style={{ border: `1px solid ${cs.border}`, borderRadius: 9, padding: "8px 10px" }}>
+            <summary style={{ cursor: "pointer", color: cs.text, fontSize: 11, fontWeight: 800 }}>
+              {group.group_id} · {group.verified_count}/{group.team_count} verified · {group.part_count} billing part · {group.invoice_count} invoice
+            </summary>
+            <div style={{ display: "grid", gap: 5, marginTop: 8 }}>{(group.rows || []).map(row => (
+              <div key={`${row.order_id}:${row.report_id || "none"}`} style={{ fontSize: 10, color: cs.muted }}>
+                <b style={{ color: cs.accent }}>{row.order_id}</b> · {row.customer || "-"} · {row.teknisi || "-"} · report {row.report_id || "belum ada"} · {row.has_part ? "✅ part" : "⚠️ tanpa part"}
+              </div>
+            ))}</div>
+          </details>
+        ))}</div>
+      </div>}
 
       <div style={{ color: cs.muted, fontSize: 10 }}>{state.query?.recommendation || "Tambahkan index hanya berdasarkan bukti pola query lambat yang konsisten."}</div>
       {legacyTeamReports > 0 && <div style={{ color: cs.yellow, fontSize: 11, lineHeight: 1.5 }}>

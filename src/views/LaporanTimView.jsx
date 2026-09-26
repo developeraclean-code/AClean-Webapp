@@ -137,11 +137,160 @@ function SurveyKirimModal({ r, onClose, sendWA, showNotif, addAgentLog, auditUse
   );
 }
 
+// Link manual dari report adalah jalur koreksi data lama: order sudah ada, tetapi
+// belum memiliki maintenance_client_id. Setelah link berhasil, report VERIFIED
+// dicoba dicatat ke history maintenance agar koreksi selesai dari satu tempat.
+function MaintenanceJobLinkModal({ report, order, apiFetch, onClose, onLinked, showNotif, createdBy }) {
+  const [clients, setClients] = useState([]);
+  const [selectedClientId, setSelectedClientId] = useState(order?.maintenance_client_id || "");
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [existingClientId, setExistingClientId] = useState(order?.maintenance_client_id || "");
+  const [allowRelink, setAllowRelink] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const [clientsResp, statusResp] = await Promise.all([
+          apiFetch("/api/maintenance", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "list-clients" }),
+          }),
+          apiFetch("/api/maintenance", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "order-link-status", order_id: order.id }),
+          }),
+        ]);
+        const body = await clientsResp.json().catch(() => ({}));
+        const statusBody = await statusResp.json().catch(() => ({}));
+        if (!clientsResp.ok) throw new Error(body.error || "Gagal memuat customer maintenance");
+        if (!statusResp.ok) throw new Error(statusBody.error || "Gagal memeriksa link job");
+        if (alive) {
+          const currentLink = statusBody.order?.maintenance_client_id || "";
+          setClients(Array.isArray(body.clients) ? body.clients : []);
+          setExistingClientId(currentLink);
+          if (currentLink) setSelectedClientId(currentLink);
+        }
+      } catch (e) {
+        if (alive) setError(e.message || "Gagal memuat customer maintenance");
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+    // apiFetch dibuat ulang oleh App pada setiap render, tetapi modal cukup fetch
+    // sekali saat dibuka. Dependensi sengaja kosong untuk mencegah request berulang.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const filteredClients = clients.filter(c => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return [c.name, c.pic_name, c.pic_phone, c.address].filter(Boolean).join(" ").toLowerCase().includes(q);
+  });
+
+  const linkJob = async () => {
+    if (!selectedClientId) { setError("Pilih customer maintenance terlebih dahulu."); return; }
+    if (existingClientId && existingClientId !== selectedClientId && !allowRelink) {
+      setError("Job sudah terhubung ke perusahaan lain. Centang konfirmasi relink terlebih dahulu.");
+      return;
+    }
+    setSaving(true); setError("");
+    try {
+      const resp = await apiFetch("/api/maintenance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "link-order", order_id: order.id, client_id: selectedClientId,
+          force_relink: allowRelink, created_by: createdBy || "report-link",
+        }),
+      });
+      const body = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(body.error || "Gagal menautkan job");
+
+      const client = clients.find(c => c.id === selectedClientId);
+      // Report yang belum verified belum boleh masuk history; autolog akan berjalan
+      // normal saat report nanti diverifikasi.
+      if (String(report?.status || "").toUpperCase() === "VERIFIED") {
+        const logResp = await apiFetch("/api/maintenance", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "autolog-from-order", order_id: order.id, created_by: createdBy || "report-link" }),
+        });
+        const autoLog = await logResp.json().catch(() => ({}));
+        if (autoLog.needs_unit_selection) {
+          showNotif("⚠️ Job sudah tertaut, tetapi unit maintenance belum dipilih sehingga history belum tercatat.");
+        }
+      }
+      if (body.warning) showNotif("⚠️ " + body.warning);
+      onLinked?.(body.order || { ...order, maintenance_client_id: selectedClientId }, client, body);
+      showNotif(`✅ Job ${order.id} ditautkan ke ${client?.name || "customer maintenance"}${body.invoice_linked ? ` · ${body.invoice_linked} invoice ikut tersinkron` : ""}`);
+      onClose();
+    } catch (e) {
+      setError(e.message || "Gagal menautkan job");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
+      <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 16, width: "100%", maxWidth: 560, maxHeight: "90vh", overflowY: "auto", padding: 22 }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 16 }}>
+          <div>
+            <div style={{ fontWeight: 800, fontSize: 16, color: cs.text }}>🔗 Tautkan ke Customer Maintenance</div>
+            <div style={{ fontSize: 12, color: cs.muted, marginTop: 3 }}>{order.id} · {report?.customer || order.customer}</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>×</button>
+        </div>
+        <div style={{ background: cs.yellow + "12", border: "1px solid " + cs.yellow + "33", borderRadius: 9, padding: "9px 11px", color: cs.yellow, fontSize: 11, lineHeight: 1.5, marginBottom: 12 }}>
+          Pilih perusahaan/site yang benar. Link ini akan mengisi <b>maintenance_client_id</b> pada job; invoice yang sudah ada juga ikut disinkronkan.
+        </div>
+        {existingClientId && (
+          <div style={{ background: cs.green + "12", border: "1px solid " + cs.green + "33", borderRadius: 9, padding: "9px 11px", color: cs.green, fontSize: 11, lineHeight: 1.5, marginBottom: 12 }}>
+            Link database saat ini: <b>{clients.find(c => c.id === existingClientId)?.name || existingClientId}</b>.
+            {selectedClientId !== existingClientId && (
+              <label style={{ display: "flex", gap: 7, alignItems: "center", color: cs.yellow, marginTop: 8, cursor: "pointer" }}>
+                <input type="checkbox" checked={allowRelink} onChange={e => setAllowRelink(e.target.checked)} />
+                Saya memahami ini akan memindahkan link job dan invoice ke perusahaan yang dipilih.
+              </label>
+            )}
+          </div>
+        )}
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari nama perusahaan, PIC, nomor, atau alamat…"
+          style={{ width: "100%", boxSizing: "border-box", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 11px", color: cs.text, fontSize: 12, outline: "none", marginBottom: 10 }} />
+        {error && <div style={{ color: cs.red, fontSize: 11, marginBottom: 10 }}>⚠️ {error}</div>}
+        {loading ? <div style={{ color: cs.muted, fontSize: 12, padding: 14, textAlign: "center" }}>⏳ Memuat customer maintenance…</div> :
+          filteredClients.length === 0 ? <div style={{ color: cs.muted, fontSize: 12, padding: 14, textAlign: "center" }}>Tidak ada customer maintenance yang cocok.</div> :
+            <div style={{ display: "grid", gap: 6, maxHeight: 360, overflowY: "auto" }}>
+              {filteredClients.map(c => (
+                <button key={c.id} type="button" onClick={() => setSelectedClientId(c.id)}
+                  style={{ textAlign: "left", background: selectedClientId === c.id ? cs.accent + "18" : cs.card, border: "1px solid " + (selectedClientId === c.id ? cs.accent : cs.border), borderRadius: 9, padding: "9px 11px", color: cs.text, cursor: "pointer" }}>
+                  <div style={{ fontSize: 12, fontWeight: 800 }}>{c.name}</div>
+                  <div style={{ color: cs.muted, fontSize: 10, marginTop: 3 }}>{[c.pic_name, c.pic_phone, c.address].filter(Boolean).join(" · ") || "Detail customer belum diisi"}</div>
+                </button>
+              ))}
+            </div>}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 16 }}>
+          <button onClick={onClose} style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: 10, borderRadius: 9, cursor: "pointer", fontWeight: 700 }}>Batal</button>
+          <button onClick={linkJob} disabled={saving || loading || !selectedClientId} style={{ background: cs.accent, border: "none", color: "#fff", padding: 10, borderRadius: 9, cursor: saving || loading || !selectedClientId ? "not-allowed" : "pointer", fontWeight: 800, opacity: saving || loading || !selectedClientId ? .6 : 1 }}>
+            {saving ? "⏳ Menautkan…" : "🔗 Tautkan Job"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LaporanTimView({ laporanReports, setLaporanReports, ordersData, setOrdersData, invoicesData, setInvoicesData, priceListData, currentUser, isMobile, laporanDateFilter, setLaporanDateFilter, laporanDateFrom, setLaporanDateFrom, laporanDateTo, setLaporanDateTo, laporanSvcFilter, setLaporanSvcFilter, laporanStatusFilter, setLaporanStatusFilter, laporanTeamFilter, setLaporanTeamFilter, searchLaporan, setSearchLaporan, searchLoading, laporanPage, setLaporanPage, userAccounts, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setEditStockMats, setLaporanInstallItems, setActiveMenu, safeArr, fotoSrc, showConfirm, showNotif, addAgentLog, auditUserName, getLocalDate, fmt, updateServiceReport, deleteServiceReport, insertInvoice, deleteInvoice, updateOrder, updateOrderStatus, markInvoicePaid, lookupHargaGlobal, hargaPerUnitFromTipe, getBracketKey, hitungLabor, isServiceBesarPekerjaan, sendWA, supabase, LAP_PAGE_SIZE, INSTALL_ITEMS, downloadServiceReportPDF, setInvTxData, setInventoryData, updateCustomerTierAfterOrder, customersData, setCustomersData, apiFetch }) {
 const _todayLap = getLocalDate?.() || new Date().toISOString().slice(0, 10);
 const [lapViewMode, setLapViewMode] = useState("detail"); // "rekap" | "detail" — default detail
 const [rekapDate, setRekapDate]     = useState(_todayLap);
 const [surveyKirimModal, setSurveyKirimModal] = useState(null);
+const [maintenanceLinkReport, setMaintenanceLinkReport] = useState(null);
 // Hanya satu galeri foto aktif. Selama tertutup tidak ada elemen <img>, sehingga
 // browser sama sekali belum meminta file foto ke R2/proxy.
 const [expandedPhotoReportId, setExpandedPhotoReportId] = useState(null);
@@ -1172,6 +1321,12 @@ return (
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", flex: 1, minWidth: 0 }}>
               <span style={{ fontFamily: "monospace", fontWeight: 700, color: cs.accent, fontSize: 13 }}>{r.job_id}</span>
               {badge(r.status)}
+              {(() => {
+                const linkedOrder = ordersData.find(o => o.id === r.job_id);
+                return linkedOrder?.maintenance_client_id ? (
+                  <span style={{ fontSize: 10, color: cs.green, background: cs.green + "15", padding: "2px 7px", borderRadius: 99, border: "1px solid " + cs.green + "33", whiteSpace: "nowrap" }}>🏢 Maintenance</span>
+                ) : null;
+              })()}
               {safeArr(r.editLog).length > 0 && (
                 <span style={{ fontSize: 9, color: cs.yellow, background: cs.yellow + "15", padding: "2px 6px", borderRadius: 99, border: "1px solid " + cs.yellow + "33", whiteSpace: "nowrap" }}>
                   ✏️ {safeArr(r.editLog).length}x
@@ -1402,6 +1557,20 @@ return (
 
           {/* Actions */}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            {(() => {
+              const linkedOrder = ordersData.find(o => o.id === r.job_id);
+              // Report lama bisa tetap tampil walau order sudah berada di luar
+              // window ordersData. Gunakan data minimal report sebagai fallback;
+              // endpoint tetap memvalidasi job_id di server.
+              const reportOrder = linkedOrder || { id: r.job_id, customer: r.customer, phone: r.phone, address: r.address, service: r.service };
+              const canLink = (currentUser?.role === "Owner" || currentUser?.role === "Admin") && r.job_id && !linkedOrder?.maintenance_client_id;
+              return canLink ? (
+                <button onClick={() => setMaintenanceLinkReport({ report: r, order: reportOrder })}
+                  style={{ background: cs.yellow + "22", border: "1px solid " + cs.yellow + "44", color: cs.yellow, padding: "8px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+                  🔗 Link Maintenance
+                </button>
+              ) : null;
+            })()}
             {r.status === "SUBMITTED" && (<>
               {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && r.service !== "Survey" && (() => {
                 const est = buildVerifyInvoice(r, ordersData.find(o => o.id === r.job_id));
@@ -1604,6 +1773,28 @@ return (
       fotoSrc={fotoSrc}
       downloadServiceReportPDF={downloadServiceReportPDF}
       invoicesData={invoicesData}
+    />
+  )}
+  {maintenanceLinkReport && (
+    <MaintenanceJobLinkModal
+      report={maintenanceLinkReport.report}
+      order={maintenanceLinkReport.order}
+      apiFetch={apiFetch}
+      showNotif={showNotif}
+      createdBy={auditUserName()}
+      onClose={() => setMaintenanceLinkReport(null)}
+      onLinked={(updatedOrder, _client, body) => {
+        setOrdersData(prev => prev.some(o => o.id === updatedOrder.id)
+          ? prev.map(o => o.id === updatedOrder.id ? { ...o, ...updatedOrder } : o)
+          : [...prev, updatedOrder]);
+        if (body?.invoice_linked) {
+          setInvoicesData(prev => prev.map(inv => (
+            inv.job_id === updatedOrder.id
+            || (updatedOrder.is_team_split && updatedOrder.job_group_id && inv.job_id === updatedOrder.job_group_id)
+          ) ? { ...inv, maintenance_client_id: updatedOrder.maintenance_client_id } : inv));
+        }
+        addAgentLog("MAINTENANCE_MANUAL_LINK", `Job ${updatedOrder.id} ditautkan dari Laporan Tim`, "SUCCESS");
+      }}
     />
   )}
   </>
