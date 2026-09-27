@@ -1,44 +1,72 @@
-import { memo, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { cs } from "../theme/cs.js";
 import AbsenBanner from "./AbsenBanner.jsx";
 import KasbonWidget from "./KasbonWidget.jsx";
 import ExpenseInputWidget from "./ExpenseInputWidget.jsx";
-import { findDelayedFieldReports } from "../lib/fieldReportWorkflow.js";
+import { findDelayedFieldReports, isFieldOrderAssigned } from "../lib/fieldReportWorkflow.js";
+import { normalizePhone, samePhone } from "../lib/phone.js";
+import { ORDER_DONE_STATUSES } from "../constants/status.js";
+import { enqueueFieldStatus } from "../lib/fieldOfflineQueue.js";
+import { buildFieldReminders, claimFieldReminder } from "../lib/fieldReminders.js";
+import { captureOptionalCheckin } from "../lib/fieldCheckin.js";
 
 const STATUS_CONFIG = {
   PENDING:    { label: "Pending",    color: "#94a3b8", bg: "#94a3b822" },
   CONFIRMED:  { label: "Confirmed",  color: "#60a5fa", bg: "#60a5fa22" },
   DISPATCHED: { label: "Berangkat",  color: "#f59e0b", bg: "#f59e0b22" },
   IN_PROGRESS:{ label: "Dikerjakan", color: "#a78bfa", bg: "#a78bfa22" },
+  WORKING:    { label: "Dikerjakan", color: "#a78bfa", bg: "#a78bfa22" },
   ON_SITE:    { label: "Di Lokasi",  color: "#34d399", bg: "#34d39922" },
   COMPLETED:  { label: "Selesai",    color: "#10b981", bg: "#10b98122" },
   REPORT_SUBMITTED: { label: "Laporan Masuk", color: "#10b981", bg: "#10b98122" },
+  INVOICE_CREATED: { label: "Invoice Dibuat", color: "#10b981", bg: "#10b98122" },
+  INVOICE_APPROVED: { label: "Invoice Dikirim", color: "#10b981", bg: "#10b98122" },
+  PAID: { label: "Lunas", color: "#10b981", bg: "#10b98122" },
+  CONTINUED: { label: "Lanjut Hari Berikut", color: "#f59e0b", bg: "#f59e0b22" },
 };
 
-function TechMobileView({ currentUser, ordersData, laporanReports, TODAY, openLaporanModal, openJobReport, materialsBroughtMap, updateOrderStatus, supabase, sendWA, auditUserName, showNotif, setActiveMenu, apiHeaders, kasbonProps, expenseProps, customersData, setHistoryPreview }) {
+function TechMobileView({ currentUser, ordersData, setOrdersData, laporanReports, TODAY, openLaporanModal, openJobReport, materialsBroughtMap, updateOrderStatus, supabase, auditUserName, showNotif, setActiveMenu, apiHeaders, kasbonProps, expenseProps, customersData, setHistoryPreview, onFieldQueued }) {
   const myName = currentUser?.name || "";
   const [updating, setUpdating] = useState(null); // order.id sedang diupdate
   const [showAllJobs, setShowAllJobs] = useState(false);
+  const [isOnline, setIsOnline] = useState(() => typeof navigator === "undefined" || navigator.onLine);
+  const statusLocks = useRef(new Set());
+
+  useEffect(() => {
+    const sync = () => setIsOnline(navigator.onLine);
+    window.addEventListener("online", sync);
+    window.addEventListener("offline", sync);
+    return () => { window.removeEventListener("online", sync); window.removeEventListener("offline", sync); };
+  }, []);
+
+  // Reminder lokal: tidak memakai cron/server quota. Satu reminder dikirim satu
+  // kali per job per hari selama aplikasi terbuka dan izin notifikasi tersedia.
+  useEffect(() => {
+    const check = () => {
+      const due = buildFieldReminders({
+        orders: ordersData, reports: laporanReports, employeeName: myName,
+        today: TODAY, now: new Date(), materialsBroughtMap,
+      });
+      const next = due.find(reminder => claimFieldReminder(reminder));
+      if (next) showNotif?.(next.message, true);
+    };
+    check();
+    const timer = setInterval(check, 60_000);
+    return () => clearInterval(timer);
+  }, [TODAY, laporanReports, materialsBroughtMap, myName, ordersData, showNotif]);
 
   // Filter: order hari ini milik teknisi/helper ini
   const todayOrders = ordersData.filter(o => {
     if (o.date !== TODAY) return false;
-    if (["CANCELLED", "INVOICE_APPROVED"].includes(o.status)) return false;
-    return (
-      (o.teknisi || "").toLowerCase() === myName.toLowerCase() ||
-      (o.helper || "").toLowerCase() === myName.toLowerCase() ||
-      (o.teknisi2 || "").toLowerCase() === myName.toLowerCase() ||
-      (o.helper2 || "").toLowerCase() === myName.toLowerCase() ||
-      (o.teknisi3 || "").toLowerCase() === myName.toLowerCase() ||
-      (o.helper3 || "").toLowerCase() === myName.toLowerCase()
-    );
+    if (["CANCELLED", "RESCHEDULED"].includes(o.status)) return false;
+    return isFieldOrderAssigned(o, myName);
   }).sort((a, b) => (a.time || "").localeCompare(b.time || ""));
 
   // Stats hari ini
-  const countDone      = todayOrders.filter(o => ["COMPLETED", "REPORT_SUBMITTED"].includes(o.status)).length;
-  const countOnSite    = todayOrders.filter(o => o.status === "ON_SITE").length;
+  const countDone      = todayOrders.filter(o => ORDER_DONE_STATUSES.includes(o.status)).length;
+  const countOnSite    = todayOrders.filter(o => ["ON_SITE", "WORKING"].includes(o.status)).length;
   const countActive    = todayOrders.filter(o => ["PENDING","CONFIRMED","DISPATCHED","IN_PROGRESS"].includes(o.status)).length;
-  const focusPriority = { ON_SITE: 0, IN_PROGRESS: 1, DISPATCHED: 2, CONFIRMED: 3, PENDING: 4 };
+  const focusPriority = { WORKING: 0, ON_SITE: 1, IN_PROGRESS: 2, DISPATCHED: 3, CONFIRMED: 4, PENDING: 5 };
   const focusedOrder = [...todayOrders]
     .filter(order => Object.hasOwn(focusPriority, order.status))
     .sort((a, b) => (focusPriority[a.status] ?? 9) - (focusPriority[b.status] ?? 9) || (a.time || "").localeCompare(b.time || ""))[0] || null;
@@ -46,26 +74,45 @@ function TechMobileView({ currentUser, ordersData, laporanReports, TODAY, openLa
   const hiddenJobCount = Math.max(0, todayOrders.length - displayedOrders.length);
   const delayedReports = findDelayedFieldReports(ordersData, laporanReports, myName, TODAY);
 
-  const handleStatus = async (order, newStatus, notifMsg) => {
+  const handleStatus = async (order, newStatus, notifMsg, extraFactory = null) => {
+    if (statusLocks.current.has(order.id)) return;
+    statusLocks.current.add(order.id);
     setUpdating(order.id);
     try {
-      await updateOrderStatus(supabase, order.id, newStatus, auditUserName?.() || myName, {});
-      showNotif?.("✅ " + notifMsg);
+      const extra = typeof extraFactory === "function" ? await extraFactory() : {};
+      const actorName = auditUserName?.() || myName;
+      if (!isOnline) {
+        await enqueueFieldStatus({ orderId: order.id, status: newStatus, extra, actorName });
+        setOrdersData?.(prev => prev.map(row => row.id === order.id ? { ...row, status: newStatus, ...extra, _pendingFieldSync: true } : row));
+        onFieldQueued?.();
+        showNotif?.("📡 " + notifMsg + " disimpan offline dan akan disinkronkan otomatis.");
+        return;
+      }
+      const { data, error, locationSkipped } = await updateOrderStatus(supabase, order.id, newStatus, actorName, extra);
+      if (error) throw error;
+      if (!data?.id) throw new Error("Order tidak berubah atau akses ditolak");
+      setOrdersData?.(prev => prev.map(row => row.id === order.id ? { ...row, status: newStatus } : row));
+      showNotif?.("✅ " + notifMsg + (locationSkipped ? " (lokasi belum tersimpan; skema sedang diperbarui)" : ""));
     } catch (e) {
-      showNotif?.("❌ Gagal update status", "error");
+      console.error("[TECH_STATUS]", e);
+      showNotif?.("❌ Gagal update status: " + (e?.message || "coba lagi"), "error");
     } finally {
+      statusLocks.current.delete(order.id);
       setUpdating(null);
     }
   };
 
+  const captureArrival = () => captureOptionalCheckin();
+
   const openMaps = (address) => {
+    if (!String(address || "").trim()) { showNotif?.("⚠️ Alamat job belum tersedia", "error"); return; }
     const q = encodeURIComponent(address || "");
     window.open(`https://www.google.com/maps/search/?api=1&query=${q}`, "_blank");
   };
 
   const openWACustomer = (phone) => {
-    if (!phone) return;
-    const num = phone.replace(/\D/g, "").replace(/^0/, "62");
+    const num = normalizePhone(phone);
+    if (num.length < 8) { showNotif?.("⚠️ Nomor WhatsApp customer belum valid", "error"); return; }
     window.open(`https://wa.me/${num}`, "_blank");
   };
 
@@ -73,7 +120,10 @@ function TechMobileView({ currentUser, ordersData, laporanReports, TODAY, openLa
   // via setHistoryPreview di App). Cari baris customer utk match akurat (customer_id),
   // fallback objek minimal dari order.
   const openHistory = (order) => {
-    const cu = (customersData || []).find(c => c.phone === order.phone);
+    const orderName = String(order.customer || "").trim().toLowerCase();
+    const cu = (customersData || []).find(c => order.customer_id && c.id === order.customer_id)
+      || (customersData || []).find(c => samePhone(c.phone, order.phone))
+      || (customersData || []).find(c => String(c.name || "").trim().toLowerCase() === orderName);
     setHistoryPreview?.(cu || { name: order.customer, phone: order.phone, address: order.address });
   };
 
@@ -102,6 +152,12 @@ function TechMobileView({ currentUser, ordersData, laporanReports, TODAY, openLa
         </div>
       </div>
 
+      {!isOnline && (
+        <div role="alert" style={{ background: "#ef444418", border: "1px solid #ef444466", color: "#fca5a5", borderRadius: 11, padding: "10px 13px", fontSize: 12, fontWeight: 700 }}>
+          📵 Offline — draft teks tetap tersimpan di perangkat, tetapi status dan foto baru dikirim setelah koneksi kembali.
+        </div>
+      )}
+
       {/* Absen mandiri — Teknisi & Helper */}
       <AbsenBanner currentUser={currentUser} supabase={supabase} TODAY={TODAY} showNotif={showNotif} apiHeaders={apiHeaders} />
 
@@ -114,7 +170,7 @@ function TechMobileView({ currentUser, ordersData, laporanReports, TODAY, openLa
       {/* Stats Bar */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
         {[
-          { label: "Belum Mulai", val: countActive, color: cs.accent },
+          { label: "Belum / Menuju", val: countActive, color: cs.accent },
           { label: "Di Lokasi",   val: countOnSite, color: "#34d399" },
           { label: "Selesai",     val: countDone,   color: cs.green },
         ].map(s => (
@@ -140,7 +196,7 @@ function TechMobileView({ currentUser, ordersData, laporanReports, TODAY, openLa
         <div style={{ background: cs.accent + "12", border: "1px solid " + cs.accent + "44", borderRadius: 12, padding: "10px 13px" }}>
           <div style={{ fontSize: 10, color: cs.accent, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".06em" }}>Fokus sekarang · satu aksi berikutnya</div>
           <div style={{ fontSize: 13, color: cs.text, fontWeight: 700, marginTop: 3 }}>
-            {focusedOrder.status === "ON_SITE" ? "Isi laporan pekerjaan" : ["DISPATCHED", "IN_PROGRESS"].includes(focusedOrder.status) ? "Konfirmasi tiba di lokasi" : "Konfirmasi berangkat"} — {focusedOrder.customer}
+            {["ON_SITE", "WORKING"].includes(focusedOrder.status) ? "Isi laporan pekerjaan" : ["DISPATCHED", "IN_PROGRESS"].includes(focusedOrder.status) ? "Konfirmasi tiba di lokasi" : "Konfirmasi berangkat"} — {focusedOrder.customer}
           </div>
         </div>
       )}
@@ -160,8 +216,10 @@ function TechMobileView({ currentUser, ordersData, laporanReports, TODAY, openLa
         displayedOrders.map(order => {
           const st = STATUS_CONFIG[order.status] || STATUS_CONFIG.PENDING;
           const isUpdating = updating === order.id;
-          const isCompleted = ["COMPLETED", "REPORT_SUBMITTED"].includes(order.status);
-          const isOnSite = order.status === "ON_SITE";
+          const isCompleted = ORDER_DONE_STATUSES.includes(order.status);
+          const isContinued = order.status === "CONTINUED";
+          const isClosedForToday = isCompleted || isContinued;
+          const isOnSite = order.status === "ON_SITE" || order.status === "WORKING";
           const isDispatched = order.status === "DISPATCHED" || order.status === "IN_PROGRESS";
           const isPending = order.status === "PENDING" || order.status === "CONFIRMED";
           const bCount = (materialsBroughtMap || {})[order.id] || 0;
@@ -175,7 +233,7 @@ function TechMobileView({ currentUser, ordersData, laporanReports, TODAY, openLa
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
                   <div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
-                      <span style={{ fontSize: 16, fontWeight: 800, color: cs.accent }}>{order.time || "--:--"}</span>
+                      <span style={{ fontSize: 16, fontWeight: 800, color: cs.accent }}>{order.time || "--:--"}{order.time_end ? `–${order.time_end}` : ""}</span>
                       <span style={{ fontSize: 10, color: cs.muted, fontFamily: "monospace" }}>{order.id}</span>
                     </div>
                     <div style={{ fontWeight: 700, fontSize: 15, color: cs.text }}>{order.customer}</div>
@@ -222,11 +280,16 @@ function TechMobileView({ currentUser, ordersData, laporanReports, TODAY, openLa
                 )}
                 {isDispatched && (
                   <button
-                    onClick={() => handleStatus(order, "ON_SITE", "Konfirmasi tiba di lokasi")}
+                    onClick={() => handleStatus(order, "ON_SITE", "Konfirmasi tiba di lokasi", captureArrival)}
                     disabled={isUpdating}
                     style={{ width: "100%", background: "#34d399", border: "none", color: "#0a0f1e", borderRadius: 12, padding: "13px", fontSize: 14, fontWeight: 800, cursor: "pointer", opacity: isUpdating ? 0.6 : 1 }}>
                     {isUpdating ? "⏳ Memproses..." : "✅ Konfirmasi Tiba di Lokasi"}
                   </button>
+                )}
+                {isDispatched && (
+                  <div style={{ fontSize: 10, color: cs.muted, textAlign: "center", marginTop: -3 }}>
+                    Lokasi hanya diminta sekali saat tombol Tiba ditekan dan boleh ditolak.
+                  </div>
                 )}
                 {isOnSite && (
                   <button
@@ -238,6 +301,11 @@ function TechMobileView({ currentUser, ordersData, laporanReports, TODAY, openLa
                 {isCompleted && (
                   <div style={{ background: cs.green + "15", border: "1px solid " + cs.green + "33", borderRadius: 10, padding: "10px 14px", textAlign: "center", fontSize: 12, color: cs.green, fontWeight: 600 }}>
                     ✅ Pekerjaan Selesai
+                  </div>
+                )}
+                {isContinued && (
+                  <div style={{ background: "#f59e0b15", border: "1px solid #f59e0b44", borderRadius: 10, padding: "10px 14px", textAlign: "center", fontSize: 12, color: "#f59e0b", fontWeight: 600 }}>
+                    ↪️ Pekerjaan dilanjutkan pada jadwal berikutnya
                   </div>
                 )}
 
@@ -253,7 +321,7 @@ function TechMobileView({ currentUser, ordersData, laporanReports, TODAY, openLa
                       📋 History
                     </button>
                   </div>
-                  {!isCompleted && (
+                  {!isClosedForToday && (
                     <button onClick={() => (openJobReport || openLaporanModal)(order)}
                       style={{ width: "100%", background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, borderRadius: 10, padding: "10px", fontSize: 12, cursor: "pointer", fontWeight: 600, position: "relative" }}>
                       📝 Laporan & Material

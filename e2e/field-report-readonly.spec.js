@@ -5,12 +5,14 @@ const hasTeknisi = Boolean(process.env.E2E_TEKNISI_EMAIL && process.env.E2E_TEKN
 
 test.describe("Alur lapangan cepat — read only", () => {
   test.skip(!hasTeknisi, "Set E2E_TEKNISI_EMAIL & E2E_TEKNISI_PASSWORD");
+  test.use({ viewport: { width: 390, height: 844 }, isMobile: true });
 
   test("dashboard teknisi dan draft laporan tidak memicu page error", async ({ page }) => {
     const errors = [];
     page.on("pageerror", error => errors.push(error.message));
     await loginAs(page, "teknisi");
     await expect(page.locator("body")).toContainText(/Selamat datang|Dashboard/i, { timeout: 15000 });
+    await expect(page.locator("body")).toContainText(/Material Harian|Tidak ada job hari ini|Fokus sekarang/i);
 
     const reportButton = page.getByRole("button", { name: /Laporan & Material|Isi Laporan Pekerjaan|Isi laporan tertua/i }).first();
     if (await reportButton.count()) {

@@ -23,8 +23,24 @@ export const updateOrderWorkflowAtomic = (supabase, id, fields, userName, mutati
     p_mutation_key: mutationKey || null,
   });
 
-export const updateOrderStatus = (supabase, id, status, userName, extra = {}) =>
-  supabase.from("orders").update({ status, ...extra, last_changed_by: userName }).eq("id", id);
+export const updateOrderStatus = async (supabase, id, status, userName, extra = {}) => {
+  let result = await supabase.from("orders").update({ status, ...extra, last_changed_by: userName })
+    .eq("id", id).select("id,status").maybeSingle();
+  const hasOptionalLocation = Object.keys(extra).some(key => key.startsWith("on_site_location_")
+    || ["on_site_latitude", "on_site_longitude", "on_site_accuracy_m"].includes(key));
+  const missingLocationColumn = result.error && hasOptionalLocation
+    && ["42703", "PGRST204"].includes(result.error.code);
+  if (missingLocationColumn) {
+    const safeExtra = Object.fromEntries(Object.entries(extra).filter(([key]) => !(
+      key.startsWith("on_site_location_")
+      || ["on_site_latitude", "on_site_longitude", "on_site_accuracy_m"].includes(key)
+    )));
+    result = await supabase.from("orders").update({ status, ...safeExtra, last_changed_by: userName })
+      .eq("id", id).select("id,status").maybeSingle();
+    return { ...result, locationSkipped: !result.error };
+  }
+  return result;
+};
 
 export const deleteOrder = async (supabase, id, userName) => {
   await supabase.from("orders").update({ last_changed_by: userName }).eq("id", id);

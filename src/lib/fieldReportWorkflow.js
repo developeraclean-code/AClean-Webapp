@@ -2,6 +2,17 @@ const DRAFT_PREFIX = "aclean:field-report:draft:v1:";
 const SESSION_PREFIX = "aclean:field-report:session:v1:";
 const DRAFT_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
+const FIELD_MEMBER_KEYS = ["teknisi", "helper", "teknisi2", "helper2", "teknisi3", "helper3"];
+const PRE_REPORT_STATUSES = new Set([
+  "PENDING", "CONFIRMED", "DISPATCHED", "ON_SITE", "WORKING", "IN_PROGRESS", "COMPLETED",
+]);
+
+export function isFieldOrderAssigned(order, employeeName) {
+  const name = String(employeeName || "").trim().toLowerCase();
+  if (!name) return false;
+  return FIELD_MEMBER_KEYS.some(key => String(order?.[key] || "").trim().toLowerCase() === name);
+}
+
 const storage = (kind = "local") => {
   if (typeof window === "undefined") return null;
   try { return kind === "session" ? window.sessionStorage : window.localStorage; }
@@ -43,6 +54,13 @@ export function saveFieldReportDraft(jobId, data) {
     store.setItem(DRAFT_PREFIX + jobId, JSON.stringify({ ...data, photos, savedAt: Date.now() }));
     return true;
   } catch { return false; }
+}
+
+export function mergeFieldReportDraftPhoto(jobId, photo) {
+  if (!jobId || !photo?.url) return false;
+  const current = loadFieldReportDraft(jobId) || {};
+  const photos = [...(current.photos || []).filter(item => item.hash !== photo.hash), photo];
+  return saveFieldReportDraft(jobId, { ...current, photos });
 }
 
 export function clearFieldReportDraft(jobId) {
@@ -92,9 +110,11 @@ export async function uploadWithRetry(upload, {
   attempts = 3, delays = [500, 1400], shouldRetry = () => true,
 } = {}) {
   let lastError;
+  let lastResult;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       const result = await upload(attempt);
+      lastResult = result;
       if (result?.success) return { ...result, attempts: attempt };
       lastError = new Error(result?.error || "Upload gagal");
       if (!shouldRetry(result, lastError) || attempt === attempts) break;
@@ -105,16 +125,18 @@ export async function uploadWithRetry(upload, {
     const delay = delays[Math.min(attempt - 1, delays.length - 1)] || 0;
     if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
   }
-  return { success: false, error: lastError?.message || "Upload gagal", attempts };
+  return { success: false, error: lastError?.message || "Upload gagal", attempts, status: lastResult?.status };
 }
 
 export function findDelayedFieldReports(orders, reports, employeeName, today) {
-  const name = (employeeName || "").toLowerCase();
-  const reported = new Set((reports || []).filter(r => r?.status !== "REJECTED").map(r => r.job_id));
+  const reported = new Set((reports || [])
+    .filter(r => r?.status !== "REJECTED" && r?.status !== "PENDING")
+    .flatMap(r => [r.job_id, r.order_id].filter(Boolean)));
   return (orders || []).filter(order => {
-    const assigned = [order.teknisi, order.helper, order.teknisi2, order.helper2, order.teknisi3, order.helper3]
-      .some(person => (person || "").toLowerCase() === name);
+    const assigned = isFieldOrderAssigned(order, employeeName);
     const due = order.date < today || ["COMPLETED", "REPORT_SUBMITTED"].includes(order.status);
-    return assigned && due && !["CANCELLED", "INVOICE_APPROVED"].includes(order.status) && !reported.has(order.id);
+    // Status invoice/paid menandakan workflow laporan sudah lewat. Jangan menuduh
+    // laporan tertunda hanya karena dataset laporan di bootstrap sedang dipaginasi.
+    return assigned && due && PRE_REPORT_STATUSES.has(order.status) && !reported.has(order.id);
   }).sort((a, b) => `${a.date} ${a.time || ""}`.localeCompare(`${b.date} ${b.time || ""}`));
 }

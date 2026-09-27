@@ -89,7 +89,10 @@ import { createTeamSplit as createTeamSplitLib } from "./lib/createTeamSplit.js"
 import { sendDispatchWA as sendDispatchWALib } from "./lib/dispatchWa.js";
 import { uploadMergedInvoicePDFForWA as uploadMergedInvoicePDFForWALib } from "./lib/mergedInvoicePdf.js";
 import { openLaporanModal as openLaporanModalLib } from "./lib/openLaporanModal.js";
-import { finishFieldReportSession } from "./lib/fieldReportWorkflow.js";
+import { finishFieldReportSession, mergeFieldReportDraftPhoto } from "./lib/fieldReportWorkflow.js";
+import {
+  clearQueuedFieldPhotos, flushFieldQueue, listFieldActions,
+} from "./lib/fieldOfflineQueue.js";
 const DeletedAuditView = lazy(() => import("./views/DeletedAuditView.jsx"));
 const MonitoringView = lazy(() => import("./views/MonitoringView.jsx"));
 const WaGroupMonitorView = lazy(() => import("./views/WaGroupMonitorView.jsx"));
@@ -1028,6 +1031,99 @@ export default function ACleanWebApp() {
   // BAP offline queue — count untuk indikator, auto-sync periodic & on online
   const [pendingBAPCount, setPendingBAPCount] = useState(0);
   const [bapSyncing, setBapSyncing] = useState(false);
+  const [pendingFieldCount, setPendingFieldCount] = useState(0);
+  const [fieldSyncing, setFieldSyncing] = useState(false);
+  const fieldSyncLock = useRef(false);
+
+  const refreshFieldQueueCount = useCallback(() => {
+    listFieldActions().then(rows => {
+      setPendingFieldCount(rows.length);
+      const latestStatus = new Map();
+      rows.filter(row => row.type === "status")
+        .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+        .forEach(row => latestStatus.set(row.orderId, row));
+      if (latestStatus.size > 0) {
+        setOrdersData(prev => {
+          let changed = false;
+          const next = prev.map(order => {
+            const queued = latestStatus.get(order.id);
+            if (!queued || (order.status === queued.status && order._pendingFieldSync)) return order;
+            changed = true;
+            return { ...order, status: queued.status, ...(queued.extra || {}), _pendingFieldSync: true };
+          });
+          return changed ? next : prev;
+        });
+      }
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    // Data order selesai bootstrap setelah effect awal. Terapkan kembali overlay
+    // antrean agar refresh saat offline tidak mengembalikan status ke nilai server lama.
+    if (ordersData.length > 0) refreshFieldQueueCount();
+    // Hanya perlu ketika dataset berubah dari kosong menjadi terisi.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ordersData.length]);
+
+  const triggerFieldSync = async () => {
+    if (fieldSyncLock.current || (typeof navigator !== "undefined" && navigator.onLine === false)) return;
+    fieldSyncLock.current = true;
+    setFieldSyncing(true);
+    try {
+      const result = await flushFieldQueue({
+        syncStatus: async row => {
+          const { data, error } = await updateOrderStatus(
+            supabase, row.orderId, row.status, row.actorName || currentUser?.name, row.extra || {}
+          );
+          return { success: !error && Boolean(data?.id), data, error: error?.message };
+        },
+        syncPhoto: async row => {
+          const response = await _apiFetch("/api/upload-foto", {
+            method: "POST", headers: await _apiHeaders(),
+            body: JSON.stringify({
+              base64: row.dataUrl, filename: `${row.hash}.jpg`, reportId: row.jobId,
+              mimeType: "image/jpeg", hash: row.hash, currentUserRole: row.role || currentUser?.role || "Unknown",
+            }),
+          });
+          const data = await response.json().catch(() => ({}));
+          return { success: Boolean(response.ok && data.success && data.url), url: data.url, error: data.error || `HTTP ${response.status}` };
+        },
+        onStatusSynced: row => {
+          setOrdersData(prev => prev.map(order => order.id === row.orderId ? { ...order, status: row.status, ...(row.extra || {}) } : order));
+        },
+        onPhotoSynced: (row, syncResult) => {
+          const photo = {
+            id: row.photoId || row.id, label: row.label || "Foto", url: syncResult.url,
+            data_url: syncResult.url, hash: row.hash, unit_no: row.unitNo || null,
+            uploading: false, queued: false, errMsg: "",
+          };
+          mergeFieldReportDraftPhoto(row.jobId, photo);
+          setLaporanFotos(prev => prev.map(item => item.hash === row.hash ? { ...item, ...photo } : item));
+        },
+      });
+      setPendingFieldCount(result.remaining);
+      if (result.synced > 0) showNotif(`☁️ ${result.synced} aktivitas lapangan berhasil disinkronkan`);
+    } catch (error) {
+      console.warn("[FIELD_SYNC]", error?.message || error);
+      refreshFieldQueueCount();
+    } finally {
+      fieldSyncLock.current = false;
+      setFieldSyncing(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshFieldQueueCount();
+    const onOnline = () => triggerFieldSync();
+    window.addEventListener("online", onOnline);
+    const timer = setInterval(() => {
+      if (navigator.onLine !== false) triggerFieldSync();
+    }, 30_000);
+    return () => { window.removeEventListener("online", onOnline); clearInterval(timer); };
+    // Worker lifecycle tunggal; callback membaca state sesi aktif dari render awal
+    // dan antrean berikutnya dipicu juga lewat tombol/online event.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Bawa Material modal — teknisi/helper declare unit material yang dibawa per job
   const [materialBringJob, setMaterialBringJob] = useState(null);
@@ -3691,6 +3787,7 @@ export default function ACleanWebApp() {
         <TechMobileView
           currentUser={currentUser}
           ordersData={ordersData}
+          setOrdersData={setOrdersData}
           laporanReports={laporanReports}
           TODAY={TODAY}
           openLaporanModal={openLaporanModal}
@@ -3707,6 +3804,7 @@ export default function ACleanWebApp() {
           expenseProps={expenseProps}
           customersData={customersData}
           setHistoryPreview={setHistoryPreview}
+          onFieldQueued={refreshFieldQueueCount}
         />
       );
     }
@@ -4500,7 +4598,7 @@ export default function ACleanWebApp() {
   // ── Laporan modal handlers (diekstrak dari IIFE render — Tahap 1 refactor) ──
   // Logika murni level-komponen; incompleteUnits dihitung ulang di dalam submitLaporan.
   // Wrapper (Fase 3, pola ctx): handleFotoUpload pindah ke lib/fotoUpload.
-  const handleFotoUpload = (e) => handleFotoUploadLib(e, { _apiFetch, _apiHeaders, appSettings, compressImg, currentUser, fotoTargetUnitRef, fotoUnitInputRef, laporanFotos, laporanModal, setLaporanFotos, showNotif });
+  const handleFotoUpload = (e) => handleFotoUploadLib(e, { _apiFetch, _apiHeaders, appSettings, compressImg, currentUser, fotoTargetUnitRef, fotoUnitInputRef, laporanFotos, laporanModal, setLaporanFotos, showNotif, onFieldQueued: refreshFieldQueueCount });
 
   // Wrapper (Fase 3, pola ctx): submitLaporan (jalur uang) pindah ke lib/submitLaporan.
   const submitLaporan = () => submitLaporanImpl({
@@ -4520,6 +4618,7 @@ export default function ACleanWebApp() {
     updateOrderStatus, userAccounts,
     onReportSubmitted: (order) => {
       const metrics = finishFieldReportSession(order);
+      clearQueuedFieldPhotos(order?.id).then(refreshFieldQueueCount).catch(() => {});
       addAgentLog("FIELD_REPORT_METRICS", JSON.stringify(metrics), "INFO");
     },
   });
@@ -5130,6 +5229,7 @@ export default function ACleanWebApp() {
             _apiHeaders={_apiHeaders}
             currentUser={currentUser}
             isMobile={isMobile}
+            onFieldQueued={refreshFieldQueueCount}
           />
         </Suspense>
       )}
@@ -5147,6 +5247,20 @@ export default function ACleanWebApp() {
           }}
           title="Klik untuk sync sekarang">
           {bapSyncing ? "☁️ Syncing..." : `📡 ${pendingBAPCount} BAP menunggu sync`}
+        </div>
+      )}
+
+      {pendingFieldCount > 0 && currentUser && ["Teknisi", "Helper"].includes(currentUser.role) && (
+        <div onClick={triggerFieldSync}
+          style={{
+            position: "fixed", bottom: pendingBAPCount > 0 ? 62 : 18, left: 18, zIndex: 591,
+            background: fieldSyncing ? cs.accent + "33" : "#f59e0b22",
+            border: "1px solid " + (fieldSyncing ? cs.accent : "#f59e0b") + "66",
+            color: fieldSyncing ? cs.accent : "#f59e0b", borderRadius: 99,
+            padding: "9px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+            boxShadow: "0 6px 20px #0007",
+          }} title="Klik untuk sinkronisasi sekarang">
+          {fieldSyncing ? "☁️ Sinkronisasi lapangan…" : `📡 ${pendingFieldCount} aktivitas menunggu sync`}
         </div>
       )}
 

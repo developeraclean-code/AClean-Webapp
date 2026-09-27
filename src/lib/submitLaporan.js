@@ -75,6 +75,12 @@ export async function submitLaporan({
     const isInstall = laporanModal?.service === "Install";
     const isSurvey = laporanModal?.service === "Survey";
     const incompleteUnits = laporanUnits.filter(u => !isUnitDone(u));
+    const fotoMasihAntre = laporanFotos.filter(f => f.queued && !f.url).length;
+    if (fotoMasihAntre > 0) {
+      showNotif(`📡 ${fotoMasihAntre} foto masih antre di perangkat. Sambungkan internet dan tunggu sinkronisasi sebelum submit.`);
+      submitLaporanLock.current = false;
+      return;
+    }
 
     // ── Survey: submit langsung, bypass 4-step wizard ──
     if (isSurvey) {
@@ -134,6 +140,7 @@ export async function submitLaporan({
     // ── 2. Validasi unit untuk non-Install ──
     if (!isInstall && incompleteUnits.length > 0) {
       showNotif(`${incompleteUnits.length} unit belum diisi pekerjaan!`);
+      submitLaporanLock.current = false;
       return;
     }
 
@@ -145,7 +152,10 @@ export async function submitLaporan({
         message: `${fotoGagal} foto belum tersimpan ke cloud (ditandai ⏳).\n\nLanjutkan submit laporan tanpa foto tersebut?`,
         confirmText: "Lanjutkan Submit"
       });
-      if (!lanjut) return;
+      if (!lanjut) {
+        submitLaporanLock.current = false;
+        return;
+      }
     }
 
     // ── 3b. Job klien kontrak maintenance: warning kualitas input (NON-BLOCKING —

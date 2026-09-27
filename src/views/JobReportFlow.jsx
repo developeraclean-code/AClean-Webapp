@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { cs } from "../theme/cs.js";
+import { hasFieldReportDraft } from "../lib/fieldReportWorkflow.js";
 
 // JobReportFlow — SATU PINTU laporan & material per job (Fase 2 rencana satu-pintu).
 // Bukan modal berat baru: ini hub ringan yang menampilkan langkah + status, lalu membuka
@@ -23,17 +24,24 @@ export default function JobReportFlow({
   open, onClose, job, currentUser, supabase, materialsBroughtMap, laporanReports, onOpenBring, onOpenLaporan,
 }) {
   const [usage, setUsage] = useState(null); // { broughtUnits, usedQty } ringkas
+  const [usageLoading, setUsageLoading] = useState(false);
+  const [usageError, setUsageError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
 
   // Hitung ringkasan material dibawa vs terpakai (untuk tampilan sisa)
   useEffect(() => {
     if (!open || !job?.id) return;
     let cancelled = false;
+    setUsage(null);
+    setUsageError("");
+    setUsageLoading(true);
     (async () => {
       try {
-        const { data } = await supabase.from("job_materials_brought")
+        const { data, error } = await supabase.from("job_materials_brought")
           .select("material_type, qty_estimate, status")
           .eq("job_id", job.id)
           .neq("status", "CANCELLED");
+        if (error) throw error;
         if (cancelled) return;
         const rows = data || [];
         setUsage({
@@ -41,25 +49,28 @@ export default function JobReportFlow({
           broughtQty: rows.reduce((s, r) => s + (Number(r.qty_estimate) || 0), 0),
         });
       } catch (_) {
-        if (!cancelled) setUsage(null);
+        if (!cancelled) { setUsage(null); setUsageError("Status material gagal dimuat"); }
+      } finally {
+        if (!cancelled) setUsageLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [open, job?.id, supabase]);
+  }, [open, job?.id, supabase, reloadKey]);
 
   if (!open || !job) return null;
 
   const broughtCount = (materialsBroughtMap || {})[job.id] || (usage?.broughtUnits ?? 0);
   const hasLaporan = (laporanReports || []).some(r =>
-    (r.order_id === job.id || r.job_id === job.id) && r.status && r.status !== "PENDING"
+    (r.order_id === job.id || r.job_id === job.id) && r.status && !["PENDING", "REJECTED"].includes(r.status)
   );
+  const hasDraft = !hasLaporan && hasFieldReportDraft(job.id);
 
   const steps = [
     {
       key: "bawa",
       icon: "📦",
       title: "Material dibawa",
-      desc: broughtCount > 0 ? `${broughtCount} unit dipilih dari stok kantor` : "Belum pilih material dari stok",
+      desc: usageLoading ? "Memuat status material…" : usageError ? usageError : broughtCount > 0 ? `${broughtCount} unit dipilih dari stok kantor` : "Opsional — lewati bila tidak membawa material",
       done: broughtCount > 0,
       action: "Atur Material",
       onClick: () => { onClose?.(); onOpenBring?.(job); },
@@ -68,9 +79,9 @@ export default function JobReportFlow({
       key: "laporan",
       icon: "📝",
       title: "Laporan pekerjaan",
-      desc: hasLaporan ? "Laporan sudah dibuat — bisa diedit" : "Isi laporan + material terpakai + foto",
+      desc: hasLaporan ? "Laporan sudah dibuat" : hasDraft ? "Draft di perangkat siap dilanjutkan" : "Isi hasil pekerjaan + material terpakai + foto",
       done: hasLaporan,
-      action: hasLaporan ? "Edit Laporan" : "Isi Laporan",
+      action: hasLaporan ? "Buka Laporan" : hasDraft ? "Lanjutkan Draft" : "Isi Laporan",
       onClick: () => { onClose?.(); onOpenLaporan?.(job); },
     },
   ];
@@ -103,6 +114,12 @@ export default function JobReportFlow({
               </button>
             </div>
           ))}
+
+          {usageError && (
+            <button onClick={() => setReloadKey(v => v + 1)} style={{ background: "#f59e0b18", border: "1px solid #f59e0b55", color: "#f59e0b", borderRadius: 9, padding: "8px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+              ↻ Muat ulang status material
+            </button>
+          )}
 
           {/* Sisa info — direkonsiliasi di Material Harian (read-only di sini) */}
           <div style={{ fontSize: 11, color: cs.muted, background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "10px 12px", lineHeight: 1.5 }}>

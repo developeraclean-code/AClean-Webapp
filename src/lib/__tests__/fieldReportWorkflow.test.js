@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  findDelayedFieldReports, loadFieldReportDraft, saveFieldReportDraft, uploadWithRetry,
+  findDelayedFieldReports, isFieldOrderAssigned, loadFieldReportDraft, saveFieldReportDraft, uploadWithRetry,
 } from "../fieldReportWorkflow.js";
 
 const makeStorage = () => {
@@ -13,6 +13,13 @@ beforeEach(() => {
 });
 
 describe("field report workflow", () => {
+  it("matches every technician/helper slot case-insensitively", () => {
+    const order = { teknisi: "Dedi", helper2: "  ARI  " };
+    expect(isFieldOrderAssigned(order, "ari")).toBe(true);
+    expect(isFieldOrderAssigned(order, "dedi")).toBe(true);
+    expect(isFieldOrderAssigned(order, "Putra")).toBe(false);
+  });
+
   it("autosave only keeps cloud photos", () => {
     saveFieldReportDraft("JOB1", { units: [{ unit_no: 1 }], photos: [
       { id: 1, data_url: "data:image/jpeg;base64,large", url: null },
@@ -40,5 +47,21 @@ describe("field report workflow", () => {
       { id: "C", date: "2026-09-15", status: "PENDING", teknisi: "Dedi" },
     ], [{ job_id: "B", status: "SUBMITTED" }], "Dedi", "2026-09-14");
     expect(delayed.map(row => row.id)).toEqual(["A"]);
+  });
+
+  it("does not flag invoiced jobs when paginated reports are absent", () => {
+    const delayed = findDelayedFieldReports([
+      { id: "A", date: "2026-09-10", status: "INVOICE_APPROVED", helper: "Dedi" },
+      { id: "B", date: "2026-09-10", status: "PAID", helper: "Dedi" },
+      { id: "C", date: "2026-09-10", status: "COMPLETED", helper: "Dedi" },
+    ], [], "Dedi", "2026-09-14");
+    expect(delayed.map(row => row.id)).toEqual(["C"]);
+  });
+
+  it("recognizes reports linked through order_id", () => {
+    const delayed = findDelayedFieldReports([
+      { id: "A", date: "2026-09-10", status: "COMPLETED", teknisi2: "Dedi" },
+    ], [{ order_id: "A", status: "SUBMITTED" }], "Dedi", "2026-09-14");
+    expect(delayed).toEqual([]);
   });
 });

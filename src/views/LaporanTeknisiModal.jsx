@@ -12,6 +12,9 @@ import {
   beginFieldReportSession, clearFieldReportDraft, loadFieldReportDraft,
   recordFieldPhotoUploadFailure, saveFieldReportDraft, uploadWithRetry,
 } from "../lib/fieldReportWorkflow.js";
+import {
+  enqueueFieldPhoto, listQueuedFieldPhotos, queuedPhotoActionId, removeFieldAction,
+} from "../lib/fieldOfflineQueue.js";
 
 // Debounce lokal (disalin dari App.jsx module-level) — untuk search material
 function useDebounce(value, delay) {
@@ -67,7 +70,7 @@ export default function LaporanTeknisiModal({
   submitLaporan, handleFotoUpload, buildCustomerHistory, fotoSrc,
   showNotif, addAgentLog, sendWA, findCustomer, insertOrder,
   setOrdersData, supabase,
-  _apiFetch, _apiHeaders, currentUser, isMobile,
+  _apiFetch, _apiHeaders, currentUser, isMobile, onFieldQueued,
 }) {
   // ── State UI internal (murni tampilan, tidak dibaca submitLaporan) ──
   const [showMatPreset, setShowMatPreset] = useState(false);
@@ -112,6 +115,27 @@ export default function LaporanTeknisiModal({
       setDraftState("aktif");
     }
   }, [laporanModal?.id]); // state setter stabil; sengaja hanya saat job berganti
+
+  // Pulihkan foto yang belum sempat terkirim dari IndexedDB. Ini terpisah dari
+  // draft localStorage supaya payload base64 besar tidak memenuhi storage browser.
+  useEffect(() => {
+    const jobId = laporanModal?.id;
+    if (!jobId) return;
+    let cancelled = false;
+    listQueuedFieldPhotos(jobId).then(rows => {
+      if (cancelled || rows.length === 0) return;
+      setLaporanFotos(prev => {
+        const hashes = new Set(prev.map(photo => photo.hash).filter(Boolean));
+        const queued = rows.filter(row => !hashes.has(row.hash)).map(row => ({
+          id: row.photoId || row.id, label: row.label || "Foto", data_url: row.dataUrl,
+          url: null, hash: row.hash, unit_no: row.unitNo || null, uploading: false,
+          queued: true, errMsg: "Menunggu koneksi",
+        }));
+        return [...prev, ...queued];
+      });
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [laporanModal?.id, setLaporanFotos]);
 
   useEffect(() => {
     const jobId = laporanModal?.id;
@@ -214,6 +238,14 @@ export default function LaporanTeknisiModal({
 
   // Helper retry upload foto — dipakai Step 2 (per unit) & Step 3 (umum)
   const retryFoto = async (f) => {
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      if (f.data_url && f.hash) await enqueueFieldPhoto({
+        jobId: laporanModal?.id, id: f.id, hash: f.hash, dataUrl: f.data_url,
+        label: f.label, unitNo: f.unit_no, role: currentUser?.role,
+      });
+      showNotif("📡 Masih offline — foto tetap aman di antrean perangkat.");
+      return;
+    }
     setLaporanFotos(prev => prev.map(x => x.id === f.id ? { ...x, uploading: true, errMsg: "" } : x));
     showNotif("⏳ Retry upload...");
     const reportId = laporanModal?.id || "tmp";
@@ -231,9 +263,21 @@ export default function LaporanTeknisiModal({
       return { ...d, success: Boolean(r.ok && d.success && d.url), status: r.status };
     }, { shouldRetry: result => !result?.status || result.status === 408 || result.status === 429 || result.status >= 500 });
     setLaporanFotos(prev => prev.map(x => x.id === f.id
-      ? { ...x, uploading: false, url: result.success ? result.url : null, errMsg: result.success ? "" : result.error, uploadAttempts: result.attempts } : x));
+      ? { ...x, uploading: false, queued: false, url: result.success ? result.url : null, errMsg: result.success ? "" : result.error, uploadAttempts: result.attempts } : x));
+    if (result.success && f.hash) {
+      removeFieldAction(queuedPhotoActionId(laporanModal?.id, f.hash)).catch(() => {});
+    }
     if (!result.success) recordFieldPhotoUploadFailure(laporanModal?.id);
     showNotif(result.success ? `✅ Upload berhasil (${result.attempts} percobaan)` : "❌ Masih gagal: " + result.error);
+  };
+
+  const removeFoto = (f) => {
+    setLaporanFotos(prev => prev.filter(item => item.id !== f.id));
+    if (f?.queued && f?.hash && laporanModal?.id) {
+      removeFieldAction(queuedPhotoActionId(laporanModal.id, f.hash))
+        .then(() => onFieldQueued?.())
+        .catch(error => console.warn("[FIELD_PHOTO_REMOVE]", error?.message || error));
+    }
   };
 
   // ── UNIT PRESET MODAL (pilih AC dari history) ──
@@ -466,12 +510,12 @@ export default function LaporanTeknisiModal({
                 ) : (
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
                     {laporanFotos.map(f => (
-                      <div key={f.id} style={{ position: "relative", aspectRatio: "1/1", borderRadius: 8, overflow: "hidden", border: "1px solid " + cs.border }}>
+                      <div key={f.id} onClick={() => { if (!f.uploading && !f.url && f.errMsg) retryFoto(f); }} style={{ position: "relative", aspectRatio: "1/1", borderRadius: 8, overflow: "hidden", border: "1px solid " + (f.errMsg ? cs.red : cs.border), cursor: !f.uploading && !f.url && f.errMsg ? "pointer" : "default" }}>
                         <img src={f.preview || f.url} alt={f.label} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                         <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.3)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>
-                          {f.uploading ? "⏳" : f.url ? "" : f.errMsg ? "❌" : "⏳"}
+                          {f.uploading ? "⏳" : f.url ? "" : f.errMsg ? "⚠️ Retry" : "⏳"}
                         </div>
-                        <button onClick={() => setLaporanFotos(p => p.filter(x => x.id !== f.id))}
+                        <button onClick={e => { e.stopPropagation(); removeFoto(f); }}
                           style={{ position: "absolute", top: 4, right: 4, background: "#000a", border: "none", color: "#fff", borderRadius: "50%", width: 22, height: 22, cursor: "pointer", fontSize: 12, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>×</button>
                       </div>
                     ))}
@@ -486,6 +530,8 @@ export default function LaporanTeknisiModal({
               <button onClick={() => {
                   const up = laporanFotos.filter(f => f.uploading).length;
                   if (up > 0) { showNotif(`⏳ Tunggu ${up} foto selesai upload dulu`); return; }
+                  const queued = laporanFotos.filter(f => f.queued && !f.url).length;
+                  if (queued > 0) { showNotif(`📡 ${queued} foto masih antre offline. Sambungkan internet sebelum submit.`); return; }
                   const fail = laporanFotos.filter(f => !f.uploading && !f.url && f.errMsg).length;
                   if (fail > 0 && !window.confirm(`⚠️ ${fail} foto GAGAL upload dan tidak akan masuk laporan.\n\nLanjut submit? (Batal untuk retry / hapus dulu)`)) return;
                   submitLaporan();
@@ -912,11 +958,11 @@ export default function LaporanTeknisiModal({
                                   {failed && (
                                     <div title="Upload gagal — ketuk untuk coba lagi"
                                       onClick={() => retryFoto(f)}
-                                      style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 2, fontSize: 9, color: "#fff", background: cs.red + "cc", cursor: "pointer", fontWeight: 700 }}>
-                                      <span style={{ fontSize: 14 }}>⚠️</span>Retry
+                                      style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 2, fontSize: 9, color: "#fff", background: (f.queued ? "#f59e0b" : cs.red) + "cc", cursor: "pointer", fontWeight: 700 }}>
+                                      <span style={{ fontSize: 14 }}>{f.queued ? "📡" : "⚠️"}</span>{f.queued ? "Antre" : "Retry"}
                                     </div>
                                   )}
-                                  <button onClick={() => setLaporanFotos(prev => prev.filter(x => x.id !== f.id))}
+                                  <button onClick={() => removeFoto(f)}
                                     style={{ position: "absolute", top: 2, right: 2, width: 18, height: 18, borderRadius: 9, background: cs.red, color: "#fff", border: "none", fontSize: 11, cursor: "pointer", lineHeight: 1, padding: 0 }}>×</button>
                                 </div>
                               );})}
@@ -1694,10 +1740,10 @@ export default function LaporanTeknisiModal({
                             title="Tap untuk retry upload"
                             onClick={() => retryFoto(f)}
                             style={{ position: "absolute", top: 4, right: 4, background: "#f59e0b", color: "#fff", fontSize: 9, padding: "1px 5px", borderRadius: 99, fontWeight: 700, cursor: "pointer" }}>
-                            ⏳ Retry
+                            {f.queued ? "📡 Antre" : "⏳ Retry"}
                           </div>
                         ) : null}
-                        <button onClick={() => setLaporanFotos(p => p.filter(x => x.id !== f.id))}
+                        <button onClick={() => removeFoto(f)}
                           style={{ position: "absolute", top: 4, left: 4, background: "#ef4444cc", border: "none", color: "#fff", borderRadius: 99, width: 18, height: 18, cursor: "pointer", fontSize: 10, lineHeight: 1, padding: 0 }}>×</button>
                         <input value={f.label} onChange={e => setLaporanFotos(p => p.map(x => x.id === f.id ? { ...x, label: e.target.value } : x))}
                           placeholder="Label foto..." style={{ marginTop: 3, width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 5, padding: "4px 6px", color: cs.text, fontSize: 10, outline: "none", boxSizing: "border-box" }} />
@@ -1733,10 +1779,13 @@ export default function LaporanTeknisiModal({
               {/* Gate tombol Next saat foto masih upload */}
               {(() => {
                 const uploadingCount = laporanFotos.filter(f => f.uploading).length;
+                const queuedCount = laporanFotos.filter(f => f.queued && !f.url).length;
                 const failedCount = laporanFotos.filter(f => !f.uploading && !f.url && f.errMsg).length;
-                const canProceed = uploadingCount === 0;
+                const canProceed = uploadingCount === 0 && queuedCount === 0;
                 const btnLabel = uploadingCount > 0
                   ? `⏳ Tunggu ${uploadingCount} foto upload...`
+                  : queuedCount > 0
+                    ? `📡 ${queuedCount} foto antre — tunggu koneksi`
                   : failedCount > 0
                     ? `⚠️ ${failedCount} foto gagal — retry atau hapus`
                     : "Lanjut → Ringkasan";
@@ -1893,6 +1942,8 @@ export default function LaporanTeknisiModal({
               <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10 }}>
                 <button onClick={() => setLaporanStep(3)} style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 600 }}>← Kembali</button>
                 <button onClick={() => {
+                  const queued = (laporanFotos || []).filter(f => f.queued && !f.url).length;
+                  if (queued > 0) { showNotif(`📡 ${queued} foto masih antre offline. Sambungkan internet sebelum submit.`); return; }
                   // Guard sebelum submit — cegah laporan kosong / salah tanpa disadari (soft confirm).
                   const nJasa = (laporanJasaItems || []).filter(j => j.nama && j.nama !== "__manual__").length;
                   const nBarang = (laporanBarangItems || []).filter(b => b.nama && b.nama !== "__manual__").length;

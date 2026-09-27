@@ -2,10 +2,11 @@
 // Diekstrak dari App.jsx (Fase 3, pola ctx). `crypto` = global browser (bukan ctx).
 import { maxFotoLaporan } from "./laporanConstants.js";
 import { recordFieldPhotoUploadFailure, uploadWithRetry } from "./fieldReportWorkflow.js";
+import { enqueueFieldPhoto, isRetryableUploadStatus } from "./fieldOfflineQueue.js";
 
 export async function handleFotoUpload(e, {
   _apiFetch, _apiHeaders, appSettings, compressImg, currentUser, fotoTargetUnitRef,
-  fotoUnitInputRef, laporanFotos, laporanModal, setLaporanFotos, showNotif,
+  fotoUnitInputRef, laporanFotos, laporanModal, setLaporanFotos, showNotif, onFieldQueued,
 } = {}) {
     // Maintenance = 50 foto, reguler = 20 (sumber tunggal di laporanConstants).
     const MAX_PHOTOS = maxFotoLaporan(laporanModal);
@@ -113,6 +114,21 @@ export async function handleFotoUpload(e, {
     // Push placeholders ke state supaya user lihat progress langsung
     setLaporanFotos(prev => [...prev, ...placeholders]);
 
+    // Saat offline, simpan foto terkompresi ke IndexedDB. Worker akan upload saat
+    // koneksi kembali; draft teks tetap ringan karena base64 tidak masuk localStorage.
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      await Promise.all(placeholders.map(ph => enqueueFieldPhoto({
+        jobId: reportId, id: ph.id, hash: ph.hash, dataUrl: ph.data_url,
+        label: ph.label, unitNo: ph.unit_no, role: currentUser?.role,
+      })));
+      setLaporanFotos(prev => prev.map(foto => placeholders.some(ph => ph.id === foto.id)
+        ? { ...foto, uploading: false, queued: true, errMsg: "Menunggu koneksi" } : foto));
+      onFieldQueued?.();
+      showNotif(`📡 ${placeholders.length} foto disimpan offline dan akan dikirim otomatis.`);
+      e.target.value = "";
+      return;
+    }
+
     const uploadOne = async (ph) => {
       const result = await uploadWithRetry(async () => {
         const r = await _apiFetch("/api/upload-foto", {
@@ -136,7 +152,15 @@ export async function handleFotoUpload(e, {
       if (result.success && result.url) {
         return { id: ph.id, url: result.url, errMsg: "", uploading: false, uploadAttempts: result.attempts };
       }
-      return { id: ph.id, url: null, errMsg: result.error || "Upload gagal", uploading: false, uploadAttempts: result.attempts };
+      if (isRetryableUploadStatus(result.status)) {
+        await enqueueFieldPhoto({
+          jobId: reportId, id: ph.id, hash: ph.hash, dataUrl: ph.data_url,
+          label: ph.label, unitNo: ph.unit_no, role: currentUser?.role,
+        });
+        onFieldQueued?.();
+        return { id: ph.id, url: null, queued: true, errMsg: "Menunggu koneksi", uploading: false, uploadAttempts: result.attempts };
+      }
+      return { id: ph.id, url: null, queued: false, errMsg: result.error || "Upload gagal", uploading: false, uploadAttempts: result.attempts };
     };
 
     let savedCount = 0, failedCount = 0;
