@@ -14,6 +14,7 @@ import {
 } from "../lib/fieldReportWorkflow.js";
 import {
   enqueueFieldPhoto, listQueuedFieldPhotos, queuedPhotoActionId, removeFieldAction,
+  fieldUserKey,
 } from "../lib/fieldOfflineQueue.js";
 
 // Debounce lokal (disalin dari App.jsx module-level) — untuk search material
@@ -71,7 +72,9 @@ export default function LaporanTeknisiModal({
   showNotif, addAgentLog, sendWA, findCustomer, insertOrder,
   setOrdersData, supabase,
   _apiFetch, _apiHeaders, currentUser, isMobile, onFieldQueued,
+  onQueueOfflineReport, autoSubmitRequested = false, onAutoSubmitStarted,
 }) {
+  const currentFieldUserKey = fieldUserKey(currentUser);
   // ── State UI internal (murni tampilan, tidak dibaca submitLaporan) ──
   const [showMatPreset, setShowMatPreset] = useState(false);
   const [matSearchId, setMatSearchId] = useState(null);
@@ -92,8 +95,8 @@ export default function LaporanTeknisiModal({
     const jobId = laporanModal?.id;
     if (!jobId || draftReadyJob.current === jobId) return;
     draftReadyJob.current = jobId;
-    const draft = loadFieldReportDraft(jobId);
-    beginFieldReportSession(jobId, { recovered: Boolean(draft) });
+    const draft = loadFieldReportDraft(jobId, currentFieldUserKey);
+    beginFieldReportSession(jobId, { recovered: Boolean(draft), userKey: currentFieldUserKey });
     if (draft) {
       if (Array.isArray(draft.units)) setLaporanUnits(draft.units);
       if (Array.isArray(draft.materials)) setLaporanMaterials(draft.materials);
@@ -122,7 +125,7 @@ export default function LaporanTeknisiModal({
     const jobId = laporanModal?.id;
     if (!jobId) return;
     let cancelled = false;
-    listQueuedFieldPhotos(jobId).then(rows => {
+    listQueuedFieldPhotos(jobId, currentFieldUserKey).then(rows => {
       if (cancelled || rows.length === 0) return;
       setLaporanFotos(prev => {
         const hashes = new Set(prev.map(photo => photo.hash).filter(Boolean));
@@ -135,7 +138,7 @@ export default function LaporanTeknisiModal({
       });
     }).catch(() => {});
     return () => { cancelled = true; };
-  }, [laporanModal?.id, setLaporanFotos]);
+  }, [currentFieldUserKey, laporanModal?.id, setLaporanFotos]);
 
   useEffect(() => {
     const jobId = laporanModal?.id;
@@ -149,7 +152,7 @@ export default function LaporanTeknisiModal({
         installItems: laporanInstallItems, cleaningInRepair: laporanCleaningInRepair,
         photos: laporanFotos, rekomendasi: laporanRekomendasi, catatan: laporanCatatan,
         surveyHasil: laporanSurveyHasil, surveyCatatan: laporanSurveyCatatan,
-      });
+      }, currentFieldUserKey);
       setDraftState(saved ? "tersimpan" : "gagal");
     }, 700);
     return () => clearTimeout(timer);
@@ -159,8 +162,20 @@ export default function LaporanTeknisiModal({
     laporanRekomendasi, laporanCatatan, laporanSurveyHasil, laporanSurveyCatatan]);
 
   useEffect(() => {
-    if (laporanSubmitted && laporanModal?.id) clearFieldReportDraft(laporanModal.id);
-  }, [laporanSubmitted, laporanModal?.id]);
+    if (laporanSubmitted && laporanModal?.id) clearFieldReportDraft(laporanModal.id, currentFieldUserKey);
+  }, [currentFieldUserKey, laporanSubmitted, laporanModal?.id]);
+
+  useEffect(() => {
+    if (!autoSubmitRequested || !laporanModal?.id || draftReadyJob.current !== laporanModal.id) return;
+    const pendingPhoto = laporanFotos.some(photo => photo.uploading || (photo.queued && !photo.url));
+    if (pendingPhoto || draftState === "menyiapkan" || draftState === "menyimpan") return;
+    const timer = setTimeout(() => {
+      onAutoSubmitStarted?.();
+      showNotif?.("☁️ Koneksi pulih — memproses laporan offline melalui alur normal.");
+      submitLaporan();
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [autoSubmitRequested, draftState, laporanFotos, laporanModal?.id, onAutoSubmitStarted, showNotif, submitLaporan]);
 
   // ── Layar sukses (setelah submit) ──
   if (laporanModal && laporanSubmitted) {
@@ -241,7 +256,7 @@ export default function LaporanTeknisiModal({
     if (typeof navigator !== "undefined" && navigator.onLine === false) {
       if (f.data_url && f.hash) await enqueueFieldPhoto({
         jobId: laporanModal?.id, id: f.id, hash: f.hash, dataUrl: f.data_url,
-        label: f.label, unitNo: f.unit_no, role: currentUser?.role,
+        label: f.label, unitNo: f.unit_no, role: currentUser?.role, userKey: currentFieldUserKey,
       });
       showNotif("📡 Masih offline — foto tetap aman di antrean perangkat.");
       return;
@@ -265,16 +280,16 @@ export default function LaporanTeknisiModal({
     setLaporanFotos(prev => prev.map(x => x.id === f.id
       ? { ...x, uploading: false, queued: false, url: result.success ? result.url : null, errMsg: result.success ? "" : result.error, uploadAttempts: result.attempts } : x));
     if (result.success && f.hash) {
-      removeFieldAction(queuedPhotoActionId(laporanModal?.id, f.hash)).catch(() => {});
+      removeFieldAction(queuedPhotoActionId(laporanModal?.id, f.hash, currentFieldUserKey)).catch(() => {});
     }
-    if (!result.success) recordFieldPhotoUploadFailure(laporanModal?.id);
+    if (!result.success) recordFieldPhotoUploadFailure(laporanModal?.id, 1, currentFieldUserKey);
     showNotif(result.success ? `✅ Upload berhasil (${result.attempts} percobaan)` : "❌ Masih gagal: " + result.error);
   };
 
   const removeFoto = (f) => {
     setLaporanFotos(prev => prev.filter(item => item.id !== f.id));
     if (f?.queued && f?.hash && laporanModal?.id) {
-      removeFieldAction(queuedPhotoActionId(laporanModal.id, f.hash))
+      removeFieldAction(queuedPhotoActionId(laporanModal.id, f.hash, currentFieldUserKey))
         .then(() => onFieldQueued?.())
         .catch(error => console.warn("[FIELD_PHOTO_REMOVE]", error?.message || error));
     }
@@ -527,11 +542,11 @@ export default function LaporanTeknisiModal({
                 )}
               </div>
 
-              <button onClick={() => {
+              <button onClick={async () => {
                   const up = laporanFotos.filter(f => f.uploading).length;
                   if (up > 0) { showNotif(`⏳ Tunggu ${up} foto selesai upload dulu`); return; }
                   const queued = laporanFotos.filter(f => f.queued && !f.url).length;
-                  if (queued > 0) { showNotif(`📡 ${queued} foto masih antre offline. Sambungkan internet sebelum submit.`); return; }
+                  if (queued > 0 || navigator.onLine === false) { await onQueueOfflineReport?.(); return; }
                   const fail = laporanFotos.filter(f => !f.uploading && !f.url && f.errMsg).length;
                   if (fail > 0 && !window.confirm(`⚠️ ${fail} foto GAGAL upload dan tidak akan masuk laporan.\n\nLanjut submit? (Batal untuk retry / hapus dulu)`)) return;
                   submitLaporan();
@@ -1941,9 +1956,9 @@ export default function LaporanTeknisiModal({
               )}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10 }}>
                 <button onClick={() => setLaporanStep(3)} style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 600 }}>← Kembali</button>
-                <button onClick={() => {
+                <button onClick={async () => {
                   const queued = (laporanFotos || []).filter(f => f.queued && !f.url).length;
-                  if (queued > 0) { showNotif(`📡 ${queued} foto masih antre offline. Sambungkan internet sebelum submit.`); return; }
+                  if (queued > 0 || navigator.onLine === false) { await onQueueOfflineReport?.(); return; }
                   // Guard sebelum submit — cegah laporan kosong / salah tanpa disadari (soft confirm).
                   const nJasa = (laporanJasaItems || []).filter(j => j.nama && j.nama !== "__manual__").length;
                   const nBarang = (laporanBarangItems || []).filter(b => b.nama && b.nama !== "__manual__").length;

@@ -31,6 +31,14 @@ describe("field report workflow", () => {
     expect(JSON.stringify(draft)).not.toContain("base64");
   });
 
+  it("isolates drafts for different field users on the same device", () => {
+    saveFieldReportDraft("JOB1", { units: [{ label: "Milik A" }] }, "tech-a");
+    saveFieldReportDraft("JOB1", { units: [{ label: "Milik B" }] }, "tech-b");
+    expect(loadFieldReportDraft("JOB1", "tech-a").units[0].label).toBe("Milik A");
+    expect(loadFieldReportDraft("JOB1", "tech-b").units[0].label).toBe("Milik B");
+    expect(loadFieldReportDraft("JOB1", "tech-c")).toBeNull();
+  });
+
   it("retries a failed background upload", async () => {
     const upload = vi.fn()
       .mockResolvedValueOnce({ success: false, error: "network" })

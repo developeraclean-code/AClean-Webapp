@@ -1,6 +1,7 @@
 const DRAFT_PREFIX = "aclean:field-report:draft:v1:";
 const SESSION_PREFIX = "aclean:field-report:session:v1:";
 const DRAFT_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+const scopedKey = (prefix, jobId, userKey = "") => `${prefix}${userKey ? `${userKey}:` : ""}${jobId}`;
 
 const FIELD_MEMBER_KEYS = ["teknisi", "helper", "teknisi2", "helper2", "teknisi3", "helper3"];
 const PRE_REPORT_STATUSES = new Set([
@@ -24,22 +25,23 @@ const readJson = (store, key) => {
   catch { return null; }
 };
 
-export function loadFieldReportDraft(jobId) {
+export function loadFieldReportDraft(jobId, userKey = "") {
   if (!jobId) return null;
   const store = storage();
-  const value = readJson(store, DRAFT_PREFIX + jobId);
+  const key = scopedKey(DRAFT_PREFIX, jobId, userKey);
+  const value = readJson(store, key);
   if (!value?.savedAt || Date.now() - value.savedAt > DRAFT_TTL_MS) {
-    try { store?.removeItem(DRAFT_PREFIX + jobId); } catch { /* storage unavailable */ }
+    try { store?.removeItem(key); } catch { /* storage unavailable */ }
     return null;
   }
   return value;
 }
 
-export function hasFieldReportDraft(jobId) {
-  return Boolean(loadFieldReportDraft(jobId));
+export function hasFieldReportDraft(jobId, userKey = "") {
+  return Boolean(loadFieldReportDraft(jobId, userKey));
 }
 
-export function saveFieldReportDraft(jobId, data) {
+export function saveFieldReportDraft(jobId, data, userKey = "") {
   if (!jobId) return false;
   const store = storage();
   if (!store) return false;
@@ -51,26 +53,26 @@ export function saveFieldReportDraft(jobId, data) {
     restored: true, uploading: false, errMsg: "",
   }));
   try {
-    store.setItem(DRAFT_PREFIX + jobId, JSON.stringify({ ...data, photos, savedAt: Date.now() }));
+    store.setItem(scopedKey(DRAFT_PREFIX, jobId, userKey), JSON.stringify({ ...data, photos, savedAt: Date.now() }));
     return true;
   } catch { return false; }
 }
 
-export function mergeFieldReportDraftPhoto(jobId, photo) {
+export function mergeFieldReportDraftPhoto(jobId, photo, userKey = "") {
   if (!jobId || !photo?.url) return false;
-  const current = loadFieldReportDraft(jobId) || {};
+  const current = loadFieldReportDraft(jobId, userKey) || {};
   const photos = [...(current.photos || []).filter(item => item.hash !== photo.hash), photo];
-  return saveFieldReportDraft(jobId, { ...current, photos });
+  return saveFieldReportDraft(jobId, { ...current, photos }, userKey);
 }
 
-export function clearFieldReportDraft(jobId) {
-  try { storage()?.removeItem(DRAFT_PREFIX + jobId); } catch { /* storage unavailable */ }
+export function clearFieldReportDraft(jobId, userKey = "") {
+  try { storage()?.removeItem(scopedKey(DRAFT_PREFIX, jobId, userKey)); } catch { /* storage unavailable */ }
 }
 
-export function beginFieldReportSession(jobId, { recovered = false } = {}) {
+export function beginFieldReportSession(jobId, { recovered = false, userKey = "" } = {}) {
   if (!jobId) return null;
   const store = storage("session");
-  const key = SESSION_PREFIX + jobId;
+  const key = scopedKey(SESSION_PREFIX, jobId, userKey);
   const existing = readJson(store, key);
   const value = existing || { startedAt: new Date().toISOString(), uploadFailures: 0, recovered: false };
   value.recovered = Boolean(value.recovered || recovered);
@@ -78,17 +80,18 @@ export function beginFieldReportSession(jobId, { recovered = false } = {}) {
   return value;
 }
 
-export function recordFieldPhotoUploadFailure(jobId, count = 1) {
+export function recordFieldPhotoUploadFailure(jobId, count = 1, userKey = "") {
   if (!jobId || count < 1) return;
-  const value = beginFieldReportSession(jobId) || {};
+  const value = beginFieldReportSession(jobId, { userKey }) || {};
   value.uploadFailures = Number(value.uploadFailures || 0) + count;
-  try { storage("session")?.setItem(SESSION_PREFIX + jobId, JSON.stringify(value)); } catch { /* storage unavailable */ }
+  try { storage("session")?.setItem(scopedKey(SESSION_PREFIX, jobId, userKey), JSON.stringify(value)); } catch { /* storage unavailable */ }
 }
 
-export function finishFieldReportSession(order, { clear = true } = {}) {
+export function finishFieldReportSession(order, { clear = true, userKey = "" } = {}) {
   const jobId = order?.id;
   const store = storage("session");
-  const value = readJson(store, SESSION_PREFIX + jobId) || beginFieldReportSession(jobId) || {};
+  const sessionKey = scopedKey(SESSION_PREFIX, jobId, userKey);
+  const value = readJson(store, sessionKey) || beginFieldReportSession(jobId, { userKey }) || {};
   const started = Date.parse(value.startedAt || "");
   const planned = Date.parse(`${order?.date || ""}T${order?.time || "00:00"}:00`);
   const now = Date.now();
@@ -100,8 +103,8 @@ export function finishFieldReportSession(order, { clear = true } = {}) {
     report_delay_minutes: Number.isFinite(planned) ? Math.max(0, Math.round((now - planned) / 60000)) : null,
   };
   if (clear) {
-    try { store?.removeItem(SESSION_PREFIX + jobId); } catch { /* storage unavailable */ }
-    clearFieldReportDraft(jobId);
+    try { store?.removeItem(sessionKey); } catch { /* storage unavailable */ }
+    clearFieldReportDraft(jobId, userKey);
   }
   return metrics;
 }

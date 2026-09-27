@@ -62,7 +62,56 @@ const rpcUnavailable = (error) => error?.code === "PGRST202" || error?.code === 
 // ─────────────────────────────────────────────
 // Tab: Overview (existing health + cron + AI summary)
 // ─────────────────────────────────────────────
-function TabOverview({ data, onRefresh }) {
+function FieldSyncPanel({ supabase }) {
+  const [logs, setLogs] = useState([]);
+  const [loadError, setLoadError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    supabase.from("agent_logs")
+      .select("id,action,status,detail,user_name,created_at")
+      .like("action", "FIELD_SYNC_%")
+      .order("created_at", { ascending: false })
+      .limit(50)
+      .then(({ data, error }) => {
+        if (!active) return;
+        if (error) setLoadError(error.message || "Gagal membaca log sinkronisasi");
+        else setLogs(data || []);
+      });
+    return () => { active = false; };
+  }, [supabase]);
+
+  const since = Date.now() - 24 * 60 * 60 * 1000;
+  const recent = logs.filter(row => new Date(row.created_at).getTime() >= since);
+  const success = recent.filter(row => row.action === "FIELD_SYNC_SUCCESS").length;
+  const conflicts = recent.filter(row => row.action === "FIELD_SYNC_CONFLICT").length;
+  const failed = recent.filter(row => row.action === "FIELD_SYNC_FAILED").length;
+  const last = logs[0];
+
+  return (
+    <div style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 14, padding: 16 }}>
+      <div style={{ fontWeight: 700, color: cs.text, marginBottom: 4, fontSize: 14 }}>📡 Sinkronisasi Lapangan</div>
+      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 12 }}>
+        Aktivitas antrean offline 24 jam terakhir. Konflik berarti data admin berubah dan laporan tidak ditimpa otomatis.
+      </div>
+      {loadError ? (
+        <div style={{ color: cs.red, fontSize: 12 }}>❌ {loadError}</div>
+      ) : (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12 }}>
+            <Card label="Sync berhasil" value={success} color={cs.green} />
+            <Card label="Perlu diperiksa" value={conflicts} color={conflicts ? cs.yellow : cs.green} />
+            <Card label="Gagal" value={failed} color={failed ? cs.red : cs.green} />
+            <Card label="Aktivitas terakhir" value={last?.created_at ? new Date(last.created_at).toLocaleTimeString("id-ID") : "Belum ada"} color={cs.accent} />
+          </div>
+          {last && <div style={{ marginTop: 10, color: cs.muted, fontSize: 11 }}>{last.action} · {last.detail || "—"}</div>}
+        </>
+      )}
+    </div>
+  );
+}
+
+function TabOverview({ data, onRefresh, supabase }) {
   const metrics = data?.metrics || {};
   const errorRate = metrics.errorRate || 0;
   const cron = metrics.cron || {};
@@ -96,6 +145,8 @@ function TabOverview({ data, onRefresh }) {
           <Card label="Logs Checked"   value={metrics.totalLogsChecked || 0} color={cs.accent} />
         </div>
       </div>
+
+      <FieldSyncPanel supabase={supabase} />
 
       {(cron.staleRunning > 0 || expenses) && (
         <div style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 14, padding: 16 }}>
@@ -1316,7 +1367,7 @@ function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHe
 
       {activeTab === "overview" && (monitorData?.status === "error"
         ? <Empty msg={`❌ Monitoring gagal: ${monitorData.message || "unknown error"}`} />
-        : monitorData ? <TabOverview data={monitorData} onRefresh={refreshOverview} /> : <Empty msg="⏳ Loading monitoring data..." />)}
+        : monitorData ? <TabOverview data={monitorData} onRefresh={refreshOverview} supabase={supabase} /> : <Empty msg="⏳ Loading monitoring data..." />)}
       {activeTab === "cron"  && <TabCron supabase={supabase} />}
       {activeTab === "ai"    && <TabAiCost supabase={supabase} />}
       {activeTab === "wa"        && <TabWa supabase={supabase} />}

@@ -6,9 +6,13 @@ import ExpenseInputWidget from "./ExpenseInputWidget.jsx";
 import { findDelayedFieldReports, isFieldOrderAssigned } from "../lib/fieldReportWorkflow.js";
 import { normalizePhone, samePhone } from "../lib/phone.js";
 import { ORDER_DONE_STATUSES } from "../constants/status.js";
-import { enqueueFieldStatus } from "../lib/fieldOfflineQueue.js";
+import {
+  cacheFieldJobPackage, enqueueFieldStatus, fieldUserKey, getFieldStorageHealth,
+  loadFieldJobPackage,
+} from "../lib/fieldOfflineQueue.js";
 import { buildFieldReminders, claimFieldReminder } from "../lib/fieldReminders.js";
 import { captureOptionalCheckin } from "../lib/fieldCheckin.js";
+import { buildFieldOrderSnapshot } from "../lib/fieldConflict.js";
 
 const STATUS_CONFIG = {
   PENDING:    { label: "Pending",    color: "#94a3b8", bg: "#94a3b822" },
@@ -25,11 +29,14 @@ const STATUS_CONFIG = {
   CONTINUED: { label: "Lanjut Hari Berikut", color: "#f59e0b", bg: "#f59e0b22" },
 };
 
-function TechMobileView({ currentUser, ordersData, setOrdersData, laporanReports, TODAY, openLaporanModal, openJobReport, materialsBroughtMap, updateOrderStatus, supabase, auditUserName, showNotif, setActiveMenu, apiHeaders, kasbonProps, expenseProps, customersData, setHistoryPreview, onFieldQueued }) {
+function TechMobileView({ currentUser, ordersData, setOrdersData, laporanReports, TODAY, openLaporanModal, openJobReport, materialsBroughtMap, updateOrderStatus, supabase, auditUserName, showNotif, setActiveMenu, apiHeaders, kasbonProps, expenseProps, customersData, setHistoryPreview, onFieldQueued, fieldSyncInfo }) {
   const myName = currentUser?.name || "";
+  const userKey = fieldUserKey(currentUser);
   const [updating, setUpdating] = useState(null); // order.id sedang diupdate
   const [showAllJobs, setShowAllJobs] = useState(false);
   const [isOnline, setIsOnline] = useState(() => typeof navigator === "undefined" || navigator.onLine);
+  const [cachedJobs, setCachedJobs] = useState([]);
+  const [storageHealth, setStorageHealth] = useState(null);
   const statusLocks = useRef(new Set());
 
   useEffect(() => {
@@ -38,6 +45,55 @@ function TechMobileView({ currentUser, ordersData, setOrdersData, laporanReports
     window.addEventListener("offline", sync);
     return () => { window.removeEventListener("online", sync); window.removeEventListener("offline", sync); };
   }, []);
+
+  useEffect(() => {
+    if (!userKey) return;
+    loadFieldJobPackage(userKey).then(pkg => setCachedJobs(pkg?.jobs || [])).catch(() => {});
+    getFieldStorageHealth().then(setStorageHealth).catch(() => {});
+  }, [userKey]);
+
+  useEffect(() => {
+    if (!userKey || !isOnline || !ordersData.length) return;
+    const todayMs = Date.parse(`${TODAY}T00:00:00`);
+    // Paket offline sengaja kecil: pekerjaan 7 hari lalu s.d. 14 hari ke depan.
+    // Riwayat panjang tetap di server dan tidak memenuhi storage perangkat lapangan.
+    const assigned = ordersData.filter(order => {
+      if (!isFieldOrderAssigned(order, myName) || ["CANCELLED", "RESCHEDULED"].includes(order.status)) return false;
+      const jobMs = Date.parse(`${order.date || ""}T00:00:00`);
+      const days = Number.isFinite(jobMs) && Number.isFinite(todayMs) ? Math.round((jobMs - todayMs) / 86_400_000) : 0;
+      return days >= -7 && days <= 14;
+    });
+    const reminders = buildFieldReminders({
+      orders: assigned, reports: laporanReports, employeeName: myName,
+      today: TODAY, now: new Date(), materialsBroughtMap,
+    });
+    cacheFieldJobPackage(userKey, assigned, reminders)
+      .then(jobs => setCachedJobs(jobs || []))
+      .catch(error => console.warn("[FIELD_JOB_CACHE]", error?.message || error));
+  }, [TODAY, isOnline, laporanReports, materialsBroughtMap, myName, ordersData, userKey]);
+
+  const enableBackgroundReminders = async () => {
+    if (!("Notification" in window) || !("serviceWorker" in navigator)) {
+      showNotif?.("⚠️ Browser ini belum mendukung notifikasi PWA.");
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") {
+      showNotif?.("⚠️ Izin notifikasi belum diberikan.");
+      return;
+    }
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      if (registration.periodicSync?.register) {
+        await registration.periodicSync.register("aclean-field-reminders", { minInterval: 15 * 60 * 1000 });
+        showNotif?.("✅ Pengingat background aktif pada browser yang mendukung.");
+      } else {
+        showNotif?.("✅ Notifikasi aktif. Pengingat tampil selama aplikasi dibuka; background dibatasi browser ini.");
+      }
+    } catch (error) {
+      showNotif?.("⚠️ Notifikasi aktif, tetapi background sync ditolak browser: " + (error?.message || "tidak tersedia"));
+    }
+  };
 
   // Reminder lokal: tidak memakai cron/server quota. Satu reminder dikirim satu
   // kali per job per hari selama aplikasi terbuka dan izin notifikasi tersedia.
@@ -56,7 +112,10 @@ function TechMobileView({ currentUser, ordersData, setOrdersData, laporanReports
   }, [TODAY, laporanReports, materialsBroughtMap, myName, ordersData, showNotif]);
 
   // Filter: order hari ini milik teknisi/helper ini
-  const todayOrders = ordersData.filter(o => {
+  const fieldOrders = !isOnline && cachedJobs.length > 0
+    ? [...ordersData, ...cachedJobs.filter(cached => !ordersData.some(order => order.id === cached.id))]
+    : ordersData;
+  const todayOrders = fieldOrders.filter(o => {
     if (o.date !== TODAY) return false;
     if (["CANCELLED", "RESCHEDULED"].includes(o.status)) return false;
     return isFieldOrderAssigned(o, myName);
@@ -72,7 +131,7 @@ function TechMobileView({ currentUser, ordersData, setOrdersData, laporanReports
     .sort((a, b) => (focusPriority[a.status] ?? 9) - (focusPriority[b.status] ?? 9) || (a.time || "").localeCompare(b.time || ""))[0] || null;
   const displayedOrders = showAllJobs || !focusedOrder ? todayOrders : [focusedOrder];
   const hiddenJobCount = Math.max(0, todayOrders.length - displayedOrders.length);
-  const delayedReports = findDelayedFieldReports(ordersData, laporanReports, myName, TODAY);
+  const delayedReports = findDelayedFieldReports(fieldOrders, laporanReports, myName, TODAY);
 
   const handleStatus = async (order, newStatus, notifMsg, extraFactory = null) => {
     if (statusLocks.current.has(order.id)) return;
@@ -82,7 +141,10 @@ function TechMobileView({ currentUser, ordersData, setOrdersData, laporanReports
       const extra = typeof extraFactory === "function" ? await extraFactory() : {};
       const actorName = auditUserName?.() || myName;
       if (!isOnline) {
-        await enqueueFieldStatus({ orderId: order.id, status: newStatus, extra, actorName });
+        await enqueueFieldStatus({
+          orderId: order.id, status: newStatus, extra, actorName, userKey,
+          expectedUpdatedAt: order.updated_at || null, orderSnapshot: buildFieldOrderSnapshot(order),
+        });
         setOrdersData?.(prev => prev.map(row => row.id === order.id ? { ...row, status: newStatus, ...extra, _pendingFieldSync: true } : row));
         onFieldQueued?.();
         showNotif?.("📡 " + notifMsg + " disimpan offline dan akan disinkronkan otomatis.");
@@ -157,6 +219,30 @@ function TechMobileView({ currentUser, ordersData, setOrdersData, laporanReports
           📵 Offline — draft teks tetap tersimpan di perangkat, tetapi status dan foto baru dikirim setelah koneksi kembali.
         </div>
       )}
+
+      <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 11, padding: "10px 13px", display: "grid", gap: 6 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+          <div style={{ fontSize: 11, color: cs.text, fontWeight: 700 }}>
+            {fieldSyncInfo?.pending > 0 ? `📡 ${fieldSyncInfo.pending} aktivitas menunggu sinkron` : "☁️ Data lapangan tersinkron"}
+          </div>
+          <button onClick={enableBackgroundReminders} style={{ background: cs.accent + "18", border: "1px solid " + cs.accent + "44", color: cs.accent, borderRadius: 8, padding: "5px 8px", fontSize: 10, cursor: "pointer", fontWeight: 700 }}>
+            🔔 Pengingat
+          </button>
+        </div>
+        <div style={{ fontSize: 10, color: fieldSyncInfo?.lastError ? cs.red : cs.muted }}>
+          {fieldSyncInfo?.lastError
+            ? `Terakhir gagal: ${fieldSyncInfo.lastError}`
+            : fieldSyncInfo?.lastSyncAt
+              ? `Terakhir sinkron ${new Date(fieldSyncInfo.lastSyncAt).toLocaleTimeString("id-ID")}`
+              : cachedJobs.length > 0 ? `Paket offline tersedia · ${cachedJobs.length} job` : "Menyiapkan paket offline…"}
+          {storageHealth?.percent != null ? ` · storage ${storageHealth.percent}%` : ""}
+        </div>
+        {(fieldSyncInfo?.conflicts || 0) > 0 && (
+          <div style={{ fontSize: 10, color: "#f59e0b", fontWeight: 700 }}>
+            ⚠️ {fieldSyncInfo.conflicts} perubahan job perlu diperiksa karena data admin berubah saat perangkat offline.
+          </div>
+        )}
+      </div>
 
       {/* Absen mandiri — Teknisi & Helper */}
       <AbsenBanner currentUser={currentUser} supabase={supabase} TODAY={TODAY} showNotif={showNotif} apiHeaders={apiHeaders} />

@@ -2,7 +2,9 @@
 // Diekstrak dari App.jsx (Fase 3, pola ctx). `crypto` = global browser (bukan ctx).
 import { maxFotoLaporan } from "./laporanConstants.js";
 import { recordFieldPhotoUploadFailure, uploadWithRetry } from "./fieldReportWorkflow.js";
-import { enqueueFieldPhoto, isRetryableUploadStatus } from "./fieldOfflineQueue.js";
+import {
+  enqueueFieldPhoto, fieldUserKey, getFieldStorageHealth, isRetryableUploadStatus,
+} from "./fieldOfflineQueue.js";
 
 export async function handleFotoUpload(e, {
   _apiFetch, _apiHeaders, appSettings, compressImg, currentUser, fotoTargetUnitRef,
@@ -10,6 +12,7 @@ export async function handleFotoUpload(e, {
 } = {}) {
     // Maintenance = 50 foto, reguler = 20 (sumber tunggal di laporanConstants).
     const MAX_PHOTOS = maxFotoLaporan(laporanModal);
+    const userKey = fieldUserKey(currentUser);
     // Foto baru di-tag ke unit hanya jika event berasal dari input per-unit (fotoUnitInputRef).
     // Upload dari uploader global (fotoInputRef) selalu unit_no=null (umum). Cara ini kebal
     // stale-ref: kalau picker per-unit dibatalkan, upload global berikutnya tidak salah tag.
@@ -59,7 +62,13 @@ export async function handleFotoUpload(e, {
 
     // ── Get compression quality dari settings (default 0.70) ──
     const fotoQualityValue = parseFloat(appSettings?.foto_compression_quality) || 0.70;
-    const fotoQuality = Math.max(0.3, Math.min(1, fotoQualityValue)); // Clamp: 30% - 100%
+    const storageBeforeCompress = await getFieldStorageHealth();
+    const adaptiveQuality = storageBeforeCompress?.percent >= 85
+      ? Math.min(fotoQualityValue, 0.42)
+      : storageBeforeCompress?.percent >= 75
+        ? Math.min(fotoQualityValue, 0.55)
+        : fotoQualityValue;
+    const fotoQuality = Math.max(0.3, Math.min(1, adaptiveQuality)); // Clamp: 30% - 100%
 
     // ── LAYER 2: Cek duplikat vs foto yang sudah ada di state (per sesi) ──
     const existingHashes = new Set(laporanFotos.map(f => f.hash).filter(Boolean));
@@ -117,14 +126,21 @@ export async function handleFotoUpload(e, {
     // Saat offline, simpan foto terkompresi ke IndexedDB. Worker akan upload saat
     // koneksi kembali; draft teks tetap ringan karena base64 tidak masuk localStorage.
     if (typeof navigator !== "undefined" && navigator.onLine === false) {
-      await Promise.all(placeholders.map(ph => enqueueFieldPhoto({
-        jobId: reportId, id: ph.id, hash: ph.hash, dataUrl: ph.data_url,
-        label: ph.label, unitNo: ph.unit_no, role: currentUser?.role,
-      })));
+      const queued = await Promise.allSettled(placeholders.map(ph => enqueueFieldPhoto({
+          jobId: reportId, id: ph.id, hash: ph.hash, dataUrl: ph.data_url,
+          label: ph.label, unitNo: ph.unit_no, role: currentUser?.role, userKey,
+        })));
+      const queuedIds = new Set(queued.flatMap((result, index) => result.status === "fulfilled" ? [placeholders[index].id] : []));
+      const firstError = queued.find(result => result.status === "rejected")?.reason;
       setLaporanFotos(prev => prev.map(foto => placeholders.some(ph => ph.id === foto.id)
-        ? { ...foto, uploading: false, queued: true, errMsg: "Menunggu koneksi" } : foto));
-      onFieldQueued?.();
-      showNotif(`📡 ${placeholders.length} foto disimpan offline dan akan dikirim otomatis.`);
+        ? queuedIds.has(foto.id)
+          ? { ...foto, uploading: false, queued: true, errMsg: "Menunggu koneksi" }
+          : { ...foto, uploading: false, queued: false, errMsg: firstError?.message || "Tidak dapat disimpan offline" }
+        : foto));
+      if (queuedIds.size > 0) onFieldQueued?.();
+      showNotif(queuedIds.size === placeholders.length
+        ? `📡 ${placeholders.length} foto disimpan offline dan akan dikirim otomatis.`
+        : `⚠️ ${queuedIds.size}/${placeholders.length} foto tersimpan. ${firstError?.message || "Storage perangkat tidak cukup."}`);
       e.target.value = "";
       return;
     }
@@ -153,12 +169,16 @@ export async function handleFotoUpload(e, {
         return { id: ph.id, url: result.url, errMsg: "", uploading: false, uploadAttempts: result.attempts };
       }
       if (isRetryableUploadStatus(result.status)) {
-        await enqueueFieldPhoto({
-          jobId: reportId, id: ph.id, hash: ph.hash, dataUrl: ph.data_url,
-          label: ph.label, unitNo: ph.unit_no, role: currentUser?.role,
-        });
-        onFieldQueued?.();
-        return { id: ph.id, url: null, queued: true, errMsg: "Menunggu koneksi", uploading: false, uploadAttempts: result.attempts };
+        try {
+          await enqueueFieldPhoto({
+            jobId: reportId, id: ph.id, hash: ph.hash, dataUrl: ph.data_url,
+            label: ph.label, unitNo: ph.unit_no, role: currentUser?.role, userKey,
+          });
+          onFieldQueued?.();
+          return { id: ph.id, url: null, queued: true, errMsg: "Menunggu koneksi", uploading: false, uploadAttempts: result.attempts };
+        } catch (queueError) {
+          return { id: ph.id, url: null, queued: false, errMsg: queueError?.message || "Storage perangkat tidak cukup", uploading: false, uploadAttempts: result.attempts };
+        }
       }
       return { id: ph.id, url: null, queued: false, errMsg: result.error || "Upload gagal", uploading: false, uploadAttempts: result.attempts };
     };
@@ -175,7 +195,7 @@ export async function handleFotoUpload(e, {
       results.forEach(r => r.url ? savedCount++ : failedCount++);
     }
 
-    if (failedCount > 0) recordFieldPhotoUploadFailure(laporanModal?.id, failedCount);
+    if (failedCount > 0) recordFieldPhotoUploadFailure(laporanModal?.id, failedCount, userKey);
 
     if (savedCount === placeholders.length) {
       showNotif(`✅ ${savedCount} foto tersimpan di R2!`);

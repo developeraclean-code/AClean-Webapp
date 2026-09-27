@@ -3,6 +3,13 @@ import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
 import * as Sentry from "@sentry/react"
 
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/field-sw.js", { scope: "/" })
+      .catch(error => console.warn("[FIELD_SW]", error?.message || error));
+  });
+}
+
 // Initialize Sentry for error tracking
 if (import.meta.env.VITE_SENTRY_DSN) {
   Sentry.init({

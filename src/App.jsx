@@ -89,10 +89,13 @@ import { createTeamSplit as createTeamSplitLib } from "./lib/createTeamSplit.js"
 import { sendDispatchWA as sendDispatchWALib } from "./lib/dispatchWa.js";
 import { uploadMergedInvoicePDFForWA as uploadMergedInvoicePDFForWALib } from "./lib/mergedInvoicePdf.js";
 import { openLaporanModal as openLaporanModalLib } from "./lib/openLaporanModal.js";
-import { finishFieldReportSession, mergeFieldReportDraftPhoto } from "./lib/fieldReportWorkflow.js";
+import { finishFieldReportSession, mergeFieldReportDraftPhoto, saveFieldReportDraft } from "./lib/fieldReportWorkflow.js";
 import {
-  clearQueuedFieldPhotos, flushFieldQueue, listFieldActions,
+  clearActiveFieldUser, clearQueuedFieldPhotos, clearQueuedFieldReport,
+  enqueueFieldReportSubmit, fieldUserKey, flushFieldQueue, listFieldActionsForUser,
+  markFieldAction,
 } from "./lib/fieldOfflineQueue.js";
+import { buildFieldOrderSnapshot, findFieldOrderConflicts } from "./lib/fieldConflict.js";
 const DeletedAuditView = lazy(() => import("./views/DeletedAuditView.jsx"));
 const MonitoringView = lazy(() => import("./views/MonitoringView.jsx"));
 const WaGroupMonitorView = lazy(() => import("./views/WaGroupMonitorView.jsx"));
@@ -1033,11 +1036,20 @@ export default function ACleanWebApp() {
   const [bapSyncing, setBapSyncing] = useState(false);
   const [pendingFieldCount, setPendingFieldCount] = useState(0);
   const [fieldSyncing, setFieldSyncing] = useState(false);
+  const [fieldSyncLastAt, setFieldSyncLastAt] = useState(null);
+  const [fieldSyncError, setFieldSyncError] = useState("");
+  const [fieldSyncConflicts, setFieldSyncConflicts] = useState(0);
+  const [autoSubmitJobId, setAutoSubmitJobId] = useState(null);
   const fieldSyncLock = useRef(false);
+  const fieldUiRef = useRef({ laporanModal: null, autoSubmitJobId: null });
+  fieldUiRef.current = { laporanModal, autoSubmitJobId };
+  const currentFieldUserKey = fieldUserKey(currentUser);
 
   const refreshFieldQueueCount = useCallback(() => {
-    listFieldActions().then(rows => {
+    if (!currentFieldUserKey) { setPendingFieldCount(0); setFieldSyncConflicts(0); return; }
+    listFieldActionsForUser(currentFieldUserKey).then(rows => {
       setPendingFieldCount(rows.length);
+      setFieldSyncConflicts(rows.filter(row => row.state === "conflict").length);
       const latestStatus = new Map();
       rows.filter(row => row.type === "status")
         .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
@@ -1055,7 +1067,7 @@ export default function ACleanWebApp() {
         });
       }
     }).catch(() => {});
-  }, []);
+  }, [currentFieldUserKey]);
 
   useEffect(() => {
     // Data order selesai bootstrap setelah effect awal. Terapkan kembali overlay
@@ -1066,12 +1078,22 @@ export default function ACleanWebApp() {
   }, [ordersData.length]);
 
   const triggerFieldSync = async () => {
-    if (fieldSyncLock.current || (typeof navigator !== "undefined" && navigator.onLine === false)) return;
+    if (!currentFieldUserKey || fieldSyncLock.current || (typeof navigator !== "undefined" && navigator.onLine === false)) return;
     fieldSyncLock.current = true;
     setFieldSyncing(true);
+    setFieldSyncError("");
     try {
       const result = await flushFieldQueue({
+        userKey: currentFieldUserKey,
         syncStatus: async row => {
+          if (row.orderSnapshot) {
+            const { data: live, error: liveError } = await supabase.from("orders")
+              .select("customer,customer_id,phone,address,area,notes,service,type,units,teknisi,helper,teknisi2,helper2,teknisi3,helper3,date,time,time_end,maintenance_client_id,maintenance_unit_ids")
+              .eq("id", row.orderId).maybeSingle();
+            if (liveError || !live) return { success: false, error: liveError?.message || "Order tidak ditemukan" };
+            const fields = findFieldOrderConflicts(row.orderSnapshot, live);
+            if (fields.length > 0) return { success: false, conflict: true, error: `Data admin berubah: ${fields.join(", ")}` };
+          }
           const { data, error } = await updateOrderStatus(
             supabase, row.orderId, row.status, row.actorName || currentUser?.name, row.extra || {}
           );
@@ -1097,14 +1119,51 @@ export default function ACleanWebApp() {
             data_url: syncResult.url, hash: row.hash, unit_no: row.unitNo || null,
             uploading: false, queued: false, errMsg: "",
           };
-          mergeFieldReportDraftPhoto(row.jobId, photo);
+          mergeFieldReportDraftPhoto(row.jobId, photo, currentFieldUserKey);
           setLaporanFotos(prev => prev.map(item => item.hash === row.hash ? { ...item, ...photo } : item));
+        },
+        onConflict: (_row, syncResult) => {
+          setFieldSyncError(syncResult.error || "Data job berubah saat offline");
+          addAgentLog("FIELD_SYNC_CONFLICT", syncResult.error || "Data job berubah saat offline", "WARNING");
         },
       });
       setPendingFieldCount(result.remaining);
-      if (result.synced > 0) showNotif(`☁️ ${result.synced} aktivitas lapangan berhasil disinkronkan`);
+      setFieldSyncConflicts(result.rows.filter(row => row.state === "conflict").length);
+      setFieldSyncLastAt(new Date().toISOString());
+      if (result.synced > 0) {
+        showNotif(`☁️ ${result.synced} aktivitas lapangan berhasil disinkronkan`);
+        addAgentLog("FIELD_SYNC_SUCCESS", `${result.synced} aktivitas tersinkron; ${result.remaining} tersisa`, "SUCCESS");
+      }
+
+      // Setelah foto/status selesai, buka kembali draft yang sudah ditandai submit
+      // offline. Modal akan menjalankan pipeline submit normal sehingga perhitungan
+      // invoice/material tetap memakai satu sumber logika yang sama.
+      const reportIntent = result.rows.find(row => row.type === "report" && row.state !== "conflict"
+        && !result.rows.some(photo => photo.type === "photo" && photo.jobId === row.jobId));
+      if (reportIntent && !fieldUiRef.current.laporanModal && !fieldUiRef.current.autoSubmitJobId) {
+        const { data: liveOrder, error: liveError } = await supabase.from("orders")
+          .select("*").eq("id", reportIntent.jobId).maybeSingle();
+        if (liveError || !liveOrder) {
+          await markFieldAction(reportIntent.id, { error: liveError?.message || "Order tidak ditemukan", lastAttempt: Date.now() });
+        } else {
+          const changed = findFieldOrderConflicts(reportIntent.orderSnapshot || {}, liveOrder);
+          if (changed.length > 0) {
+            const message = `Data admin berubah: ${changed.join(", ")}`;
+            await markFieldAction(reportIntent.id, { state: "conflict", error: message, lastAttempt: Date.now() });
+            setFieldSyncError(message);
+            setFieldSyncConflicts(value => value + 1);
+            addAgentLog("FIELD_SYNC_CONFLICT", `${reportIntent.jobId}: ${message}`, "WARNING");
+          } else {
+            await markFieldAction(reportIntent.id, { state: "resuming", error: "", lastAttempt: Date.now() });
+            setAutoSubmitJobId(reportIntent.jobId);
+            openLaporanModal(liveOrder);
+          }
+        }
+      }
     } catch (error) {
       console.warn("[FIELD_SYNC]", error?.message || error);
+      setFieldSyncError(error?.message || "Sinkronisasi gagal");
+      addAgentLog("FIELD_SYNC_FAILED", error?.message || "Sinkronisasi gagal", "ERROR");
       refreshFieldQueueCount();
     } finally {
       fieldSyncLock.current = false;
@@ -1123,7 +1182,7 @@ export default function ACleanWebApp() {
     // Worker lifecycle tunggal; callback membaca state sesi aktif dari render awal
     // dan antrean berikutnya dipicu juga lewat tombol/online event.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [currentFieldUserKey]);
 
   // Bawa Material modal — teknisi/helper declare unit material yang dibawa per job
   const [materialBringJob, setMaterialBringJob] = useState(null);
@@ -2480,6 +2539,9 @@ export default function ACleanWebApp() {
 
   const doLogout = async () => {
     invalidateCache();
+    // Putuskan identitas aktif service worker tanpa menghapus antrean milik akun.
+    // Antrean tetap aman dan hanya akan dilanjutkan saat akun yang sama login lagi.
+    await clearActiveFieldUser(currentFieldUserKey).catch(() => {});
     _internalTokenRef.current = null; // clear cached API token saat logout
     _internalTokenExpRef.current = 0;
     await supabase.auth.signOut();
@@ -3805,6 +3867,10 @@ export default function ACleanWebApp() {
           customersData={customersData}
           setHistoryPreview={setHistoryPreview}
           onFieldQueued={refreshFieldQueueCount}
+          fieldSyncInfo={{
+            pending: pendingFieldCount, syncing: fieldSyncing, lastSyncAt: fieldSyncLastAt,
+            lastError: fieldSyncError, conflicts: fieldSyncConflicts,
+          }}
         />
       );
     }
@@ -4600,6 +4666,36 @@ export default function ACleanWebApp() {
   // Wrapper (Fase 3, pola ctx): handleFotoUpload pindah ke lib/fotoUpload.
   const handleFotoUpload = (e) => handleFotoUploadLib(e, { _apiFetch, _apiHeaders, appSettings, compressImg, currentUser, fotoTargetUnitRef, fotoUnitInputRef, laporanFotos, laporanModal, setLaporanFotos, showNotif, onFieldQueued: refreshFieldQueueCount });
 
+  const queueCurrentReportForOffline = async () => {
+    if (!laporanModal?.id || !currentFieldUserKey) {
+      showNotif("❌ Laporan offline tidak dapat diantrekan karena identitas sesi tidak lengkap.");
+      return false;
+    }
+    try {
+      const draftSaved = saveFieldReportDraft(laporanModal.id, {
+        step: laporanStep, activeUnitIdx, units: laporanUnits, materials: laporanMaterials,
+        jasaItems: laporanJasaItems, barangItems: laporanBarangItems,
+        installItems: laporanInstallItems, cleaningInRepair: laporanCleaningInRepair,
+        photos: laporanFotos, rekomendasi: laporanRekomendasi, catatan: laporanCatatan,
+        surveyHasil: laporanSurveyHasil, surveyCatatan: laporanSurveyCatatan,
+      }, currentFieldUserKey);
+      if (!draftSaved) throw new Error("Draft lokal tidak dapat disimpan");
+      await enqueueFieldReportSubmit({
+        jobId: laporanModal.id, userKey: currentFieldUserKey,
+        actorName: auditUserName(), orderSnapshot: buildFieldOrderSnapshot(laporanModal),
+      });
+      await refreshFieldQueueCount();
+      setLaporanModal(null);
+      showNotif("📡 Laporan disimpan sebagai paket offline dan akan diproses otomatis setelah foto tersinkron.");
+      addAgentLog("FIELD_REPORT_QUEUED", `Laporan ${laporanModal.id} menunggu koneksi`, "WARNING");
+      return true;
+    } catch (error) {
+      reportError("field.report.queue", error, { jobId: laporanModal.id });
+      showNotif("❌ Gagal menyimpan paket laporan offline: " + (error?.message || error));
+      return false;
+    }
+  };
+
   // Wrapper (Fase 3, pola ctx): submitLaporan (jalur uang) pindah ke lib/submitLaporan.
   const submitLaporan = () => submitLaporanImpl({
     INSTALL_ITEMS, _apiHeaders, addAgentLog, appSettings, auditUserName, buildInvoiceDetail,
@@ -4617,8 +4713,12 @@ export default function ACleanWebApp() {
     showNotif, submitLaporanLock, summarize, supabase, syncTrackedStock, teknisiData,
     updateOrderStatus, userAccounts,
     onReportSubmitted: (order) => {
-      const metrics = finishFieldReportSession(order);
-      clearQueuedFieldPhotos(order?.id).then(refreshFieldQueueCount).catch(() => {});
+      const metrics = finishFieldReportSession(order, { userKey: currentFieldUserKey });
+      Promise.all([
+        clearQueuedFieldPhotos(order?.id, currentFieldUserKey),
+        clearQueuedFieldReport(order?.id, currentFieldUserKey),
+      ]).then(refreshFieldQueueCount).catch(() => {});
+      setAutoSubmitJobId(null);
       addAgentLog("FIELD_REPORT_METRICS", JSON.stringify(metrics), "INFO");
     },
   });
@@ -5230,6 +5330,9 @@ export default function ACleanWebApp() {
             currentUser={currentUser}
             isMobile={isMobile}
             onFieldQueued={refreshFieldQueueCount}
+            onQueueOfflineReport={queueCurrentReportForOffline}
+            autoSubmitRequested={autoSubmitJobId === laporanModal?.id}
+            onAutoSubmitStarted={() => setAutoSubmitJobId(null)}
           />
         </Suspense>
       )}
