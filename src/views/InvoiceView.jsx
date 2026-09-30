@@ -576,7 +576,7 @@ const loadPendingPayments = async () => {
   if (!supabase) return;
   setLoadingPendingPayments(true);
   try {
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from("payment_suggestions")
       .select("*, ai_extractions:ai_extraction_id(*)")
       .eq("validation_status", "PENDING")
@@ -584,6 +584,20 @@ const loadPendingPayments = async () => {
       .or("ai_extraction_id.not.is.null,forwarded_to_group.not.is.null,media_job_id.not.is.null")
       .order("created_at", { ascending: false })
       .limit(50);
+    // Deployment frontend dapat tiba beberapa menit sebelum migration 188.
+    // Dalam window itu tetap gunakan query lama agar tab Pending AI tidak blank/error.
+    if (error && /media_job_id/i.test(String(error.message || error.details || ""))) {
+      const legacy = await supabase
+        .from("payment_suggestions")
+        .select("*, ai_extractions:ai_extraction_id(*)")
+        .eq("validation_status", "PENDING")
+        .eq("status", "PENDING")
+        .or("ai_extraction_id.not.is.null,forwarded_to_group.not.is.null")
+        .order("created_at", { ascending: false })
+        .limit(50);
+      data = legacy.data;
+      error = legacy.error;
+    }
     if (error) throw error;
     setPendingPayments(data || []);
   } catch (e) {
