@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { cs } from "../theme/cs.js";
+import { PIPA_MASTER_OPTIONS, validateNewMaterial } from "../lib/materialCatalog.js";
 
 const inp = {
   width: "100%", background: cs.card, border: "1px solid " + cs.border,
@@ -17,7 +18,7 @@ const MATERIAL_TYPES = [
 
 const UNITS = ["pcs", "kg", "m", "roll", "botol", "set", "liter", "unit"];
 
-const EMPTY_ADD = { name: "", code: "", unit: "pcs", price: "", stock: "", reorder: "", min_alert: "", material_type: "other" };
+const EMPTY_ADD = { name: "", code: "", unit: "pcs", price: "", stock: "", reorder: "", min_alert: "", material_type: "other", pipaMaster: "" };
 const EMPTY_EDIT = { stock: "", tambah: "", price: "", reorder: "", min_alert: "" };
 
 function computeStockStatusLocal(stock, reorder) {
@@ -84,6 +85,13 @@ export default function MaterialFormModal({
     if (!form.name || form.name.trim().length < 2 || form.name.trim().length > 100) {
       showNotif("❌ Nama material harus 2-100 karakter"); return;
     }
+    const materialGuard = validateNewMaterial({
+      name: form.name,
+      materialType: form.material_type,
+      pipaMaster: form.pipaMaster,
+      inventoryData,
+    });
+    if (!materialGuard.ok) { showNotif("❌ " + materialGuard.message); return; }
     const stokAwal = parseStock(form.stock);
     if (stokAwal < 0) { showNotif("❌ Stok tidak boleh negatif"); return; }
     const price = parseInt(form.price) || 0;
@@ -185,11 +193,26 @@ export default function MaterialFormModal({
 
           {/* ── ADD MODE ── */}
           {mode === "add" && (<>
+            {form.material_type === "pipa" && (
+              <div style={{ background: "#f59e0b12", border: "1px solid #f59e0b55", borderRadius: 10, padding: "10px 12px" }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#f59e0b", marginBottom: 5 }}>🔧 Klasifikasi Master Pipa AC <span style={{ color: cs.red }}>*</span></div>
+                <select value={form.pipaMaster || ""}
+                  onChange={e => setForm(f => ({ ...f, pipaMaster: e.target.value, name: e.target.value, unit: "m" }))}
+                  style={{ ...inp, padding: "9px 12px" }}>
+                  <option value="">Pilih jenis pipa…</option>
+                  {PIPA_MASTER_OPTIONS.map(name => <option key={name} value={name}>{name}</option>)}
+                </select>
+                <div style={{ fontSize: 10.5, color: cs.muted, marginTop: 6, lineHeight: 1.4 }}>
+                  Pilih master barang di sini. Label seperti <b>Roll C1</b> dibuat nanti melalui <b>Tambah Unit</b>, bukan sebagai nama material baru.
+                </div>
+              </div>
+            )}
             <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 10 }}>
               <div>
                 <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Nama Material <span style={{ color: cs.red }}>*</span></div>
                 <input type="text" placeholder="cth: Freon R32, Pipa 1/4" value={form.name || ""}
-                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))} style={inp} />
+                  readOnly={form.material_type === "pipa" && !!form.pipaMaster}
+                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))} style={{ ...inp, opacity: form.material_type === "pipa" && form.pipaMaster ? 0.75 : 1 }} />
               </div>
               <div>
                 <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Kode Manual</div>
@@ -204,7 +227,7 @@ export default function MaterialFormModal({
               <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 6 }}>Tipe Material</div>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                 {MATERIAL_TYPES.map(([val, lbl]) => (
-                  <button key={val} onClick={() => setForm(f => ({ ...f, material_type: val }))}
+                  <button key={val} onClick={() => setForm(f => ({ ...f, material_type: val, ...(val === "pipa" ? { pipaMaster: "", unit: "m" } : { pipaMaster: "" }) }))}
                     style={{ padding: "5px 12px", borderRadius: 8, fontSize: 12, cursor: "pointer", border: "1px solid " + (form.material_type === val ? cs.accent : cs.border), background: form.material_type === val ? cs.accent + "22" : cs.surface, color: form.material_type === val ? cs.accent : cs.muted, fontWeight: form.material_type === val ? 700 : 400 }}>
                     {lbl}
                   </button>

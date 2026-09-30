@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { cs } from "../theme/cs.js";
 import { reconcileDay, sumReportedUsage, reconStatus, RECON_TOLERANCE } from "../lib/materialRecon.js";
+import { classifyInventoryMaterial } from "../lib/materialCatalog.js";
 
 // Kompres gambar → base64 (tanpa prefix). Max 1280px, JPEG q0.7. (mirror ExpenseInputWidget)
 function compressToBase64(file, maxDim = 1280, quality = 0.7) {
@@ -29,15 +30,6 @@ function compressToBase64(file, maxDim = 1280, quality = 0.7) {
 const MAX_PHOTOS = 5;
 const todayJkt = () => new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" });
 const slug = (s) => String(s || "tek").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 30) || "tek";
-
-// Klasifikasi item inventory → kategori form (pipa/kabel/freon). Selain itu di-skip.
-function classifyInv(name) {
-  const n = String(name || "").toLowerCase();
-  if (n.startsWith("freon")) return "freon";
-  if (n.startsWith("pipa ac")) return "pipa";
-  if (n.startsWith("kabel")) return "kabel";  // termasuk "KABEL Listrik 4x2,5"
-  return null;                                 // KLEM PIPA PVC dll → diabaikan
-}
 
 // Kategori material: semua kini berbasis UNIT (unit_id) dari inventory_units.
 const CATS = [
@@ -144,9 +136,9 @@ function MaterialCheckoutView({ supabase, currentUser, showNotif, fotoSrc, _apiF
   const byKat = (k) => materials.filter((m) => m.kategori === k);
 
   const load = useCallback(async () => {
-    const { data: inv } = await supabase.from("inventory").select("code,name,unit,stock,status");
+    const { data: inv } = await supabase.from("inventory").select("code,name,unit,stock,status,material_type");
     const mats = (inv || [])
-      .map((it) => ({ ...it, kategori: classifyInv(it.name) }))
+      .map((it) => ({ ...it, kategori: classifyInventoryMaterial(it) }))
       .filter((it) => it.kategori)
       .sort((a, b) => a.kategori.localeCompare(b.kategori) || a.name.localeCompare(b.name));
     setMaterials(mats);
