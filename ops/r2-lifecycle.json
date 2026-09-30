@@ -1,0 +1,58 @@
+{
+  "rules": [
+    {
+      "id": "aclean-abort-incomplete-multipart-1d",
+      "enabled": true,
+      "conditions": { "prefix": "" },
+      "abortMultipartUploadsTransition": { "condition": { "type": "Age", "maxAge": 86400 } }
+    },
+    {
+      "id": "aclean-wa-group-90d",
+      "enabled": true,
+      "conditions": { "prefix": "wa-group/" },
+      "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 7776000 } }
+    },
+    {
+      "id": "aclean-wa-images-90d",
+      "enabled": true,
+      "conditions": { "prefix": "wa-images/" },
+      "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 7776000 } }
+    },
+    {
+      "id": "aclean-tool-bag-90d",
+      "enabled": true,
+      "conditions": { "prefix": "tool-bag/" },
+      "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 7776000 } }
+    },
+    {
+      "id": "aclean-expenses-30d",
+      "enabled": true,
+      "conditions": { "prefix": "expenses/" },
+      "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 2592000 } }
+    },
+    {
+      "id": "aclean-backup-60d",
+      "enabled": true,
+      "conditions": { "prefix": "backup/" },
+      "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 5184000 } }
+    },
+    {
+      "id": "aclean-wa-snapshots-60d",
+      "enabled": true,
+      "conditions": { "prefix": "wa-snapshots/" },
+      "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 5184000 } }
+    },
+    {
+      "id": "aclean-generated-service-reports-365d",
+      "enabled": true,
+      "conditions": { "prefix": "service-reports/" },
+      "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 31536000 } }
+    },
+    {
+      "id": "aclean-generated-invoices-365d",
+      "enabled": true,
+      "conditions": { "prefix": "invoices/" },
+      "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 31536000 } }
+    }
+  ]
+}

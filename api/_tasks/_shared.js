@@ -2,6 +2,7 @@
 // ADANYA dari api/cron-reminder.js saat pemecahan ke _tasks/, Jul 2026).
 import { createClient } from "@supabase/supabase-js";
 import { createHmac, createHash } from "crypto";
+import { encodeR2CanonicalPath } from "../_r2-key.js";
 
 export const sb = createClient(
   process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL,
@@ -102,7 +103,7 @@ export async function deleteR2Object(key) {
     const host = accountId + ".r2.cloudflarestorage.com";
     const region = "auto", service = "s3";
 
-    const canonicalUri = "/" + bucket + "/" + key;
+    const canonicalUri = encodeR2CanonicalPath(bucket, key);
     const payloadHash = createHash("sha256").update("").digest("hex");
     const canonicalHeaders = `host:${host}\nx-amz-content-sha256:${payloadHash}\nx-amz-date:${timeStr}\n`;
     const signedHeaders = "host;x-amz-content-sha256;x-amz-date";
@@ -124,7 +125,8 @@ export async function deleteR2Object(key) {
         "x-amz-date": timeStr,
         "x-amz-content-sha256": payloadHash,
         "Authorization": authorization
-      }
+      },
+      signal: AbortSignal.timeout(4000),
     });
     return r.ok || r.status === 204 || r.status === 404;
   } catch(e) {

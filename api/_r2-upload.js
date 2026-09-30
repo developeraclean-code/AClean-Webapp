@@ -3,6 +3,7 @@
 // Pattern AWS Sig V4 — sama dgn /api/upload-foto endpoint existing.
 
 import { createHash, createHmac } from "node:crypto";
+import { encodeR2CanonicalPath } from "./_r2-key.js";
 
 const R2_ENV = () => ({
   accessKeyId:    process.env.R2_ACCESS_KEY,
@@ -102,7 +103,8 @@ export async function uploadBufferToR2({ buffer, key, mimeType }) {
   }
   try {
     const host = accountId + ".r2.cloudflarestorage.com";
-    const endpoint = "https://" + host + "/" + bucket + "/" + key;
+    const canonicalUri = encodeR2CanonicalPath(bucket, key);
+    const endpoint = "https://" + host + canonicalUri;
     const now = new Date();
     const dateStr = now.toISOString().replace(/[:-]|\.\d{3}/g, "").slice(0, 8);
     const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "").slice(0, 15) + "Z";
@@ -110,7 +112,6 @@ export async function uploadBufferToR2({ buffer, key, mimeType }) {
 
     const canonicalHeaders = `content-type:${mimeType}\nhost:${host}\nx-amz-content-sha256:${payloadHash}\nx-amz-date:${amzDate}\n`;
     const signedHeaders = "content-type;host;x-amz-content-sha256;x-amz-date";
-    const canonicalUri = "/" + bucket + "/" + encodeURIComponent(key).replace(/%2F/g, "/");
     const canonicalReq = ["PUT", canonicalUri, "", canonicalHeaders, signedHeaders, payloadHash].join("\n");
     const credScope = `${dateStr}/auto/s3/aws4_request`;
     const reqHash = createHash("sha256").update(canonicalReq).digest("hex");
@@ -130,6 +131,7 @@ export async function uploadBufferToR2({ buffer, key, mimeType }) {
         "Content-Length": String(buffer.length),
       },
       body: buffer,
+      signal: AbortSignal.timeout(10000),
     });
     if (!r2res.ok) {
       const errTxt = await r2res.text().catch(() => "");

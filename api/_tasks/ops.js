@@ -2,8 +2,12 @@
 // api/cron-reminder.js, pemecahan _tasks/ Jul 2026). Entry & jadwal tetap di cron-reminder.js.
 import { sb, sendWA, sendWAWithResult, isCronJobEnabled, fmt, log, deleteR2Object, OWNER_PHONE } from "./_shared.js";
 import * as Sentry from "@sentry/node";
-import { createHmac, createHash } from "crypto";
-import { getR2BucketUsage } from "../_r2-upload.js";
+import { getR2BucketUsage, hasR2Config, uploadBufferToR2 } from "../_r2-upload.js";
+import { mapWithConcurrency } from "../_r2-key.js";
+import { gzip } from "node:zlib";
+import { promisify } from "node:util";
+
+const gzipAsync = promisify(gzip);
 
 // ══════════════════════════════════════════════════
 // TASK: Project Alerts — WA ke Owner untuk modul Project
@@ -124,47 +128,27 @@ export async function taskAutoReturnBrought() {
 
 // ══════════════════════════════════════════════════
 // TASK 7: Backup Data Mingguan ke R2
-// Jalan tiap Senin 08:00 WIB (jadwal di taskTick dispatcher)
+// Jalan tiap Senin 11:00 WIB (jadwal di taskTick dispatcher)
 // Export invoices, orders, customers, service_reports ke R2
 // ══════════════════════════════════════════════════
 export async function taskBackupData() {
   // Gate FAIL-OPEN — sengaja BEDA dari SOP strict (=== "true") milik task WA-customer:
   // backup wajib default JALAN; key hilang tidak boleh mematikan backup diam-diam.
   // Berhenti hanya kalau eksplisit dimatikan (standalone "false" / cron_jobs active:false).
-  const { data: togData } = await sb.from("app_settings").select("key,value").in("key", ["backup_data_enabled", "cron_jobs"]);
+  const { data: togData, error: toggleError } = await sb.from("app_settings").select("key,value").in("key", ["backup_data_enabled", "cron_jobs"]);
+  if (toggleError) {
+    await log("BACKUP_DATA", "Gagal membaca toggle: " + toggleError.message, "ERROR");
+    throw new Error("Backup toggle: " + toggleError.message);
+  }
   const togMap = Object.fromEntries((togData || []).map(s => [s.key, s.value]));
   if (!isCronJobEnabled(togMap, "backup_data_enabled") || togMap["backup_data_enabled"] === "false") {
     await log("BACKUP_DATA", "Dilewati — toggle OFF", "INFO");
     return { skipped: true };
   }
 
-  const r2Key    = process.env.R2_ACCESS_KEY;
-  const r2Secret = process.env.R2_SECRET_KEY;
-  const r2Account= process.env.R2_ACCOUNT_ID;
-  const r2Bucket = process.env.R2_BUCKET_NAME || "aclean-files";
-
-  if (!r2Key || !r2Secret || !r2Account) {
+  if (!hasR2Config()) {
     await log("BACKUP_DATA", "R2 credentials tidak lengkap — skip", "ERROR");
     return { skipped: true };
-  }
-
-  function hmac(key, data) { return createHmac("sha256", key).update(data).digest(); }
-  function sigV4Put(key, body, contentType) {
-    const host = r2Account + ".r2.cloudflarestorage.com";
-    const now = new Date();
-    const amzDate = now.toISOString().replace(/[:\-]|\.\d{3}/g, "").slice(0, 15) + "Z";
-    const dateStr = amzDate.slice(0, 8);
-    const payloadHash = createHash("sha256").update(body).digest("hex");
-    const canonicalUri = "/" + r2Bucket + "/" + key;
-    const canonicalHeaders = "content-type:" + contentType + "\nhost:" + host + "\nx-amz-content-sha256:" + payloadHash + "\nx-amz-date:" + amzDate + "\n";
-    const signedHeaders = "content-type;host;x-amz-content-sha256;x-amz-date";
-    const canonicalRequest = "PUT\n" + canonicalUri + "\n\n" + canonicalHeaders + "\n" + signedHeaders + "\n" + payloadHash;
-    const credScope = dateStr + "/auto/s3/aws4_request";
-    const strToSign = "AWS4-HMAC-SHA256\n" + amzDate + "\n" + credScope + "\n" + createHash("sha256").update(canonicalRequest).digest("hex");
-    const signingKey = hmac(hmac(hmac(hmac("AWS4" + r2Secret, dateStr), "auto"), "s3"), "aws4_request");
-    const signature = createHmac("sha256", signingKey).update(strToSign).digest("hex");
-    const authorization = "AWS4-HMAC-SHA256 Credential=" + r2Key + "/" + credScope + ", SignedHeaders=" + signedHeaders + ", Signature=" + signature;
-    return { url: "https://" + host + canonicalUri, headers: { Authorization: authorization, "x-amz-date": amzDate, "x-amz-content-sha256": payloadHash, "content-type": contentType, host } };
   }
 
   const now = new Date(Date.now() + 7 * 3600000); // WIB
@@ -186,31 +170,53 @@ export async function taskBackupData() {
     return { data: all };
   }
 
-  for (const table of tables) {
+  // Empat tabel diambil paralel. Masing-masing tetap paginate berurutan supaya tidak
+  // membanjiri Supabase Nano dengan burst request yang besar.
+  const exports = await Promise.all(tables.map(async table => {
     try {
       const { data, error } = await fetchAllRows(table);
-      if (error) { results[table] = "ERROR: " + error.message; continue; }
+      if (error) return { table, error: "ERROR: " + error.message };
       const body = JSON.stringify({ exported_at: new Date().toISOString(), table, count: data.length, data });
-      const r2Key2 = "backup/" + dateStr + "/" + table + ".json";
-      const { url, headers } = sigV4Put(r2Key2, body, "application/json");
-      const putRes = await fetch(url, { method: "PUT", headers, body });
-      results[table] = putRes.ok ? data.length + " rows" : "PUT_FAIL:" + putRes.status;
+      return { table, data, body };
     } catch(e) {
-      results[table] = "EXCEPTION: " + e.message;
+      return { table, error: "EXCEPTION: " + e.message };
     }
-  }
+  }));
+
+  await mapWithConcurrency(exports, 2, async item => {
+    if (item.error) { results[item.table] = item.error; return; }
+    try {
+      const key = `backup/${dateStr}/${item.table}.json.gz`;
+      const compressed = await gzipAsync(Buffer.from(item.body), { level: 6 });
+      const uploaded = await uploadBufferToR2({
+        buffer: compressed,
+        key,
+        mimeType: "application/gzip",
+      });
+      results[item.table] = uploaded.ok
+        ? `${item.data.length} rows (${compressed.length} bytes gzip)`
+        : `PUT_FAIL:${uploaded.err || "unknown"}`;
+    } catch (error) {
+      results[item.table] = `EXCEPTION:${error?.message || error}`;
+    }
+  });
 
   // Catat ke backup_log (notes = path folder, dipakai untuk retensi di bawah)
   const successTables = tables.filter(t => results[t] && !results[t].startsWith("ERROR") && !results[t].startsWith("PUT_FAIL") && !results[t].startsWith("EXCEPTION"));
+  let backupLogError = null;
   try {
-    await sb.from("backup_log").insert({
+    const { error } = await sb.from("backup_log").insert({
       type: "auto-r2-weekly",
       tables: successTables,           // ARRAY column — jangan join
       row_counts: results,             // jsonb column — pass object langsung
       exported_by: "CRON",
       notes: "backup/" + dateStr + "/"
     });
-  } catch(e) { console.error("[BACKUP_LOG]", e.message); }
+    if (error) throw error;
+  } catch(e) {
+    backupLogError = e.message;
+    console.error("[BACKUP_LOG]", e.message);
+  }
 
   // ── Retensi 60 hari (2 bulan): hapus folder backup lama dari R2 + backup_log ──
   // Folder ber-tanggal di-track via backup_log.notes ("backup/YYYY-MM-DD/"). Format lama
@@ -218,21 +224,30 @@ export async function taskBackupData() {
   let purgedBackups = 0;
   try {
     const cutoffISO = new Date(Date.now() - 60 * 86400000).toISOString();
-    const { data: oldLogs } = await sb.from("backup_log")
-      .select("id, tables, notes").lt("created_at", cutoffISO).limit(50);
-    for (const bl of oldLogs || []) {
+    const { data: oldLogs, error: retentionQueryError } = await sb.from("backup_log")
+      .select("id, tables, notes").lt("created_at", cutoffISO).limit(5);
+    if (retentionQueryError) throw retentionQueryError;
+    const retentionResults = await mapWithConcurrency(oldLogs || [], 2, async bl => {
       const folder = String(bl.notes || "").trim().replace(/^backup\//, "").replace(/\/$/, "");
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(folder)) continue; // hanya folder ber-tanggal
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(folder)) return false; // hanya folder ber-tanggal
       const tbls = (Array.isArray(bl.tables) && bl.tables.length) ? bl.tables : tables;
-      for (const t of tbls) { await deleteR2Object("backup/" + folder + "/" + t + ".json"); }
-      await sb.from("backup_log").delete().eq("id", bl.id);
-      purgedBackups++;
-    }
+      const objectKeys = tbls.flatMap(t => [
+        `backup/${folder}/${t}.json`,
+        `backup/${folder}/${t}.json.gz`,
+      ]);
+      const deleted = await mapWithConcurrency(objectKeys, 4, deleteR2Object);
+      if (!deleted.every(item => item.status === "fulfilled" && item.value === true)) return false;
+      const { error } = await sb.from("backup_log").delete().eq("id", bl.id);
+      return !error;
+    });
+    purgedBackups = retentionResults.filter(x => x.status === "fulfilled" && x.value === true).length;
   } catch(e) { console.error("[BACKUP_RETENTION]", e.message); }
 
-  const summary = "Backup " + dateStr + ": " + Object.entries(results).map(([t, r]) => t + "=" + r).join(", ") + (purgedBackups ? ` | retensi: hapus ${purgedBackups} backup >60h` : "");
-  await log("BACKUP_DATA", summary, successTables.length === tables.length ? "SUCCESS" : "WARNING");
-  return { dateStr, results, purgedBackups };
+  const summary = "Backup " + dateStr + ": " + Object.entries(results).map(([t, r]) => t + "=" + r).join(", ")
+    + (backupLogError ? ` | backup_log GAGAL: ${backupLogError}` : "")
+    + (purgedBackups ? ` | retensi: hapus ${purgedBackups} backup >60h` : "");
+  await log("BACKUP_DATA", summary, successTables.length === tables.length && !backupLogError ? "SUCCESS" : "WARNING");
+  return { dateStr, results, purgedBackups, backupLogError };
 }
 
 // ══════════════════════════════════════════════════

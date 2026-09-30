@@ -51,7 +51,8 @@ async function taskTick() {
     { t: "stock",                    fn: taskStock,                  h: 8 },
     { t: "servis-reminder",          fn: taskServisReminder,         h: 8,  dow: 1 },
     { t: "weekly",                   fn: taskWeeklyReport,           h: 8,  dow: 0 },
-    { t: "backup",                   fn: taskBackupData,             h: 8,  dow: 1 },
+    // Backup cukup berat; jam 11 memisahkannya dari task stok/weekly jam 8.
+    { t: "backup",                   fn: taskBackupData,             h: 11, dow: 1 },
     { t: "wa-cleanup",               fn: taskWaCleanup,              h: 9 },
     { t: "rating-prompt",            fn: taskRatingPrompt,           h: 9 },
     { t: "project-alerts",           fn: taskProjectAlerts,          h: 9 },
@@ -114,7 +115,8 @@ async function taskTick() {
     if (alreadyRan.has(s.t)) continue;
     if (count >= CAP || Date.now() - tickStartedAt >= TIME_BUDGET_MS) { pending++; continue; }
     const remainingMs = Math.max(1_000, TIME_BUDGET_MS - (Date.now() - tickStartedAt));
-    try { await runWithCronLogging(sb, s.t, () => s.fn(), { timeoutMs: Math.min(6_500, remainingMs) }); ran.push(s.t); count++; }
+    const taskTimeoutMs = s.t === "backup" ? 18_000 : 6_500;
+    try { await runWithCronLogging(sb, s.t, () => s.fn(), { timeoutMs: Math.min(taskTimeoutMs, remainingMs) }); ran.push(s.t); count++; }
     catch (e) {
       console.error("[TICK]", s.t, e.message);
       if (e?.code === "CRON_TIMEOUT") {

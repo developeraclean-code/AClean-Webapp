@@ -15,6 +15,7 @@
     "test:e2e:report": "playwright show-report",
     "test:sfm-100": "node scripts/simulate-sfm-100.mjs",
     "check:migrations": "node scripts/check-migrations.mjs",
+    "r2:lifecycle": "node scripts/apply-r2-lifecycle.mjs",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
     "typecheck": "tsc --noEmit -p tsconfig.json"
