@@ -40,7 +40,7 @@ export const searchOrdersServer = (supabase, query) => {
     .limit(100);
 };
 
-const INVOICE_COLS = "id,job_id,customer,phone,address,service,units,labor,material,discount,trade_in,trade_in_amount,total,status,due,paid_at,sent,sent_at,created_at,updated_at,follow_up,teknisi,garansi_days,garansi_expires,paid_method,materials_detail,payment_proof_url,repair_gratis,invoice_type,unit_ac_amount,paket_pasang,paid_amount,remaining_amount,wa_sent_count,wa_last_sent_at,wa_last_sent_mode,wa_last_sent_by,wa_last_sent_method,pdf_url,pdf_generated_at,quotation_id";
+const INVOICE_COLS = "id,job_id,customer,phone,address,service,units,labor,material,discount,trade_in,trade_in_amount,total,pph23,pph23_amount,status,due,paid_at,sent,sent_at,created_at,updated_at,follow_up,teknisi,garansi_days,garansi_expires,paid_method,materials_detail,payment_proof_url,repair_gratis,invoice_type,unit_ac_amount,paket_pasang,paid_amount,remaining_amount,wa_sent_count,wa_last_sent_at,wa_last_sent_mode,wa_last_sent_by,wa_last_sent_method,pdf_url,pdf_generated_at,quotation_id";
 export const fetchInvoices = (supabase) =>
   supabase.from("invoices")
     .select(INVOICE_COLS)

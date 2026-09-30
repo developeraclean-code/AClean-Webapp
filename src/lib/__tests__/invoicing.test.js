@@ -15,6 +15,7 @@ import {
   categoryFromCatalog,
   auditQuoteDeviation,
   computePph23,
+  grossUpPph23Rows,
 } from "../invoicing.js";
 
 describe("categoryOf", () => {
@@ -283,6 +284,35 @@ describe("computePph23 (gross-up 2,5%)", () => {
   it("rate lain (mis. 2%) tetap konsisten dpp-amount=net", () => {
     const r = computePph23(2000000, 0.02);
     expect(r.dpp - r.amount).toBe(2000000);
+  });
+});
+
+describe("grossUpPph23Rows", () => {
+  it("membagi gross-up proporsional hanya ke jasa dan jumlahnya tepat", () => {
+    const rows = [
+      { desc: "Cleaning", qty: 2, subtotal: 300000, taxable: true },
+      { desc: "Transport", qty: 1, subtotal: 90000, taxable: true },
+      { desc: "Kapasitor", qty: 1, subtotal: 250000, taxable: false },
+    ];
+    const out = grossUpPph23Rows(rows, 10000);
+    expect(out.reduce((sum, row) => sum + (row.pphGrossUp || 0), 0)).toBe(10000);
+    expect(out[0].subtotal + out[1].subtotal).toBe(400000);
+    expect(out[2]).toEqual(rows[2]);
+    expect(rows[0].subtotal).toBe(300000); // input tidak dimutasi
+  });
+
+  it("residu pembulatan ditempatkan pada baris jasa terakhir", () => {
+    const out = grossUpPph23Rows([
+      { qty: 3, subtotal: 100001, taxable: true },
+      { qty: 2, subtotal: 200002, taxable: true },
+    ], 10001);
+    expect(out.reduce((sum, row) => sum + row.pphGrossUp, 0)).toBe(10001);
+    expect(out.reduce((sum, row) => sum + row.subtotal, 0)).toBe(310004);
+  });
+
+  it("tanpa baris kena pajak tidak mengubah nilai", () => {
+    const rows = [{ qty: 1, price: 250000, subtotal: 250000, taxable: false }];
+    expect(grossUpPph23Rows(rows, 10000)).toEqual(rows);
   });
 });
 

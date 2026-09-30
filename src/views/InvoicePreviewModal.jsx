@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { summarize } from "../lib/invoicing.js";
+import { invalidateCachedPDF } from "../lib/pdfCache.js";
 
 export default function InvoicePreviewModal({
   open, onClose, selectedInvoice, invoicesData, setInvoicesData,
@@ -23,8 +24,12 @@ export default function InvoicePreviewModal({
     return Array.isArray(parsed) ? parsed : [];
   })();
   // PPh 23 HANYA dari kategori Jasa (labor) — bukan liveInv.total (jasa+material).
-  const jasaSubtotal = liveInv ? summarize(mArr).labor : 0;
+  const jasaSubtotal = liveInv
+    ? (mArr.length > 0 ? summarize(mArr).labor : Number(liveInv.labor) || 0)
+    : 0;
   const pph = computePph23(jasaSubtotal, rate);
+  const savedPphAmount = Number(liveInv?.pph23_amount) || 0;
+  const savedDpp = jasaSubtotal + savedPphAmount;
 
   // Preview = hasil generate PDF ASLI (InvoicePDF.jsx via generateInvoicePDFBlob),
   // BUKAN markup HTML terpisah — dulu preview ini re-implementasi manual yang gampang
@@ -33,6 +38,7 @@ export default function InvoicePreviewModal({
   // karena sumbernya sama persis.
   const [pdfUrl, setPdfUrl] = useState(null);
   const [pdfError, setPdfError] = useState(null);
+  const [pphSaving, setPphSaving] = useState(false);
   useEffect(() => {
     if (!liveInv) { setPdfUrl(null); setPdfError(null); return; }
     let cancelled = false;
@@ -77,19 +83,35 @@ export default function InvoicePreviewModal({
         {/* PPh 23 toggle */}
         <div style={{ background: "#ecfeff", borderBottom: "1px solid #cffafe", padding: "8px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
           <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12, color: "#0e7490", fontWeight: 700 }}>
-            <input type="checkbox" checked={!!liveInv.pph23}
+            <input type="checkbox" checked={!!liveInv.pph23} disabled={pphSaving}
               onChange={async e => {
                 const on = e.target.checked;
                 const amt = on ? pph.amount : 0;
-                setInvoicesData(prev => prev.map(i => i.id === liveInv.id ? { ...i, pph23: on, pph23_amount: amt } : i));
-                const { error } = await updateInvoice(supabase, liveInv.id, { pph23: on, pph23_amount: amt }, auditUserName());
-                if (error) showNotif("⚠️ Gagal simpan PPh 23: " + error.message);
-                else showNotif(on ? `✅ PPh 23 aktif — DPP ${fmt(pph.dpp)}, dipotong ${fmt(pph.amount)}` : "PPh 23 dinonaktifkan");
+                setPphSaving(true);
+                try {
+                  const { data, error } = await updateInvoice(
+                    supabase,
+                    liveInv.id,
+                    { pph23: on, pph23_amount: amt },
+                    auditUserName()
+                  ).select("id,pph23,pph23_amount,pdf_url,pdf_generated_at,updated_at").maybeSingle();
+                  if (error || !data) throw error || new Error("Invoice tidak ditemukan setelah update");
+
+                  invalidateCachedPDF("invoice", liveInv.id);
+                  setInvoicesData(prev => prev.map(i => i.id === liveInv.id ? { ...i, ...data } : i));
+                  showNotif(on
+                    ? `✅ PPh 23 aktif — DPP ${fmt(pph.dpp)}, dipotong ${fmt(pph.amount)}`
+                    : "PPh 23 dinonaktifkan");
+                } catch (error) {
+                  showNotif("⚠️ Gagal simpan PPh 23: " + (error?.message || "unknown"));
+                } finally {
+                  setPphSaving(false);
+                }
               }}
-              style={{ width: 15, height: 15, accentColor: "#0891b2" }} />
-            Customer potong PPh 23 ({(rate * 100).toLocaleString("id-ID")}%)
+              style={{ width: 15, height: 15, accentColor: "#0891b2", cursor: pphSaving ? "wait" : "pointer" }} />
+            Customer potong PPh 23 ({(rate * 100).toLocaleString("id-ID")}%){pphSaving ? " — menyimpan…" : ""}
           </label>
-          {liveInv.pph23 && <span style={{ fontSize: 11, color: "#0e7490", fontFamily: "monospace" }}>DPP {fmt(pph.dpp)} · PPh −{fmt(pph.amount)} · diterima {fmt(liveInv.total)}</span>}
+          {liveInv.pph23 && <span style={{ fontSize: 11, color: "#0e7490", fontFamily: "monospace" }}>DPP {fmt(savedDpp)} · PPh −{fmt(savedPphAmount)} · diterima {fmt(liveInv.total)}</span>}
         </div>
 
         {/* PDF preview — render langsung dari InvoicePDF.jsx (sama persis dgn hasil download/WA) */}

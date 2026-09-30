@@ -254,6 +254,47 @@ export function computePph23(netTotal, rate = 0.025) {
   return { dpp, amount: dpp - net, rate: r };
 }
 
+// Alokasikan nilai gross-up PPh ke baris jasa/fee untuk kebutuhan tampilan invoice.
+// `pphAmount` harus terbagi tepat (termasuk residu pembulatan) tanpa mengubah baris
+// material/freon. Fungsi ini presentation-only: nilai sumber di DB tetap net.
+export function grossUpPph23Rows(rows, pphAmount) {
+  const source = Array.isArray(rows) ? rows : [];
+  const amount = Math.max(0, Math.round(Number(pphAmount) || 0));
+  const result = source.map(row => ({ ...row }));
+  if (amount <= 0 || result.length === 0) return result;
+
+  const taxableIndexes = [];
+  let taxableNet = 0;
+  result.forEach((row, index) => {
+    const subtotal = Math.max(0, Number(row.subtotal) || 0);
+    if (row.taxable === true && subtotal > 0) {
+      taxableIndexes.push(index);
+      taxableNet += subtotal;
+    }
+  });
+  if (taxableIndexes.length === 0 || taxableNet <= 0) return result;
+
+  let allocated = 0;
+  taxableIndexes.forEach((index, position) => {
+    const row = result[index];
+    const netSubtotal = Math.max(0, Number(row.subtotal) || 0);
+    const addition = position === taxableIndexes.length - 1
+      ? amount - allocated
+      : Math.round(amount * (netSubtotal / taxableNet));
+    allocated += addition;
+
+    const grossSubtotal = netSubtotal + addition;
+    const qty = Number(row.qty) || 0;
+    result[index] = {
+      ...row,
+      price: qty > 0 ? grossSubtotal / qty : grossSubtotal,
+      subtotal: grossSubtotal,
+      pphGrossUp: addition,
+    };
+  });
+  return result;
+}
+
 // ── P2/D: deviasi Invoice vs Quotation ───────────────────────────────────────
 // Cocokkan quotation→invoice via quotation.invoice_id, fallback job_id. Flag bila
 // total invoice menyimpang dari total quote di luar toleransi. Quote tanpa invoice

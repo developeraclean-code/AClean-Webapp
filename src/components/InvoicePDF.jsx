@@ -1,4 +1,5 @@
 import { Document, Page, Text, View, StyleSheet, Image, Font } from "@react-pdf/renderer";
+import { BILLING_CATEGORY, grossUpPph23Rows, lineCategory } from "../lib/invoicing.js";
 
 // Matikan hyphenation otomatis react-pdf — defaultnya suka motong kata di
 // ujung baris (mis. "Service" → "Ser-vice") walau bukan bahasa Inggris.
@@ -9,10 +10,11 @@ Font.registerHyphenationCallback((word) => [word]);
 // terhadap nilai ini — kalau cache R2 lebih lama dari versi ini, PDF di-generate
 // ulang otomatis (bukan pakai cache lama), tanpa perlu hapus pdf_url manual per
 // invoice. Lupa bump ini = perubahan desain baru tidak kelihatan di invoice lama.
-export const PDF_TEMPLATE_VERSION = "2026-08-14T10:00:00Z";
+export const PDF_TEMPLATE_VERSION = "2026-09-30T00:00:00Z";
 
 // ── Helpers ──
 const fmt = (n) => "Rp " + (Number(n) || 0).toLocaleString("id-ID");
+const fmtNumber = (n) => (Number(n) || 0).toLocaleString("id-ID", { maximumFractionDigits: 2 });
 
 const detectKat = (m) => {
   if (m.keterangan === "jasa") return "jasa";
@@ -38,7 +40,11 @@ const matRowData = (m) => {
     : (m.subtotal > 0 && m.jumlah > 0 ? Math.round(m.subtotal / m.jumlah) : 0);
   const sub = m.subtotal > 0 ? m.subtotal
     : (hSat > 0 && m.jumlah > 0 ? hSat * m.jumlah : 0);
-  return { desc: m.nama || "", qty: m.jumlah, uom: m.satuan || "", price: hSat, subtotal: sub };
+  const category = lineCategory(m);
+  return {
+    desc: m.nama || "", qty: m.jumlah, uom: m.satuan || "", price: hSat, subtotal: sub,
+    taxable: category === BILLING_CATEGORY.LABOR || category === BILLING_CATEGORY.FEE,
+  };
 };
 
 // ── Styles (Times New Roman, 1 tabel flat — konsisten dgn QuotationPDF.jsx) ──
@@ -174,8 +180,8 @@ function ItemRow({ no, desc, qty, uom, price, subtotal, include, bold }) {
         <Text style={[s.td, { flex: 1 }, bold ? { fontFamily: "Times-Bold" } : {}]}>{desc}</Text>
         <Text style={[s.td, { width: 34, textAlign: "right" }]}>{qty || "—"}</Text>
         <Text style={[s.td, { width: 50 }]}>{uom || "Unit"}</Text>
-        <Text style={[s.td, { width: 76, textAlign: "right" }]}>{price > 0 ? price.toLocaleString("id-ID") : "—"}</Text>
-        <Text style={[s.td, { width: 86, textAlign: "right", fontFamily: "Times-Bold" }]}>{subtotal > 0 ? subtotal.toLocaleString("id-ID") : "—"}</Text>
+        <Text style={[s.td, { width: 76, textAlign: "right" }]}>{price > 0 ? fmtNumber(price) : "—"}</Text>
+        <Text style={[s.td, { width: 86, textAlign: "right", fontFamily: "Times-Bold" }]}>{subtotal > 0 ? fmtNumber(subtotal) : "—"}</Text>
       </View>
       {(include || []).map((inc, i) => (
         <Text key={i} style={s.incText}>✓ {inc.nama} {inc.qty} {inc.satuan}</Text>
@@ -272,6 +278,7 @@ function InvoicePage({ inv, logoUrl, appSettings = {}, invoiceItems = [], portal
       desc: item.description, qty: item.qty, uom: "Unit", price: item.unit_price,
       subtotal: item.subtotal || item.qty * item.unit_price || 0,
       include: (includeItems && paketItems[0] === item) ? includeItems : null,
+      taxable: item.item_type === "paket" || item.item_type === "jasa",
     }));
   } else if (matDetails.length > 0) {
     const ordered = [
@@ -282,14 +289,17 @@ function InvoicePage({ inv, logoUrl, appSettings = {}, invoiceItems = [], portal
     ];
     rows = ordered.map(matRowData);
   } else if ((inv.labor || 0) > 0 || (inv.material || 0) > 0) {
-    if ((inv.labor || 0) > 0) rows.push({ desc: inv.service || "Jasa Servis AC", qty: unitCount, uom: "Unit", price: perUnit, subtotal: inv.labor || 0 });
-    if ((inv.material || 0) > 0) rows.push({ desc: "Material & Freon", qty: null, uom: "", price: 0, subtotal: inv.material || 0 });
+    if ((inv.labor || 0) > 0) rows.push({ desc: inv.service || "Jasa Servis AC", qty: unitCount, uom: "Unit", price: perUnit, subtotal: inv.labor || 0, taxable: true });
+    if ((inv.material || 0) > 0) rows.push({ desc: "Material & Freon", qty: null, uom: "", price: 0, subtotal: inv.material || 0, taxable: false });
   }
 
   const hasPph = !!inv.pph23 && (inv.pph23_amount || 0) > 0;
-  // DPP = nilai JASA (labor) saja + PPh — bukan total (jasa+material), supaya baris
-  // "Nilai Jasa (DPP)" akurat saat invoice ada material-nya juga.
-  const dpp = hasPph ? (inv.labor || 0) + (inv.pph23_amount || 0) : 0;
+  if (hasPph) rows = grossUpPph23Rows(rows, inv.pph23_amount);
+  const storedPphDpp = (Number(inv.labor) || 0) + (Number(inv.pph23_amount) || 0);
+  const pphRate = hasPph && storedPphDpp > 0
+    ? ((Number(inv.pph23_amount) || 0) / storedPphDpp) * 100
+    : (Number(appSettings.pph23_rate) || 0.025) * 100;
+  const grossInvoiceTotal = (Number(inv.total) || 0) + (hasPph ? Number(inv.pph23_amount) || 0 : 0);
   const sisaBayar = (inv.remaining_amount || 0) > 0 ? inv.remaining_amount : Math.max(0, (inv.total || 0) - (inv.paid_amount || 0));
   const hasPageLabel = pageTotal && pageTotal > 1;
 
@@ -344,8 +354,8 @@ function InvoicePage({ inv, logoUrl, appSettings = {}, invoiceItems = [], portal
         )}
         {hasPph && (
           <>
-            <View style={s.adjRow}><Text>Nilai Jasa (DPP)</Text><Text>{fmt(dpp)}</Text></View>
-            <View style={[s.adjRow, { color: "#2f5ea3" }]}><Text>PPh 23 (2,5%) dipotong customer</Text><Text>- {fmt(inv.pph23_amount)}</Text></View>
+            <View style={s.adjRow}><Text>Total sebelum potongan PPh 23</Text><Text>{fmt(grossInvoiceTotal)}</Text></View>
+            <View style={[s.adjRow, { color: "#2f5ea3" }]}><Text>PPh 23 ({pphRate.toLocaleString("id-ID")}%) dipotong customer</Text><Text>- {fmt(inv.pph23_amount)}</Text></View>
           </>
         )}
 
@@ -408,6 +418,10 @@ function MergedInvoicePage({ invList, logoUrl, appSettings = {}, portalLink = nu
   const phone = first.phone || "";
 
   const totalAll = invList.reduce((s, e) => s + (Number(e.inv?.total) || 0), 0);
+  const totalPph = invList.reduce((sum, entry) => {
+    const inv = entry.inv || {};
+    return sum + (inv.pph23 ? Number(inv.pph23_amount) || 0 : 0);
+  }, 0);
   const paidAll  = invList.reduce((s, e) => s + (Number(e.inv?.paid_amount) || 0), 0);
   const sisaAll  = invList.reduce((s, e) => {
     const inv = e.inv || {};
@@ -477,7 +491,7 @@ function MergedInvoicePage({ invList, logoUrl, appSettings = {}, portalLink = nu
           if (Array.isArray(md)) return md;
           try { return JSON.parse(md); } catch { return []; }
         })();
-        const rows = matDetails.length > 0
+        let rows = matDetails.length > 0
           ? [
               ...matDetails.filter(m => detectKat(m) === "jasa"),
               ...matDetails.filter(m => detectKat(m) === "repair"),
@@ -485,9 +499,11 @@ function MergedInvoicePage({ invList, logoUrl, appSettings = {}, portalLink = nu
               ...matDetails.filter(m => detectKat(m) === "freon"),
             ].map(matRowData)
           : [
-              ...((Number(inv.labor) || 0) > 0 ? [{ desc: inv.service || "Jasa Servis AC", qty: unitCount, uom: "Unit", price: 0, subtotal: Number(inv.labor) || 0 }] : []),
-              ...((Number(inv.material) || 0) > 0 ? [{ desc: "Material & Freon", qty: null, uom: "", price: 0, subtotal: Number(inv.material) || 0 }] : []),
+              ...((Number(inv.labor) || 0) > 0 ? [{ desc: inv.service || "Jasa Servis AC", qty: unitCount, uom: "Unit", price: 0, subtotal: Number(inv.labor) || 0, taxable: true }] : []),
+              ...((Number(inv.material) || 0) > 0 ? [{ desc: "Material & Freon", qty: null, uom: "", price: 0, subtotal: Number(inv.material) || 0, taxable: false }] : []),
             ];
+        const invoicePph = inv.pph23 ? Number(inv.pph23_amount) || 0 : 0;
+        if (invoicePph > 0) rows = grossUpPph23Rows(rows, invoicePph);
 
         return (
           <View key={idx} wrap={false} style={s.sectionBox}>
@@ -503,6 +519,9 @@ function MergedInvoicePage({ invList, logoUrl, appSettings = {}, portalLink = nu
             )}
             {(Number(inv.discount) || 0) > 0 && (
               <View style={s.adjRow}><Text>Diskon</Text><Text>- {fmt(inv.discount)}</Text></View>
+            )}
+            {invoicePph > 0 && (
+              <View style={[s.adjRow, { color: "#2f5ea3" }]}><Text>PPh 23 dipotong customer</Text><Text>- {fmt(invoicePph)}</Text></View>
             )}
             {inv.status === "PAID" ? (
               <View style={{ padding: "4 12", backgroundColor: "#e6f4ec", borderTop: "1px solid #cfd2d6" }}>
@@ -522,9 +541,15 @@ function MergedInvoicePage({ invList, logoUrl, appSettings = {}, portalLink = nu
       {/* Total akumulasi */}
       <View style={{ marginTop: 4, marginBottom: 12, border: "2px solid #2f5ea3" }}>
         <View style={{ flexDirection: "row", padding: "8 14", borderBottom: "1px solid #cfd2d6" }}>
-          <Text style={{ flex: 1, fontSize: 10, color: "#5b5f66" }}>Subtotal {invList.length} pekerjaan</Text>
-          <Text style={{ fontSize: 10, fontFamily: "Times-Bold" }}>{fmt(totalAll)}</Text>
+          <Text style={{ flex: 1, fontSize: 10, color: "#5b5f66" }}>{totalPph > 0 ? "Total sebelum potongan PPh 23" : `Subtotal ${invList.length} pekerjaan`}</Text>
+          <Text style={{ fontSize: 10, fontFamily: "Times-Bold" }}>{fmt(totalAll + totalPph)}</Text>
         </View>
+        {totalPph > 0 && (
+          <View style={{ flexDirection: "row", padding: "6 14", borderBottom: "1px solid #cfd2d6" }}>
+            <Text style={{ flex: 1, fontSize: 9, color: "#2f5ea3" }}>PPh 23 dipotong customer</Text>
+            <Text style={{ fontSize: 9, color: "#2f5ea3", fontFamily: "Times-Bold" }}>- {fmt(totalPph)}</Text>
+          </View>
+        )}
         {paidAll > 0 && (
           <View style={{ flexDirection: "row", padding: "6 14" }}>
             <Text style={{ flex: 1, fontSize: 9, color: "#1f7a4d" }}>Sudah dibayar</Text>

@@ -2043,7 +2043,8 @@ export default function ACleanWebApp() {
     // ulang, tanpa perlu hapus pdf_url manual per invoice tiap kali layout diubah.
     const { default: InvoicePDF, PDF_TEMPLATE_VERSION } = await import("./components/InvoicePDF.jsx");
     const variant = portalLink ? "wpl" : "nopl";
-    const version = `${inv.updated_at || inv.created_at || "v0"}:${variant}:${PDF_TEMPLATE_VERSION}`;
+    const pphFingerprint = `${inv.pph23 ? 1 : 0}:${Number(inv.pph23_amount) || 0}`;
+    const version = `${inv.updated_at || inv.created_at || "v0"}:pph=${pphFingerprint}:${variant}:${PDF_TEMPLATE_VERSION}`;
 
     // Layer 1: memory cache (fastest, <10ms)
     const memCached = getCachedPDF("invoice", inv.id, version);
@@ -2110,8 +2111,12 @@ export default function ACleanWebApp() {
       .update({ pdf_url: pdfUrl, pdf_generated_at: new Date().toISOString() })
       .eq("id", invoiceId);
     if (versionUpdatedAt) q = q.eq("updated_at", versionUpdatedAt);
-    const { error: upErr } = await q;
-    if (upErr) console.warn("[cacheInvoicePDFToR2] DB update failed:", upErr.message);
+    const { data: updated, error: upErr } = await q
+      .select("id,pdf_url,pdf_generated_at,updated_at")
+      .maybeSingle();
+    if (upErr) throw upErr;
+    if (!updated) throw new Error("Invoice berubah saat PDF dibuat; pointer cache lama tidak disimpan");
+    setInvoicesData(prev => prev.map(i => i.id === invoiceId ? { ...i, ...updated } : i));
     return pdfUrl;
   };
 
@@ -2152,7 +2157,12 @@ export default function ACleanWebApp() {
             .update({ pdf_url: pdfUrl, pdf_generated_at: new Date().toISOString() })
             .eq("id", inv.id);
           if (inv.updated_at) q = q.eq("updated_at", inv.updated_at);
-          q.then(({ error }) => error && console.warn("[uploadInvoicePDFForWA] DB cache update failed:", error.message));
+          const { data: updated, error } = await q
+            .select("id,pdf_url,pdf_generated_at,updated_at")
+            .maybeSingle();
+          if (error) console.warn("[uploadInvoicePDFForWA] DB cache update failed:", error.message);
+          else if (!updated) console.warn("[uploadInvoicePDFForWA] invoice berubah; pointer cache tidak disimpan");
+          else setInvoicesData(prev => prev.map(i => i.id === inv.id ? { ...i, ...updated } : i));
         }
         return pdfUrl;
       }
@@ -2167,17 +2177,17 @@ export default function ACleanWebApp() {
   // Compute deterministic cache key untuk sekumpulan invoice + variant.
   // Format: merge:{sorted_ids_csv}:{max_updated_at}:{variant}
   // Variant berubah kalau invoice di-update (trigger updated_at di DB).
-  const computeMergedCacheKey = (invList, portalLink) => {
+  const computeMergedCacheKey = (invList, portalLink, templateVersion) => {
     const sortedIds = [...invList].map(i => i.id).sort();
-    const maxUpdated = invList.reduce((max, i) => {
-      const u = i.updated_at || i.created_at || "v0";
-      return u > max ? u : max;
-    }, "");
+    const fingerprint = [...invList]
+      .sort((a, b) => String(a.id).localeCompare(String(b.id)))
+      .map(i => `${i.id}@${i.updated_at || i.created_at || "v0"}:pph=${i.pph23 ? 1 : 0}:${Number(i.pph23_amount) || 0}`)
+      .join("|");
     const variant = portalLink ? "wpl" : "nopl";
     return {
       sortedIds,
-      cacheKey: `merge:${sortedIds.join(",")}:${maxUpdated}:${variant}`,
-      memVersion: `${maxUpdated}:${variant}`,
+      cacheKey: `merge:${fingerprint}:${variant}:${templateVersion}`,
+      memVersion: `${fingerprint}:${variant}:${templateVersion}`,
     };
   };
 
@@ -2199,7 +2209,8 @@ export default function ACleanWebApp() {
       console.warn("[generateMergedInvoicePDFBlob] refetch gagal:", err?.message || err);
     }
     const { getCachedPDF, setCachedPDF } = await import("./lib/pdfCache.js");
-    const { sortedIds, cacheKey, memVersion } = computeMergedCacheKey(invList, portalLink);
+    const { default: InvoicePDF, PDF_TEMPLATE_VERSION } = await import("./components/InvoicePDF.jsx");
+    const { sortedIds, cacheKey, memVersion } = computeMergedCacheKey(invList, portalLink, PDF_TEMPLATE_VERSION);
     const memId = sortedIds.join(",");
 
     // Layer 1: memory cache
@@ -2234,7 +2245,6 @@ export default function ACleanWebApp() {
 
     // Layer 3: generate fresh
     const { pdf } = await import("@react-pdf/renderer");
-    const { default: InvoicePDF } = await import("./components/InvoicePDF.jsx");
     const logoUrl = await fetchInvoiceLogoUrl();
     const entries = invList.map(inv => ({ inv, invoiceItems: [] }));
     const blob = await pdf(
