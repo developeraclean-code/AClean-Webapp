@@ -221,7 +221,9 @@ return (
                     if (r.service === "Install") {
                       const installMap = {};
                       (r.materials || []).forEach(mat => {
-                        const ii = INSTALL_ITEMS.find(item => item.label === mat.nama || item.key === mat.id);
+                        const ii = INSTALL_ITEMS.find(item =>
+                          item.label === mat.nama || item.key === mat.id || item.legacyLabels?.includes(mat.nama)
+                        );
                         if (ii) installMap[ii.key] = String(mat.jumlah || 0);
                       });
                       setLaporanInstallItems(installMap);

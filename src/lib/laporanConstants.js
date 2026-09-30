@@ -115,7 +115,9 @@ export const INSTALL_ITEMS = [
   { key: "pipa_25pk",               label: "Pipa AC Hoda 2,5PK",                 satuan: "Meter", default: 0 },
   { key: "pipa_3pk",                label: "Pipa AC Hoda 3PK",                   satuan: "Meter", default: 0 },
   { key: "kabel_15",                label: "Kabel Listrik 3x1,5",                satuan: "Meter", default: 0 },
-  { key: "kabel_25",                label: "Kabel Listrik 3x2,5",                satuan: "Meter", default: 0 },
+  // SKU026 sudah dipakai di laporan lama; label bisnis yang benar adalah 4x2,5.
+  // legacyLabels menjaga laporan lama tetap bisa dibuka dan diedit.
+  { key: "kabel_25",                label: "Kabel Listrik 4x2,5",                legacyLabels: ["Kabel Listrik 3x2,5"], satuan: "Meter", default: 0 },
   { key: "ducttape_biasa",          label: "Duct Tape Non Lem",                  satuan: "Piece", default: 0 },
   { key: "ducttape_lem",            label: "Duct Tape Lem",                       satuan: "Piece", default: 0 },
   { key: "jasa_pipa_ac",            label: "Jasa Penarikan Pipa AC",              satuan: "Meter", default: 0 },

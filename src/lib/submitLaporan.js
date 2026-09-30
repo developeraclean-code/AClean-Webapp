@@ -203,7 +203,7 @@ export async function submitLaporan({
       "pipa_25pk": "SKU024",  // Pipa AC Hoda 2,5PK
       "pipa_3pk": "SKU057",  // Pipa AC Hoda 3PK
       "kabel_15": "SKU025",  // Kabel Listrik 3x1,5
-      "kabel_25": "SKU026",  // Kabel Listrik 3x2,5
+      "kabel_25": "SKU026",  // Kabel Listrik 4x2,5 (nama lama: 3x2,5)
       "ducttape_biasa": "SKU031",
       "ducttape_lem": "SKU030",
       "dinabolt": "SKU058",

@@ -59,6 +59,8 @@ export const PRICE_LIST_DEFAULT = {
     "Pipa AC Hoda 2,5PK": 0,
     "Pipa AC Hoda 3PK": 0,
     "Kabel Listrik 3x1,5": 0,
+    "Kabel Listrik 4x2,5": 0,
+    // Alias historis — laporan lama masih menyimpan nama 3x2,5.
     "Kabel Listrik 3x2,5": 0,
     "Duct Tape Non Lem": 0,
     "Duct Tape Lem": 0,
