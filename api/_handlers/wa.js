@@ -10,6 +10,7 @@ import { logAiUsageRest } from "../_logger.js";
 import { analyzeToolBagPhoto } from "../_tool-bag-vision.js";
 import { classifyText, matchSelesaiToOrder, persistTextClassification, extractMaterialUsage, resolveUsageJobs, looksLikeMaterialUsage } from "../_ai-text.js";
 import { uploadBufferToR2, downloadToBuffer, hasR2Config } from "../_r2-upload.js";
+import { classifyPaymentMedia, ensurePaymentSuggestion, registerPaymentMediaReference, stagePaymentMedia, updatePaymentMediaJob } from "../_payment-media.js";
 import { md5Buffer, checkImageDuplicate } from "../_image-dedup.js";
 import { parseKasbonText, matchKasbonName, isKasbonApprovalMessage, isKasbonRevisionMessage, resolveKasbonEntry, KASBON_APPROVER_PHONES } from "../_kasbon-parser.js";
 import { parseCarrierFromCaption, matchCarrierName, parseLaporanTeam, matchLaporanToOrder, parseBiayaExtended } from "../_shadow-parsers.js";
@@ -1979,8 +1980,12 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
       if (isMediaMessage && mediaUrl && SU && SK && !isToolBagPhoto) {
         const AK = (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY || "").trim();
         console.log("[WA_IMG_ENTRY]", { sender, hasAK: !!AK });
-        if (AK) {
-          try {
+        try {
+            let stagedMedia = payDetectOn && !senderIsInternal
+              ? await registerPaymentMediaReference({
+                  supabaseUrl: SU, serviceKey: SK, sourceUrl: mediaUrl, phone: sender, senderName,
+                })
+              : null;
             // HEAD request dulu untuk cek ukuran — tidak download isi gambar
             let skipDueToSize = false;
             try {
@@ -1993,6 +1998,10 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
 
             if (skipDueToSize) {
               console.log("[WA_IMG] Skip: ukuran < 10 KB (sticker/icon), tidak diproses");
+              if (stagedMedia?.job) await updatePaymentMediaJob({
+                supabaseUrl: SU, serviceKey: SK, id: stagedMedia.job.id,
+                patch: { status: "IGNORED", category: "sticker", last_error: "media <10KB", next_retry_at: null },
+              });
             } else {
             console.log("[WA_IMG_STEP1] downloading from Fonnte:", mediaUrl);
             const imgFetch = await fetch(mediaUrl, { signal: AbortSignal.timeout(10000) });
@@ -2003,48 +2012,84 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
               // Double-check ukuran setelah download — buang jika < 10 KB
               if (imgBuf.byteLength < 10240) {
                 console.log("[WA_IMG] Skip setelah download: ukuran < 10 KB");
+                if (stagedMedia?.job) await updatePaymentMediaJob({
+                  supabaseUrl: SU, serviceKey: SK, id: stagedMedia.job.id,
+                  patch: { status: "IGNORED", category: "sticker", last_error: "media <10KB", next_retry_at: null },
+                });
               } else {
-              const base64Img = Buffer.from(imgBuf).toString("base64");
               const mimeType = (imgFetch.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
-              console.log("[WA_IMG_STEP4] calling Anthropic", { mimeType, base64Len: base64Img.length });
-
-              // Step 1: Classify gambar — satu API call untuk dua tujuan
-              const classifyRes = await fetch("https://api.anthropic.com/v1/messages", {
-                method: "POST",
-                headers: { "Content-Type": "application/json", "x-api-key": AK, "anthropic-version": "2023-06-01" },
-                body: JSON.stringify({
-                  model: "claude-haiku-4-5",
-                  max_tokens: 250,
-                  messages: [{ role: "user", content: [
-                    { type: "image", source: { type: "base64", media_type: mimeType, data: base64Img } },
-                    { type: "text", text: 'Klasifikasikan gambar ini. Pilih SATU kategori: "bukti_transfer" (struk transfer/screenshot m-banking), "kerusakan_ac" (foto AC rusak/error/bocor/kotor), "dokumen" (dokumen/teks lain yang relevan), atau "tidak_relevan" (foto tidak terkait AC/pembayaran). Jika bukti_transfer, ekstrak: amount (angka), bank (nama bank), transfer_date (YYYY-MM-DD). Format JSON SAJA:\n{"category":"bukti_transfer","amount":150000,"bank":"BCA","transfer_date":"2026-04-22"}\natau\n{"category":"kerusakan_ac"}\natau\n{"category":"tidak_relevan"}' }
-                  ]}]
-                })
-              });
-
-              console.log("[WA_IMG_STEP5] Anthropic response", { ok: classifyRes.ok, status: classifyRes.status });
-              if (!classifyRes.ok) {
-                const errBodyAnthropic = await classifyRes.text().catch(() => "");
-                console.warn("[WA_IMG_ANTHROPIC_ERR]", classifyRes.status, errBodyAnthropic.slice(0, 300));
-                // Sentry capture biar body error lengkap visible di dashboard (Vercel logs UI truncate)
-                try { Sentry.captureMessage(`Anthropic classify ${classifyRes.status}: ${errBodyAnthropic.slice(0, 500)}`, "warning"); } catch (_) {}
+              // Durability invariant: mirror ke R2 + tulis retry job SEBELUM memanggil AI.
+              // URL Fonnte bersifat sementara; tanpa urutan ini timeout AI membuat bukti hilang.
+              stagedMedia = payDetectOn && !senderIsInternal
+                ? await stagePaymentMedia({
+                    supabaseUrl: SU, serviceKey: SK, sourceUrl: mediaUrl, phone: sender,
+                    senderName, buffer: Buffer.from(imgBuf), mimeType, createdAt: msgCreatedAt,
+                  })
+                : null;
+              if (stagedMedia?.ok && stagedMedia.url) {
+                await fetch(SU + "/rest/v1/wa_messages?phone=eq." + encodeURIComponent(sender) + "&created_at=eq." + encodeURIComponent(msgCreatedAt), {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
+                  body: JSON.stringify({ image_url: stagedMedia.url })
+                }).catch(e => console.warn("[WA_IMG_STAGE_PATCH]", e.message));
+              } else if (stagedMedia && !stagedMedia.ok) {
+                console.warn("[WA_IMG_STAGE_FAIL]", stagedMedia.error);
+                try { Sentry.captureMessage(`WA payment media staging gagal: ${stagedMedia.error}`, "warning"); } catch (_) {}
               }
-              let savedImageUrl = null;
-              if (classifyRes.ok) {
-                const classifyData = await classifyRes.json();
+
+              console.log("[WA_IMG_STEP4] calling Anthropic", { mimeType, staged: !!stagedMedia?.ok });
+              const classifyResult = await classifyPaymentMedia({ buffer: Buffer.from(imgBuf), mimeType, apiKey: AK });
+              console.log("[WA_IMG_STEP5] Anthropic response", { ok: classifyResult.ok, error: classifyResult.error || null });
+              if (!classifyResult.ok) {
+                console.warn("[WA_IMG_ANTHROPIC_ERR]", classifyResult.error);
+                try { Sentry.captureMessage(`Anthropic classify: ${classifyResult.error}`, "warning"); } catch (_) {}
+                if (stagedMedia?.job) {
+                  await ensurePaymentSuggestion({
+                    supabaseUrl: SU, serviceKey: SK, job: stagedMedia.job,
+                    pendingReason: classifyResult.error,
+                  });
+                  await updatePaymentMediaJob({
+                    supabaseUrl: SU, serviceKey: SK, id: stagedMedia.job.id,
+                    patch: {
+                      // Suggestion manual boleh langsung terlihat, tetapi job tetap
+                      // retryable supaya AI masih mencoba mengisi nominal/bank.
+                      status: "FAILED_RETRYABLE",
+                      attempts: Number(stagedMedia.job.attempts || 0) + 1,
+                      last_error: classifyResult.error,
+                      next_retry_at: new Date(Date.now() + 3600000).toISOString(),
+                    },
+                  });
+                }
+              }
+              // Jika staging sukses, object yang sama menjadi bukti permanen (TTL 90 hari).
+              // Ini menghindari upload R2 kedua dan memangkas waktu webhook serverless.
+              let savedImageUrl = classifyResult.ok && classifyResult.classification?.category === "bukti_transfer"
+                ? (stagedMedia?.url || null) : null;
+              if (classifyResult.ok) {
+                const classifyData = classifyResult.data;
                 logAi("wa-personal-vision", "claude-haiku-4-5", classifyData);
-                const rawClassify = (classifyData.content||[]).map(c=>c.text||"").join("").trim();
-                const jsonMatchC = rawClassify.match(/\{[\s\S]*\}/);
-                if (jsonMatchC) {
-                  let classified;
-                  try { classified = JSON.parse(jsonMatchC[0]); } catch(_) {}
+                const classified = classifyResult.classification;
+                if (classified) {
+                  if (stagedMedia?.job) {
+                    await updatePaymentMediaJob({
+                      supabaseUrl: SU, serviceKey: SK, id: stagedMedia.job.id,
+                      patch: {
+                        status: classified.category === "bukti_transfer" ? "STORED" : "IGNORED",
+                        category: classified.category,
+                        transfer_amount: classified.amount, fee_amount: classified.fee_amount,
+                        total_debit: classified.total_debit, bank: classified.bank,
+                        transfer_date: safeDateStr(classified.transfer_date),
+                        next_retry_at: classified.category === "bukti_transfer" ? new Date().toISOString() : null,
+                      },
+                    });
+                  }
 
                   // Hanya simpan bukti_transfer — kategori lain tidak perlu disimpan di R2
                   const shouldSave = classified && classified.category === "bukti_transfer";
                   console.log("[WA_IMG_CLASSIFIED]", { sender, category: classified?.category, shouldSave, amount: classified?.amount });
 
                   // Step 2: Upload ke R2 hanya jika kategori relevan
-                  if (shouldSave) {
+                  if (shouldSave && !savedImageUrl) {
                     const r2Key = process.env.R2_ACCESS_KEY;
                     const r2Secret = process.env.R2_SECRET_KEY;
                     const r2Account = process.env.R2_ACCOUNT_ID;
@@ -2219,10 +2264,15 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                     } else {
                     // Simpan ke payment_suggestions — await + log error supaya tidak silent fail
                     try {
-                      const psRes = await fetch(SU + "/rest/v1/payment_suggestions", {
+                      const psEndpoint = stagedMedia?.job?.id
+                        ? SU + "/rest/v1/payment_suggestions?on_conflict=media_job_id"
+                        : SU + "/rest/v1/payment_suggestions";
+                      const psRes = await fetch(psEndpoint, {
                         method: "POST",
-                        headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
+                        headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK,
+                          Prefer: stagedMedia?.job?.id ? "resolution=merge-duplicates,return=minimal" : "return=minimal" },
                         body: JSON.stringify({
+                          media_job_id: stagedMedia?.job?.id || undefined,
                           phone: sender, sender_name: senderName, raw_message: "(gambar bukti transfer)",
                           amount: classified.amount || null, bank: classified.bank || null,
                           transfer_date: safeDateStr(classified.transfer_date),
@@ -2268,6 +2318,11 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                             })
                           }).catch(() => {});
                         }
+                      } else if (stagedMedia?.job) {
+                        await updatePaymentMediaJob({
+                          supabaseUrl: SU, serviceKey: SK, id: stagedMedia.job.id,
+                          patch: { status: "DONE", invoice_id: matchedInvoiceId, last_error: null, next_retry_at: null },
+                        });
                       }
                     } catch (psErr) {
                       console.error("[PAY_SUGGEST_IMG_SAVE_EXC]", psErr?.message || psErr);
@@ -2348,9 +2403,9 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
               } // end: double-check size setelah download
             }
             } // end: skipDueToSize else
-          } catch(imgErr) {
-            console.warn("[receive-wa] Image classifier failed:", imgErr.message);
-          }
+        } catch(imgErr) {
+          console.warn("[receive-wa] Image classifier failed:", imgErr.message);
+          try { Sentry.captureException(imgErr, { tags: { op: "wa_personal_media_pipeline" }, extra: { phone: sender } }); } catch (_) {}
         }
       }
 
@@ -2608,4 +2663,3 @@ export async function waGroups(req, res) {
       }
       return res.status(400).json({ error: "Unknown action", supported: ["fonnte-list", "discovery-list"] });
 }
-

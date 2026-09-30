@@ -13,7 +13,7 @@ import { verifyAppToken } from "./_auth.js";
 import { sb, sendWA, log, OWNER_PHONE } from "./_tasks/_shared.js";
 import { taskCleanup, taskR2Cleanup90d, taskExpenseFotoCleanup30d, taskPaymentProofCleanup90d, taskSnapshotCleanup, taskWaCleanup, taskLogCleanup } from "./_tasks/cleanup.js";
 import { taskReminder, taskDaily, taskStock, taskServisReminder, taskVoucherExpiryReminder, taskLaporanStaleAlert, taskMaterialPulangReminder, taskWeeklyReport, taskMorningDispatch, taskRatingPrompt } from "./_tasks/reminders.js";
-import { taskWaSnapshot, taskWaBackfill, taskScanBuktiBayar } from "./_tasks/wa-ai.js";
+import { taskWaSnapshot, taskWaBackfill, taskScanBuktiBayar, taskRetryPaymentMedia } from "./_tasks/wa-ai.js";
 import { taskProjectAlerts, taskAutoReturnBrought, taskBackupData, taskPayrollWA, taskBonusEligible, taskMaintenanceContractExpiry, taskMaintenanceFollowupAlert, taskMaintenancePmDue, taskMediaGapAlert, taskDataIntegrityAudit, taskInfraUsageAlert } from "./_tasks/ops.js";
 
 // Initialize Sentry
@@ -82,6 +82,14 @@ async function taskTick() {
   const ran = [];
   // bukti-bayar: scan tiap tick jam kerja 9-18 WIB
   if (hour >= 9 && hour <= 18) {
+    try { await runWithCronLogging(sb, "payment-media-retry", () => taskRetryPaymentMedia(), { timeoutMs: 11_000 }); ran.push("payment-media-retry"); }
+    catch (e) {
+      console.error("[TICK] payment-media-retry", e.message);
+      if (e?.code === "CRON_TIMEOUT") {
+        await log("TICK", `${hour}:00 WIB — retry media timeout; task lain ditunda ke tick berikutnya`, "WARNING");
+        return { hourWib: hour, ran, pending: 1, timedOut: "payment-media-retry", items_processed: ran.length };
+      }
+    }
     try { await runWithCronLogging(sb, "bukti-bayar", () => taskScanBuktiBayar(), { timeoutMs: 6_500 }); ran.push("bukti-bayar"); }
     catch (e) {
       console.error("[TICK] bukti-bayar", e.message);
@@ -207,6 +215,7 @@ export default async function handler(req, res) {
       "cleanup":          taskCleanup,
       "wa-cleanup":       taskWaCleanup,
       "bukti-bayar":      taskScanBuktiBayar,
+      "payment-media-retry": taskRetryPaymentMedia,
       "backup":           taskBackupData,
       "weekly":           taskWeeklyReport,
       "morning-dispatch": taskMorningDispatch,

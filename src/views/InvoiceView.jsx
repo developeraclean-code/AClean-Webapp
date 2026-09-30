@@ -581,7 +581,7 @@ const loadPendingPayments = async () => {
       .select("*, ai_extractions:ai_extraction_id(*)")
       .eq("validation_status", "PENDING")
       .eq("status", "PENDING")  // defensive: exclude kalau old UI sudah CONFIRMED/DISMISSED
-      .or("ai_extraction_id.not.is.null,forwarded_to_group.not.is.null")
+      .or("ai_extraction_id.not.is.null,forwarded_to_group.not.is.null,media_job_id.not.is.null")
       .order("created_at", { ascending: false })
       .limit(50);
     if (error) throw error;
@@ -597,15 +597,20 @@ useEffect(() => { if (invoiceSubTab === "pending_ai") loadPendingPayments(); /* 
 // Cari kandidat invoice berdasarkan amount + phone match
 const findInvoiceCandidates = (sug) => {
   const target = Number(sug.amount) || 0;
-  if (!target) return [];
   const phone = (sug.phone || "").replace(/\D/g, "");
-  const unpaid = (invoicesData || []).filter(i =>
-    INVOICE_UNPAID_STATUSES.includes(i.status) &&
-    Math.abs(Number(i.total || 0) - target) < 1000  // toleransi Rp 1.000
-  );
+  const unpaid = (invoicesData || []).filter(i => {
+    if (!INVOICE_UNPAID_STATUSES.includes(i.status)) return false;
+    if (sug.invoice_id && i.id === sug.invoice_id) return true;
+    if (!target) {
+      const cust = (customersData || []).find(c => c.id === i.customer_id) || {};
+      const candidatePhone = String(i.phone || cust.phone || "").replace(/\D/g, "");
+      return phone && candidatePhone.endsWith(phone.slice(-9));
+    }
+    return Math.abs(Number(i.total || 0) - target) < 1000;
+  });
   // ranking: phone exact > nama partial > amount only
   const ranked = unpaid.map(i => {
-    let score = 1;
+    let score = sug.invoice_id === i.id ? 20 : 1;
     const cust = (customersData || []).find(c => c.id === i.customer_id) || {};
     if (phone && (cust.phone || "").replace(/\D/g, "").endsWith(phone.slice(-9))) score += 5;
     if (sug.sender_name && (cust.name || "").toLowerCase().includes(String(sug.sender_name).toLowerCase().split(" ")[0])) score += 2;
@@ -979,7 +984,8 @@ return (
         {pendingPayments.map(sug => {
           const ai = sug.ai_extractions || {};
           const candidates = findInvoiceCandidates(sug);
-          const conf = sug.ai_extractions?.confidence || "?";
+          const isManualRecovery = !!sug.media_job_id && !sug.amount;
+          const conf = isManualRecovery ? "REVIEW" : (sug.ai_extractions?.confidence || "?");
           const confColor = conf === "HIGH" ? "#10b981" : conf === "MEDIUM" ? "#f59e0b" : "#ef4444";
           const selected = pendingSelectedInvoice[sug.id] || candidates[0]?.inv?.id;
           return (
@@ -992,9 +998,10 @@ return (
               )}
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                  <span style={{ fontSize: 18, fontWeight: 800, color: cs.text }}>{fmt(sug.amount || 0)}</span>
+                  <span style={{ fontSize: 18, fontWeight: 800, color: cs.text }}>{sug.amount ? fmt(sug.amount) : "Nominal belum terbaca"}</span>
                   <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 6, background: confColor + "22", color: confColor }}>{conf}</span>
                   {sug.forwarded_to_group && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 6, background: "#ec489922", color: "#ec4899" }}>📥 Auto-forwarded</span>}
+                  {isManualRecovery && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 6, background: "#f59e0b22", color: "#f59e0b" }}>⚠ AI gagal · cek manual</span>}
                 </div>
                 <div style={{ fontSize: 12, color: cs.text, marginBottom: 4 }}>🏦 {sug.bank || "—"} · 📅 {sug.transfer_date || "—"}</div>
                 <div style={{ fontSize: 12, color: cs.muted, marginBottom: 8 }}>👤 {sug.sender_name || "—"} ({sug.phone || "—"})</div>
@@ -1009,7 +1016,7 @@ return (
                     </button>
                   </div>
                   {candidates.length === 0 && !manualPickerOpen[sug.id] && (
-                    <div style={{ fontSize: 11, color: cs.muted }}>Tidak ada invoice UNPAID dengan jumlah {fmt(sug.amount || 0)}. Klik "Cari Manual" untuk pilih invoice lain.</div>
+                    <div style={{ fontSize: 11, color: cs.muted }}>Tidak ada invoice UNPAID yang cocok. Klik "Cari Manual" untuk pilih invoice lain.</div>
                   )}
                   {candidates.map(({ inv, cust, score }) => (
                     <label key={inv.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", cursor: "pointer", fontSize: 12, color: cs.text }}>

@@ -5,6 +5,21 @@ import * as Sentry from "@sentry/node";
 import { uploadBufferToR2, hasR2Config } from "../_r2-upload.js";
 import { parseKasbonText, matchKasbonName, isKasbonApprovalMessage, resolveKasbonEntry, KASBON_APPROVER_PHONES } from "../_kasbon-parser.js";
 import { buildExpenseDedupKey } from "../_expense-dedup.js";
+import { retryOnePaymentMediaJob } from "../_payment-media.js";
+
+// Maksimal satu media per invocation agar aman untuk Vercel/Supabase free tier.
+// Job idempoten; kegagalan disimpan dan dicoba lagi maksimal tiga kali.
+export async function taskRetryPaymentMedia() {
+  const { data } = await sb.from("app_settings").select("value").eq("key", "wa_payment_detect").maybeSingle();
+  if (data?.value === "false") return { skipped: true, reason: "wa_payment_detect_off" };
+  const result = await retryOnePaymentMediaJob({
+    supabaseUrl: process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL,
+    serviceKey: process.env.SUPABASE_SERVICE_KEY,
+    apiKey: (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY || "").trim(),
+  });
+  if (result?.error) await log("PAYMENT_MEDIA_RETRY", result.error, result.pendingReview ? "WARNING" : "ERROR");
+  return result;
+}
 
 // ══════════════════════════════════════════════════
 // TASK: WA Daily Snapshot — Phase 2 review window
@@ -525,4 +540,3 @@ export async function taskScanBuktiBayar() {
 
   return { checked: invs.length, suggestions: suggestions.length, updated, details: updateLog };
 }
-

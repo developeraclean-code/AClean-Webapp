@@ -19,6 +19,12 @@
       "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 7776000 } }
     },
     {
+      "id": "aclean-wa-inbox-90d",
+      "enabled": true,
+      "conditions": { "prefix": "wa-inbox/" },
+      "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 7776000 } }
+    },
+    {
       "id": "aclean-tool-bag-90d",
       "enabled": true,
       "conditions": { "prefix": "tool-bag/" },

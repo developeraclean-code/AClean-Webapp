@@ -144,6 +144,38 @@ export async function uploadBufferToR2({ buffer, key, mimeType }) {
   }
 }
 
+/** Ambil object private R2 sebagai buffer untuk retry worker. */
+export async function downloadBufferFromR2(key, { timeoutMs = 10000 } = {}) {
+  const { accessKeyId, secretAccessKey, accountId, bucket } = R2_ENV();
+  if (!accessKeyId || !secretAccessKey || !accountId || !key) return { ok: false, err: "R2 env/key not configured" };
+  try {
+    const host = `${accountId}.r2.cloudflarestorage.com`;
+    const canonicalUri = encodeR2CanonicalPath(bucket, key);
+    const now = new Date();
+    const dateStr = now.toISOString().replace(/[:-]|\.\d{3}/g, "").slice(0, 8);
+    const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "").slice(0, 15) + "Z";
+    const payloadHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    const canonicalHeaders = `host:${host}\nx-amz-content-sha256:${payloadHash}\nx-amz-date:${amzDate}\n`;
+    const signedHeaders = "host;x-amz-content-sha256;x-amz-date";
+    const canonicalReq = ["GET", canonicalUri, "", canonicalHeaders, signedHeaders, payloadHash].join("\n");
+    const credScope = `${dateStr}/auto/s3/aws4_request`;
+    const strToSign = ["AWS4-HMAC-SHA256", amzDate, credScope, createHash("sha256").update(canonicalReq).digest("hex")].join("\n");
+    const hmac = (k, d) => createHmac("sha256", k).update(d).digest();
+    const signingKey = hmac(hmac(hmac(hmac("AWS4" + secretAccessKey, dateStr), "auto"), "s3"), "aws4_request");
+    const signature = createHmac("sha256", signingKey).update(strToSign).digest("hex");
+    const authorization = `AWS4-HMAC-SHA256 Credential=${accessKeyId}/${credScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+    const response = await fetch(`https://${host}${canonicalUri}`, {
+      headers: { Authorization: authorization, "x-amz-date": amzDate, "x-amz-content-sha256": payloadHash },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) return { ok: false, err: `R2 GET ${response.status}` };
+    const buffer = Buffer.from(await response.arrayBuffer());
+    return { ok: true, buffer, size: buffer.length, mimeType: response.headers.get("content-type") || "image/jpeg" };
+  } catch (error) {
+    return { ok: false, err: error.message };
+  }
+}
+
 /**
  * Download URL → buffer + mime type.
  * Untuk Fonnte URL biar bisa di-mirror ke R2 sebelum URL expired.
