@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef } from "react";
 import { cs } from "../theme/cs.js";
 import { formatPhone } from "../lib/phone.js";
+import { QUOTATION_PAYMENT, quotationPaymentDetails } from "../lib/quotation.js";
 import QuotationModal from "./QuotationModal.jsx";
 
 const fmt = (n) => "Rp " + (Number(n) || 0).toLocaleString("id-ID");
@@ -192,9 +193,13 @@ export default function QuotationView({
     sendingWaNow.current.add(quo.id);
     setSendingWAId(quo.id);
     try {
+      const payment = quotationPaymentDetails({ method: quo.payment_method, downPaymentAmount: quo.down_payment_amount, total: quo.total });
+      const paymentMessage = payment.method === QUOTATION_PAYMENT.DOWN_PAYMENT
+        ? `\nDown Payment: *${fmt(payment.downPaymentAmount)}*\nSisa: *${fmt(payment.remainingAmount)}*`
+        : "\nPembayaran: *Transfer Full*";
       const msg =
         `Halo ${quo.customer},\n\nBerikut penawaran dari AClean:\n\n` +
-        `📋 *${quo.id}*\nTotal: *${fmt(quo.total)}*` +
+        `📋 *${quo.id}*\nTotal: *${fmt(quo.total)}*${paymentMessage}` +
         `\n\nPenawaran berlaku hingga ${quo.valid_until || "-"}.\nHubungi kami untuk konfirmasi.\n\n— AClean Service`;
 
       // Upload PDF quotation ke R2 terlebih dahulu jika tersedia
@@ -310,6 +315,11 @@ export default function QuotationView({
                   </div>
                   <div style={{ textAlign: "right" }}>
                     <div style={{ fontWeight: 800, fontSize: 15, color: cs.accent }}>{fmt(quo.total)}</div>
+                    <div style={{ fontSize: 10.5, color: quo.payment_method === QUOTATION_PAYMENT.DOWN_PAYMENT ? "#fbbf24" : cs.muted, marginTop: 2 }}>
+                      {quo.payment_method === QUOTATION_PAYMENT.DOWN_PAYMENT
+                        ? `DP ${fmt(quo.down_payment_amount)}`
+                        : "Transfer Full"}
+                    </div>
                     {quo.unit_ac_amount > 0 && (
                       <div style={{ fontSize: 11, color: cs.muted }}>omset {fmt((quo.total || 0) - (quo.unit_ac_amount || 0))}</div>
                     )}

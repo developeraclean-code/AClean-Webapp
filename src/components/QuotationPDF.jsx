@@ -1,4 +1,5 @@
 import { Document, Page, Text, View, StyleSheet, Image, Font } from "@react-pdf/renderer";
+import { QUOTATION_PAYMENT, quotationPaymentDetails } from "../lib/quotation.js";
 
 // Matikan hyphenation otomatis react-pdf — defaultnya suka motong kata di
 // ujung baris (mis. "Service" → "Ser-vice") walau bukan bahasa Inggris.
@@ -16,17 +17,28 @@ const TERMS_PEKERJAAN = [
   "Penambahan Material / Jasa diluar Pekerjaan Quotation ini.",
   "Apabila ditemukan kerusakan Sparepart lain / Pekerjaan lain Maka akan diberikan penawaran tambahan.",
 ];
-const TERMS_PAYMENT = [
-  "Payment : Cash / Bank Transfer 100%",
+const TERMS_PAYMENT_BASE = [
   "Instalation : 1~14 Days, After Payment",
   "Price Include Shipment",
   "Validation : 15 Days",
   "Transfer BCA : 8830-8830-11 ( Malda Retta )",
 ];
+const LEGACY_PAYMENT_TERM = "Payment : Cash / Bank Transfer 100%";
 
 // Normalisasi untuk deteksi apakah quo.notes hanya berisi preset (hindari duplikat di PDF)
 const _norm = (t) => (t || "").replace(/\s+/g, " ").trim().toLowerCase();
-const _PRESET_SIGNATURE = _norm(TERMS_PEKERJAAN.join(" ") + TERMS_PAYMENT.join(" "));
+const _isPresetNotes = (notes) => {
+  const normalized = _norm(notes);
+  if (!normalized) return false;
+  const containsBaseTerms = [...TERMS_PEKERJAAN, ...TERMS_PAYMENT_BASE]
+    .every(term => normalized.includes(_norm(term)));
+  const containsKnownPayment = [
+    LEGACY_PAYMENT_TERM,
+    "Payment : Bank Transfer 100% (Full Payment)",
+    "Payment : Down Payment",
+  ].some(term => normalized.includes(_norm(term)));
+  return containsBaseTerms && containsKnownPayment;
+};
 
 const s = StyleSheet.create({
   page:       { padding: 40, fontFamily: "Times-Roman", fontSize: 10, color: "#22252b", backgroundColor: "#fff" },
@@ -58,6 +70,8 @@ const s = StyleSheet.create({
   // Boxes
   validBox:   { backgroundColor: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 4, padding: "8 12", marginTop: 14 },
   validText:  { fontSize: 9, color: "#c2410c" },
+  paymentBox: { backgroundColor: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 4, padding: "8 12", marginTop: 10 },
+  paymentText:{ fontSize: 9, color: "#1d4ed8", lineHeight: 1.45 },
   noteBox:    { border: "1px solid #cfd2d6", borderRadius: 4, padding: "9 12", marginTop: 12 },
   noteTitle:  { fontFamily: "Times-Bold", fontSize: 8, color: "#5b5f66", marginBottom: 4, textTransform: "uppercase" },
   noteText:   { fontSize: 9.5, lineHeight: 1.5 },
@@ -118,6 +132,15 @@ export default function QuotationPDF({ quo, appSettings, logoUrl }) {
   const hasPph = !!quo.pph23 && (quo.pph23_amount || 0) > 0;
   // DPP = nilai JASA saja + PPh — bukan total (jasa+material+unit AC).
   const dpp = hasPph ? (quo.labor || 0) + (quo.pph23_amount || 0) : 0;
+  const payment = quotationPaymentDetails({
+    method: quo.payment_method,
+    downPaymentAmount: quo.down_payment_amount,
+    total: quo.total,
+  });
+  const paymentTerm = payment.method === QUOTATION_PAYMENT.DOWN_PAYMENT
+    ? `Payment : Down Payment ${fmt(payment.downPaymentAmount)}; sisa ${fmt(payment.remainingAmount)}`
+    : "Payment : Bank Transfer 100% (Full Payment)";
+  const paymentTerms = [paymentTerm, ...TERMS_PAYMENT_BASE];
 
   return (
     <Document>
@@ -193,6 +216,14 @@ export default function QuotationPDF({ quo, appSettings, logoUrl }) {
           </View>
         </View>
 
+        <View wrap={false} style={s.paymentBox}>
+          <Text style={s.paymentText}>
+            Metode Pembayaran: {payment.method === QUOTATION_PAYMENT.DOWN_PAYMENT
+              ? `Down Payment ${fmt(payment.downPaymentAmount)} — sisa ${fmt(payment.remainingAmount)}`
+              : `Transfer Full ${fmt(quo.total)}`}
+          </Text>
+        </View>
+
         {/* Valid until warning */}
         <View wrap={false} style={s.validBox}>
           <Text style={s.validText}>
@@ -201,7 +232,7 @@ export default function QuotationPDF({ quo, appSettings, logoUrl }) {
         </View>
 
         {/* Catatan tambahan custom — hanya tampil jika notes BUKAN sekadar preset T&C */}
-        {quo.notes && !_norm(quo.notes).includes(_PRESET_SIGNATURE) && (
+        {quo.notes && !_isPresetNotes(quo.notes) && (
           <View style={s.noteBox}>
             <Text style={s.noteTitle}>Catatan / Scope Pekerjaan</Text>
             <Text style={s.noteText}>{quo.notes}</Text>
@@ -218,7 +249,7 @@ export default function QuotationPDF({ quo, appSettings, logoUrl }) {
             </View>
           ))}
           <Text style={[s.termsTitle, { marginTop: 8 }]}>Term Of Payment</Text>
-          {TERMS_PAYMENT.map((t, i) => (
+          {paymentTerms.map((t, i) => (
             <View key={i} style={s.termsItem}>
               <Text style={s.termsNum}>{i + 1}.</Text>
               <Text style={{ flex: 1 }}>{t}</Text>

@@ -2,6 +2,14 @@ import { useState, useMemo, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { normalizePhone, formatPhone } from "../lib/phone.js";
 import { categoryFromCatalog, computePph23 } from "../lib/invoicing.js";
+import { searchCustomersServer } from "../data/reads.js";
+import {
+  QUOTATION_PAYMENT,
+  filterQuotationCustomers,
+  mergeQuotationCustomers,
+  quotationHalfPayment,
+  quotationPaymentDetails,
+} from "../lib/quotation.js";
 
 const fmt = (n) => "Rp " + (Number(n) || 0).toLocaleString("id-ID");
 
@@ -80,6 +88,9 @@ export default function QuotationModal({
   const [custSearch, setCustSearch]     = useState(isEdit ? (editData.customer || "") : "");
   const [selectedCust, setSelectedCust] = useState(null);
   const [newCust, setNewCust]           = useState({ name: "", phone: "", area: "", alamat: "" });
+  const [serverCustMatches, setServerCustMatches] = useState([]);
+  const [custSearchLoading, setCustSearchLoading] = useState(false);
+  const [custSearchError, setCustSearchError] = useState("");
 
   // ── Items: Unit AC (opsional) ──
   const [withUnitAC, setWithUnitAC] = useState(isEdit ? (editData.items || []).some(i => i.item_type === "unit_ac") : !!replaceUnit);
@@ -118,6 +129,16 @@ export default function QuotationModal({
   const [tradeIn, setTradeIn]     = useState(isEdit ? (editData.trade_in_amount > 0) : false);
   const [tradeInAmt, setTradeInAmt] = useState(isEdit && editData.trade_in_amount > 0 ? editData.trade_in_amount : TRADE_IN_PRESETS[0]);
   const [pph23On, setPph23On]     = useState(isEdit ? !!editData.pph23 : false);
+
+  // ── Metode pembayaran ──
+  const initialPaymentMethod = editData?.payment_method === QUOTATION_PAYMENT.DOWN_PAYMENT
+    ? QUOTATION_PAYMENT.DOWN_PAYMENT
+    : QUOTATION_PAYMENT.FULL_TRANSFER;
+  const [paymentMethod, setPaymentMethod] = useState(initialPaymentMethod);
+  const [downPaymentAmount, setDownPaymentAmount] = useState(
+    initialPaymentMethod === QUOTATION_PAYMENT.DOWN_PAYMENT ? Number(editData?.down_payment_amount) || 0 : 0,
+  );
+  const [downPayment50, setDownPayment50] = useState(false);
 
   // ── Notes ──
   const [notes, setNotes] = useState(isEdit ? (editData.notes || "") : (maintenancePrefill?.notes || ""));
@@ -172,6 +193,44 @@ export default function QuotationModal({
     }
   }, []);
 
+  // Quotation dibuka dari menu Invoice, sedangkan customersData sengaja di-lazy-load
+  // di menu customer/order. Karena itu suggestion wajib punya fallback server-side.
+  // Debounce menjaga query tetap ringan; error ditampilkan agar tidak menjadi silent error.
+  useEffect(() => {
+    if (custMode !== "existing") return;
+    const query = custSearch.trim();
+    if (query.length < 2 || selectedCust) {
+      setServerCustMatches([]);
+      setCustSearchLoading(false);
+      setCustSearchError("");
+      return;
+    }
+
+    let cancelled = false;
+    setServerCustMatches([]);
+    setCustSearchLoading(true);
+    setCustSearchError("");
+    const timer = setTimeout(async () => {
+      try {
+        const digits = query.replace(/\D/g, "");
+        const serverQuery = digits.length >= 5 ? normalizePhone(query) : query;
+        const { data, error } = await searchCustomersServer(supabase, serverQuery);
+        if (error) throw error;
+        if (!cancelled) setServerCustMatches(data || []);
+      } catch (error) {
+        console.warn("[Quotation] customer suggestion gagal:", error);
+        if (!cancelled) {
+          setServerCustMatches([]);
+          setCustSearchError("Pencarian customer gagal dimuat. Coba ketik ulang.");
+        }
+      } finally {
+        if (!cancelled) setCustSearchLoading(false);
+      }
+    }, 300);
+
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [custMode, custSearch, selectedCust, supabase]);
+
   // ── Kalkulasi ──
   const totalUnitsCount = useMemo(() => acUnits.reduce((s, u) => s + (Number(u.qty) || 1), 0), [acUnits]);
   const totalUnitAC     = useMemo(() => withUnitAC ? acUnits.reduce((s, u) => s + (u.subtotal || 0), 0) : 0, [acUnits, withUnitAC]);
@@ -188,17 +247,22 @@ export default function QuotationModal({
   const grandTotal      = Math.max(0, totalUnitAC + totalItems - diskonNominal - tradeInNominal);
   const omsetAClean     = totalItems - diskonNominal - tradeInNominal;
   const pph23Info       = pph23On ? computePph23(jasaSubtotal) : { amount: 0, dpp: 0 };
+  const effectiveDownPayment = downPayment50 ? quotationHalfPayment(grandTotal) : Number(downPaymentAmount) || 0;
+  const paymentDetails = quotationPaymentDetails({
+    method: paymentMethod,
+    downPaymentAmount: effectiveDownPayment,
+    total: grandTotal,
+  });
 
   // ── Customer display ──
   const custDisplay = custMode === "existing"
     ? selectedCust
     : (newCust.name ? { name: newCust.name, phone: newCust.phone, area: newCust.area } : null);
 
-  const filteredCust = (customersData || []).filter(c =>
-    !custSearch ||
-    (c.name || "").toLowerCase().includes(custSearch.toLowerCase()) ||
-    (c.phone || "").includes(custSearch)
-  );
+  const filteredCust = useMemo(() => filterQuotationCustomers(
+    mergeQuotationCustomers(serverCustMatches, customersData || []),
+    custSearch,
+  ), [customersData, serverCustMatches, custSearch]);
 
   // ── Price list options utk grid (harga deal klien + paket preset + katalog global) ──
   const priceOptions = useMemo(() => {
@@ -300,6 +364,14 @@ export default function QuotationModal({
     if (!custDisplay) { showNotif?.("⚠️ Pilih customer dahulu"); return; }
     const items = buildItems();
     if (items.length === 0) { showNotif?.("⚠️ Tambahkan minimal 1 item"); return; }
+    if (paymentMethod === QUOTATION_PAYMENT.DOWN_PAYMENT) {
+      if (paymentDetails.downPaymentAmount <= 0) {
+        showNotif?.("⚠️ Nominal Down Payment wajib lebih dari Rp 0"); return;
+      }
+      if (effectiveDownPayment > grandTotal) {
+        showNotif?.("⚠️ Down Payment tidak boleh melebihi total penawaran"); return;
+      }
+    }
 
     setSaving(true);
     try {
@@ -338,6 +410,8 @@ export default function QuotationModal({
         trade_in_amount: tradeInNominal,
         pph23:           pph23On,
         pph23_amount:    pph23Info.amount,
+        payment_method:  paymentDetails.method,
+        down_payment_amount: paymentDetails.downPaymentAmount,
         valid_until:     validUntil,
         notes:           notes || null,
         updated_at:      new Date().toISOString(),
@@ -415,6 +489,8 @@ export default function QuotationModal({
                 <>
                   <input value={custSearch} onChange={e => { setCustSearch(e.target.value); setSelectedCust(null); }}
                     placeholder="Cari nama atau no HP..." autoFocus style={inp} />
+                  {custSearchLoading && <div style={{ fontSize: 11, color: cs.accent }}>Mencari customer terbaru…</div>}
+                  {custSearchError && <div style={{ fontSize: 11, color: "#f87171" }}>⚠️ {custSearchError}</div>}
                   <div style={{ maxHeight: 220, overflowY: "auto", display: "grid", gap: 6 }}>
                     {filteredCust.map(c => (
                       <div key={c.id} onClick={() => { setSelectedCust(c); setCustSearch(c.name); }}
@@ -429,7 +505,7 @@ export default function QuotationModal({
                         {selectedCust?.id === c.id && <span style={{ color: cs.accent }}>✓</span>}
                       </div>
                     ))}
-                    {filteredCust.length === 0 && custSearch && (
+                    {filteredCust.length === 0 && custSearch && !custSearchLoading && !custSearchError && (
                       <div style={{ padding: 12, color: cs.muted, fontSize: 12, textAlign: "center" }}>
                         Tidak ditemukan —
                         <button onClick={() => { setCustMode("baru"); setNewCust(p => ({ ...p, name: custSearch })); }}
@@ -692,6 +768,46 @@ export default function QuotationModal({
                 </div>
               </div>
 
+              {/* Metode pembayaran */}
+              <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: 14, display: "grid", gap: 12 }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: cs.text }}>💳 Metode Pembayaran</div>
+                  <div style={{ fontSize: 10.5, color: cs.muted, marginTop: 3 }}>Tersimpan pada quotation dan ikut tercetak di PDF.</div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>
+                  {[
+                    { key: QUOTATION_PAYMENT.DOWN_PAYMENT, label: "Down Payment", desc: "Bayar sebagian, sisanya kemudian" },
+                    { key: QUOTATION_PAYMENT.FULL_TRANSFER, label: "Transfer Full", desc: "Transfer 100% nilai penawaran" },
+                  ].map(option => (
+                    <button key={option.key} type="button" onClick={() => setPaymentMethod(option.key)}
+                      style={{ textAlign: "left", padding: "10px 12px", borderRadius: 10, cursor: "pointer",
+                        background: paymentMethod === option.key ? cs.accent + "22" : cs.surface,
+                        border: "1px solid " + (paymentMethod === option.key ? cs.accent : cs.border), color: cs.text }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 800 }}>{paymentMethod === option.key ? "● " : "○ "}{option.label}</div>
+                      <div style={{ fontSize: 10.5, color: cs.muted, marginTop: 3 }}>{option.desc}</div>
+                    </button>
+                  ))}
+                </div>
+                {paymentMethod === QUOTATION_PAYMENT.DOWN_PAYMENT && (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "end" }}>
+                    <div>
+                      <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Nominal Down Payment (Rp)</div>
+                      <input type="number" min="1" max={grandTotal || undefined} value={downPayment50 ? quotationHalfPayment(grandTotal) : downPaymentAmount || ""}
+                        disabled={downPayment50}
+                        onChange={e => { setDownPayment50(false); setDownPaymentAmount(Number(e.target.value)); }}
+                        style={{ ...inp, opacity: downPayment50 ? 0.75 : 1 }} placeholder="Masukkan nominal DP" />
+                    </div>
+                    <label style={{ minHeight: 34, display: "flex", alignItems: "center", gap: 7, color: cs.accent, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                      <input type="checkbox" checked={downPayment50} onChange={e => setDownPayment50(e.target.checked)} />
+                      50% ({fmt(quotationHalfPayment(grandTotal))})
+                    </label>
+                    <div style={{ gridColumn: "1 / -1", fontSize: 11, color: cs.muted }}>
+                      Sisa setelah DP: <strong style={{ color: cs.text }}>{fmt(paymentDetails.remainingAmount)}</strong>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Notes — opsional, untuk catatan khusus saja. T&C standar otomatis di PDF */}
               <div>
                 <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Catatan Khusus (opsional)</div>
@@ -743,6 +859,14 @@ export default function QuotationModal({
                 <div style={{ borderTop: "1px solid " + cs.border, marginTop: 10, paddingTop: 10, display: "flex", justifyContent: "space-between" }}>
                   <span style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>TOTAL PENAWARAN</span>
                   <span style={{ fontWeight: 800, fontSize: 15, color: cs.accent }}>{fmt(grandTotal)}</span>
+                </div>
+                <div style={{ marginTop: 10, padding: "9px 10px", borderRadius: 8, background: cs.surface, border: "1px solid " + cs.border }}>
+                  <div style={{ fontSize: 11, color: cs.muted }}>Metode Pembayaran</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: cs.text, marginTop: 2 }}>
+                    {paymentMethod === QUOTATION_PAYMENT.DOWN_PAYMENT
+                      ? `Down Payment ${fmt(paymentDetails.downPaymentAmount)} · Sisa ${fmt(paymentDetails.remainingAmount)}`
+                      : `Transfer Full ${fmt(grandTotal)}`}
+                  </div>
                 </div>
                 {pph23On && pph23Info.amount > 0 && (
                   <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
@@ -797,6 +921,9 @@ export default function QuotationModal({
                 <div style={{ fontSize: 13, color: cs.muted }}>Customer: <strong style={{ color: cs.text }}>{custDisplay?.name || "—"}</strong></div>
                 <div style={{ fontSize: 13, color: cs.muted }}>Total: <strong style={{ color: cs.accent }}>{fmt(grandTotal)}</strong></div>
                 <div style={{ fontSize: 13, color: cs.muted }}>Items: <strong style={{ color: cs.text }}>{buildItems().length} item</strong></div>
+                <div style={{ fontSize: 13, color: cs.muted }}>Pembayaran: <strong style={{ color: cs.text }}>
+                  {paymentMethod === QUOTATION_PAYMENT.DOWN_PAYMENT ? `DP ${fmt(paymentDetails.downPaymentAmount)}` : "Transfer Full"}
+                </strong></div>
                 {withUnitAC && <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>* Unit AC tidak masuk omset (passthrough)</div>}
               </div>
 
