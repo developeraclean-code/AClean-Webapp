@@ -17,6 +17,14 @@ const BRAND_SHORTCUTS = ["Daikin", "Panasonic", "Sharp", "Samsung", "LG", "Mitsu
 const KAPASITAS_OPT   = ["0.5 PK", "0.75 PK", "1 PK", "1.5 PK", "2 PK", "2.5 PK", "3 PK", "3.5 PK", "4 PK", "5 PK", "6 PK"];
 const TIPE_UNIT       = ["Split Standard", "Split Inverter", "Cassette", "Split Duct", "Floor Standing"];
 const TRADE_IN_PRESETS = [250000, 300000];
+const AC_PRICE_MODE = {
+  UNIT_ONLY: "UNIT_ONLY",
+  INCLUDE_INSTALLATION: "INCLUDE_INSTALLATION",
+};
+
+const acPriceForMode = (row, mode) => Number(
+  mode === AC_PRICE_MODE.INCLUDE_INSTALLATION ? row?.harga_inc_pasang : row?.harga_unit
+) || 0;
 
 const DEFAULT_PAKET = [
   { key: "paket_05_1pk", label: "Paket Pemasangan 0,5PK – 1PK", harga: 1400000,
@@ -58,7 +66,7 @@ const TABS = [
 const emptyUnit = () => ({
   _id: Date.now() + Math.random(),
   nama: "", brand: "", tipe: "Split Standard", kapasitas: "1 PK", model: "",
-  qty: 1, harga_satuan: 0, subtotal: 0, _manual: true,
+  qty: 1, harga_satuan: 0, subtotal: 0, price_mode: AC_PRICE_MODE.UNIT_ONLY, _manual: true,
 });
 
 const SATUAN_OPT = ["Unit", "Meter", "Roll", "Set", "Pcs", "Lot", "Hari", "Jam"];
@@ -97,7 +105,12 @@ export default function QuotationModal({
   const [acUnits, setAcUnits]       = useState(() => {
     if (isEdit) {
       const units = (editData.items || []).filter(i => i.item_type === "unit_ac");
-      return units.length > 0 ? units.map(u => ({ ...u, _id: Math.random(), _manual: true, nama: u.nama || u.description || "", harga_satuan: u.unit_price, subtotal: u.subtotal || u.unit_price * u.qty })) : [emptyUnit()];
+      return units.length > 0 ? units.map(u => ({
+        ...u, _id: Math.random(), _manual: true, nama: u.nama || u.description || "",
+        price_mode: u.price_mode === AC_PRICE_MODE.INCLUDE_INSTALLATION
+          ? AC_PRICE_MODE.INCLUDE_INSTALLATION : AC_PRICE_MODE.UNIT_ONLY,
+        harga_satuan: u.unit_price, subtotal: u.subtotal || u.unit_price * u.qty,
+      })) : [emptyUnit()];
     }
     if (replaceUnit) {
       return [{ ...emptyUnit(), nama: replaceUnit.label || "", brand: replaceUnit.brand || "", kapasitas: replaceUnit.kapasitas || "1 PK" }];
@@ -304,7 +317,7 @@ export default function QuotationModal({
           p.brand === up.brand && p.tipe === up.tipe && p.kapasitas === up.kapasitas
         );
         if (match && (up.harga_satuan === 0 || !up.harga_satuan)) {
-          up.harga_satuan = match.harga_unit;
+          up.harga_satuan = acPriceForMode(match, up.price_mode);
           up._priceHint = match;
         } else if (match) {
           up._priceHint = match;
@@ -312,7 +325,16 @@ export default function QuotationModal({
           up._priceHint = null;
         }
       }
-      if (field === "qty" || field === "harga_satuan")
+      if (field === "price_mode") {
+        const match = up._priceHint || acPriceList.find(p =>
+          p.brand === up.brand && p.tipe === up.tipe && p.kapasitas === up.kapasitas
+        );
+        if (match) {
+          up._priceHint = match;
+          up.harga_satuan = acPriceForMode(match, val);
+        }
+      }
+      if (field === "qty" || field === "harga_satuan" || field === "price_mode")
         up.subtotal = (Number(up.qty) || 0) * (Number(up.harga_satuan) || 0);
       if ((field === "brand" || field === "tipe" || field === "kapasitas") && up.harga_satuan > 0)
         up.subtotal = (Number(up.qty) || 1) * up.harga_satuan;
@@ -337,6 +359,8 @@ export default function QuotationModal({
           unit_price: Number(u.harga_satuan) || 0,
           subtotal: u.subtotal || 0,
           is_passthrough: true,
+          price_mode: u.price_mode === AC_PRICE_MODE.INCLUDE_INSTALLATION
+            ? AC_PRICE_MODE.INCLUDE_INSTALLATION : AC_PRICE_MODE.UNIT_ONLY,
         });
       });
     }
@@ -559,6 +583,9 @@ export default function QuotationModal({
                               <div style={{ flex: 1, minWidth: 0 }}>
                                 <div style={{ fontSize: 12, fontWeight: 700, color: cs.text }}>{u.brand} {u.tipe} {u.kapasitas}</div>
                                 <div style={{ fontSize: 11, color: cs.muted }}>{u.model || u.seri || ""}</div>
+                                <div style={{ fontSize: 10, color: u.price_mode === AC_PRICE_MODE.INCLUDE_INSTALLATION ? "#22c55e" : "#60a5fa", fontWeight: 700, marginTop: 2 }}>
+                                  {u.price_mode === AC_PRICE_MODE.INCLUDE_INSTALLATION ? "Unit + instalasi" : "Unit only"}
+                                </div>
                                 <div style={{ fontSize: 12, color: "#f59e0b", fontFamily: "monospace", fontWeight: 700 }}>{fmt(u.harga_satuan)} / unit</div>
                               </div>
                               <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
@@ -597,23 +624,37 @@ export default function QuotationModal({
                         <div style={{ maxHeight: 200, overflowY: "auto", display: "grid", gap: 4 }}>
                           {filteredPLQ.length === 0 && <div style={{ fontSize: 11, color: cs.muted, padding: "8px 0" }}>Tidak ada unit ditemukan</div>}
                           {filteredPLQ.map((p, i) => {
-                            const alreadyAdded = acUnits.some(u => u.model === p.seri && u.brand === p.brand && u.harga_satuan > 0);
+                            const hasUnitOnly = acUnits.some(u => u.model === p.seri && u.brand === p.brand && u.harga_satuan > 0 && u.price_mode !== AC_PRICE_MODE.INCLUDE_INSTALLATION);
+                            const hasIncludeInstallation = acUnits.some(u => u.model === p.seri && u.brand === p.brand && u.harga_satuan > 0 && u.price_mode === AC_PRICE_MODE.INCLUDE_INSTALLATION);
+                            const alreadyAdded = hasUnitOnly && (hasIncludeInstallation || !Number(p.harga_inc_pasang));
+                            const addPricedUnit = (priceMode) => {
+                              if (priceMode === AC_PRICE_MODE.UNIT_ONLY ? hasUnitOnly : hasIncludeInstallation) return;
+                              const price = acPriceForMode(p, priceMode);
+                              if (price <= 0) {
+                                showNotif?.(`⚠️ Harga ${priceMode === AC_PRICE_MODE.INCLUDE_INSTALLATION ? "include instalasi" : "unit only"} belum tersedia`);
+                                return;
+                              }
+                              const newU = { _id: Date.now() + i, brand: p.brand, tipe: p.tipe, kapasitas: p.kapasitas, model: p.seri || "", qty: 1, price_mode: priceMode, harga_satuan: price, subtotal: price, is_passthrough: true, _priceHint: p };
+                              setAcUnits(prev => {
+                                const emptyIdx = prev.findIndex(u => !u.brand || u.harga_satuan === 0);
+                                if (emptyIdx >= 0) return prev.map((u, ii) => ii === emptyIdx ? newU : u);
+                                return [...prev, newU];
+                              });
+                            };
                             return (
-                              <div key={i} onClick={() => {
-                                if (alreadyAdded) return;
-                                const newU = { _id: Date.now() + i, brand: p.brand, tipe: p.tipe, kapasitas: p.kapasitas, model: p.seri || "", qty: 1, harga_satuan: p.harga_unit, subtotal: p.harga_unit, is_passthrough: true, _priceHint: p };
-                                setAcUnits(prev => {
-                                  const emptyIdx = prev.findIndex(u => !u.brand || u.harga_satuan === 0);
-                                  if (emptyIdx >= 0) return prev.map((u, ii) => ii === emptyIdx ? newU : u);
-                                  return [...prev, newU];
-                                });
-                              }} style={{ padding: "8px 10px", borderRadius: 7, border: "1px solid " + (alreadyAdded ? "#16a34a44" : cs.border), background: alreadyAdded ? "#16a34a10" : cs.surface, cursor: alreadyAdded ? "default" : "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, opacity: alreadyAdded ? 0.7 : 1 }}>
+                              <div key={i} style={{ padding: "8px 10px", borderRadius: 7, border: "1px solid " + (alreadyAdded ? "#16a34a44" : cs.border), background: alreadyAdded ? "#16a34a10" : cs.surface, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, opacity: alreadyAdded ? 0.7 : 1 }}>
                                 <div style={{ flex: 1, minWidth: 0 }}>
                                   <div style={{ fontSize: 11, fontWeight: 700, color: cs.text }}>{p.brand} <span style={{ color: cs.muted, fontWeight: 400 }}>{p.tipe}</span> · {p.kapasitas}</div>
                                   <div style={{ fontSize: 10, color: cs.muted }}>{p.seri}{p.nama_varian ? ` · ${p.nama_varian}` : ""}</div>
                                 </div>
-                                <div style={{ fontSize: 12, fontWeight: 700, color: "#f59e0b", fontFamily: "monospace", flexShrink: 0 }}>{fmt(p.harga_unit)}</div>
-                                <div style={{ fontSize: 16, color: alreadyAdded ? "#16a34a" : "#f59e0b", flexShrink: 0 }}>{alreadyAdded ? "✓" : "+"}</div>
+                                <div style={{ display: "grid", gap: 4, flexShrink: 0 }}>
+                                  <button type="button" disabled={hasUnitOnly} onClick={() => addPricedUnit(AC_PRICE_MODE.UNIT_ONLY)} style={{ ...btn("#60a5fa"), padding: "4px 8px", fontSize: 10, opacity: hasUnitOnly ? 0.45 : 1 }}>
+                                    {hasUnitOnly ? "✓ " : ""}Unit only · {fmt(p.harga_unit)}
+                                  </button>
+                                  <button type="button" disabled={!Number(p.harga_inc_pasang) || hasIncludeInstallation} onClick={() => addPricedUnit(AC_PRICE_MODE.INCLUDE_INSTALLATION)} style={{ ...btn("#22c55e"), padding: "4px 8px", fontSize: 10, opacity: Number(p.harga_inc_pasang) && !hasIncludeInstallation ? 1 : 0.45 }}>
+                                    {hasIncludeInstallation ? "✓ " : ""}Include instalasi · {Number(p.harga_inc_pasang) ? fmt(p.harga_inc_pasang) : "belum ada"}
+                                  </button>
+                                </div>
                               </div>
                             );
                           })}
@@ -660,6 +701,11 @@ export default function QuotationModal({
                                 <input type="number" min="1" value={u.qty} onChange={e => updateUnit(idx, "qty", e.target.value)} style={inp} />
                               </div>
                               <div style={{ gridColumn: "span 2" }}>
+                                <div style={{ fontSize: 11, color: cs.muted, marginBottom: 3 }}>Kategori harga</div>
+                                <select value={u.price_mode || AC_PRICE_MODE.UNIT_ONLY} onChange={e => updateUnit(idx, "price_mode", e.target.value)} style={{ ...inp, marginBottom: 8 }}>
+                                  <option value={AC_PRICE_MODE.UNIT_ONLY}>Unit only</option>
+                                  <option value={AC_PRICE_MODE.INCLUDE_INSTALLATION}>Unit + instalasi</option>
+                                </select>
                                 <div style={{ fontSize: 11, color: cs.muted, marginBottom: 3 }}>Harga Satuan (passthrough)</div>
                                 <input type="number" min="0" value={u.harga_satuan || ""} onChange={e => updateUnit(idx, "harga_satuan", Number(e.target.value))} style={inp} placeholder="0" />
                                 {u.subtotal > 0 && <div style={{ fontSize: 11, color: cs.muted, marginTop: 4 }}>Subtotal: {fmt(u.subtotal)}</div>}

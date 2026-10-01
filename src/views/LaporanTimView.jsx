@@ -808,7 +808,20 @@ const verifyLaporan = async (r) => {
       afterVerified();
       const savedOrder = data?.order;
       const savedOrders = Array.isArray(data?.orders) ? data.orders : [];
-      const savedInvoice = data?.invoice;
+      let savedInvoice = data?.invoice;
+      // AFTER-trigger quotation dapat menerapkan DP tepat setelah INSERT. RETURNING
+      // PostgreSQL masih membawa row sebelum AFTER-trigger, jadi baca ulang agar UI
+      // langsung menampilkan paid_amount/sisa aktual tanpa perlu refresh manual.
+      if (savedInvoice?.id) {
+        const { data: refreshedInvoice, error: refreshError } = await supabase
+          .from("invoices").select("*").eq("id", savedInvoice.id).maybeSingle();
+        if (refreshError) {
+          console.warn("[ReportFinalize] refresh saldo DP gagal:", refreshError.message);
+          showNotif("⚠️ Invoice berhasil dibuat, tetapi saldo DP terbaru belum tampil. Muat ulang menu Invoice.");
+        } else if (refreshedInvoice) {
+          savedInvoice = refreshedInvoice;
+        }
+      }
       if (savedOrder) setOrdersData(prev => prev.map(o => o.id === savedOrder.id ? { ...o, ...savedOrder } : o));
       if (savedOrders.length > 0) {
         const byId = new Map(savedOrders.map(o => [o.id, o]));

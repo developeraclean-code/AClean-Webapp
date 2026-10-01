@@ -7,13 +7,27 @@ export async function approveInvoiceCore(inv, {
   ordersData, reportError, retroMatchPayment, setAuditUser, setInvoicesData,
   setOrdersData, showNotif, supabase, updateInvoice, updateOrderStatus, validatePositiveNumber,
 } = {}) {
+    // Ambil saldo terbaru dari DB. DP quotation dapat diterapkan oleh trigger setelah
+    // invoice dibuat, sehingga object React yang masih terbuka bisa belum membawa
+    // paid_amount terbaru. Approval tidak boleh menimpa saldo tersebut menjadi UNPAID.
+    const { data: latestInvoice, error: latestError } = await supabase
+      .from("invoices")
+      .select("id,total,paid_amount,remaining_amount,status,quotation_id")
+      .eq("id", inv.id)
+      .maybeSingle();
+    if (latestError) {
+      reportError("invoice.approve.latestBalanceFailed", latestError, { invoiceId: inv.id });
+      showNotif("❌ Saldo pembayaran terbaru gagal dimuat. Approval dibatalkan agar DP tidak tertimpa.");
+      return null;
+    }
+    const effectiveInv = latestInvoice ? { ...inv, ...latestInvoice } : inv;
     // Input validation
     if (!inv.id || inv.id.trim().length === 0) {
       showNotif("❌ Invoice ID tidak valid");
       return null;
     }
     // Allow Rp 0 for repair_gratis (free repairs), but require positive for regular invoices
-    if (!inv.repair_gratis && !validatePositiveNumber(inv.total)) {
+    if (!effectiveInv.repair_gratis && !validatePositiveNumber(effectiveInv.total)) {
       showNotif("❌ Invoice total harus lebih dari 0");
       return null;
     }
@@ -60,8 +74,16 @@ export async function approveInvoiceCore(inv, {
     const today = getLocalDate();
     const due = new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const approvedAt = getLocalISOString(); // Indonesia timezone (UTC+7)
+    const paidAmount = Math.max(0, Number(effectiveInv.paid_amount) || 0);
+    const remainingAmount = Math.max(0, Number(effectiveInv.total || 0) - paidAmount);
+    const approvedStatus = paidAmount >= Number(effectiveInv.total || 0) && Number(effectiveInv.total || 0) > 0
+      ? "PAID"
+      : paidAmount > 0 ? "PARTIAL_PAID" : "UNPAID";
+    let finalApprovedStatus = approvedStatus;
+    let finalPaidAmount = paidAmount;
+    let finalRemainingAmount = remainingAmount;
     setInvoicesData(prev => prev.map(i =>
-      i.id === inv.id ? { ...i, status: "UNPAID", due } : i
+      i.id === inv.id ? { ...i, paid_amount: paidAmount, remaining_amount: remainingAmount, status: approvedStatus, due } : i
     ));
     // 1 order = 1 invoice (termasuk multi-hari, kebijakan Owner 11 Agu 2026): approve
     // HANYA menyentuh order pemilik invoice ini. Dulu status ikut di-propagate ke semua
@@ -69,26 +91,49 @@ export async function approveInvoiceCore(inv, {
     // punya invoice sendiri, jadi propagasi itu akan menimpa invoice_id anak dan merusak
     // pasangan 1:1-nya.
     setOrdersData(prev => prev.map(o =>
-      o.id === inv.job_id ? { ...o, invoice_id: inv.id, status: "INVOICE_APPROVED" } : o
+      o.id === inv.job_id ? { ...o, invoice_id: inv.id, status: approvedStatus === "PAID" ? "PAID" : "INVOICE_APPROVED" } : o
     ));
     // GAP 4: simpan approved_by, trigger DB akan catat audit_log
     await setAuditUser();
     // Update invoice — try full, fallback minimal
     {
       const { error: apErr } = await updateInvoice(supabase, inv.id, {
-        status: "UNPAID", due,
+        // Saldo tidak ditulis ulang di sini. Trigger deposit/ledger adalah sumber
+        // kebenaran dan akan merekonsiliasi status bila ada DP masuk bersamaan.
+        status: approvedStatus, due,
+        ...(approvedStatus === "PAID" ? { paid_at: getLocalDate() } : {}),
         approved_by: currentUser?.name || null,
         approved_at: approvedAt,
       }, auditUserName());
       if (apErr) {
         console.warn("invoice approve full failed:", apErr.message);
-        const { error: apErr2 } = await updateInvoice(supabase, inv.id, { status: "UNPAID" }, auditUserName());
+        const { error: apErr2 } = await updateInvoice(supabase, inv.id, {
+          status: approvedStatus,
+        }, auditUserName());
         if (apErr2) reportError("invoice.approve.minimalFailed", apErr2, { invoiceId: inv.id });
       }
     }
+    // Trigger DP berjalan di transaksi UPDATE di atas. Baca hasil akhirnya sebelum
+    // menyetel status order agar race "DP masuk saat tombol Approve ditekan" aman.
+    const { data: reconciledInvoice, error: reconcileReadError } = await supabase
+      .from("invoices").select("status,paid_amount,remaining_amount").eq("id", inv.id).maybeSingle();
+    if (reconcileReadError) {
+      reportError("invoice.approve.reconcileReadFailed", reconcileReadError, { invoiceId: inv.id });
+    } else if (reconciledInvoice) {
+      finalApprovedStatus = reconciledInvoice.status || approvedStatus;
+      finalPaidAmount = Number(reconciledInvoice.paid_amount) || 0;
+      finalRemainingAmount = Math.max(0, Number(reconciledInvoice.remaining_amount) || 0);
+      setInvoicesData(prev => prev.map(i => i.id === inv.id
+        ? { ...i, status: finalApprovedStatus, paid_amount: finalPaidAmount, remaining_amount: finalRemainingAmount, due }
+        : i));
+      setOrdersData(prev => prev.map(o => o.id === inv.job_id
+        ? { ...o, invoice_id: inv.id, status: finalApprovedStatus === "PAID" ? "PAID" : "INVOICE_APPROVED" }
+        : o));
+    }
     // Update order status — with fallback
     {
-      const { error: oErr } = await updateOrderStatus(supabase, inv.job_id, "INVOICE_APPROVED", auditUserName(), { invoice_id: inv.id });
+      const orderStatus = finalApprovedStatus === "PAID" ? "PAID" : "INVOICE_APPROVED";
+      const { error: oErr } = await updateOrderStatus(supabase, inv.job_id, orderStatus, auditUserName(), { invoice_id: inv.id });
       if (oErr) {
         console.warn("orders INVOICE_APPROVED failed:", oErr.message);
         await updateOrderStatus(supabase, inv.job_id, "COMPLETED", auditUserName());
@@ -97,7 +142,10 @@ export async function approveInvoiceCore(inv, {
     addAgentLog("INVOICE_APPROVED", `Invoice ${inv.id} approve oleh ${currentUser?.name || "—"} — ${inv.customer} ${fmt(inv.total)}`, "SUCCESS");
 
     // Retro-match: cari bukti bayar yang sudah masuk sebelum invoice di-approve
-    retroMatchPayment(inv).catch(e => console.warn("[RETRO_MATCH] fire-and-forget error:", e.message));
+    if (finalApprovedStatus !== "PAID") {
+      retroMatchPayment({ ...inv, paid_amount: finalPaidAmount, remaining_amount: finalRemainingAmount, status: finalApprovedStatus })
+        .catch(e => console.warn("[RETRO_MATCH] fire-and-forget error:", e.message));
+    }
 
     return due; // kembalikan due date untuk dipakai caller
 }

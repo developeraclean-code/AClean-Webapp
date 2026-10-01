@@ -840,20 +840,51 @@ export async function submitLaporan({
 
       // Simpan invoice ke Supabase — exclude fields yang tidak ada di DB schema
       const { garansi_status: _gs, ...invBase } = newInvoice;
-      const invPayload = {
+      let invPayload = {
         ...invBase,
         materials_detail: detailToStore.length > 0 ? JSON.stringify(detailToStore) : null,
         repair_gratis: invBase.repair_gratis || undefined,
       };
       // ── 1 invoice per job: query DB langsung untuk cegah race condition ──
       const { data: existingDB, error: fetchExistingErr } = await supabase
-        .from("invoices").select("id").eq("job_id", laporanModal.id);
+        .from("invoices").select("id,paid_amount,remaining_amount,quotation_id").eq("job_id", laporanModal.id);
       if (fetchExistingErr) {
         reportError("invoice.precheck.fetchExisting", fetchExistingErr, { jobId: laporanModal.id });
         showNotif("❌ Gagal verifikasi invoice existing — submit dibatalkan. Coba lagi.");
         return;
       }
-      if (existingDB && existingDB.length > 0) {
+      let savedInvoiceId = invId;
+      let updatedPaidInvoice = false;
+      const paidExisting = (existingDB || []).filter(i => Number(i.paid_amount || 0) > 0);
+      if (paidExisting.length > 1) {
+        reportError("invoice.rewrite.multiplePaid", new Error("Multiple paid invoices for one job"), { jobId: laporanModal.id, invoiceIds: paidExisting.map(i => i.id) });
+        showNotif("❌ Ditemukan lebih dari satu invoice berbayar pada job ini. Revisi dibatalkan agar ledger pembayaran tidak rusak.");
+        return;
+      }
+      if (paidExisting.length === 1) {
+        // Pembayaran/DP sudah melekat: pertahankan primary key dan ledger. UPDATE total
+        // akan memicu kalkulasi ulang deposit di DB; invoice berbayar tidak boleh dihapus.
+        const existing = paidExisting[0];
+        if (Number(newInvoice.total || 0) < Number(existing.paid_amount || 0)) {
+          showNotif(`❌ Total revisi (${fmt(newInvoice.total)}) lebih kecil dari uang yang sudah diterima (${fmt(existing.paid_amount)}). Revisi dibatalkan; buat keputusan refund/kredit customer terlebih dahulu.`);
+          addAgentLog("INVOICE_REWRITE_BELOW_PAYMENT_BLOCKED", `Invoice ${existing.id}: total revisi ${newInvoice.total} < pembayaran ${existing.paid_amount}`, "WARNING");
+          return;
+        }
+        savedInvoiceId = existing.id;
+        const { id: _newGeneratedId, paid_amount: _ignorePaid, remaining_amount: _ignoreRemaining, ...safeUpdate } = invPayload;
+        const { error: updatePaidErr } = await supabase.from("invoices").update(safeUpdate).eq("id", existing.id);
+        if (updatePaidErr) {
+          reportError("invoice.rewrite.updatePaid", updatePaidErr, { jobId: laporanModal.id, invoiceId: existing.id });
+          showNotif("❌ Gagal memperbarui invoice yang sudah memiliki DP. Revisi dibatalkan; pembayaran tetap aman.");
+          return;
+        }
+        newInvoice.id = existing.id;
+        newInvoice.quotation_id = existing.quotation_id || newInvoice.quotation_id;
+        updatedPaidInvoice = true;
+        invPayload = { ...safeUpdate, id: existing.id };
+        setInvoicesData(prev => prev.map(i => i.id === existing.id ? { ...i, ...newInvoice } : i));
+        addAgentLog("INVOICE_REWRITE_PRESERVE_PAYMENT", `Invoice ${existing.id} diperbarui tanpa menghapus ledger pembayaran`, "SUCCESS");
+      } else if (existingDB && existingDB.length > 0) {
         // Hapus semua dulu — update local state HANYA setelah semua delete sukses
         for (const old of existingDB) {
           const { error: delErr } = await deleteInvoice(supabase, old.id, auditUserName(), "TEKNISI_REWRITE_LAPORAN");
@@ -876,7 +907,7 @@ export async function submitLaporan({
           addAgentLog("INVOICE_INVARIANT", describeInconsistency(_chk, newInvoice.id) + " (submit laporan)", "WARNING");
         }
       }
-      const { error: invErr } = await insertInvoice(supabase, invPayload);
+      const { error: invErr } = updatedPaidInvoice ? { error: null } : await insertInvoice(supabase, invPayload);
       if (invErr) {
         console.warn("Invoice insert failed:", invErr.message, "— retrying minimal");
         let retryOk = false;
@@ -897,7 +928,7 @@ export async function submitLaporan({
         }
       }
       // Update local state SETELAH DB insert sukses (atau retry sukses)
-      setInvoicesData(prev => prev.some(i => i.id === newInvoice.id) ? prev : [...prev, newInvoice]);
+      if (!updatedPaidInvoice) setInvoicesData(prev => prev.some(i => i.id === newInvoice.id) ? prev : [...prev, newInvoice]);
 
       // P1: Link invoice ↔ quotation — jika ADA penawaran yang job_id-nya = order ini.
       // Berlaku baik order dari Approve quotation MAUPUN job manual yang ditautkan via
@@ -906,15 +937,15 @@ export async function submitLaporan({
       const linkedQuo = quotationsData.find(q => q.job_id === laporanModal.id);
       if (linkedQuo) {
         // Patch invoice.quotation_id
-        supabase.from("invoices").update({ quotation_id: linkedQuo.id }).eq("id", invId).then(() => {});
+        supabase.from("invoices").update({ quotation_id: linkedQuo.id }).eq("id", savedInvoiceId).then(() => {});
         // Patch quotation.invoice_id
-        supabase.from("quotations").update({ invoice_id: invId, updated_at: new Date().toISOString() }).eq("id", linkedQuo.id).then(() => {});
-        setQuotationsData(prev => prev.map(q => q.id === linkedQuo.id ? { ...q, invoice_id: invId } : q));
-        setInvoicesData(prev => prev.map(i => i.id === invId ? { ...i, quotation_id: linkedQuo.id } : i));
-        addAgentLog("QUOTATION_INVOICE_LINKED", `Invoice ${invId} ↔ Quotation ${linkedQuo.id} ter-link`, "SUCCESS");
+        supabase.from("quotations").update({ invoice_id: savedInvoiceId, updated_at: new Date().toISOString() }).eq("id", linkedQuo.id).then(() => {});
+        setQuotationsData(prev => prev.map(q => q.id === linkedQuo.id ? { ...q, invoice_id: savedInvoiceId } : q));
+        setInvoicesData(prev => prev.map(i => i.id === savedInvoiceId ? { ...i, quotation_id: linkedQuo.id } : i));
+        addAgentLog("QUOTATION_INVOICE_LINKED", `Invoice ${savedInvoiceId} ↔ Quotation ${linkedQuo.id} ter-link`, "SUCCESS");
       }
 
-      addAgentLog("INVOICE_CREATED", `Invoice ${invId} dibuat — ${laporanModal.customer} ${fmt(newInvoice.total)}`, "SUCCESS");
+      addAgentLog(updatedPaidInvoice ? "INVOICE_UPDATED" : "INVOICE_CREATED", `Invoice ${savedInvoiceId} ${updatedPaidInvoice ? "diperbarui" : "dibuat"} — ${laporanModal.customer} ${fmt(newInvoice.total)}`, "SUCCESS");
 
       // WA notif ke Owner
       const ownerAccounts = userAccounts.filter(u => u.role === "Owner" && u.active !== false);
@@ -925,7 +956,7 @@ export async function submitLaporan({
         + "Layanan: " + laporanModal.service + " - " + laporanUnits.length + " unit\n"
         + "Teknisi: " + laporanModal.teknisi + (laporanModal.helper ? " + " + laporanModal.helper : "") + "\n"
         + "Total: " + fmt(newInvoice.total) + " Jasa: " + fmt(newInvoice.labor) + " Mat: " + fmt(newInvoice.material) + "\n"
-        + "Invoice: " + invId + " Silakan approve di menu Invoice. — ARA";
+        + "Invoice: " + savedInvoiceId + " Silakan approve di menu Invoice. — ARA";
       // Notify owner accounts
       await Promise.all(ownerAccounts.map(u => {
         if (u.phone) return sendWA(u.phone, ownerMsg);

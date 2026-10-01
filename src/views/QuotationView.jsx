@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { formatPhone } from "../lib/phone.js";
 import { QUOTATION_PAYMENT, quotationPaymentDetails } from "../lib/quotation.js";
@@ -50,8 +50,98 @@ export default function QuotationView({
   const approvingNow = useRef(new Set());
   const [approveTargetId, setApproveTargetId] = useState(null);
   const [approveDate, setApproveDate]          = useState("");
+  const [quotationPayments, setQuotationPayments] = useState([]);
+  const [depositTarget, setDepositTarget] = useState(null);
+  const [depositSaving, setDepositSaving] = useState(false);
+  const depositSavingNow = useRef(false);
+  const [depositFeatureReady, setDepositFeatureReady] = useState(true);
+  const [depositForm, setDepositForm] = useState({ amount: "", method: "transfer", paid_at: today, reference: "", notes: "" });
 
   const canEdit = currentUser?.role === "Owner" || currentUser?.role === "Admin";
+  const canRecordPayment = ["Owner", "Admin", "Finance"].includes(currentUser?.role);
+
+  useEffect(() => {
+    const ids = (quotationsData || []).map(q => q.id).filter(Boolean);
+    if (!supabase || ids.length === 0 || !canRecordPayment) {
+      setQuotationPayments([]);
+      return;
+    }
+    let alive = true;
+    supabase.from("quotation_payments")
+      .select("id,quotation_id,amount,applied_amount,method,paid_at,reference,notes,applied_invoice_id,created_at")
+      .in("quotation_id", ids)
+      .order("paid_at", { ascending: false })
+      .then(({ data, error }) => {
+        if (!alive) return;
+        if (error) {
+          setDepositFeatureReady(false);
+          setQuotationPayments([]);
+          console.warn("[QuotationDeposit] ledger belum tersedia:", error.message);
+          return;
+        }
+        setDepositFeatureReady(true);
+        setQuotationPayments(data || []);
+      });
+    return () => { alive = false; };
+  }, [supabase, quotationsData, canRecordPayment]);
+
+  const paymentSummary = (quotationId) => {
+    const rows = quotationPayments.filter(p => p.quotation_id === quotationId);
+    return {
+      rows,
+      received: rows.reduce((sum, p) => sum + Number(p.amount || 0), 0),
+      applied: rows.reduce((sum, p) => sum + Number(p.applied_amount || 0), 0),
+    };
+  };
+
+  const openDeposit = (quo) => {
+    const summary = paymentSummary(quo.id);
+    setDepositTarget(quo);
+    setDepositForm({
+      amount: String(Math.max(0, Number(quo.down_payment_amount || 0) - summary.received) || ""),
+      payment_id: crypto.randomUUID(), method: "transfer", paid_at: today, reference: "", notes: "",
+    });
+  };
+
+  const recordDeposit = async () => {
+    if (!depositTarget || depositSavingNow.current) return;
+    const amount = Number(depositForm.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      showNotif?.("⚠️ Nominal DP diterima wajib lebih dari Rp 0");
+      return;
+    }
+    depositSavingNow.current = true;
+    setDepositSaving(true);
+    try {
+      const paymentId = depositForm.payment_id;
+      const { data, error } = await supabase.rpc("record_quotation_deposit_atomic", {
+        p_payment_id: paymentId,
+        p_quotation_id: depositTarget.id,
+        p_amount: amount,
+        p_method: depositForm.method,
+        p_paid_at: depositForm.paid_at,
+        p_reference: depositForm.reference || null,
+        p_notes: depositForm.notes || null,
+        p_proof_url: null,
+        p_actor_name: currentUser?.name || null,
+      });
+      if (error) throw error;
+      const saved = data?.payment;
+      if (!saved?.id) throw new Error("Penerimaan DP tersimpan tetapi respons ledger tidak lengkap");
+      setQuotationPayments(prev => [saved, ...prev.filter(p => p.id !== saved.id)]);
+      if (data?.application?.invoice && setInvoicesData) {
+        const appliedInvoice = data.application.invoice;
+        setInvoicesData(prev => prev.map(i => i.id === appliedInvoice.id ? { ...i, ...appliedInvoice } : i));
+      }
+      setDepositTarget(null);
+      showNotif?.(`✅ DP ${fmt(amount)} tercatat sebagai uang masuk${saved.applied_invoice_id ? " dan mengurangi invoice aktual" : "; menunggu invoice aktual"}`);
+    } catch (error) {
+      showNotif?.("❌ Gagal mencatat DP: " + (error.message || error));
+    } finally {
+      depositSavingNow.current = false;
+      setDepositSaving(false);
+    }
+  };
 
   const isExpired = (q) => q.valid_until && q.valid_until < today && q.status !== "APPROVED" && q.status !== "CANCELLED";
 
@@ -298,6 +388,7 @@ export default function QuotationView({
           {filtered.map(quo => {
             const expired = isExpired(quo);
             const approving = approvingId === quo.id;
+            const deposit = paymentSummary(quo.id);
             return (
               <div key={quo.id} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 16 }}>
                 {/* Row 1: ID + status + total */}
@@ -320,6 +411,11 @@ export default function QuotationView({
                         ? `DP ${fmt(quo.down_payment_amount)}`
                         : "Transfer Full"}
                     </div>
+                    {quo.payment_method === QUOTATION_PAYMENT.DOWN_PAYMENT && (
+                      <div style={{ fontSize: 10.5, color: deposit.received > 0 ? "#4ade80" : "#f87171", marginTop: 2 }}>
+                        Diterima {fmt(deposit.received)} · belum diterima {fmt(Math.max(0, Number(quo.down_payment_amount || 0) - deposit.received))}
+                      </div>
+                    )}
                     {quo.unit_ac_amount > 0 && (
                       <div style={{ fontSize: 11, color: cs.muted }}>omset {fmt((quo.total || 0) - (quo.unit_ac_amount || 0))}</div>
                     )}
@@ -382,6 +478,14 @@ export default function QuotationView({
                     </button>
                   )}
 
+                  {canRecordPayment && quo.payment_method === QUOTATION_PAYMENT.DOWN_PAYMENT && quo.status !== "CANCELLED" && (
+                    <button onClick={() => openDeposit(quo)} disabled={!depositFeatureReady}
+                      title={depositFeatureReady ? "Catat uang DP yang benar-benar sudah diterima" : "Jalankan migration 190 terlebih dahulu"}
+                      style={btnStyle("#06b6d4", !depositFeatureReady)}>
+                      💳 Catat DP Masuk
+                    </button>
+                  )}
+
                   {canEdit && (quo.status === "SENT" || quo.status === "DRAFT" || expired) && quo.status !== "CANCELLED" && (
                     approveTargetId === quo.id ? null : (
                       <button onClick={() => { setApproveTargetId(quo.id); setApproveDate(today); }} disabled={approving}
@@ -441,6 +545,52 @@ export default function QuotationView({
           editData={editData}
           priceListData={priceListData}
         />
+      )}
+
+      {depositTarget && (
+        <div onClick={() => !depositSaving && setDepositTarget(null)} style={{ position: "fixed", inset: 0, zIndex: 1200, background: "#020617cc", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: "min(520px, 100%)", background: cs.card, border: "1px solid #06b6d455", borderRadius: 14, padding: 18, display: "grid", gap: 12 }}>
+            <div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: cs.text }}>💳 Catat DP Benar-benar Diterima</div>
+              <div style={{ fontSize: 11, color: cs.muted, marginTop: 4 }}>{depositTarget.id} · {depositTarget.customer}</div>
+            </div>
+            <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 10, padding: 10, fontSize: 12, color: cs.muted }}>
+              Rencana DP <b style={{ color: "#fbbf24" }}>{fmt(depositTarget.down_payment_amount)}</b> · sudah diterima <b style={{ color: "#4ade80" }}>{fmt(paymentSummary(depositTarget.id).received)}</b>.
+              {depositTarget.invoice_id ? " Pembayaran langsung diterapkan ke invoice aktual." : " Dana disimpan sebagai kas masuk dan otomatis diterapkan saat invoice aktual dibuat."}
+            </div>
+            {paymentSummary(depositTarget.id).rows.length > 0 && (
+              <div style={{ display: "grid", gap: 5 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: cs.muted }}>Riwayat penerimaan</div>
+                {paymentSummary(depositTarget.id).rows.map(row => (
+                  <div key={row.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "7px 9px", fontSize: 11 }}>
+                    <span style={{ color: cs.text }}>{row.paid_at} · {String(row.method || "transfer").toUpperCase()}{row.reference ? ` · ${row.reference}` : ""}</span>
+                    <span style={{ color: "#4ade80", fontWeight: 700 }}>{fmt(row.amount)}{Number(row.applied_amount || 0) > 0 ? ` · terpakai ${fmt(row.applied_amount)}` : " · menunggu invoice"}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <label style={{ fontSize: 11, color: cs.muted }}>Nominal diterima
+              <input type="number" min="1" value={depositForm.amount} onChange={e => setDepositForm(p => ({ ...p, amount: e.target.value }))}
+                style={{ width: "100%", marginTop: 4, boxSizing: "border-box", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 10px", color: cs.text }} />
+            </label>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <label style={{ fontSize: 11, color: cs.muted }}>Metode
+                <select value={depositForm.method} onChange={e => setDepositForm(p => ({ ...p, method: e.target.value }))} style={{ width: "100%", marginTop: 4, background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 10px", color: cs.text }}>
+                  <option value="transfer">Transfer</option><option value="cash">Cash</option><option value="qris">QRIS</option><option value="card">Kartu</option><option value="other">Lainnya</option>
+                </select>
+              </label>
+              <label style={{ fontSize: 11, color: cs.muted }}>Tanggal diterima
+                <input type="date" value={depositForm.paid_at} onChange={e => setDepositForm(p => ({ ...p, paid_at: e.target.value }))} style={{ width: "100%", marginTop: 4, boxSizing: "border-box", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 10px", color: cs.text }} />
+              </label>
+            </div>
+            <input value={depositForm.reference} onChange={e => setDepositForm(p => ({ ...p, reference: e.target.value }))} placeholder="Nomor referensi transfer (opsional)" style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 10px", color: cs.text }} />
+            <textarea value={depositForm.notes} onChange={e => setDepositForm(p => ({ ...p, notes: e.target.value }))} placeholder="Catatan (opsional)" rows={2} style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 10px", color: cs.text, resize: "vertical" }} />
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button disabled={depositSaving} onClick={() => setDepositTarget(null)} style={btnStyle("#94a3b8", depositSaving)}>Batal</button>
+              <button disabled={depositSaving} onClick={recordDeposit} style={btnStyle("#06b6d4", depositSaving)}>{depositSaving ? "Menyimpan..." : "✅ Simpan Uang Masuk"}</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

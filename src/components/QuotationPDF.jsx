@@ -192,7 +192,11 @@ export default function QuotationPDF({ quo, appSettings, logoUrl }) {
             <View style={s.tr}><Text style={[s.td, { flex: 1, textAlign: "center", color: "#94a3b8", fontStyle: "italic" }]}>Belum ada item</Text></View>
           ) : allRows.map((item, i) => (
             <ItemRow key={i} no={i + 1}
-              desc={item.description?.trim() || (item.item_type === "unit_ac" ? "Unit AC" : "")}
+              desc={`${item.description?.trim() || (item.item_type === "unit_ac" ? "Unit AC" : "")}${
+                item.item_type === "unit_ac"
+                  ? item.price_mode === "INCLUDE_INSTALLATION" ? " — Include Instalasi" : " — Unit Only"
+                  : ""
+              }`}
               qty={item.qty} uom={item.satuan} price={item.unit_price} subtotal={item.subtotal}
               include={item.include} />
           ))}
