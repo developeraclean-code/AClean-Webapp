@@ -4,6 +4,7 @@ import { useAppContext } from "../context/AppContext.js";
 import { ORDER_DONE_STATUSES } from "../constants/status.js";
 import { fetchStatisticsSnapshot } from "../data/reads.js";
 import { downloadBlob, buildCsv, printDocument, htmlTable, rp, fmtTanggal, escapeHtml } from "../lib/exportUtils.js";
+import { statisticsProfitBreakdown } from "../lib/statisticsProfit.js";
 
 const statisticsCache = new Map();
 const STATISTICS_CACHE_MS = 2 * 60 * 1000;
@@ -181,6 +182,16 @@ const totalDiscount = Number(statsSnapshot?.financial?.discount ?? paidInv.reduc
 // Biaya dihitung hanya bila SUDAH final: bukan menunggu approval Admin (≥500rb) dan bukan
 // draft AI yang belum di-review (PENDING_AI). Keduanya belum sah jadi pengeluaran.
 const totalExpenses = Number(statsSnapshot?.financial?.expenses ?? (expensesData || []).filter(e => e.approval_status !== "PENDING_APPROVAL" && e.validation_status !== "PENDING_AI" && inRange(String(e.date || e.created_at || ""))).reduce((a, b) => a + (b.amount || 0), 0));
+const profitBreakdown = statisticsProfitBreakdown({
+  ...(statsSnapshot?.financial || {}),
+  revenue: totalRevenue,
+  expenses: totalExpenses,
+});
+const totalPayroll = profitBreakdown.payroll;
+const totalBonuses = profitBreakdown.bonuses;
+const totalCosts = profitBreakdown.totalCosts;
+const netProfit = profitBreakdown.netProfit;
+const profitCalculationReady = Number(statsSnapshot?.financial?.calculation_version || 0) >= 2;
 const totalAR = Number(statsSnapshot?.financial?.ar ?? (unpaidInv.reduce((a, b) => a + (b.total || 0), 0)
   + overdueInv.reduce((a, b) => a + (b.total || 0), 0)));
 const totalPending = Number(statsSnapshot?.financial?.pending ?? pendingInv.reduce((a, b) => a + (b.total || 0), 0));
@@ -260,10 +271,14 @@ const fmtPct = (n, d) => d > 0 ? (n / d * 100).toFixed(1) + "%" : "—";
 const fmtRp = (n) => "Rp " + Math.round(n).toLocaleString("id-ID");
 
 // ── Export rekap Statistik (CSV data + PDF rapi) — ikut periode yang dipilih ──
-const profit = totalRevenue - totalExpenses;
-const marginPct = totalRevenue > 0 ? Math.round(profit / totalRevenue * 100) : 0;
+const profit = netProfit;
+const marginPct = profitBreakdown.marginPct;
 
 const exportStatistikCsv = () => {
+  if (!profitCalculationReady) {
+    showNotif?.("⚠️ Migrasi Statistik 191 belum aktif; export ditahan agar angka profit tidak keliru");
+    return;
+  }
   const R = [];
   R.push(["Periode", periodLabel]);
   R.push(["Dicetak", fmtTanggal(new Date())]);
@@ -274,7 +289,12 @@ const exportStatistikCsv = () => {
   R.push(["- Jasa", Math.round(totalLabor)]);
   R.push(["- Material", Math.round(totalMaterial)]);
   R.push(["Diskon diberikan", Math.round(totalDiscount)]);
-  R.push(["Biaya Operasional", Math.round(totalExpenses)]);
+  R.push(["Pengeluaran Tercatat", Math.round(totalExpenses)]);
+  R.push(["- Pembelian Material", Math.round(profitBreakdown.materialPurchases)]);
+  R.push(["- Operasional Lain", Math.round(profitBreakdown.operatingExpenses)]);
+  R.push(["Gaji Tim Mingguan", Math.round(totalPayroll)]);
+  R.push(["Komisi / Bonus Dibayar", Math.round(totalBonuses)]);
+  R.push(["Total Biaya", Math.round(totalCosts)]);
   R.push(["Laba (Profit)", Math.round(profit)]);
   R.push(["Margin (%)", marginPct]);
   R.push(["Piutang Outstanding (AR)", Math.round(totalAR)]);
@@ -301,10 +321,14 @@ const exportStatistikCsv = () => {
 };
 
 const exportStatistikPdf = () => {
+  if (!profitCalculationReady) {
+    showNotif?.("⚠️ Migrasi Statistik 191 belum aktif; export ditahan agar angka profit tidak keliru");
+    return;
+  }
   const card = (lbl, val, cls = "") => `<div class="card"><div class="lbl">${escapeHtml(lbl)}</div><div class="val ${cls}">${val}</div></div>`;
   const cards = `<div class="cards">
     ${card("Pendapatan", rp(totalRevenue), "pos")}
-    ${card("Biaya Operasional", rp(totalExpenses), "neg")}
+    ${card("Total Biaya", rp(totalCosts), "neg")}
     ${card("Laba (Profit)", rp(profit), profit >= 0 ? "pos" : "neg")}
     ${card("Margin", marginPct + "%")}
     ${card("Piutang (AR)", rp(totalAR))}
@@ -314,7 +338,11 @@ const exportStatistikPdf = () => {
     ["&nbsp;&nbsp;— Jasa", rp(totalLabor)],
     ["&nbsp;&nbsp;— Material", rp(totalMaterial)],
     ["Diskon diberikan", rp(totalDiscount)],
-    ["Biaya Operasional", `<span class="neg">− ${rp(totalExpenses)}</span>`],
+    ["Pengeluaran Tercatat", `<span class="neg">− ${rp(totalExpenses)}</span>`],
+    ["&nbsp;&nbsp;— Pembelian Material", `<span class="neg">− ${rp(profitBreakdown.materialPurchases)}</span>`],
+    ["&nbsp;&nbsp;— Operasional Lain", `<span class="neg">− ${rp(profitBreakdown.operatingExpenses)}</span>`],
+    ["Gaji Tim Mingguan", `<span class="neg">− ${rp(totalPayroll)}</span>`],
+    ["Komisi / Bonus Dibayar", `<span class="neg">− ${rp(totalBonuses)}</span>`],
   ], { colClass: ["", "r"], footer: ["Laba (Profit)", `<span class="${profit >= 0 ? "pos" : "neg"}">${rp(profit)}</span>`] });
   const svc = htmlTable(["Layanan", "Transaksi", "Pendapatan"],
     revBreakdown.map(([name, rev, , cnt]) => [escapeHtml(name), String(cnt), rp(rev)]),
@@ -456,12 +484,20 @@ return (
             <span>💰 Profit & Loss — {periodLabel}</span>
             <span style={{ fontSize: 11, color: cs.muted, fontWeight: 400 }}>Berdasarkan {billablePaidCount} invoice berbayar{paidCount > billablePaidCount ? " (+" + (paidCount - billablePaidCount) + " gratis)" : ""}</span>
           </div>
+          {statsSnapshot && !profitCalculationReady && (
+            <div style={{ padding: "10px 12px", marginBottom: 14, borderRadius: 9, border: `1px solid ${cs.yellow}55`, background: `${cs.yellow}12`, color: cs.yellow, fontSize: 11, fontWeight: 700 }}>
+              ⚠️ Migrasi Statistik 191 belum aktif. Payroll dan komisi belum ditampilkan; angka net profit ditahan dari export agar tidak menyesatkan.
+            </div>
+          )}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
             {[
               { label: "Total Pendapatan", val: fmt(totalRevenue), sub: "Gross Revenue", color: cs.green, icon: "📈" },
               { label: "Pendapatan Jasa", val: fmt(totalLabor), sub: fmtPct(totalLabor, totalRevenue) + " dari revenue", color: cs.accent, icon: "🔧" },
               { label: "Pendapatan Material", val: fmt(totalMaterial), sub: fmtPct(totalMaterial, totalRevenue) + " dari revenue", color: cs.yellow, icon: "📦" },
-              { label: "Total Pengeluaran", val: fmt(totalExpenses), sub: fmtPct(totalExpenses, totalRevenue) + " dari revenue", color: cs.ara, icon: "💸" },
+              { label: "Pengeluaran Tercatat", val: fmt(totalExpenses), sub: `Material ${fmt(profitBreakdown.materialPurchases)} · lain ${fmt(profitBreakdown.operatingExpenses)}`, color: cs.ara, icon: "💸" },
+              { label: "Gaji Tim Mingguan", val: fmt(totalPayroll), sub: `${statsSnapshot?.financial?.payroll_count || 0} slip pada periode ini`, color: cs.accent, icon: "👷" },
+              { label: "Komisi Dibayar", val: fmt(totalBonuses), sub: `${statsSnapshot?.financial?.bonus_count || 0} bonus dibayar`, color: cs.yellow, icon: "🎯" },
+              { label: "Total Biaya", val: fmt(totalCosts), sub: fmtPct(totalCosts, totalRevenue) + " dari revenue", color: cs.red, icon: "🧮" },
             ].map(k => (
               <div key={k.label} style={{ background: cs.surface, borderRadius: 10, padding: "14px 16px", border: "1px solid " + k.color + "22" }}>
                 <div style={{ fontSize: 20, marginBottom: 6 }}>{k.icon}</div>
@@ -504,16 +540,15 @@ return (
         </div>
 
         {/* ── SECTION 1b: Estimasi Net Profit ── */}
-        {totalRevenue > 0 && (() => {
-          const netProfit = totalLabor - totalExpenses;
-          const profitMargin = totalRevenue > 0 ? Math.round(netProfit / totalRevenue * 100) : 0;
+        {totalRevenue > 0 && profitCalculationReady && (() => {
+          const profitMargin = marginPct;
           const isProfit = netProfit >= 0;
           return (
             <div style={{ background: "linear-gradient(135deg," + (isProfit ? cs.green : cs.red) + "18," + cs.accent + "08)", border: "1px solid " + (isProfit ? cs.green : cs.red) + "33", borderRadius: 14, padding: "16px 20px", display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }}>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 11, color: cs.muted, fontWeight: 700, marginBottom: 4 }}>💹 ESTIMASI NET PROFIT — {periodLabel}</div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: isProfit ? cs.green : cs.red, fontFamily: "monospace" }}>{fmt(netProfit)}</div>
-                <div style={{ fontSize: 10, color: cs.muted }}>Jasa ({fmt(totalLabor)}) − Pengeluaran ({fmt(totalExpenses)})</div>
+                <div style={{ fontSize: 10, color: cs.muted }}>Revenue efektif ({fmt(totalRevenue)}) − total biaya ({fmt(totalCosts)})</div>
               </div>
               <div style={{ textAlign: "center", padding: "10px 16px", background: (isProfit ? cs.green : cs.red) + "12", borderRadius: 10, border: "1px solid " + (isProfit ? cs.green : cs.red) + "22" }}>
                 <div style={{ fontSize: 24, fontWeight: 800, color: isProfit ? cs.green : cs.red }}>{profitMargin}%</div>
