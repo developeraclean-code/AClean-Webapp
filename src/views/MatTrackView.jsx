@@ -643,7 +643,7 @@ function MaterialReconTab({ supabase, appSettings }) {
   );
 }
 
-function MatTrackView({ inventoryData, invUnitsData, setInvUnitsData, invTxData, setInvTxData, matTrackFilter, setMatTrackFilter, matTrackSearch, setMatTrackSearch, matTrackDateFrom, setMatTrackDateFrom, matTrackDateTo, setMatTrackDateTo, setModalStok, fetchInventoryUnits, setInventoryData, appSettings }) {
+function MatTrackView({ inventoryData, invUnitsData, setInvUnitsData, invTxData, setInvTxData, matTrackFilter, setMatTrackFilter, matTrackSearch, setMatTrackSearch, matTrackDateFrom, setMatTrackDateFrom, matTrackDateTo, setMatTrackDateTo, fetchInventoryUnits, setInventoryData, appSettings }) {
   // Fase 1: primitif global dari AppContext.
   const { supabase, showNotif, currentUser, addAgentLog } = useAppContext();
 const TRACK_ITEMS = inventoryData.filter(item =>
@@ -1155,12 +1155,6 @@ return (
               title={mainTab === "stok" ? "Unduh CSV stok material (opname unit/tabung/roll)" : "Unduh CSV log pemakaian material sesuai filter aktif"}
               style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, padding: "9px 14px", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
               ⬇️ {mainTab === "stok" ? "CSV Stok" : "CSV Pemakaian"}
-            </button>
-          )}
-          {mainTab === "stok" && (
-            <button onClick={() => setModalStok(true)}
-              style={{ background: "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", color: "#fff", padding: "9px 16px", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
-              + Material Baru
             </button>
           )}
         </div>
@@ -1707,8 +1701,10 @@ return (
       // Unit aktif tampil di atas, nonaktif di bawah
       displayUnits = [...displayUnits].sort((a, b) => (b.is_active ? 1 : 0) - (a.is_active ? 1 : 0));
 
-      // Skip card jika tidak ada unit yang match filter
-      if (displayUnits.length === 0) return null;
+      // Owner/Admin tetap harus melihat master tanpa unit aktif agar dapat memakai
+      // tombol Tambah Unit. Di tab arsip, hanya master yang punya unit arsip tampil.
+      const showEmptyMaster = isOwnerAdmin && archiveTabFilter !== "diarsipkan";
+      if (displayUnits.length === 0 && !showEmptyMaster) return null;
 
       const totalStok = activeUnits.reduce((s, u) => s + (u.stock || 0), 0);
       const totalKap  = activeUnits.reduce((s, u) => s + (u.capacity || 0), 0);

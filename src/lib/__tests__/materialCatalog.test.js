@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  MATERIAL_MASTER_PRESETS,
   PIPA_MASTER_OPTIONS,
   classifyInventoryMaterial,
+  defaultUnitForMaterialType,
   findDuplicateMaterial,
+  findMaterialPreset,
   isPhysicalUnitName,
   validateNewMaterial,
 } from "../materialCatalog.js";
@@ -11,6 +14,16 @@ describe("material catalog guard", () => {
   it("provides fixed Hoda pipe master choices", () => {
     expect(PIPA_MASTER_OPTIONS).toContain("Pipa AC Hoda 1PK");
     expect(PIPA_MASTER_OPTIONS).toContain("Pipa AC Hoda 2,5PK");
+  });
+
+  it("provides operational presets with internal units", () => {
+    expect(MATERIAL_MASTER_PRESETS.map((item) => item.name)).toEqual(expect.arrayContaining([
+      "Freon R-32", "Freon R-410", "Freon R-22", "Pipa AC Hoda 3PK",
+    ]));
+    expect(findMaterialPreset("Freon R-32")).toMatchObject({ materialType: "freon", unit: "kg" });
+    expect(findMaterialPreset("Pipa AC Hoda 2PK")).toMatchObject({ materialType: "pipa", unit: "m" });
+    expect(defaultUnitForMaterialType("kabel")).toBe("m");
+    expect(defaultUnitForMaterialType("other")).toBe("pcs");
   });
 
   it("detects roll/tabung as physical-unit names", () => {
@@ -45,5 +58,26 @@ describe("material catalog guard", () => {
     expect(findDuplicateMaterial(inventory, "Pipa AC Hoda 2.5PK", "pipa").code).toBe("SKU024");
     expect(result.ok).toBe(false);
     expect(result.message).toContain("SKU024");
+  });
+
+  it("treats legacy freon spelling as the same master", () => {
+    const inventory = [{ code: "FR32", name: "Freon R32", material_type: "freon" }];
+    expect(findDuplicateMaterial(inventory, "Freon R-32", "freon")?.code).toBe("FR32");
+    expect(findDuplicateMaterial(
+      [{ code: "FR410", name: "Freon R-410A", material_type: "freon" }],
+      "Freon R-410",
+      "freon",
+    )?.code).toBe("FR410");
+  });
+
+  it("allows a guarded manual master without forcing a pipa preset", () => {
+    const result = validateNewMaterial({
+      name: "Pipa Drain Fleksibel",
+      materialType: "pipa",
+      pipaMaster: "",
+      manualEntry: true,
+      inventoryData: [],
+    });
+    expect(result.ok).toBe(true);
   });
 });

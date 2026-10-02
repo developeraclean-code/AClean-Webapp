@@ -4340,7 +4340,7 @@ export default function ACleanWebApp() {
     <MatTrackView inventoryData={inventoryData} invUnitsData={invUnitsData} setInvUnitsData={setInvUnitsData} invTxData={invTxData} setInvTxData={setInvTxData}
       matTrackFilter={matTrackFilter} setMatTrackFilter={setMatTrackFilter} matTrackSearch={matTrackSearch} setMatTrackSearch={setMatTrackSearch}
       matTrackDateFrom={matTrackDateFrom} setMatTrackDateFrom={setMatTrackDateFrom} matTrackDateTo={matTrackDateTo} setMatTrackDateTo={setMatTrackDateTo}
-      setModalStok={setModalStok} fetchInventoryUnits={fetchInventoryUnits} setInventoryData={setInventoryData} computeStockStatus={computeStockStatus} appSettings={appSettings} />
+      fetchInventoryUnits={fetchInventoryUnits} setInventoryData={setInventoryData} computeStockStatus={computeStockStatus} appSettings={appSettings} />
   );
 
 

@@ -1,6 +1,11 @@
 import { useState, useEffect, useRef } from "react";
 import { cs } from "../theme/cs.js";
-import { PIPA_MASTER_OPTIONS, validateNewMaterial } from "../lib/materialCatalog.js";
+import {
+  MATERIAL_MASTER_PRESETS,
+  defaultUnitForMaterialType,
+  findMaterialPreset,
+  validateNewMaterial,
+} from "../lib/materialCatalog.js";
 
 const inp = {
   width: "100%", background: cs.card, border: "1px solid " + cs.border,
@@ -16,10 +21,9 @@ const MATERIAL_TYPES = [
   ["other", "📦 Lainnya"],
 ];
 
-const UNITS = ["pcs", "kg", "m", "roll", "botol", "set", "liter", "unit"];
-
-const EMPTY_ADD = { name: "", code: "", unit: "pcs", price: "", stock: "", reorder: "", min_alert: "", material_type: "other", pipaMaster: "" };
-const EMPTY_EDIT = { stock: "", tambah: "", price: "", reorder: "", min_alert: "" };
+const MANUAL_PRESET = "__manual__";
+const EMPTY_ADD = { materialPreset: "", name: "", code: "", unit: "pcs", stock: "", reorder: "", min_alert: "", material_type: "other", pipaMaster: "" };
+const EMPTY_EDIT = { stock: "", tambah: "", reorder: "", min_alert: "" };
 
 function computeStockStatusLocal(stock, reorder) {
   if (stock <= 0) return "OUT";
@@ -49,7 +53,7 @@ export default function MaterialFormModal({
   useEffect(() => {
     if (!open) return;
     if (mode === "edit" && editItem) {
-      setForm({ stock: editItem.stock ?? "", tambah: "", price: editItem.price ?? "", reorder: editItem.reorder ?? "", min_alert: editItem.min_alert ?? "" });
+      setForm({ stock: editItem.stock ?? "", tambah: "", reorder: editItem.reorder ?? "", min_alert: editItem.min_alert ?? "" });
     } else {
       setForm(EMPTY_ADD);
     }
@@ -90,12 +94,11 @@ export default function MaterialFormModal({
       materialType: form.material_type,
       pipaMaster: form.pipaMaster,
       inventoryData,
+      manualEntry: form.materialPreset === MANUAL_PRESET,
     });
     if (!materialGuard.ok) { showNotif("❌ " + materialGuard.message); return; }
     const stokAwal = parseStock(form.stock);
     if (stokAwal < 0) { showNotif("❌ Stok tidak boleh negatif"); return; }
-    const price = parseInt(form.price) || 0;
-    if (price < 0 || price > 100000000) { showNotif("❌ Harga tidak valid"); return; }
     const reorderPt = parseInt(form.reorder) || 5;
     const minAlert = parseInt(form.min_alert) || 2;
     const rawCode = (form.code || "").trim().toUpperCase();
@@ -108,7 +111,7 @@ export default function MaterialFormModal({
       code: newCode,
       name: form.name.trim(),
       unit: form.unit || "pcs",
-      price,
+      price: 0,
       stock: stokAwal,
       reorder: reorderPt,
       min_alert: minAlert,
@@ -147,7 +150,8 @@ export default function MaterialFormModal({
     if (savingNow.current) return;
     if (!editItem) return;
     if (stokFinal < 0) { showNotif("❌ Stok tidak boleh negatif"); return; }
-    const hargaBaru = parseInt(form.price ?? editItem.price) || 0;
+    // Harga dikelola di Price List/Harga Beli, bukan dari modal stok.
+    const hargaBaru = Number(editItem.price) || 0;
     const reorderBaru = parseInt(form.reorder ?? editItem.reorder) || 5;
     savingNow.current = true;
     setSaving(true);
@@ -193,29 +197,26 @@ export default function MaterialFormModal({
 
           {/* ── ADD MODE ── */}
           {mode === "add" && (<>
-            {form.material_type === "pipa" && (
-              <div style={{ background: "#f59e0b12", border: "1px solid #f59e0b55", borderRadius: 10, padding: "10px 12px" }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: "#f59e0b", marginBottom: 5 }}>🔧 Klasifikasi Master Pipa AC <span style={{ color: cs.red }}>*</span></div>
-                <select value={form.pipaMaster || ""}
-                  onChange={e => setForm(f => ({ ...f, pipaMaster: e.target.value, name: e.target.value, unit: "m" }))}
-                  style={{ ...inp, padding: "9px 12px" }}>
-                  <option value="">Pilih jenis pipa…</option>
-                  {PIPA_MASTER_OPTIONS.map(name => <option key={name} value={name}>{name}</option>)}
-                </select>
-                <div style={{ fontSize: 10.5, color: cs.muted, marginTop: 6, lineHeight: 1.4 }}>
-                  Pilih master barang di sini. Label seperti <b>Roll C1</b> dibuat nanti melalui <b>Tambah Unit</b>, bukan sebagai nama material baru.
-                </div>
-              </div>
-            )}
             <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 10 }}>
               <div>
                 <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Nama Material <span style={{ color: cs.red }}>*</span></div>
-                <input type="text" placeholder="cth: Freon R32, Pipa 1/4" value={form.name || ""}
-                  readOnly={form.material_type === "pipa" && !!form.pipaMaster}
-                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))} style={{ ...inp, opacity: form.material_type === "pipa" && form.pipaMaster ? 0.75 : 1 }} />
+                <select value={form.materialPreset || ""}
+                  onChange={e => {
+                    const value = e.target.value;
+                    const preset = findMaterialPreset(value);
+                    if (preset) {
+                      setForm(f => ({ ...f, materialPreset: value, name: preset.name, material_type: preset.materialType, unit: preset.unit, pipaMaster: preset.materialType === "pipa" ? preset.name : "" }));
+                    } else {
+                      setForm(f => ({ ...f, materialPreset: value, name: "", material_type: "other", unit: "pcs", pipaMaster: "" }));
+                    }
+                  }} style={{ ...inp, padding: "9px 12px" }}>
+                  <option value="">Pilih master material…</option>
+                  {MATERIAL_MASTER_PRESETS.map(preset => <option key={preset.name} value={preset.name}>{preset.name}</option>)}
+                  <option value={MANUAL_PRESET}>＋ Input Manual</option>
+                </select>
               </div>
               <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Kode Manual</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Kode Master</div>
                 <input type="text" placeholder="cth: FRN-R32" value={form.code || ""}
                   onChange={e => setForm(f => ({ ...f, code: e.target.value.toUpperCase().replace(/[^A-Z0-9\-_]/g, "") }))}
                   style={{ ...inp, fontFamily: "monospace" }} />
@@ -223,34 +224,27 @@ export default function MaterialFormModal({
               </div>
             </div>
 
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 6 }}>Tipe Material</div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                {MATERIAL_TYPES.map(([val, lbl]) => (
-                  <button key={val} onClick={() => setForm(f => ({ ...f, material_type: val, ...(val === "pipa" ? { pipaMaster: "", unit: "m" } : { pipaMaster: "" }) }))}
-                    style={{ padding: "5px 12px", borderRadius: 8, fontSize: 12, cursor: "pointer", border: "1px solid " + (form.material_type === val ? cs.accent : cs.border), background: form.material_type === val ? cs.accent + "22" : cs.surface, color: form.material_type === val ? cs.accent : cs.muted, fontWeight: form.material_type === val ? 700 : 400 }}>
-                    {lbl}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            {form.materialPreset === MANUAL_PRESET && (<>
               <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Satuan</div>
-                <select value={form.unit || "pcs"} onChange={e => setForm(f => ({ ...f, unit: e.target.value }))}
-                  style={{ ...inp, padding: "9px 12px" }}>
-                  {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
-                </select>
+                <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Nama Material Manual <span style={{ color: cs.red }}>*</span></div>
+                <input type="text" placeholder="Masukkan nama master material" value={form.name || ""}
+                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))} style={inp} />
               </div>
               <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Harga JUAL/Unit (Rp)</div>
-                <input type="number" min="0" placeholder="0" value={form.price || ""}
-                  onChange={e => setForm(f => ({ ...f, price: e.target.value }))} style={inp} />
-                <div style={{ fontSize: 10, color: cs.muted, marginTop: 3 }}>
-                  Harga <b>beli</b> (HPP) diisi di tab 💵 Harga Beli, bukan di sini.
+                <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 6 }}>Tipe Material</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {MATERIAL_TYPES.map(([val, lbl]) => (
+                    <button key={val} type="button" onClick={() => setForm(f => ({ ...f, material_type: val, unit: defaultUnitForMaterialType(val), pipaMaster: "" }))}
+                      style={{ padding: "5px 12px", borderRadius: 8, fontSize: 12, cursor: "pointer", border: "1px solid " + (form.material_type === val ? cs.accent : cs.border), background: form.material_type === val ? cs.accent + "22" : cs.surface, color: form.material_type === val ? cs.accent : cs.muted, fontWeight: form.material_type === val ? 700 : 400 }}>
+                      {lbl}
+                    </button>
+                  ))}
                 </div>
               </div>
+            </>)}
+
+            <div style={{ background: "#f59e0b12", border: "1px solid #f59e0b55", borderRadius: 10, padding: "9px 12px", fontSize: 10.5, color: cs.muted, lineHeight: 1.45 }}>
+              Kode di atas adalah kode <b>master material</b>. Nama pembeda seperti <b>Tabung R32-01</b> atau <b>Roll C1</b> dibuat melalui <b>Tambah Unit</b> setelah master tersimpan.
             </div>
 
             <div style={{ background: cs.accent + "10", border: "1px solid " + cs.accent + "33", borderRadius: 10, padding: "12px 14px" }}>
@@ -301,17 +295,10 @@ export default function MaterialFormModal({
               </div>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Harga JUAL/Unit</div>
-                <input type="number" value={form.price ?? editItem.price}
-                  onChange={e => setForm(f => ({ ...f, price: e.target.value }))} style={inp} />
-              </div>
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Reorder Point</div>
-                <input type="number" value={form.reorder ?? editItem.reorder}
-                  onChange={e => setForm(f => ({ ...f, reorder: e.target.value }))} style={inp} />
-              </div>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: cs.muted, marginBottom: 4 }}>Reorder Point</div>
+              <input type="number" value={form.reorder ?? editItem.reorder}
+                onChange={e => setForm(f => ({ ...f, reorder: e.target.value }))} style={inp} />
             </div>
 
             <div style={{ background: stokFinal <= (editItem.min_alert || 0) ? cs.red + "12" : cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "10px 12px", fontSize: 12, color: cs.muted }}>

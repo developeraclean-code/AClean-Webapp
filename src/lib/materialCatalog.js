@@ -9,8 +9,29 @@ export const PIPA_MASTER_OPTIONS = Object.freeze([
   "Pipa AC Hoda 3PK",
 ]);
 
+// Pilihan master yang memang rutin dipakai operasional. `unit` tetap disimpan
+// di database untuk perhitungan stok, tetapi tidak perlu dipilih admin di form.
+export const MATERIAL_MASTER_PRESETS = Object.freeze([
+  Object.freeze({ name: "Freon R-32", materialType: "freon", unit: "kg" }),
+  Object.freeze({ name: "Freon R-410", materialType: "freon", unit: "kg" }),
+  Object.freeze({ name: "Freon R-22", materialType: "freon", unit: "kg" }),
+  ...PIPA_MASTER_OPTIONS.map((name) => Object.freeze({ name, materialType: "pipa", unit: "m" })),
+]);
+
+export const defaultUnitForMaterialType = (materialType) => {
+  if (materialType === "freon") return "kg";
+  if (materialType === "pipa" || materialType === "kabel") return "m";
+  return "pcs";
+};
+
+export const findMaterialPreset = (name) => MATERIAL_MASTER_PRESETS.find(
+  (preset) => preset.name === name
+) || null;
+
 export const normalizeMaterialName = (value) => String(value || "")
   .toLowerCase()
+  // Samakan variasi lama seperti R32, R-32, R410A, dan R-410.
+  .replace(/\br[\s-]*(22|32|410)a?\b/g, "r$1")
   .replace(/[.,]/g, "")
   .replace(/\s+/g, " ")
   .trim();
@@ -42,12 +63,12 @@ export const findDuplicateMaterial = (inventoryData, name, materialType) => {
   ) || null;
 };
 
-export const validateNewMaterial = ({ name, materialType, pipaMaster, inventoryData }) => {
+export const validateNewMaterial = ({ name, materialType, pipaMaster, inventoryData, manualEntry = false }) => {
   const trimmedName = String(name || "").trim();
   if (isPhysicalUnitName(trimmedName)) {
     return { ok: false, message: "Roll/unit fisik tidak dibuat sebagai master. Gunakan Tambah Unit di Stok Material." };
   }
-  if (materialType === "pipa") {
+  if (materialType === "pipa" && !manualEntry) {
     if (!pipaMaster) {
       return { ok: false, message: "Pilih klasifikasi master Pipa AC terlebih dahulu" };
     }
