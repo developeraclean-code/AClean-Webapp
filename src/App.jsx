@@ -124,7 +124,6 @@ const LaporanDetailModal = lazy(() => import("./views/LaporanDetailModal.jsx"));
 const ProjectApp = lazy(() => import("./project/ProjectApp.jsx"));
 const MaintenanceView = lazy(() => import("./views/MaintenanceView.jsx"));
 const MaterialCheckoutView   = lazy(() => import("./views/MaterialCheckoutView.jsx"));
-const WebsiteContentView = lazy(() => import("./views/WebsiteContentView.jsx"));
 const PanduanView = lazy(() => import("./views/PanduanView.jsx"));
 const KodeErrorView = lazy(() => import("./views/KodeErrorView.jsx"));
 const TeamGuidelinesView = lazy(() => import("./views/TeamGuidelinesView.jsx"));
@@ -3829,7 +3828,6 @@ export default function ACleanWebApp() {
     { id: "monitoring", icon: "🔍", label: "Monitoring" },
     { id: "wa_groups", icon: "📡", label: "Monitor WA" },
     { id: "settings", icon: "⚙️", label: "Pengaturan" },
-    { id: "website", icon: "🌐", label: "Konten Website" },
     { id: "mattrack", icon: "🧮", label: "Stok Material" },
     { id: "biaya", icon: "💸", label: "Biaya" },
     // Teknisi-only menu (not shown to Owner/Admin)
@@ -4118,7 +4116,7 @@ export default function ACleanWebApp() {
     const totalMin = h * 60 + m + Math.round(jamTambah * 60);
     const nh = Math.floor(totalMin / 60);
     const nm = totalMin % 60;
-    if (nh >= 17) return "17:00"; // max jam selesai
+    if (nh > 23 || (nh === 23 && nm > 59)) return "23:59"; // batasi pada hari kalender yang sama
     return String(nh).padStart(2, "0") + ":" + String(nm).padStart(2, "0");
   };
 
@@ -4586,15 +4584,6 @@ export default function ACleanWebApp() {
       case "monitoring": return renderMonitoring();
       case "wa_groups": return renderWaGroupMonitor();
       case "settings": return renderSettings();
-      case "website": return (
-        <Suspense fallback={<div style={{ color: cs.muted, padding: 20 }}>Memuat...</div>}>
-          <WebsiteContentView
-            currentUser={currentUser} supabase={supabase}
-            showNotif={showNotif} showConfirm={showConfirm}
-            _apiFetch={_apiFetch} _apiHeaders={_apiHeaders}
-          />
-        </Suspense>
-      );
       default: return renderDashboard();
     }
   };

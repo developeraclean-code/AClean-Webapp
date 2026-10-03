@@ -387,7 +387,8 @@ const PlanningTab = ({ allInvoices, allExpenses, showNotif, financeSnapshot, det
 
   const netProfit = totalIn - totalOut;
   const netProfitAll = totalInAll - totalOutAll;
-  const pct = targetBulan > 0 ? Math.min(100, (totalIn / targetBulan) * 100) : 0;
+  const pct = targetBulan > 0 ? (totalIn / targetBulan) * 100 : 0;
+  const pctBar = Math.min(100, pct);
   const unpaidCount = Number(financeSnapshot?.summary?.unpaid_count ?? (allInvoices || []).filter(i => i.status === "UNPAID" || i.status === "OVERDUE").length);
   const overdueCount = Number(financeSnapshot?.summary?.overdue_count ?? (allInvoices || []).filter(i => i.status === "OVERDUE").length);
 
@@ -412,8 +413,8 @@ const PlanningTab = ({ allInvoices, allExpenses, showNotif, financeSnapshot, det
     R.push(["Keterangan", "Nilai (Rp)"]);
     R.push(["Kas Masuk (PAID bulan ini)", Math.round(totalIn)]);
     R.push(["Kas Keluar (Biaya bulan ini)", Math.round(totalOut)]);
-    R.push(["Net (Bulan Ini)", Math.round(netProfit)]);
-    R.push(["Net Profit All-Time", Math.round(netProfitAll)]);
+    R.push(["Kas Bersih (Bulan Ini)", Math.round(netProfit)]);
+    R.push(["Kas Bersih All-Time", Math.round(netProfitAll)]);
     R.push([]);
     R.push(["KAS MASUK — RINCIAN"]);
     R.push(["Tanggal", "Customer", "Layanan", "Status", "Diterima (Rp)"]);
@@ -439,7 +440,7 @@ const PlanningTab = ({ allInvoices, allExpenses, showNotif, financeSnapshot, det
     const ringkas = htmlTable(["Keterangan", "Jumlah"], [
       ["Kas Masuk (PAID bulan ini)", `<span class="pos">${rp(totalIn)}</span>`],
       ["Kas Keluar (Biaya bulan ini)", `<span class="neg">− ${rp(totalOut)}</span>`],
-      ["Net Profit All-Time", rp(netProfitAll)],
+      ["Kas Bersih All-Time", rp(netProfitAll)],
     ], { colClass: ["", "r"], footer: ["Net (Bulan Ini)", `<span class="${netProfit >= 0 ? "pos" : "neg"}">${rp(netProfit)}</span>`] });
     const outByCat = {};
     expensesBulanIni.forEach(e => { const k = e.subcategory || e.category || "Lain-lain"; outByCat[k] = (outByCat[k] || 0) + Number(e.amount || 0); });
@@ -452,7 +453,7 @@ const PlanningTab = ({ allInvoices, allExpenses, showNotif, financeSnapshot, det
     printDocument({
       title: "Laporan Arus Kas — AClean",
       subtitle: `Periode: ${bulanLabel} · Dicetak ${fmtTanggal(new Date())}`,
-      legend: "Kas masuk = penerimaan invoice LUNAS / PARTIAL bulan ini. Kas keluar = biaya sah (tanpa yang menunggu approval).",
+      legend: "Kas masuk = pembayaran invoice yang diterima (LUNAS / cicilan) pada bulan ini. Kas keluar = biaya tercatat yang sudah lolos approval. Kas bersih bukan laba akuntansi final.",
       bodyHtml: `${cards}<h2 class="sec">Ringkasan</h2>${ringkas}<h2 class="sec">Kas Keluar per Kategori</h2>${outTable}<h2 class="sec">Rincian Kas Masuk (${paidThisMonth.length})</h2>${inTable}`,
       signature: true,
       showNotif,
@@ -461,144 +462,110 @@ const PlanningTab = ({ allInvoices, allExpenses, showNotif, financeSnapshot, det
   };
 
   return (
-    <div>
-      {detailsLoading && <div style={{ marginBottom: 12, padding: "9px 12px", borderRadius: 9, background: cs.accent + "12", border: "1px solid " + cs.accent + "33", color: cs.accent, fontSize: 11 }}>⏳ Memuat rincian bulan saat tab dibuka…</div>}
-      {/* Toolbar export */}
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-        <button onClick={exportArusKasPdf} disabled={detailsLoading}
-          title="Cetak / simpan PDF arus kas bulan ini (masuk, keluar, net, rincian)"
-          style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, padding: "8px 14px", borderRadius: 9, cursor: detailsLoading ? "wait" : "pointer", opacity: detailsLoading ? 0.55 : 1, fontWeight: 700, fontSize: 12 }}>
-          🖨️ PDF Arus Kas
-        </button>
-        <button onClick={exportArusKasCsv} disabled={detailsLoading}
-          title="Unduh CSV arus kas bulan ini (buka di Excel)"
-          style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, padding: "8px 14px", borderRadius: 9, cursor: detailsLoading ? "wait" : "pointer", opacity: detailsLoading ? 0.55 : 1, fontWeight: 700, fontSize: 12 }}>
-          ⬇️ CSV
-        </button>
-      </div>
+    <div style={{ display: "grid", gap: 14 }}>
+      {detailsLoading && <div style={{ padding: "10px 14px", borderRadius: 11, background: cs.accent + "12", border: "1px solid " + cs.accent + "33", color: cs.accent, fontSize: 12 }}>⏳ Memuat rincian keuangan {bulanLabel}… angka transaksi akan tampil setelah pemuatan selesai.</div>}
 
-      {/* Target Progress */}
-      <div style={{ background: "linear-gradient(135deg," + cs.accent + "12," + cs.ara + "08)", border: "1px solid " + cs.accent + "33", borderRadius: 12, padding: 18, marginBottom: 14 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10, flexWrap: "wrap", gap: 10 }}>
+      <section style={{ background: "linear-gradient(135deg," + cs.card + "," + cs.accent + "12 75%," + cs.ara + "12)", border: "1px solid " + cs.accent + "44", borderRadius: 18, padding: "20px 22px" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 14, flexWrap: "wrap", marginBottom: 18 }}>
           <div>
-            <div style={{ fontSize: 11, color: cs.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>
-              Target Pemasukan — {bulanLabel} <span style={{ color: cs.accent }}>(klik untuk edit)</span>
+            <div style={{ color: cs.accent, fontSize: 11, fontWeight: 800, letterSpacing: 1, textTransform: "uppercase" }}>Financial Planning</div>
+            <h2 style={{ margin: "5px 0 4px", fontSize: 21, color: cs.text }}>Rencana & arus kas · {bulanLabel}</h2>
+            <div style={{ color: cs.muted, fontSize: 12 }}>Pantau target pemasukan, uang yang benar-benar diterima, biaya tercatat, dan piutang.</div>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={exportArusKasPdf} disabled={detailsLoading} style={{ background: cs.surface, border: "1px solid " + cs.border, color: cs.text, padding: "9px 13px", borderRadius: 10, cursor: detailsLoading ? "wait" : "pointer", opacity: detailsLoading ? 0.55 : 1, fontWeight: 700, fontSize: 12 }}>🖨️ Cetak PDF</button>
+            <button onClick={exportArusKasCsv} disabled={detailsLoading} style={{ background: cs.surface, border: "1px solid " + cs.border, color: cs.text, padding: "9px 13px", borderRadius: 10, cursor: detailsLoading ? "wait" : "pointer", opacity: detailsLoading ? 0.55 : 1, fontWeight: 700, fontSize: 12 }}>⬇️ Unduh CSV</button>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", alignItems: "end", gap: 18 }}>
+          <div>
+            <label htmlFor="finance-month-target" style={{ display: "block", color: cs.muted, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: .5, marginBottom: 7 }}>Target pemasukan kas</label>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, maxWidth: 330, padding: "10px 12px", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 11 }}>
+              <span style={{ color: cs.muted, fontSize: 13 }}>Rp</span>
+              <input id="finance-month-target" type="number" min="0" step="1000000" value={targetBulan} onChange={e => handleTargetChange(e.target.value)} aria-label="Target pemasukan kas bulan ini" style={{ width: "100%", minWidth: 0, background: "transparent", border: 0, outline: 0, color: cs.text, fontSize: 18, fontWeight: 800 }} />
             </div>
-            <input
-              type="number"
-              value={targetBulan}
-              onChange={e => handleTargetChange(e.target.value)}
-              style={{ background: "transparent", border: "none", color: cs.accent, fontSize: 20, fontWeight: 700, width: 240, outline: "none" }} />
-            <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>Target tersimpan otomatis</div>
+            <div style={{ color: cs.muted, fontSize: 11, marginTop: 6 }}>Tersimpan otomatis di perangkat ini.</div>
           </div>
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 11, color: cs.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Tercapai Bulan Ini</div>
-            <div style={{ fontSize: 22, fontWeight: 700, color: cs.green }}>{fmtRp(totalIn)}</div>
-            <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>{pct.toFixed(1)}% dari target · {paidThisMonth.length} invoice</div>
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, marginBottom: 7 }}>
+              <span style={{ color: cs.muted, fontSize: 12 }}>Kas masuk bulan ini</span>
+              <b style={{ color: pct >= 100 ? cs.green : cs.accent, fontSize: 13 }}>{targetBulan > 0 ? `${pct.toFixed(1)}% tercapai` : "Target belum diisi"}</b>
+            </div>
+            <div style={{ height: 11, borderRadius: 99, background: cs.surface, overflow: "hidden", border: "1px solid " + cs.border }}>
+              <div style={{ width: pctBar + "%", height: "100%", background: pct >= 100 ? "linear-gradient(90deg," + cs.green + ",#16a34a)" : "linear-gradient(90deg," + cs.accent + "," + cs.ara + ")", borderRadius: 99, transition: "width .45s" }} />
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 7, fontSize: 12 }}>
+              <b style={{ color: cs.text }}>{fmtRp(totalIn)}</b>
+              <span style={{ color: cs.muted }}>{pct >= 100 ? "Target tercapai" : `Sisa ${fmtRp(Math.max(0, targetBulan - totalIn))}`}</span>
+            </div>
           </div>
         </div>
-        <div style={{ height: 8, background: cs.surface, borderRadius: 4, overflow: "hidden" }}>
-          <div style={{ height: "100%", width: pct + "%", background: pct >= 100 ? "linear-gradient(90deg," + cs.green + ",#16a34a)" : "linear-gradient(90deg," + cs.accent + "," + cs.ara + ")", borderRadius: 4, transition: "width 0.5s" }} />
-        </div>
-        <div style={{ fontSize: 11, color: cs.muted, marginTop: 6 }}>
-          Sisa target: {fmtRp(Math.max(0, targetBulan - totalIn))}
-          {pct >= 100 && <span style={{ color: cs.green, fontWeight: 700, marginLeft: 8 }}>🎉 Target tercapai!</span>}
-        </div>
+      </section>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))", gap: 11 }}>
+        {[
+          { label: "Kas masuk", value: fmtRp(totalIn), detail: `${paidThisMonth.length} invoice PAID / cicilan`, color: cs.green, icon: "↙" },
+          { label: "Biaya tercatat", value: fmtRp(totalOut), detail: `${expensesBulanIni.length} transaksi disetujui`, color: cs.red, icon: "↗" },
+          { label: "Kas bersih", value: fmtRp(netProfit), detail: "Kas masuk dikurangi biaya tercatat", color: netProfit >= 0 ? cs.green : cs.red, icon: "＝" },
+          { label: "Piutang aktif", value: `${unpaidCount} invoice`, detail: `${overdueCount} sudah jatuh tempo`, color: overdueCount ? cs.red : cs.yellow, icon: "◷" },
+        ].map((item) => (
+          <div key={item.label} style={{ position: "relative", overflow: "hidden", background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: "15px 16px" }}>
+            <div style={{ position: "absolute", right: 14, top: 11, color: item.color + "55", fontSize: 25, fontWeight: 900 }}>{item.icon}</div>
+            <div style={{ color: cs.muted, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: .45 }}>{item.label}</div>
+            <div style={{ color: item.color, fontSize: 20, fontWeight: 850, lineHeight: 1.2, margin: "8px 0 5px", overflowWrap: "anywhere" }}>{item.value}</div>
+            <div style={{ color: cs.muted, fontSize: 11 }}>{item.detail}</div>
+          </div>
+        ))}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14, marginBottom: 14 }}>
-        {/* Ringkasan Keuangan */}
-        <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: 18 }}>
-          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12 }}>📊 Ringkasan — {bulanLabel}</div>
-          {[
-            { label: "Pemasukan PAID", value: fmtRp(totalIn), color: cs.green },
-            { label: "Pengeluaran", value: fmtRp(totalOut), color: cs.red },
-            { label: "Net Profit Bulan Ini", value: fmtRp(netProfit), color: netProfit >= 0 ? cs.green : cs.red },
-            { label: "Profit Margin", value: totalIn > 0 ? ((netProfit / totalIn) * 100).toFixed(1) + "%" : "—", color: cs.accent },
-          ].map(r => (
-            <div key={r.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0", borderBottom: "1px solid " + cs.border + "80" }}>
-              <span style={{ fontSize: 12, color: cs.muted }}>{r.label}</span>
-              <span style={{ fontWeight: 700, color: r.color, fontSize: 13 }}>{r.value}</span>
-            </div>
-          ))}
-          <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid " + cs.border }}>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
-              <span style={{ color: cs.muted }}>Net Profit All-Time</span>
-              <span style={{ fontWeight: 700, color: netProfitAll >= 0 ? cs.green : cs.red }}>{fmtRp(netProfitAll)}</span>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginTop: 6 }}>
-              <span style={{ color: cs.muted }}>Total Pengeluaran All-Time</span>
-              <span style={{ fontWeight: 700, color: cs.red }}>{fmtRp(totalOutAll)}</span>
-            </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(290px,1fr))", gap: 14 }}>
+        <section style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 15, padding: 18 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", marginBottom: 14 }}>
+            <div><div style={{ fontSize: 14, fontWeight: 800, color: cs.text }}>💸 Pengeluaran terbesar</div><div style={{ color: cs.muted, fontSize: 11, marginTop: 3 }}>Berdasarkan kategori biaya {bulanLabel}.</div></div>
+            <Badge color={cs.red} bg={cs.red + "12"} border={cs.red + "33"}>{expensesBulanIni.length} transaksi</Badge>
           </div>
-        </div>
-
-        {/* Top Pengeluaran Bulan Ini */}
-        <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: 18 }}>
-          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12 }}>💸 Top Pengeluaran — {bulanLabel}</div>
           {topExpenses.length === 0 ? (
-            <div style={{ color: cs.muted, fontSize: 13, textAlign: "center", padding: "28px 0" }}>
-              Belum ada pengeluaran bulan ini
-            </div>
+            <div style={{ border: "1px dashed " + cs.border, borderRadius: 11, padding: "24px 14px", textAlign: "center", color: cs.muted, fontSize: 12 }}>{detailsLoading ? "Menyiapkan rincian biaya…" : "Belum ada biaya disetujui pada periode ini."}</div>
           ) : topExpenses.map(([kat, total]) => {
             const pctOut = totalOut > 0 ? (total / totalOut * 100) : 0;
-            return (
-              <div key={kat} style={{ marginBottom: 12 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
-                  <span style={{ color: cs.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "55%" }}>{kat}</span>
-                  <span style={{ color: cs.red, fontWeight: 700 }}>
-                    {fmtRp(total)} <span style={{ color: cs.muted, fontWeight: 400 }}>({pctOut.toFixed(0)}%)</span>
-                  </span>
-                </div>
-                <div style={{ height: 6, background: cs.surface, borderRadius: 4, overflow: "hidden" }}>
-                  <div style={{ height: "100%", width: Math.min(100, pctOut) + "%", background: "linear-gradient(90deg," + cs.red + ",#b91c1c)", borderRadius: 4 }} />
-                </div>
+            return <div key={kat} style={{ marginBottom: 13 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, fontSize: 12, marginBottom: 6 }}>
+                <span style={{ color: cs.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{kat}</span>
+                <span style={{ color: cs.red, fontWeight: 800, whiteSpace: "nowrap" }}>{fmtRp(total)} <small style={{ color: cs.muted, fontWeight: 500 }}>({pctOut.toFixed(0)}%)</small></span>
               </div>
-            );
+              <div style={{ height: 7, background: cs.surface, borderRadius: 99, overflow: "hidden" }}><div style={{ height: "100%", width: Math.min(100, pctOut) + "%", background: "linear-gradient(90deg," + cs.red + ",#b91c1c)", borderRadius: 99 }} /></div>
+            </div>;
           })}
-          {expensesBulanIni.length > 0 && (
-            <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid " + cs.border + "80", fontSize: 12, display: "flex", justifyContent: "space-between" }}>
-              <span style={{ color: cs.muted }}>{expensesBulanIni.length} transaksi</span>
-              <span style={{ fontWeight: 700, color: cs.red }}>{fmtRp(totalOut)} total</span>
+          <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid " + cs.border, paddingTop: 11, marginTop: 4, fontSize: 12 }}><span style={{ color: cs.muted }}>Total biaya periode</span><b style={{ color: cs.red }}>{fmtRp(totalOut)}</b></div>
+        </section>
+
+        <section style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 15, padding: 18 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: cs.text, marginBottom: 3 }}>🧭 Tindak lanjut keuangan</div>
+          <div style={{ color: cs.muted, fontSize: 11, marginBottom: 13 }}>Ringkasan untuk membantu menentukan aksi berikutnya.</div>
+          <div style={{ display: "grid", gap: 9 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 11, padding: 11, background: (overdueCount ? cs.red : cs.green) + "0d", border: "1px solid " + (overdueCount ? cs.red : cs.green) + "30", borderRadius: 11 }}>
+              <span style={{ fontSize: 19 }}>{overdueCount ? "🚨" : "✅"}</span><div><b style={{ display: "block", color: overdueCount ? cs.red : cs.green, fontSize: 12 }}>{overdueCount ? `${overdueCount} invoice perlu follow-up` : "Tidak ada invoice overdue"}</b><span style={{ color: cs.muted, fontSize: 11 }}>{unpaidCount} invoice masih belum lunas secara total.</span></div>
             </div>
-          )}
-        </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 11, padding: 11, background: cs.accent + "0d", border: "1px solid " + cs.accent + "30", borderRadius: 11 }}>
+              <span style={{ fontSize: 19 }}>🏦</span><div><b style={{ display: "block", color: cs.accent, fontSize: 12 }}>Rekonsiliasi kas</b><span style={{ color: cs.muted, fontSize: 11 }}>Cocokkan penerimaan invoice PAID/cicilan dengan mutasi rekening.</span></div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 11, padding: 11, background: cs.surface, border: "1px solid " + cs.border, borderRadius: 11 }}>
+              <span style={{ fontSize: 19 }}>🛟</span><div><b style={{ display: "block", color: cs.text, fontSize: 12 }}>Ruang alokasi saving (indikatif)</b><span style={{ color: cs.muted, fontSize: 11 }}>20% dari kas bersih positif: <b style={{ color: cs.green }}>{fmtRp(Math.max(0, Math.round(netProfit * 0.2)))}</b>.</span></div>
+            </div>
+          </div>
+        </section>
       </div>
 
-      {/* Rekomendasi Finance */}
-      <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: 18 }}>
-        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12 }}>💡 Rekomendasi Finance</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10 }}>
-          <div style={{ background: pct >= 100 ? cs.green + "0d" : cs.accent + "0d", border: "1px solid " + (pct >= 100 ? cs.green : cs.accent) + "33", borderRadius: 10, padding: 12 }}>
-            <div style={{ fontWeight: 700, color: pct >= 100 ? cs.green : cs.accent, fontSize: 13, marginBottom: 4 }}>
-              {pct >= 100 ? "🎉 Target Tercapai!" : "📈 Progress Target"}
-            </div>
-            <div style={{ fontSize: 12, color: cs.muted }}>
-              {pct.toFixed(1)}% dari target {bulanLabel}. {pct >= 100 ? "Luar biasa!" : "Terus tingkatkan performa."}
-            </div>
-          </div>
-          <div style={{ background: cs.accent + "0d", border: "1px solid " + cs.accent + "33", borderRadius: 10, padding: 12 }}>
-            <div style={{ fontWeight: 700, color: cs.accent, fontSize: 13, marginBottom: 4 }}>💰 Sisihkan Saving</div>
-            <div style={{ fontSize: 12, color: cs.muted }}>
-              20% dari net profit = {fmtRp(Math.max(0, Math.round(netProfit * 0.2)))} untuk dana darurat.
-            </div>
-          </div>
-          <div style={{ background: overdueCount > 0 ? cs.red + "0d" : cs.yellow + "0d", border: "1px solid " + (overdueCount > 0 ? cs.red : cs.yellow) + "33", borderRadius: 10, padding: 12 }}>
-            <div style={{ fontWeight: 700, color: overdueCount > 0 ? cs.red : cs.yellow, fontSize: 13, marginBottom: 4 }}>
-              {overdueCount > 0 ? "🚨 Ada Invoice Overdue!" : "⚠️ Piutang Beredar"}
-            </div>
-            <div style={{ fontSize: 12, color: cs.muted }}>
-              {unpaidCount} UNPAID · {overdueCount} OVERDUE. Lakukan follow-up segera.
-            </div>
-          </div>
-          <div style={{ background: cs.ara + "0d", border: "1px solid " + cs.ara + "33", borderRadius: 10, padding: 12 }}>
-            <div style={{ fontWeight: 700, color: cs.ara, fontSize: 13, marginBottom: 4 }}>📋 Cek Mutasi Rutin</div>
-            <div style={{ fontSize: 12, color: cs.muted }}>
-              Verifikasi semua invoice PAID di rekening setiap hari kerja.
-            </div>
-          </div>
+      <section style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 13, padding: "12px 15px", color: cs.muted, fontSize: 11, lineHeight: 1.55 }}>
+        <b style={{ color: cs.text }}>Cara membaca angka:</b> Kas masuk memakai pembayaran yang diterima pada bulan ini (termasuk cicilan). Biaya hanya menghitung transaksi yang sudah lolos approval. <b style={{ color: cs.text }}>Kas bersih bukan laba akuntansi final</b>; biaya stok terpakai, kewajiban yang belum dicatat, dan penyesuaian lain bisa membuat laba sebenarnya berbeda.
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 20px", marginTop: 8 }}>
+          <span>All-time kas masuk <b style={{ color: cs.green }}>{fmtRp(totalInAll)}</b></span>
+          <span>All-time biaya <b style={{ color: cs.red }}>{fmtRp(totalOutAll)}</b></span>
+          <span>All-time kas bersih <b style={{ color: netProfitAll >= 0 ? cs.green : cs.red }}>{fmtRp(netProfitAll)}</b></span>
+          <span>Margin kas bulan ini <b style={{ color: cs.accent }}>{totalIn > 0 ? ((netProfit / totalIn) * 100).toFixed(1) + "%" : "—"}</b></span>
         </div>
-      </div>
+      </section>
     </div>
   );
 };

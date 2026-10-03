@@ -100,6 +100,7 @@ const isOwner = currentUser?.role === "Owner";
 
 const PETTY_CASH_SUBS = ["Bensin Motor", "Perbaikan Motor", "Parkir", "Kasbon Karyawan", "Lembur", "Bonus", "Lain-lain"];
 const MATERIAL_SUBS = ["Pipa AC", "Kabel", "Freon", "Material Lain"];
+const EXPENSE_AUDIT_FROM = "2026-10-04";
 // Quick-filter chips (for petty_cash tab only) — semua subcategory
 const QUICK_FILTERS = ["Semua", "Bensin Motor", "Perbaikan Motor", "Parkir", "Kasbon Karyawan", "Lembur", "Bonus", "Lain-lain"];
 
@@ -124,6 +125,10 @@ const [workspaceV2, setWorkspaceV2] = useState(false);
 const [workspaceLoading, setWorkspaceLoading] = useState(false);
 const [workspaceError, setWorkspaceError] = useState("");
 const [workspaceRevision, setWorkspaceRevision] = useState(0);
+const [expenseSort, setExpenseSort] = useState("date_desc");
+const [showExpenseAuditNotices, setShowExpenseAuditNotices] = useState(false);
+const [expenseAudit, setExpenseAudit] = useState({ type: null, loading: false, error: "", rows: [] });
+const [approvingExpenseId, setApprovingExpenseId] = useState(null);
 
 // ── Budget state ──
 const [showBudgetPanel, setShowBudgetPanel] = useState(false);
@@ -385,11 +390,19 @@ const filtered = (isTrash ? deletedData : (workspaceV2 ? (workspace?.rows || [])
       !(e.item_name || "").toLowerCase().includes(q)) return false;
   }
   return true;
-}).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+});
 
 const totalFilteredCount = workspaceV2 ? Number(workspace?.total_count || 0) : filtered.length;
 const totalPage = Math.ceil(totalFilteredCount / EXPENSE_PAGE_SIZE) || 1;
-const pageData = workspaceV2 ? filtered : filtered.slice((expensePage - 1) * EXPENSE_PAGE_SIZE, expensePage * EXPENSE_PAGE_SIZE);
+const pageData = (workspaceV2 ? filtered : filtered.slice((expensePage - 1) * EXPENSE_PAGE_SIZE, expensePage * EXPENSE_PAGE_SIZE))
+  .slice()
+  .sort((a, b) => {
+    if (expenseSort === "date_asc") return (a.date || "").localeCompare(b.date || "");
+    if (expenseSort === "amount_desc") return Number(b.amount || 0) - Number(a.amount || 0);
+    if (expenseSort === "amount_asc") return Number(a.amount || 0) - Number(b.amount || 0);
+    if (expenseSort === "name_asc") return (a.subcategory || a.item_name || "").localeCompare(b.subcategory || b.item_name || "", "id");
+    return (b.date || "").localeCompare(a.date || "");
+  });
 // Total tidak menghitung biaya PENDING_APPROVAL (belum disetujui Owner).
 const grandTotal = workspaceV2 ? Number(workspace?.total_amount || 0) : filtered.reduce((s, e) => s + (e.approval_status === "PENDING_APPROVAL" ? 0 : Number(e.amount || 0)), 0);
 const pendingApprovals = (expensesData || []).filter(e => e.approval_status === "PENDING_APPROVAL" && !e.deleted_at);
@@ -546,12 +559,31 @@ const handleDeleteExpense = async (item) => {
 // ── Approval biaya Admin (≥500rb) — Owner/Finance ──
 const bolehApprove = currentUser?.role === "Owner" || currentUser?.role === "Finance";
 const approveExpense = async (item) => {
-  const { error } = await updateExpense(supabase, item.id,
-    { approval_status: "APPROVED", approved_by: auditUserName(), approved_at: new Date().toISOString() }, auditUserName());
-  if (error) { showNotif?.("❌ Gagal setujui: " + error.message); return; }
-  setExpensesData(prev => prev.map(x => x.id === item.id ? { ...x, approval_status: "APPROVED" } : x));
-  setWorkspaceRevision(v => v + 1);
-  showNotif?.(`✅ Biaya ${item.subcategory} (${fmt(item.amount)}) disetujui — kini terhitung`);
+  if (approvingExpenseId === item.id) return;
+  setApprovingExpenseId(item.id);
+  try {
+    // Compare-and-set: hanya transisi dari PENDING_APPROVAL. Klik ganda/request bersamaan
+    // tidak dapat menyetujui ulang baris yang sama, apalagi membuat expense baru.
+    const { data, error } = await supabase.from("expenses").update({
+      approval_status: "APPROVED", approved_by: auditUserName(), approved_at: new Date().toISOString(),
+      last_changed_by: auditUserName(),
+    }).eq("id", item.id).eq("approval_status", "PENDING_APPROVAL").is("deleted_at", null)
+      .select("id").maybeSingle();
+    if (error) throw error;
+    if (!data) {
+      setWorkspaceRevision(v => v + 1);
+      showNotif?.("ℹ️ Biaya ini sudah diproses atau tidak lagi menunggu approval. Data dimuat ulang.");
+      return;
+    }
+    setExpensesData(prev => prev.map(x => x.id === item.id ? { ...x, approval_status: "APPROVED", approved_by: auditUserName() } : x));
+    setExpenseAudit(prev => prev.type === "pending" ? { ...prev, rows: prev.rows.filter(x => x.id !== item.id) } : prev);
+    setWorkspaceRevision(v => v + 1);
+    showNotif?.(`✅ Biaya ${item.subcategory} (${fmt(item.amount)}) disetujui — kini terhitung`);
+  } catch (error) {
+    showNotif?.("❌ Gagal setujui biaya: " + error.message);
+  } finally {
+    setApprovingExpenseId(null);
+  }
 };
 const rejectExpense = async (item) => {
   const ok = showConfirm
@@ -588,6 +620,67 @@ const handlePurgeExpense = async (item) => {
   setDeletedData(prev => prev.filter(x => x.id !== item.id));
   showNotif?.(`🗑️ Biaya ${item.subcategory} dihapus permanen`);
 };
+
+const loadExpenseAuditIssue = async (type) => {
+  setExpenseAudit({ type, loading: true, error: "", rows: [] });
+  try {
+    let rows = [];
+    if (type === "pending") {
+      const { data, error } = await supabase.from("expenses").select("*")
+        .is("deleted_at", null).eq("approval_status", "PENDING_APPROVAL")
+        .order("date", { ascending: false }).limit(200);
+      if (error) throw error;
+      rows = data || [];
+    } else if (type === "duplicates") {
+      let query = supabase.from("expenses")
+        .select("id,date,amount,category,subcategory,teknisi_name,item_name,description,created_by")
+        .is("deleted_at", null).gte("date", EXPENSE_AUDIT_FROM).order("date", { ascending: false }).limit(1000);
+      const { data, error } = await query;
+      if (error) throw error;
+      const groups = new Map();
+      (data || []).forEach(row => {
+        const actorItem = String(row.teknisi_name ?? row.item_name ?? "").trim().toLowerCase();
+        const key = JSON.stringify([row.date, Number(row.amount || 0), row.category, row.subcategory, actorItem]);
+        groups.set(key, [...(groups.get(key) || []), row]);
+      });
+      rows = [...groups.values()].filter(group => group.length > 1);
+      if ((data || []).length === 1000) rows.truncated = true;
+    } else if (type === "legacy") {
+      const [{ data: admins, error: adminError }, { data: expenses, error: expenseError }] = await Promise.all([
+        supabase.from("user_profiles").select("name").eq("role", "Admin"),
+        supabase.from("expenses").select("*").is("deleted_at", null).gte("date", EXPENSE_AUDIT_FROM).gte("amount", 500000)
+          .eq("approval_status", "APPROVED").is("approved_at", null)
+          .order("date", { ascending: false }).limit(500),
+      ]);
+      if (adminError) throw adminError;
+      if (expenseError) throw expenseError;
+      const adminNames = new Set((admins || []).map(user => String(user.name || "").trim().toLowerCase()).filter(Boolean));
+      rows = (expenses || []).filter(item => adminNames.has(String(item.created_by || "").trim().toLowerCase()));
+    }
+    setExpenseAudit({ type, loading: false, error: "", rows });
+  } catch (error) {
+    setExpenseAudit({ type, loading: false, error: error?.message || "Gagal memuat rincian audit", rows: [] });
+  }
+};
+
+const closeExpenseAudit = () => setExpenseAudit({ type: null, loading: false, error: "", rows: [] });
+
+const renderAuditExpense = (item, { canApprove = false, label = "" } = {}) => (
+  <div key={item.id} style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", padding: "10px 12px", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 9 }}>
+    <div style={{ flex: 1, minWidth: 190 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <strong style={{ color: cs.text, fontSize: 12 }}>{item.subcategory || item.category || "Biaya"}</strong>
+        <span style={{ color: cs.muted, fontSize: 11 }}>{item.date || "Tanggal tidak tersedia"}</span>
+        {label && <span style={{ color: cs.yellow, fontSize: 10, fontWeight: 700 }}>{label}</span>}
+      </div>
+      <div style={{ color: cs.muted, fontSize: 11, marginTop: 3 }}>{item.description || item.item_name || "Tanpa keterangan"}{item.teknisi_name ? ` · ${item.teknisi_name}` : ""}</div>
+      {item.created_by && <div style={{ color: cs.muted, fontSize: 10, marginTop: 2 }}>Input: {item.created_by}</div>}
+    </div>
+    <strong style={{ color: cs.red, whiteSpace: "nowrap", fontSize: 12 }}>Rp {Number(item.amount || 0).toLocaleString("id-ID")}</strong>
+    {canApprove && bolehApprove && <button type="button" disabled={approvingExpenseId === item.id} onClick={() => approveExpense(item)} style={{ border: 0, borderRadius: 7, padding: "6px 9px", background: cs.green + "22", color: cs.green, cursor: approvingExpenseId === item.id ? "wait" : "pointer", opacity: approvingExpenseId === item.id ? 0.65 : 1, fontWeight: 700, fontSize: 11 }}>{approvingExpenseId === item.id ? "Memproses…" : "Setujui"}</button>}
+    {isOwnerAdmin && <button type="button" onClick={() => openEdit(item)} style={{ border: "1px solid " + cs.border, borderRadius: 7, padding: "6px 9px", background: "transparent", color: cs.accent, cursor: "pointer", fontWeight: 700, fontSize: 11 }}>Edit</button>}
+  </div>
+);
 
 return (
   <div style={{ display: "grid", gap: 16 }}>
@@ -895,24 +988,82 @@ return (
       )}
     </div>
 
-    {/* Banner approval biaya Admin (≥500rb) — Owner/Finance */}
-    {!isTrash && bolehApprove && pendingApprovalCount > 0 && (
-      <div style={{ background: "#78350f", border: "2px solid #f59e0b", borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "#fde68a", fontWeight: 700 }}>
-        ⏳ {pendingApprovalCount} biaya Admin menunggu persetujuan (Rp {pendingApprovalSum.toLocaleString("id-ID")}) — belum dihitung di total. Gunakan filter tanggal untuk membuka baris yang akan direview.
-      </div>
-    )}
-    {!isTrash && workspaceV2 && Number(workspace?.duplicate_warning_count || 0) > 0 && (
-      <div style={{ background: cs.yellow + "10", border: "1px solid " + cs.yellow + "44", borderRadius: 10, padding: "9px 14px", fontSize: 12, color: cs.yellow }}>
-        ⚠️ {Number(workspace.duplicate_warning_count)} kelompok transaksi tampak serupa. Ini hanya peringatan audit; tidak ada data yang dihapus otomatis.
-      </div>
-    )}
-    {!isTrash && bolehApprove && workspaceV2 && Number(workspace?.legacy_admin_high_without_review || 0) > 0 && (
-      <div style={{ background: cs.red + "10", border: "1px solid " + cs.red + "44", borderRadius: 10, padding: "9px 14px", fontSize: 12, color: cs.red }}>
-        🔎 {Number(workspace.legacy_admin_high_without_review)} biaya lama Admin ≥ Rp500.000 belum memiliki jejak reviewer. Nilai tidak diubah otomatis; perlu audit Owner/Finance.
-      </div>
+    {/* Ringkasan audit dibuat ringkas agar tidak menenggelamkan filter dan transaksi. */}
+    {!isTrash && !isPendingAi && (() => {
+      const duplicateCount = Number(workspace?.duplicate_warning_count || 0);
+      const legacyCount = Number(workspace?.legacy_admin_high_without_review || 0);
+      const hasPending = bolehApprove && pendingApprovalCount > 0;
+      const hasDuplicate = workspaceV2 && duplicateCount > 0;
+      const hasLegacy = bolehApprove && workspaceV2 && legacyCount > 0;
+      if (!hasPending && !hasDuplicate && !hasLegacy) return null;
+      return (
+        <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 11, overflow: "hidden" }}>
+          <button type="button" onClick={() => setShowExpenseAuditNotices(value => !value)}
+            aria-expanded={showExpenseAuditNotices}
+            style={{ width: "100%", display: "flex", alignItems: "center", gap: 9, padding: "10px 13px", textAlign: "left", background: "transparent", border: 0, color: cs.text, cursor: "pointer" }}>
+            <span style={{ fontSize: 13, fontWeight: 700, flex: 1 }}>🔎 Pemeriksaan & tindak lanjut</span>
+            {hasPending && <span style={{ fontSize: 11, color: cs.yellow, fontWeight: 700 }}>{pendingApprovalCount} perlu approval</span>}
+            {hasDuplicate && <span style={{ fontSize: 11, color: cs.yellow }}>{duplicateCount} mirip</span>}
+            {hasLegacy && <span style={{ fontSize: 11, color: cs.red }}>{legacyCount} perlu audit</span>}
+            <span aria-hidden="true" style={{ color: cs.muted }}>{showExpenseAuditNotices ? "▲" : "▼"}</span>
+          </button>
+          {showExpenseAuditNotices && (
+            <div style={{ display: "grid", gap: 7, padding: "0 13px 12px" }}>
+              {hasPending && <div style={{ borderLeft: "3px solid " + cs.yellow, background: cs.yellow + "10", borderRadius: 6, padding: "8px 10px", fontSize: 12, color: cs.yellow }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <span>⏳ {pendingApprovalCount} biaya Admin menunggu persetujuan (Rp {pendingApprovalSum.toLocaleString("id-ID")}); belum masuk total biaya.</span>
+                  <button type="button" onClick={() => loadExpenseAuditIssue("pending")} style={{ border: "1px solid " + cs.yellow + "66", borderRadius: 7, padding: "5px 9px", background: "transparent", color: cs.yellow, cursor: "pointer", fontWeight: 700, fontSize: 11 }}>Lihat transaksi</button>
+                </div>
+              </div>}
+              {hasDuplicate && <div style={{ borderLeft: "3px solid " + cs.yellow, background: cs.yellow + "10", borderRadius: 6, padding: "8px 10px", fontSize: 12, color: cs.yellow }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <span>⚠️ {duplicateCount} kelompok transaksi sejak 4 Okt 2026 tampak serupa. Tidak ada data dihapus otomatis.</span>
+                  <button type="button" onClick={() => loadExpenseAuditIssue("duplicates")} style={{ border: "1px solid " + cs.yellow + "66", borderRadius: 7, padding: "5px 9px", background: "transparent", color: cs.yellow, cursor: "pointer", fontWeight: 700, fontSize: 11 }}>Periksa kelompok</button>
+                </div>
+              </div>}
+              {hasLegacy && <div style={{ borderLeft: "3px solid " + cs.red, background: cs.red + "10", borderRadius: 6, padding: "8px 10px", fontSize: 12, color: cs.red }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <span>🔎 {legacyCount} biaya sejak 4 Okt 2026 oleh Admin ≥Rp500.000 belum memiliki jejak reviewer.</span>
+                  <button type="button" onClick={() => loadExpenseAuditIssue("legacy")} style={{ border: "1px solid " + cs.red + "66", borderRadius: 7, padding: "5px 9px", background: "transparent", color: cs.red, cursor: "pointer", fontWeight: 700, fontSize: 11 }}>Tinjau transaksi</button>
+                </div>
+              </div>}
+              {hasPending && <div style={{ fontSize: 11, color: cs.muted }}>Gunakan tanggal dan pencarian untuk menemukan transaksi yang perlu ditinjau.</div>}
+            </div>
+          )}
+        </div>
+      );
+    })()}
+
+    {expenseAudit.type && (
+      <section style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 13, padding: 14, display: "grid", gap: 10 }} aria-live="polite">
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <div style={{ color: cs.text, fontWeight: 800, fontSize: 13 }}>
+            {expenseAudit.type === "pending" ? "Transaksi menunggu approval" : expenseAudit.type === "duplicates" ? "Kelompok transaksi yang mirip" : "Biaya lama tanpa jejak reviewer"}
+          </div>
+          <button type="button" onClick={closeExpenseAudit} aria-label="Tutup rincian audit" style={{ border: "1px solid " + cs.border, borderRadius: 7, padding: "5px 9px", background: "transparent", color: cs.muted, cursor: "pointer" }}>Tutup ✕</button>
+        </div>
+        {expenseAudit.loading ? <div style={{ color: cs.muted, fontSize: 12, padding: 8 }}>Memuat transaksi terkait…</div>
+          : expenseAudit.error ? <div role="alert" style={{ color: cs.red, fontSize: 12 }}>Gagal memuat rincian: {expenseAudit.error}</div>
+          : expenseAudit.type === "duplicates" ? (
+            <>
+              {expenseAudit.rows.length === 0 ? <div style={{ color: cs.muted, fontSize: 12 }}>Tidak ditemukan kelompok transaksi mirip pada rentang tanggal aktif.</div>
+                : expenseAudit.rows.map((group, index) => (
+                  <div key={`${group[0]?.date}-${group[0]?.id}-${index}`} style={{ display: "grid", gap: 6, padding: 10, border: "1px solid " + cs.yellow + "44", borderRadius: 10 }}>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: cs.yellow }}>Kelompok {index + 1} · {group.length} transaksi · {group[0]?.date} · Rp {Number(group[0]?.amount || 0).toLocaleString("id-ID")}</div>
+                    {group.map(item => renderAuditExpense(item, { label: "Periksa kemungkinan duplikat" }))}
+                  </div>
+                ))}
+              {expenseAudit.rows.truncated && <div style={{ fontSize: 11, color: cs.muted }}>Pemindaian dibatasi pada 1.000 transaksi terbaru. Persempit rentang tanggal untuk pemeriksaan yang lebih lengkap.</div>}
+            </>
+          ) : expenseAudit.rows.length === 0 ? <div style={{ color: cs.muted, fontSize: 12 }}>Tidak ada transaksi yang cocok. Data kemungkinan sudah berubah setelah ringkasan audit dimuat.</div>
+            : <>
+              <div style={{ fontSize: 11, color: cs.muted }}>Menampilkan {expenseAudit.rows.length} transaksi terkait{expenseAudit.type === "pending" && expenseAudit.rows.length === 200 ? " (maksimal 200; gunakan rentang tanggal untuk membatasi)" : ""}.</div>
+              {expenseAudit.rows.map(item => renderAuditExpense(item, { canApprove: expenseAudit.type === "pending", label: expenseAudit.type === "pending" ? "Menunggu approval" : "Reviewer belum tercatat" }))}
+            </>}
+      </section>
     )}
 
-    {/* Search + date range */}
+    {/* Search + date range + sorting */}
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
       <input value={expenseSearch} onChange={e => { setExpenseSearch(e.target.value); setExpensePage(1); }}
         placeholder="🔍 Cari keterangan / nama..."
@@ -925,6 +1076,17 @@ return (
       <span style={{ color: cs.muted, fontSize: 12 }}>—</span>
       <input type="date" value={expenseDateTo} onChange={e => { setExpenseDateTo(e.target.value); setExpensePage(1); }}
         style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, color: cs.text, padding: "7px 10px", fontSize: 12 }} />
+      <label style={{ display: "flex", alignItems: "center", gap: 6, color: cs.muted, fontSize: 11 }}>
+        Urutkan halaman
+        <select value={expenseSort} onChange={e => setExpenseSort(e.target.value)}
+          style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, color: cs.text, padding: "7px 9px", fontSize: 12 }}>
+          <option value="date_desc">Tanggal terbaru</option>
+          <option value="date_asc">Tanggal terlama</option>
+          <option value="amount_desc">Nominal terbesar</option>
+          <option value="amount_asc">Nominal terkecil</option>
+          <option value="name_asc">Kategori / nama A–Z</option>
+        </select>
+      </label>
       {(expenseSearch || expenseDateFrom || expenseDateTo) && (
         <button onClick={() => { setExpenseSearch(""); setExpenseDateFrom(""); setExpenseDateTo(""); setExpensePage(1); }}
           style={{ background: "transparent", border: "1px solid " + cs.border, borderRadius: 8, color: cs.muted, padding: "7px 12px", fontSize: 12, cursor: "pointer" }}>
@@ -989,8 +1151,8 @@ return (
             </div>
             {!isTrash && item.approval_status === "PENDING_APPROVAL" && bolehApprove && (
               <div style={{ display: "flex", gap: 6 }}>
-                <button onClick={() => approveExpense(item)} title="Setujui — biaya mulai dihitung"
-                  style={{ background: cs.green, border: "none", color: "#fff", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>✅ Setujui</button>
+                <button disabled={approvingExpenseId === item.id} onClick={() => approveExpense(item)} title="Setujui — biaya mulai dihitung"
+                  style={{ background: cs.green, border: "none", color: "#fff", borderRadius: 8, padding: "5px 12px", cursor: approvingExpenseId === item.id ? "wait" : "pointer", opacity: approvingExpenseId === item.id ? 0.65 : 1, fontSize: 12, fontWeight: 700 }}>{approvingExpenseId === item.id ? "⏳ Memproses" : "✅ Setujui"}</button>
                 <button onClick={() => rejectExpense(item)} title="Tolak & hapus"
                   style={{ background: "transparent", border: "1px solid " + cs.red, color: cs.red, borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: 12 }}>❌ Tolak</button>
               </div>

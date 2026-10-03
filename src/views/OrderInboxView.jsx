@@ -96,29 +96,44 @@ function SourceBadge({ source }) {
 }
 
 // ── Time Grid: timeline view berdasarkan jam mulai aktual (pixel-accurate) ──
-const GRID_START = 9;   // jam 09:00
-const GRID_END   = 17;  // jam 17:00
-const GRID_HOURS = Array.from({ length: GRID_END - GRID_START + 1 }, (_, i) => GRID_START + i); // [9..17]
-const GRID_TOTAL_MIN = (GRID_END - GRID_START) * 60; // 480 menit total
+const REGULAR_GRID_START = 9;
+const REGULAR_GRID_END = 18;
+const NIGHT_GRID_START = 18;
+const NIGHT_GRID_END = 24;
 
-// Konversi menit ke % posisi dalam grid
-function minToPercent(minutes) {
-  const rel = Math.max(0, Math.min(minutes - GRID_START * 60, GRID_TOTAL_MIN));
-  return (rel / GRID_TOTAL_MIN) * 100;
+// Konversi menit ke % posisi dalam rentang grid; bar dipotong pada batas grid.
+function minToPercent(minutes, startHour, endHour) {
+  const total = (endHour - startHour) * 60;
+  const rel = Math.max(0, Math.min(minutes - startHour * 60, total));
+  return (rel / total) * 100;
 }
 
 // onDateChange: callback ke parent agar Planning Order ikut filter
-function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, weekOrders, teknisiData, dailySlots, expandedId, setExpandedId, TODAY, onDateChange, onDragReassign, laporanJobSet }) {
-  const [selectedDate, setSelectedDate] = useState(weekDays.find(d => d.date === TODAY)?.date || weekDays[0]?.date);
+function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, weekOrders, teknisiData, dailySlots, expandedId, setExpandedId, TODAY, onDateChange, onDragReassign, laporanJobSet, shift = "regular", selectedDate: selectedDateProp, onSelectDate }) {
+  const [localSelectedDate, setLocalSelectedDate] = useState(weekDays.find(d => d.date === TODAY)?.date || weekDays[0]?.date);
   const [dragOverSlot, setDragOverSlot] = useState(null); // nama slot yang sedang jadi drop target
+  const isNight = shift === "night";
+  const gridStart = isNight ? NIGHT_GRID_START : REGULAR_GRID_START;
+  const gridEnd = isNight ? NIGHT_GRID_END : REGULAR_GRID_END;
+  const gridHours = Array.from({ length: gridEnd - gridStart + 1 }, (_, i) => gridStart + i);
+  const selectedDate = selectedDateProp || localSelectedDate;
 
   function selectDate(d) {
-    setSelectedDate(d);
+    setLocalSelectedDate(d);
     onDateChange && onDateChange(d);
+    onSelectDate && onSelectDate(d);
   }
 
   const currentDate = weekDays.find(d => d.date === selectedDate) ? selectedDate : weekDays[0]?.date;
-  const dayOrders = weekOrders.filter(o => o.date === currentDate);
+  const allDayOrders = weekOrders.filter(o => o.date === currentDate);
+  const dayOrders = allDayOrders.filter(o => {
+    const start = toMinutes(o.time);
+    return start === null || (isNight ? start >= NIGHT_GRID_START * 60 : start < NIGHT_GRID_START * 60);
+  });
+  const nightExistingSlots = isNight ? [...new Set(dayOrders.map(o => o.team_slot).filter(Boolean))] : [];
+  const visibleSlots = isNight
+    ? [...new Set([...teamSlots.filter(name => name.startsWith("Malam ")), ...nightExistingSlots])]
+    : teamSlots.filter(name => !name.startsWith("Malam "));
 
   // Helper: ambil anggota slot untuk hari ini
   function getSlotMembers(slotName) {
@@ -135,9 +150,9 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, w
     <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 14, padding: 20 }}>
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
-        <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>📅 Time Grid Jadwal</div>
+        <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>{isNight ? `🌙 Grid Malam · ${currentDate} · 18:00–23:59` : "📅 Time Grid Reguler · 09:00–18:00"}</div>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <button onClick={() => setWeekOffset(w => w - 1)}
+          {!isNight && <><button onClick={() => setWeekOffset(w => w - 1)}
             style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, borderRadius: 7, padding: "5px 11px", cursor: "pointer", fontSize: 13 }}>‹</button>
           <span style={{ fontSize: 12, color: cs.muted, minWidth: 115, textAlign: "center" }}>{weekLabel}</span>
           <button onClick={() => setWeekOffset(w => w + 1)}
@@ -145,12 +160,12 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, w
           {weekOffset !== 0 && (
             <button onClick={() => setWeekOffset(0)}
               style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, borderRadius: 7, padding: "5px 9px", cursor: "pointer", fontSize: 11 }}>Minggu ini</button>
-          )}
+          )}</>}
         </div>
       </div>
 
       {/* Pilih hari */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+      {!isNight && <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
         {weekDays.map(d => {
           const isToday = d.date === TODAY;
           const isSelected = d.date === currentDate;
@@ -171,7 +186,8 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, w
             </button>
           );
         })}
-      </div>
+      </div>}
+      {isNight && <div style={{ color: cs.muted, fontSize: 11, marginBottom: 14 }}>Penugasan kru grid malam terpisah dari tim reguler. Atur teknisi/helper pada slot Malam di panel Tim Harian.</div>}
 
       {/* Legend */}
       <div style={{ display: "flex", gap: 16, marginBottom: 10, fontSize: 11, color: cs.muted, flexWrap: "wrap" }}>
@@ -182,31 +198,31 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, w
       </div>
 
       {/* Timeline grid */}
-      {(teamSlots.every(s => dayOrders.filter(o => o.team_slot === s).length === 0) && dayOrders.filter(o => o.team_slot).length === 0) ? (
+      {(visibleSlots.every(s => dayOrders.filter(o => o.team_slot === s).length === 0) && !dayOrders.some(o => !o.team_slot || !hasValidTime(o.time))) ? (
         <div style={{ textAlign: "center", color: cs.muted, padding: 32, fontSize: 13 }}>
-          Belum ada jadwal hari ini
+          Belum ada jadwal {isNight ? "malam" : "reguler"} hari ini
         </div>
       ) : (
         <div style={{ overflowX: "auto" }}>
           {/* Header jam */}
-          <div style={{ display: "flex", marginLeft: 110, marginBottom: 4, position: "relative", minWidth: 560 }}>
-            {GRID_HOURS.map(h => (
+          <div style={{ display: "flex", marginLeft: 110, marginBottom: 4, position: "relative", minWidth: isNight ? 560 : 650 }}>
+            {gridHours.map(h => (
               <div key={h} style={{
-                flex: h === GRID_END ? "0 0 0px" : 1,
-                fontSize: 10, color: h >= 12 && h < 14 ? cs.yellow : h === GRID_END ? cs.red + "aa" : cs.muted,
+                flex: h === gridEnd ? "0 0 0px" : 1,
+                fontSize: 10, color: h >= 12 && h < 14 ? cs.yellow : h === gridEnd ? cs.red + "aa" : cs.muted,
                 fontWeight: 600, textAlign: "left", paddingLeft: 2,
-                borderLeft: "1px solid " + (h === GRID_END ? cs.red + "55" : cs.border + "44"),
+                borderLeft: "1px solid " + (h === gridEnd ? cs.red + "55" : cs.border + "44"),
                 paddingBottom: 2,
               }}>
                 {String(h).padStart(2,"0")}:00
                 {h >= 12 && h < 14 && <div style={{ fontSize: 8, color: cs.yellow }}>siang</div>}
-                {h === GRID_END && <div style={{ fontSize: 8, color: cs.red + "88" }}>selesai</div>}
+                {h === gridEnd && <div style={{ fontSize: 8, color: cs.red + "88" }}>selesai</div>}
               </div>
             ))}
           </div>
 
           {/* Baris per slot tim (Team/Project/Maintenance) */}
-          {teamSlots.map(slotName => {
+          {visibleSlots.map(slotName => {
             const isProject = slotName.startsWith("Project");
             const isMaintenance = slotName.startsWith("Maintenance");
             const slotColor = isProject ? cs.ara : isMaintenance ? cs.yellow : cs.accent;
@@ -239,19 +255,19 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, w
                   onDrop={(e) => { e.preventDefault(); const id = e.dataTransfer.getData("orderId"); setDragOverSlot(null); if (id && onDragReassign) onDragReassign(id, slotName); }}
                 >
                   {/* Grid garis jam */}
-                  {GRID_HOURS.map(h => (
+                  {gridHours.map(h => (
                     <div key={h} style={{
                       position: "absolute", top: 0, bottom: 0,
-                      left: minToPercent(h * 60) + "%",
-                      borderLeft: "1px solid " + (h === GRID_END ? cs.red + "55" : cs.border + "33"),
+                      left: minToPercent(h * 60, gridStart, gridEnd) + "%",
+                      borderLeft: "1px solid " + (h === gridEnd ? cs.red + "55" : cs.border + "33"),
                       pointerEvents: "none",
                     }} />
                   ))}
                   {/* Jam 12-14: background siang */}
                   <div style={{
                     position: "absolute", top: 0, bottom: 0,
-                    left: minToPercent(12 * 60) + "%",
-                    width: (minToPercent(14 * 60) - minToPercent(12 * 60)) + "%",
+                    left: minToPercent(12 * 60, gridStart, gridEnd) + "%",
+                    width: (minToPercent(14 * 60, gridStart, gridEnd) - minToPercent(12 * 60, gridStart, gridEnd)) + "%",
                     background: cs.yellow + "08", pointerEvents: "none",
                   }} />
 
@@ -265,8 +281,8 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, w
                       : Math.round(hitungDurasi(o.service, o.units) * 60);
                     const endMin = startMin + durMin;
 
-                    const leftPct = minToPercent(startMin);
-                    const widthPct = minToPercent(endMin) - leftPct;
+                    const leftPct = minToPercent(startMin, gridStart, gridEnd);
+                    const widthPct = minToPercent(endMin, gridStart, gridEnd) - leftPct;
 
                     const isDone = ["REPORT_SUBMITTED","COMPLETED","VERIFIED","INVOICE_APPROVED","PAID","INVOICED"].includes(o.status)
                       || (laporanJobSet && laporanJobSet.has(o.id));
@@ -276,7 +292,7 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, w
                     // (mis. jadi teknisi di sini + helper di tim lain). Dulu cuma cek slot sama →
                     // dobel-booking lintas-slot tak tertandai.
                     const blockPeople = [o.teknisi, o.teknisi2, o.teknisi3, o.helper, o.helper2, o.helper3].filter(Boolean);
-                    const isConflict = !isDone && dayOrders.some(o2 => {
+                    const isConflict = !isDone && allDayOrders.some(o2 => {
                       if (o2.id === o.id) return false;
                       if (["REPORT_SUBMITTED","COMPLETED","VERIFIED","INVOICE_APPROVED","PAID","INVOICED","CANCELLED"].includes(o2.status)
                         || (laporanJobSet && laporanJobSet.has(o2.id))) return false;
@@ -419,6 +435,9 @@ function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknis
   // Berapa row yang ditampilkan per slot (2 default, expand progresif s/d 8 —
   // migrasi 127: kapasitas naik dari 4 ke 8 orang/tim, 4 teknisi + 4 helper).
   const [expandedSlots, setExpandedSlots] = useState({}); // slotName → jumlah row hasil klik "+Tambah"
+  const [showNightSlots, setShowNightSlots] = useState(false);
+  const dateHasNightOrders = ordersData.some(o => o.date === slotDate && o.status !== "CANCELLED" && hasValidTime(o.time) && toMinutes(o.time) >= NIGHT_GRID_START * 60);
+  const nightSlotsVisible = showNightSlots || dateHasNightOrders;
   function visibleRows(slotName, slot) {
     let lastFilled = 0;
     for (let i = 1; i <= MEMBER_COUNT; i++) { if (slot[`member${i}`]) lastFilled = i; }
@@ -463,7 +482,7 @@ function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknis
         <div>
           <div style={{ fontWeight: 800, fontSize: 14, color: cs.text }}>👥 Isi Tim Harian</div>
           <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>
-            Isi siapa mengisi Team 01–10 hari ini · Confirm → propagasi ke semua order tim tsb
+            Isi roster harian reguler atau Malam secara terpisah · Confirm menerapkan anggota ke order pada slot yang sama
           </div>
         </div>
         {/* Tab 7 hari */}
@@ -584,9 +603,14 @@ function DailyTeamPanel({ slotDate, setSlotDate, TODAY, TEAM_SLOTS, activeTeknis
         );
       })()}
 
-      {/* Grid slot Team 01–10 */}
+      <label style={{ display: "flex", alignItems: "center", gap: 8, width: "fit-content", margin: "10px 0", padding: "7px 10px", borderRadius: 8, border: "1px solid " + (dateHasNightOrders ? cs.yellow + "88" : cs.border), color: cs.text, cursor: dateHasNightOrders ? "default" : "pointer" }}>
+        <input type="checkbox" checked={nightSlotsVisible} disabled={dateHasNightOrders} onChange={e => setShowNightSlots(e.target.checked)} />
+        <span style={{ fontSize: 11, fontWeight: 700 }}>Kelola roster Malam (slot terpisah)</span>
+        {dateHasNightOrders && <span style={{ fontSize: 10, color: cs.yellow, fontWeight: 700 }}>Otomatis · ada job malam</span>}
+      </label>
+      {/* Grid slot Team reguler; roster Malam dibuka saat diperlukan. */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 10 }}>
-        {TEAM_SLOTS.map(slotName => {
+        {TEAM_SLOTS.filter(slotName => nightSlotsVisible || !slotName.startsWith("Malam ")).map(slotName => {
           const slot = getSlotData(slotDate, slotName);
           const members = slotMemberRoles(slot);
           const ordCount = orderCount(slotDate, slotName);
@@ -848,8 +872,9 @@ function calcTimeEnd(timeStart, service, units) {
   const dur = hitungDurasi(service, parseInt(units) || 1);
   const [h, m] = (timeStart || "09:00").split(":").map(Number);
   const totalMin = h * 60 + m + Math.round(dur * 60);
-  const nh = Math.min(Math.floor(totalMin / 60), 20);
-  const nm = totalMin % 60;
+  const safeMin = Math.min(totalMin, 23 * 60 + 59);
+  const nh = Math.floor(safeMin / 60);
+  const nm = safeMin % 60;
   return String(nh).padStart(2, "0") + ":" + String(nm).padStart(2, "0");
 }
 
@@ -857,6 +882,7 @@ function calcTimeEnd(timeStart, service, units) {
 const TEAM_SLOTS_BASE = [
   ...Array.from({ length: 10 }, (_, i) => `Team ${String(i + 1).padStart(2, "0")}`),
   "Maintenance 01", "Maintenance 02",
+  ...Array.from({ length: 4 }, (_, i) => `Malam ${String(i + 1).padStart(2, "0")}`),
 ];
 const MEMBER_ROLES = ["teknisi", "helper"];
 // Kapasitas tim: 8 orang (4 teknisi + 4 helper) — migrasi 127, naik dari 4 orang.
@@ -1075,6 +1101,8 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   const [expandedId, setExpandedId] = useState(null);
   // Tanggal aktif dari klik di Time Grid — Planning Order ikut filter ke hari ini
   const [gridDate, setGridDate] = useState(null);
+  const [timeGridDate, setTimeGridDate] = useState(TODAY);
+  const [showNightGrid, setShowNightGrid] = useState(false);
 
   // ── Team slot state ──
   const [dailySlots, setDailySlots] = useState([]);   // [{date, slot, member1..4, confirmed}]
@@ -1103,7 +1131,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   // angka 1) bikin Maintenance menyelip di antara Team 01/02 (temuan 20 Jul 2026).
   const TEAM_SLOTS = useMemo(() => {
     const all = Array.from(new Set([...TEAM_SLOTS_BASE, ...Object.keys(teamPresets)]));
-    const rank = (name) => name.startsWith("Team ") ? 0 : 1;
+    const rank = (name) => name.startsWith("Team ") ? 0 : name.startsWith("Maintenance ") ? 1 : name.startsWith("Malam ") ? 2 : 3;
     return all.sort((a, b) => {
       const r = rank(a) - rank(b);
       if (r !== 0) return r;
@@ -1368,7 +1396,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     const id = "PRJ-" + Date.now();
     const payload = {
       id, customer: project.nama, phone: null, service: "Project", type: project.kategori || "",
-      address: project.lokasi || "", date, time: "09:00", time_end: "17:00",
+      address: project.lokasi || "", date, time: "09:00", time_end: "18:00",
       status: "CONFIRMED", units: 1, project_id: project.id,
       team_slot: autoSlot,
       ...resolved, last_changed_by: auditUserName(),
@@ -1716,6 +1744,22 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     if (!form.customer.trim()) { unlock(); return showNotif("Nama customer wajib diisi", "error"); }
     if (!form.date) { unlock(); return showNotif("Tanggal wajib diisi", "error"); }
     if (!form.service) { unlock(); return showNotif("Layanan wajib diisi", "error"); }
+    const originalSchedule = editId ? ordersData.find(o => o.id === editId) : null;
+    const scheduleChanged = !originalSchedule || form.time !== String(originalSchedule.time || "").slice(0, 5) || (form.time_end || "") !== String(originalSchedule.time_end || "").slice(0, 5);
+    if (scheduleChanged) {
+      const scheduleStart = toMinutes(form.time);
+      const scheduleEnd = toMinutes(form.time_end || calcTimeEnd(form.time, form.service, form.units));
+      const exactEnd = scheduleStart === null ? null : scheduleStart + Math.round(hitungDurasi(form.service, form.units) * 60);
+      if (scheduleStart === null || scheduleEnd === null || scheduleEnd <= scheduleStart || scheduleEnd > 23 * 60 + 59 || exactEnd > 23 * 60 + 59) {
+        unlock(); return showNotif("Jam selesai harus setelah jam mulai dan masih di hari yang sama (maks. 23:59).", "error");
+      }
+      if (scheduleStart < 18 * 60 && (scheduleEnd > 18 * 60 || exactEnd > 18 * 60)) {
+        unlock(); return showNotif("Jadwal reguler harus selesai paling lambat 18:00. Geser jam mulai ke 18:00 atau sesudahnya agar masuk grid malam.", "error");
+      }
+      if (scheduleStart >= 18 * 60 && form.team_slot && !form.team_slot.startsWith("Malam ")) {
+        unlock(); return showNotif("Pekerjaan mulai 18:00 atau sesudahnya perlu memakai slot Malam agar roster teknisi/helper terpisah.", "error");
+      }
+    }
     // Phone WAJIB — tanpa phone, customer baru tidak bisa dibuat & invoice/penagihan
     // tidak bisa di-track. Lebih baik blok di sini daripada bikin orphan data.
     const phoneNorm = normalizePhone(form.phone || "");
@@ -1962,6 +2006,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     ordersData.filter(o => weekDateSet.has(o.date) && o.status !== "CANCELLED"),
     [ordersData, weekDateSet]
   );
+  const weekHasNightOrders = weekOrders.some(o => hasValidTime(o.time) && toMinutes(o.time) >= NIGHT_GRID_START * 60);
   const gridTeknisi = useMemo(() => {
     const names = new Set(activeTeknisi.map(t => t.name));
     weekOrders.forEach(o => { if (o.teknisi) names.add(o.teknisi); });
@@ -1991,6 +2036,10 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
 
   // ── Opsi B: update teknisi/helper inline tanpa buka form edit ──
   async function handleQuickAssign(order, field, value) {
+    if (field === "team_slot" && hasValidTime(order.time) && toMinutes(order.time) >= 18 * 60 && value && !value.startsWith("Malam ")) {
+      showNotif("Order mulai 18:00 atau sesudahnya harus memakai slot Malam agar roster terpisah.", "warning");
+      return false;
+    }
     let update = { [field]: value || null, last_changed_by: auditUserName() };
 
     // Project order: team_slot hanya sebagai pengelompokan di Time Grid —
@@ -2359,7 +2408,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
           {/* Jam Mulai */}
           <div>
             <label style={labelStyle}>Jam Mulai</label>
-            <input style={inputStyle} type="time" value={form.time}
+            <input style={inputStyle} type="time" min="09:00" max="23:00" value={form.time}
               onChange={e => setField("time", e.target.value)} />
           </div>
 
@@ -2374,7 +2423,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
                 Reset ↺
               </button>
             </label>
-            <input style={inputStyle} type="time" value={form.time_end}
+            <input style={inputStyle} type="time" min="09:01" max="23:59" value={form.time_end}
               onChange={e => setField("time_end", e.target.value)} />
             <div style={{ fontSize: 10, color: cs.muted, marginTop: 3 }}>
               Estimasi: {calcTimeEnd(form.time, form.service, form.units)}
@@ -2385,6 +2434,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
           {/* Team Slot */}
           <div>
             <label style={labelStyle}>Assign ke Tim</label>
+            <div style={{ color: cs.muted, fontSize: 10, marginBottom: 4 }}>Untuk mulai 18:00 ke atas, pilih slot Malam agar roster teknisi/helper terpisah.</div>
             <select style={inputStyle} value={form.team_slot} onChange={e => setField("team_slot", e.target.value)}>
               <option value="">— Pilih tim —</option>
               {TEAM_SLOTS.map(s => {
@@ -2393,7 +2443,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
                 const hasMembers = members.length > 0;
                 return (
                   <option key={s} value={s}>
-                    {s}{hasMembers ? " — " + members.join(", ") : " (kosong)"}
+                    {s.startsWith("Malam ") ? "🌙 " : ""}{s}{hasMembers ? " — " + members.join(", ") : " (kosong)"}
                   </option>
                 );
               })}
@@ -2463,10 +2513,28 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         dailySlots={dailySlots}
         expandedId={expandedId} setExpandedId={setExpandedId}
         TODAY={TODAY}
-        onDateChange={d => setGridDate(d)}
+        selectedDate={timeGridDate}
+        onDateChange={d => { setGridDate(d); setTimeGridDate(d); }}
         onDragReassign={handleDragReassign}
         laporanJobSet={laporanJobSet}
       />
+      <label style={{ display: "flex", alignItems: "center", gap: 9, width: "fit-content", maxWidth: "100%", background: cs.surface, border: "1px solid " + (weekHasNightOrders ? cs.yellow + "88" : cs.border), borderRadius: 10, padding: "8px 12px", color: cs.text, cursor: weekHasNightOrders ? "default" : "pointer" }}>
+        <input type="checkbox" checked={showNightGrid || weekHasNightOrders} disabled={weekHasNightOrders}
+          onChange={e => setShowNightGrid(e.target.checked)} />
+        <span style={{ fontSize: 12, fontWeight: 700 }}>Tampilkan grid malam (18:00–23:59)</span>
+        {weekHasNightOrders && <span style={{ fontSize: 10, color: cs.yellow, fontWeight: 700 }}>Otomatis · {weekOrders.filter(o => hasValidTime(o.time) && toMinutes(o.time) >= NIGHT_GRID_START * 60).length} job minggu ini</span>}
+      </label>
+      {(showNightGrid || weekHasNightOrders) && <TimeGrid
+        weekDays={weekDays} weekLabel={weekLabel} weekOffset={weekOffset}
+        setWeekOffset={setWeekOffset} teamSlots={TEAM_SLOTS}
+        weekOrders={weekOrders} teknisiData={teknisiData}
+        dailySlots={dailySlots}
+        expandedId={expandedId} setExpandedId={setExpandedId}
+        TODAY={TODAY} shift="night" selectedDate={timeGridDate}
+        onDateChange={d => { setGridDate(d); setTimeGridDate(d); }}
+        onDragReassign={handleDragReassign}
+        laporanJobSet={laporanJobSet}
+      />}
 
       {/* ═══ DAFTAR ORDER INBOX (today + ke depan) ═══ */}
       <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 14, padding: 20 }}>

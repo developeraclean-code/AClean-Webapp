@@ -251,7 +251,7 @@ export default function ProjectDetailView() {
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 16 }}>
         <Card><L>Kategori</L><V>{p.kategori}</V><D>{p.lokasi} · Survey/start {p.mulai}</D></Card>
-        <Card><L>Timeline</L><V>{p.mulai} → {p.target}</V></Card>
+        <Card><L>Timeline</L><V>{p.mulai || "—"} → {p.target || "Target belum ditentukan"}</V></Card>
         {can.finance && <Card><L>Nilai / DP</L><V>{fmtRp(p.nilai)}</V><D>diterima {fmtRp(k.dpTotal)}</D></Card>}
         <Card><L>Tim di Lokasi</L><V>{p.tim?.join(", ")}</V><D>PIC: {p.pic}</D></Card>
       </div>

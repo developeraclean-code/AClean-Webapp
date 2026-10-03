@@ -96,8 +96,14 @@ export const overBudgetProjects = (db) => db.projects.filter((p) => { const b = 
 
 export function daysLate(p, today) {
   if (p.status === "SELESAI" || p.status === "HOLD") return 0;
-  const d = (new Date(today) - new Date(p.target)) / 86400000;
-  return d > 0 ? Math.round(d) : 0;
+  // A missing target is not 1970-01-01: Date(null) silently becomes the Unix
+  // epoch and produced bogus values such as "telat 20.729 hari".
+  if (!p?.target) return 0;
+  const target = new Date(`${String(p.target).slice(0, 10)}T00:00:00Z`).getTime();
+  const todayMs = new Date(`${String(today || "").slice(0, 10)}T00:00:00Z`).getTime();
+  if (!Number.isFinite(target) || !Number.isFinite(todayMs)) return 0;
+  const d = (todayMs - target) / 86400000;
+  return d > 0 ? Math.floor(d) : 0;
 }
 
 export const isLocked = (db, pid, tgl) =>

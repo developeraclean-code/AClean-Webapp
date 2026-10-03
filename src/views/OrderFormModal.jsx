@@ -76,6 +76,11 @@ export default function OrderFormModal({
     if (!form.customer) { showNotif("Nama customer wajib diisi"); return; }
     if (!form.teknisi) { showNotif("Pilih teknisi dulu"); return; }
     if (!form.date) { showNotif("Pilih tanggal dulu"); return; }
+    const [startHour, startMinute] = (form.time || "09:00").split(":").map(Number);
+    const startMinutes = startHour * 60 + startMinute;
+    const endMinutes = startMinutes + Math.round((hitungDurasi ? hitungDurasi(form.service, form.units) : 1) * 60);
+    if (endMinutes > 23 * 60 + 59) { showNotif("Durasi pekerjaan melewati tengah malam. Pecah menjadi order/lanjutan hari berikutnya."); return; }
+    if (startMinutes < 18 * 60 && endMinutes > 18 * 60) { showNotif("Jadwal reguler harus selesai maksimal 18:00. Pilih jam mulai 18:00 atau sesudahnya untuk grid malam."); return; }
     await onSubmit({ ...form, parent_job_id: continuationParentId || null, is_multi_day: !!(continuationParentId && continuationParentId !== "") });
   };
 
@@ -415,11 +420,13 @@ export default function OrderFormModal({
                 </div>
 
                 {/* Time slots */}
-                <label style={lbl}>Jam Mulai <span style={{ fontWeight: 400 }}>(09:00 – 17:00 WIB)</span></label>
+                <label style={lbl}>Jam Mulai <span style={{ fontWeight: 400 }}>(Reguler selesai maks. 18:00; mulai 18:00+ masuk grid malam)</span></label>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 5, marginBottom: 8 }}>
-                  {["09:00","10:00","11:00","12:00","13:00","14:00","15:00","16:00","17:00"].map(t => {
+                  {["09:00","10:00","11:00","12:00","13:00","14:00","15:00","16:00","17:00","18:00","19:00","20:00","21:00","22:00","23:00"].map(t => {
                     const endT = hitungJamSelesai ? hitungJamSelesai(t, form.service, form.units) : "00:00";
-                    const ok = endT <= "17:00";
+                    const [slotH, slotM] = t.split(":").map(Number);
+                    const exactEndMins = slotH * 60 + slotM + Math.round(dur * 60);
+                    const ok = exactEndMins <= 23 * 60 + 59 && (t < "18:00" ? exactEndMins <= 18 * 60 : endT <= "23:59");
                     const isAvail = (cekTeknisiAvailable && form.teknisi && form.date)
                       ? cekTeknisiAvailable(form.teknisi, form.date, t, form.service, form.units) : true;
                     const sel = form.time === t;
@@ -432,7 +439,7 @@ export default function OrderFormModal({
                     );
                   })}
                 </div>
-                <input type="time" min="09:00" max="17:00" value={form.time || "09:00"} onChange={e => set("time", e.target.value)}
+                <input type="time" min="09:00" max="23:00" value={form.time || "09:00"} onChange={e => set("time", e.target.value)}
                   style={{ ...inp, background: cs.surface, marginBottom: 8 }} />
                 <div style={{ background: avail ? cs.green + "10" : cs.red + "10", border: "1px solid " + (avail ? cs.green : cs.red) + "22", borderRadius: 8, padding: "8px 12px", display: "flex", gap: 12, flexWrap: "wrap", fontSize: 12 }}>
                   <span>⏱ <b style={{ color: cs.accent }}>{dur >= 8 ? "1 hari kerja" : dur + "j"}</b></span>

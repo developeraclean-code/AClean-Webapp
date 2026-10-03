@@ -65,6 +65,14 @@ export default function EditOrderModal({
     const tekChanged = form.teknisi !== editOrderItem.teknisi;
     const dateChanged = form.date !== editOrderItem.date;
     const timeChanged = form.time !== editOrderItem.time;
+    if (dateChanged || timeChanged) {
+      const [startH, startM] = (form.time || "09:00").split(":").map(Number);
+      const startMinutes = startH * 60 + startM;
+      const duration = hitungDurasi ? hitungDurasi(form.service || "Cleaning", form.units || 1) : 1;
+      const endMinutes = startMinutes + Math.round(duration * 60);
+      if (endMinutes > 23 * 60 + 59) { showNotif("Durasi pekerjaan melewati tengah malam. Pecah menjadi order/lanjutan hari berikutnya."); return; }
+      if (startMinutes < 18 * 60 && endMinutes > 18 * 60) { showNotif("Jadwal reguler harus selesai maksimal 18:00. Pilih jam mulai 18:00 atau sesudahnya untuk grid malam."); return; }
+    }
     if (cekTeknisiAvailableDB && form.teknisi && (tekChanged || dateChanged || timeChanged)) {
       const dbCheck = await cekTeknisiAvailableDB(
         form.teknisi,
@@ -283,7 +291,7 @@ export default function EditOrderModal({
               </div>
               <div>
                 <label style={lbl}>Jam Mulai</label>
-                <input type="time" min="09:00" max="17:00" value={form.time || "09:00"} onChange={e => set("time", e.target.value)} style={{ ...inp, background: cs.surface }} />
+                <input type="time" min="09:00" max="23:00" value={form.time || "09:00"} onChange={e => set("time", e.target.value)} style={{ ...inp, background: cs.surface }} />
               </div>
             </div>
             {form.date && form.time && (
