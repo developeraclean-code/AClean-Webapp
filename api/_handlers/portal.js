@@ -4,6 +4,7 @@
 import { checkRateLimit } from "../_auth.js";
 import { validateAndNormalizePhone, buildPhoneVariants, sanitizeName } from "../_validate.js";
 import { sentryCatch } from "../_report.js";
+import { resolveMaintenanceReportUnits } from "../../src/lib/maintenanceUnitResolution.js";
 
     // ── MANAGE-USER: Create/Update/Deactivate/Reset-Password via Admin API ──
     // ── PROJECT MODULE: hapus baris (Owner only) — RLS anon sengaja tanpa DELETE ──
@@ -192,28 +193,58 @@ export async function maintenance(req, res) {
           const days = Math.min(Math.max(Number(body.days) || 120, 7), 3650);
           const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
           const _arr = (v) => { if (Array.isArray(v)) return v; if (typeof v === "string") { try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; } } return []; };
-          const j = async (url) => { try { const r = await fetch(REST(url), { headers }); return r.ok ? await r.json() : []; } catch { return []; } };
+          // Audit tidak boleh menampilkan "bersih" saat query gagal/timeout.
+          const j = async (url) => {
+            const r = await fetch(REST(url), { headers });
+            if (!r.ok) throw new Error(`Audit link gagal membaca ${url.split("?")[0]} (HTTP ${r.status})`);
+            return r.json();
+          };
+          const jPaged = async (url, maxRows) => {
+            const rows = [];
+            const pageSize = 1000;
+            for (let offset = 0; offset < maxRows; offset += pageSize) {
+              const page = await j(`${url}&limit=${pageSize}&offset=${offset}`);
+              if (!Array.isArray(page)) throw new Error("Audit link menerima respons bukan array");
+              rows.push(...page);
+              if (page.length < pageSize) return rows;
+            }
+            // Jangan diam-diam menganggap sisanya tidak ada saat audit terpotong.
+            throw new Error(`Audit link melewati ${maxRows} baris; pilih rentang hari lebih pendek`);
+          };
 
           // 1) Order yang SUDAH ter-link ke client maintenance dalam window
-          const linkedOrders = await j(`orders?maintenance_client_id=not.is.null&date=gte.${since}&select=id,customer,phone,service,status,date,maintenance_client_id,maintenance_unit_ids&order=date.desc&limit=3000`);
+          const linkedOrders = await jPaged(`orders?maintenance_client_id=not.is.null&date=gte.${since}&select=id,customer,phone,service,status,date,maintenance_client_id,maintenance_unit_ids&order=date.desc`, 3000);
           const linkedIds = new Set(linkedOrders.map(o => o.id));
+          const linkedOrderById = new Map(linkedOrders.map(o => [o.id, o]));
           // 2) Laporan VERIFIED dalam window (units_json untuk cek maint_unit_id)
-          const verifiedReports = await j(`service_reports?status=eq.VERIFIED&date=gte.${since}&select=job_id,total_units,units_json&limit=6000`);
+          const verifiedReports = await jPaged(`service_reports?status=eq.VERIFIED&date=gte.${since}&select=job_id,total_units,units_json`, 6000);
           const repByJob = {}; verifiedReports.forEach(r => { if (!repByJob[r.job_id]) repByJob[r.job_id] = r; });
           // 3) maintenance_logs dalam window → order mana yang sudah punya log
-          const logsRows = await j(`maintenance_logs?service_date=gte.${since}&select=order_id&limit=10000`);
+          const logsRows = await jPaged(`maintenance_logs?service_date=gte.${since}&select=order_id`, 10000);
           const loggedOrders = new Set(logsRows.map(l => l.order_id).filter(Boolean));
           // 4) Clients (untuk nama & phone variants)
-          const clients = await j(`maintenance_clients?select=id,name,pic_phone`);
+          const clients = await jPaged(`maintenance_clients?select=id,name,pic_phone`, 3000);
           const clientName = Object.fromEntries(clients.map(c => [c.id, c.name]));
           // 5) Invoices dalam window (cek link ke client)
-          const invoices = await j(`invoices?created_at=gte.${since}T00:00:00&select=id,job_id,customer,total,maintenance_client_id,status&limit=5000`);
+          const invoices = await jPaged(`invoices?created_at=gte.${since}T00:00:00&select=id,job_id,customer,total,maintenance_client_id,status`, 5000);
+          // Validasi kepemilikan ID yang ditulis teknisi. Ambil ID unik saja,
+          // dibatasi batch agar tombol audit tidak membebani free tier.
+          const reportUnitIds = [...new Set(verifiedReports.flatMap(r => _arr(r.units_json)
+            .map(u => String(u?.maint_unit_id || "").trim().toLowerCase()).filter(Boolean)))];
+          if (reportUnitIds.length > 1500) return res.status(413).json({ error: "Terlalu banyak unit untuk satu audit; pilih rentang hari lebih pendek" });
+          const validUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+          const registryById = new Map();
+          const queryIds = reportUnitIds.filter(id => validUuid.test(id));
+          for (let i = 0; i < queryIds.length; i += 100) {
+            const rows = await j(`maintenance_units?id=in.(${encodeURIComponent(queryIds.slice(i, i + 100).join(","))})&select=id,client_id&limit=100`);
+            rows.forEach(u => registryById.set(String(u.id).toLowerCase(), u));
+          }
 
           // === Temuan A: laporan VERIFIED tapi 0 log (history unit kosong) ===
           // Hanya laporan yang PUNYA unit (Survey/Cek tanpa unit tidak perlu log → bukan missing-link).
           const missing_logs = linkedOrders
             .filter(o => repByJob[o.id] && _arr(repByJob[o.id].units_json).length > 0 && !loggedOrders.has(o.id))
-            .map(o => ({ order_id: o.id, customer: o.customer, client: clientName[o.maintenance_client_id] || "?", service: o.service, date: o.date, status: o.status }));
+            .map(o => ({ order_id: o.id, customer: o.customer, client: clientName[o.maintenance_client_id] || "?", client_id: o.maintenance_client_id, service: o.service, date: o.date, status: o.status }));
 
           // === Temuan B: link lemah — sudah ada log TAPI laporan punya unit tanpa maint_unit_id ===
           // (dicatat lewat pencocokan posisi yang rawan salah AC)
@@ -222,35 +253,65 @@ export async function maintenance(req, res) {
             .map(o => {
               const units = _arr(repByJob[o.id].units_json);
               const noId = units.filter(u => u && !u.maint_unit_id).length;
-              return noId > 0 ? { order_id: o.id, customer: o.customer, client: clientName[o.maintenance_client_id] || "?", service: o.service, date: o.date, units_total: units.length, units_no_id: noId } : null;
+              return noId > 0 ? { order_id: o.id, customer: o.customer, client: clientName[o.maintenance_client_id] || "?", client_id: o.maintenance_client_id, service: o.service, date: o.date, units_total: units.length, units_no_id: noId } : null;
             })
             .filter(Boolean);
 
+          // Antrean pemetaan mencakup laporan yang belum punya log juga. Jangan
+          // sembunyikan kasus campuran ID/kosong hanya karena sebagian ID valid.
+          const needs_unit_mapping = linkedOrders
+            .filter(o => repByJob[o.id])
+            .map(o => {
+              const units = _arr(repByJob[o.id].units_json);
+              if (!units.length) return null;
+              const ids = units.map(u => String(u?.maint_unit_id || "").trim().toLowerCase()).filter(Boolean);
+              const missing = units.length - ids.length;
+              const duplicates = ids.length - new Set(ids).size;
+              const unknown = ids.filter(id => !registryById.has(id)).length;
+              const otherClient = ids.filter(id => registryById.has(id)
+                && String(registryById.get(id).client_id) !== String(o.maintenance_client_id)).length;
+              if (!missing && !duplicates && !unknown && !otherClient) return null;
+              return { order_id: o.id, customer: o.customer, client: clientName[o.maintenance_client_id] || "?",
+                client_id: o.maintenance_client_id, service: o.service, date: o.date,
+                units_total: units.length, units_no_id: missing, units_duplicate_id: duplicates,
+                units_unknown_id: unknown, units_other_client: otherClient,
+                has_logs: loggedOrders.has(o.id) };
+            }).filter(Boolean);
+
           // === Temuan C: laporan maintenance belum diverifikasi (autolog belum jalan) ===
-          const submittedReports = await j(`service_reports?status=eq.SUBMITTED&date=gte.${since}&select=job_id,customer,date,service&limit=3000`);
+          const submittedReports = await jPaged(`service_reports?status=eq.SUBMITTED&date=gte.${since}&select=job_id,customer,date,service`, 3000);
           const unverified = submittedReports
             .filter(r => linkedIds.has(r.job_id))
-            .map(r => ({ order_id: r.job_id, customer: r.customer, date: r.date, service: r.service }));
+            .map(r => ({ order_id: r.job_id, customer: r.customer, client_id: linkedOrderById.get(r.job_id)?.maintenance_client_id, date: r.date, service: r.service }));
 
           // === Temuan D: invoice order maintenance belum ter-link ke client ===
           const invoice_unlinked = invoices
             .filter(iv => iv.job_id && linkedIds.has(iv.job_id) && !iv.maintenance_client_id)
-            .map(iv => ({ invoice_id: iv.id, order_id: iv.job_id, customer: iv.customer, total: iv.total, status: iv.status }));
+            .map(iv => ({ invoice_id: iv.id, order_id: iv.job_id, customer: iv.customer, client_id: linkedOrderById.get(iv.job_id)?.maintenance_client_id, total: iv.total, status: iv.status }));
 
           // === Temuan E: order BELUM ter-link tapi nomor HP cocok perusahaan maintenance ===
-          const phoneToClient = {};
-          clients.forEach(c => { const np = validateAndNormalizePhone(c.pic_phone); if (np) buildPhoneVariants(np).forEach(v => { phoneToClient[v] = c; }); });
-          const variants = Object.keys(phoneToClient);
+          const phoneToClients = {};
+          clients.forEach(c => { const np = validateAndNormalizePhone(c.pic_phone); if (np) buildPhoneVariants(np).forEach(v => {
+            const matches = phoneToClients[v] || (phoneToClients[v] = []);
+            if (!matches.some(row => row.id === c.id)) matches.push(c);
+          }); });
+          const variants = Object.keys(phoneToClients);
           let unlinked_candidates = [];
           if (variants.length) {
-            const unlinkedOrders = await j(`orders?maintenance_client_id=is.null&phone=in.(${encodeURIComponent(variants.join(","))})&date=gte.${since}&select=id,customer,phone,service,status,date&order=date.desc&limit=2000`);
-            unlinked_candidates = unlinkedOrders.map(o => ({ order_id: o.id, customer: o.customer, phone: o.phone, service: o.service, date: o.date, status: o.status, suggest_client: phoneToClient[o.phone]?.name || "?", suggest_client_id: phoneToClient[o.phone]?.id || null }));
+            const unlinkedOrders = await jPaged(`orders?maintenance_client_id=is.null&phone=in.(${encodeURIComponent(variants.join(","))})&date=gte.${since}&select=id,customer,phone,service,status,date&order=date.desc`, 2000);
+            unlinked_candidates = unlinkedOrders.map(o => {
+              const matches = phoneToClients[o.phone] || [];
+              return { order_id: o.id, customer: o.customer, phone: o.phone, service: o.service, date: o.date, status: o.status,
+                suggest_client: matches.length === 1 ? matches[0].name : `${matches.length} lokasi mungkin — pilih manual`,
+                suggest_client_id: matches.length === 1 ? matches[0].id : null,
+                candidate_client_ids: matches.map(c => c.id) };
+            });
           }
 
           return res.status(200).json({
             window_days: days,
-            summary: { missing_logs: missing_logs.length, weak_links: weak_links.length, unverified: unverified.length, invoice_unlinked: invoice_unlinked.length, unlinked_candidates: unlinked_candidates.length },
-            missing_logs, weak_links, unverified, invoice_unlinked, unlinked_candidates,
+            summary: { missing_logs: missing_logs.length, weak_links: weak_links.length, needs_unit_mapping: needs_unit_mapping.length, unverified: unverified.length, invoice_unlinked: invoice_unlinked.length, unlinked_candidates: unlinked_candidates.length },
+            missing_logs, weak_links, needs_unit_mapping, unverified, invoice_unlinked, unlinked_candidates,
           });
         }
 
@@ -348,7 +409,7 @@ export async function maintenance(req, res) {
         if (action === "report-units") {
           if (!body.order_id) return res.status(400).json({ error: "order_id wajib" });
           const _arr = (v) => { if (Array.isArray(v)) return v; if (typeof v === "string") { try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; } } return []; };
-          const r = await fetch(REST("service_reports?job_id=eq." + encodeURIComponent(body.order_id) + "&select=units_json,total_units,service,date&order=updated_at.desc&limit=1"), { headers });
+          const r = await fetch(REST("service_reports?job_id=eq." + encodeURIComponent(body.order_id) + "&status=eq.VERIFIED&select=units_json,total_units,service,date&order=updated_at.desc&limit=1"), { headers });
           if (!r.ok) return res.status(500).json({ error: "DB error", detail: await r.text() });
           const rep = (await r.json())[0];
           if (!rep) return res.status(200).json({ units: [], found: false });
@@ -369,33 +430,38 @@ export async function maintenance(req, res) {
           const order = (await oRes.json())[0];
           if (!order) return res.status(404).json({ error: "Order tidak ditemukan" });
           // Laporan terbaru
-          const rRes = await fetch(REST("service_reports?job_id=eq." + encodeURIComponent(body.order_id) + "&select=id,units_json&order=updated_at.desc&limit=1"), { headers });
+          const rRes = await fetch(REST("service_reports?job_id=eq." + encodeURIComponent(body.order_id) + "&status=eq.VERIFIED&select=id,units_json&order=updated_at.desc&limit=1"), { headers });
+          if (!rRes.ok) return res.status(502).json({ error: "Gagal membaca laporan; tidak ada perubahan" });
           const rep = (await rRes.json())[0];
           if (!rep) return res.status(404).json({ error: "Laporan tidak ditemukan" });
+          // Log lama bisa menunjuk unit yang salah. Jangan hapus/rebuild lintas
+          // request: kegagalan setelah DELETE dahulu membuat riwayat yatim.
+          const logRes = await fetch(REST("maintenance_logs?order_id=eq." + encodeURIComponent(body.order_id) + "&select=id&limit=1"), { headers });
+          if (!logRes.ok) return res.status(502).json({ error: "Gagal memeriksa riwayat; tidak ada perubahan" });
+          if ((await logRes.json()).length) return res.status(409).json({ error: "Riwayat lama sudah ada. Pemetaan ulang memerlukan audit manual; tidak ada log yang dihapus otomatis." });
           // Validasi unit_id milik klien ini
           const clientId = order.maintenance_client_id;
           if (!clientId) return res.status(400).json({ error: "Order belum ter-link perusahaan — tautkan dulu" });
           const uRes = await fetch(REST("maintenance_units?client_id=eq." + encodeURIComponent(clientId) + "&select=id"), { headers });
+          if (!uRes.ok) return res.status(502).json({ error: "Gagal memvalidasi registry; tidak ada perubahan" });
           const validSet = new Set((await uRes.json()).map(u => u.id));
           const units = _arr(rep.units_json);
-          const usedIds = [];
+          if (!units.length || body.mapping.length !== units.length) return res.status(400).json({ error: "Semua unit laporan harus dipetakan tepat satu kali" });
+          const indexes = new Set();
+          const usedIds = new Set();
           for (const m of body.mapping) {
             const i = Number(m.idx);
-            if (i >= 0 && i < units.length && m.maint_unit_id && validSet.has(m.maint_unit_id)) {
-              units[i] = { ...units[i], maint_unit_id: m.maint_unit_id };
-              usedIds.push(m.maint_unit_id);
+            const uid = String(m.maint_unit_id || "");
+            if (!Number.isInteger(i) || i < 0 || i >= units.length || indexes.has(i) || !validSet.has(uid) || usedIds.has(uid)) {
+              return res.status(400).json({ error: "Pemetaan tidak valid, duplikat, atau unit milik klien lain" });
             }
+            indexes.add(i); usedIds.add(uid);
+            units[i] = { ...units[i], maint_unit_id: uid };
           }
-          if (!usedIds.length) return res.status(400).json({ error: "Tidak ada pemetaan valid" });
-          // 1) Simpan maint_unit_id ke units_json laporan
+          // Satu perubahan saja. Order menyimpan rencana; laporan menyimpan aktual.
           const pr = await fetch(REST("service_reports?id=eq." + encodeURIComponent(rep.id)), { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ units_json: units }) });
           if (!pr.ok) return res.status(400).json({ error: "Gagal simpan laporan", detail: await pr.text() });
-          // 2) Pastikan order.maintenance_unit_ids memuat unit yang dipetakan
-          const newUnitIds = [...new Set([...(Array.isArray(order.maintenance_unit_ids) ? order.maintenance_unit_ids : []), ...usedIds])];
-          await fetch(REST("orders?id=eq." + encodeURIComponent(body.order_id)), { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ maintenance_unit_ids: newUnitIds }) });
-          // 3) Hapus log lama order ini supaya re-autolog bersih (cegah dobel / posisi lama)
-          await fetch(REST("maintenance_logs?order_id=eq." + encodeURIComponent(body.order_id)), { method: "DELETE", headers });
-          return res.status(200).json({ ok: true, mapped: usedIds.length });
+          return res.status(200).json({ ok: true, mapped: usedIds.size });
         }
 
         if (action === "create-client") {
@@ -965,29 +1031,13 @@ export async function maintenance(req, res) {
           const oRows = await oRes.json();
           if (!Array.isArray(oRows) || !oRows.length) return res.status(404).json({ error: "Order tidak ditemukan" });
           const order = oRows[0];
-          let clientId = order.maintenance_client_id || null;
-          let unitIds = Array.isArray(order.maintenance_unit_ids) ? order.maintenance_unit_ids.slice() : [];
-
-          // ── Lapis 2 (jaring pengaman): order belum ter-link tapi telpon cocok klien maintenance? ──
-          // Berlaku untuk SEMUA jalur order (WA inbound, manual) & semua jenis servis.
-          if (!clientId && order.phone) {
-            const np = validateAndNormalizePhone(order.phone);
-            if (np) {
-              try {
-                const orFilter = buildPhoneVariants(np).map(v => "pic_phone.eq." + v).join(",");
-                const mcRes = await fetch(REST("maintenance_clients?or=(" + encodeURIComponent(orFilter) + ")&select=id&limit=1"), { headers });
-                const mc = await mcRes.json();
-                if (Array.isArray(mc) && mc.length) clientId = mc[0].id;
-              } catch (_) {}
-            }
-          }
+          const clientId = order.maintenance_client_id || null;
+          // Nomor HP dapat dipakai beberapa lokasi/perusahaan. Autolog tidak boleh
+          // memilih client pertama dari HP dan menulis history ke site yang salah.
           if (!clientId) return res.status(200).json({ skipped: true, reason: "bukan order maintenance" });
-
-          const explicitUnits = unitIds.length > 0;        // admin sudah pilih unit di Planning Order?
-          // Default SEMUA unit HANYA untuk servis cleaning (servis massal seluruh lokasi).
-          // Repair/Pasang/Complain → admin WAJIB pilih unit dulu (cegah salah catat ke 22 unit).
-          const svcRaw = String(order.service || "").toLowerCase();
-          const isCleaning = svcRaw.includes("cleaning") || svcRaw.includes("cuci");
+          if (String(order.service || "").toLowerCase() === "survey") {
+            return res.status(200).json({ skipped: true, reason: "survey tanpa servis unit" });
+          }
 
           // ── Ambil laporan teknisi LEBIH AWAL (sebelum guard non-cleaning) ──
           // Laporan bisa jadi sumber kebenaran unit: teknisi memilih AC spesifik via
@@ -997,63 +1047,26 @@ export async function maintenance(req, res) {
           const _arr = (v) => { if (Array.isArray(v)) return v; if (typeof v === "string") { try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; } } return []; };
           let report = null;
           try {
-            const rpRes = await fetch(REST("service_reports?job_id=eq." + encodeURIComponent(order.id) + "&select=units_json,foto_urls,fotos,materials_json,total_freon&order=updated_at.desc&limit=1"), { headers });
+            const rpRes = await fetch(REST("service_reports?job_id=eq." + encodeURIComponent(order.id) + "&status=eq.VERIFIED&select=units_json,foto_urls,fotos,materials_json,total_freon&order=updated_at.desc&limit=1"), { headers });
+            if (!rpRes.ok) return res.status(502).json({ error: "Gagal membaca laporan VERIFIED; riwayat tidak diubah" });
             const rp = await rpRes.json();
             if (Array.isArray(rp) && rp.length) report = rp[0];
-          } catch (_) {}
+          } catch (_) { return res.status(502).json({ error: "Gagal membaca laporan VERIFIED; riwayat tidak diubah" }); }
           const repUnits = _arr(report?.units_json);
-          const reportMaintIds = [...new Set(repUnits.map(ru => (ru && ru.maint_unit_id) || null).filter(Boolean))];
-          // Laporan menunjuk unit spesifik & order belum punya pilihan → pakai unit dari laporan.
-          if (!explicitUnits && reportMaintIds.length) unitIds = reportMaintIds.slice();
-
-          // Bail HANYA bila tak ada info unit dari mana pun (order kosong, bukan cleaning, laporan
-          // juga tak menunjuk unit). Kalau laporan sudah menunjuk unit → lanjut catat per unit.
-          if (!explicitUnits && !isCleaning && !reportMaintIds.length) {
-            // Bukan cleaning & unit belum dipilih → JANGAN auto-catat. Link klien saja, minta admin pilih.
-            if (!order.maintenance_client_id) {
-              fetch(REST("orders?id=eq." + encodeURIComponent(order.id)), { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ maintenance_client_id: clientId }) }).catch(() => {});
-            }
-            fetch(SU + "/rest/v1/agent_logs", {
-              method: "POST",
-              headers: { apikey: SK, Authorization: "Bearer " + SK, "Content-Type": "application/json" },
-              body: JSON.stringify({
-                action: "MAINTENANCE_UNIT_SELECT_NEEDED",
-                severity: "warn", category: "maintenance", status: "WARNING",
-                detail: `Order ${order.id} (${order.customer || ""}) servis ${order.service || "-"} = customer maintenance, tapi unit belum dipilih. Admin pilih AC mana + konfirmasi ke customer sebelum catat ke history.`,
-                metadata: { order_id: order.id, client_id: clientId, service: order.service },
-                time: new Date().toISOString(),
-              }),
-            }).catch(sentryCatch("agent_log_maintenance_select", { order_id: order.id, client_id: clientId }));
-            return res.status(200).json({ skipped: true, needs_unit_selection: true, reason: "servis non-cleaning — admin pilih unit dulu", client_linked: clientId });
+          const ids = [...new Set(repUnits.map(ru => String(ru?.maint_unit_id || "").trim().toLowerCase()).filter(Boolean))];
+          let registryUnits = [];
+          if (ids.length) {
+            const vRes = await fetch(REST("maintenance_units?id=in.(" + encodeURIComponent(ids.join(",")) + ")&select=id,client_id"), { headers });
+            if (!vRes.ok) return res.status(502).json({ error: "Gagal validasi unit registry; riwayat tidak diubah" });
+            registryUnits = await vRes.json();
           }
-
-          // Cleaning tanpa pilihan eksplisit → default semua unit aktif (bukan baru/nonaktif/rusak).
-          if (!unitIds.length) {
-            try {
-              const auRes = await fetch(REST("maintenance_units?client_id=eq." + encodeURIComponent(clientId) + "&status=eq.active&select=id&order=unit_code.asc"), { headers });
-              const au = await auRes.json();
-              if (Array.isArray(au)) unitIds = au.map(u => u.id);
-            } catch (_) {}
+          const resolvedUnits = resolveMaintenanceReportUnits(repUnits, registryUnits, clientId);
+          if (!resolvedUnits.ok) {
+            return res.status(200).json({ skipped: true, needs_unit_selection: true,
+              reason: resolvedUnits.reason, unit_index: resolvedUnits.index ?? null,
+              message: "Petakan setiap unit laporan ke satu unit registry milik klien ini di Maintenance → Cek Link. Riwayat tidak diubah." });
           }
-          if (!unitIds.length) return res.status(200).json({ skipped: true, reason: "klien maintenance tanpa unit aktif" });
-
-          // Filter unit berstatus 'baru' dari daftar (AC BARU tidak perlu service).
-          // Berlaku untuk unitIds eksplisit maupun auto-fetch — cegah log hantu ke AC yang belum aktif.
-          try {
-            const stRes = await fetch(REST("maintenance_units?id=in.(" + encodeURIComponent(unitIds.join(",")) + ")&select=id,status"), { headers });
-            const stData = await stRes.json();
-            const baruIds = new Set((Array.isArray(stData) ? stData : []).filter(u => u.status === "baru").map(u => u.id));
-            if (baruIds.size > 0) {
-              unitIds = unitIds.filter(id => !baruIds.has(id));
-              console.log(`[autolog] Skip ${baruIds.size} unit status=baru`);
-            }
-          } catch (_) {}
-          if (!unitIds.length) return res.status(200).json({ skipped: true, reason: "semua unit berstatus baru — tidak perlu log" });
-
-          // Persist hasil resolusi balik ke order → order tampil ter-link di UI (non-blocking).
-          if (!order.maintenance_client_id) {
-            fetch(REST("orders?id=eq." + encodeURIComponent(order.id)), { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ maintenance_client_id: clientId, maintenance_unit_ids: unitIds }) }).catch(() => {});
-          }
+          const unitIds = resolvedUnits.pairs.map(pair => pair.uid);
 
           // ── Invoice linking selalu dijalankan (bahkan saat log sudah ada) ──
           // Penting: multi-team = tiap order punya invoice sendiri, semua harus ter-link ke client.
@@ -1066,9 +1079,18 @@ export async function maintenance(req, res) {
           } catch (_) {}
 
           // Idempotency: sudah ada log utk order ini? (cek SETELAH invoice linking)
-          const exRes = await fetch(REST("maintenance_logs?order_id=eq." + encodeURIComponent(order.id) + "&select=id&limit=1"), { headers });
+          const exRes = await fetch(REST("maintenance_logs?order_id=eq." + encodeURIComponent(order.id) + "&select=id,unit_id&limit=100"), { headers });
+          if (!exRes.ok) return res.status(502).json({ error: "Gagal memeriksa log lama; riwayat tidak diubah" });
           const ex = await exRes.json();
-          if (Array.isArray(ex) && ex.length) return res.status(200).json({ skipped: true, reason: "sudah ter-log" });
+          if (Array.isArray(ex) && ex.length) {
+            const loggedIds = ex.map(log => String(log.unit_id || ""));
+            const complete = loggedIds.length === unitIds.length
+              && new Set(loggedIds).size === loggedIds.length
+              && loggedIds.every(id => unitIds.includes(id));
+            return res.status(200).json(complete
+              ? { skipped: true, reason: "sudah ter-log lengkap" }
+              : { skipped: true, needs_manual_review: true, reason: "log lama tidak sama dengan unit aktual; tidak ditimpa otomatis" });
+          }
 
           // ── Perkaya log dari laporan + invoice (visi "1-stop all-in") ──
           // 1) Laporan teknisi (sudah di-fetch lebih awal di atas): foto + material level-laporan.
@@ -1150,13 +1172,6 @@ export async function maintenance(req, res) {
           const SVC_MAP = { "Cleaning": "Cuci", "Cuci AC": "Cuci", "Install": "Pasang", "Pasang": "Pasang", "Bongkar Pasang": "Pasang", "Repair": "Perbaikan", "Perbaikan": "Perbaikan", "Isi Freon": "Isi Freon", "Survey": "Cek" };
           const svcType = SVC_MAP[order.service] || order.service || "Maintenance";
 
-          // Cap unitIds ke jumlah unit yang benar-benar dilaporkan di laporan teknisi.
-          // Tanpa ini: 12 unit direncanakan tapi 10 dilaporkan → 12 log dibuat (2 log hantu).
-          // Jika repUnits kosong (laporan belum masuk), tetap pakai semua unitIds.
-          const effectiveUnitIds = repUnits.length > 0 && repUnits.length < unitIds.length
-            ? unitIds.slice(0, repUnits.length)
-            : unitIds;
-
           // Map svcType → service_category (billing classifier)
           const SVC_CATEGORY_MAP = {
             "Cuci": "cuci_rutin", "Cuci AC": "cuci_rutin",
@@ -1167,37 +1182,7 @@ export async function maintenance(req, res) {
           };
           const svcCategory = SVC_CATEGORY_MAP[svcType] || "cuci_rutin";
 
-          // ── Keterikatan per-unit: utamakan maint_unit_id dari laporan, bukan posisi array ──
-          // Laporan maintenance membawa maint_unit_id per unit (di-preset dari registry saat
-          // modal dibuka). Mencocokkan log ke AC lewat ID itu = tahan terhadap urutan berbeda
-          // atau unit ditambah/dihapus teknisi di lapangan (pencocokan posisi lama bisa salah AC).
-          // Laporan lama tanpa maint_unit_id → fallback ke pencocokan posisi (perilaku lama).
-          const reportedMaintIds = [...new Set(repUnits.map(ru => (ru && ru.maint_unit_id) || null).filter(Boolean))];
-          let unitPairs; // [{ uid, lu }] — lu = unit laporan (boleh null)
-          if (reportedMaintIds.length) {
-            // Validasi kepemilikan: unit harus milik klien ini. Status 'baru' SENGAJA
-            // TIDAK dikecualikan di jalur ini — teknisi menyebut unit itu secara
-            // EKSPLISIT di laporan, artinya benar-benar dikerjakan, jadi riwayatnya
-            // wajib tercatat. (Skip 'baru' tetap berlaku di jalur bulk/default baris
-            // ~953, yang memang untuk mencegah AC baru dipasang ikut ter-log massal.)
-            // Tanpa pengecualian ini, unit yang diajukan teknisi via "+ Tambah Unit
-            // Baru" (masuk sbg status 'baru') hilang dari history tanpa error apa pun.
-            const candidateIds = [...new Set([...unitIds, ...reportedMaintIds])];
-            let validSet = new Set(candidateIds);
-            try {
-              const vRes = await fetch(REST("maintenance_units?id=in.(" + encodeURIComponent(candidateIds.join(",")) + ")&client_id=eq." + encodeURIComponent(clientId) + "&select=id,status"), { headers });
-              const vData = await vRes.json();
-              if (Array.isArray(vData)) validSet = new Set(vData.map(u => u.id));
-            } catch (_) {}
-            const seen = new Set();
-            unitPairs = repUnits
-              .filter(ru => ru && ru.maint_unit_id && validSet.has(ru.maint_unit_id))
-              .filter(ru => (seen.has(ru.maint_unit_id) ? false : (seen.add(ru.maint_unit_id), true)))
-              .map(ru => ({ uid: ru.maint_unit_id, lu: ru }));
-          } else {
-            unitPairs = effectiveUnitIds.map((uid, i) => ({ uid, lu: repUnits[i] || null }));
-          }
-          if (!unitPairs.length) return res.status(200).json({ skipped: true, reason: "tidak ada unit valid untuk dicatat" });
+          const unitPairs = resolvedUnits.pairs;
 
           // Buat 1 log per unit yang benar-benar dikerjakan.
           // PENTING: format description di bawah ("Kondisi: …", "Freon +X", "Ampere Y")
@@ -1333,13 +1318,11 @@ export async function maintenance(req, res) {
             }
           } catch (e) { console.warn("[autolog] auto-close followup gagal (non-blocking):", e.message); }
 
-          const capped = repUnits.length > 0 && repUnits.length < unitIds.length;
           return res.status(200).json({
             created: createdLogs.length,
             followups_created: followupsCreated,
             followups_closed: followupsClosed,
             enriched: { photos: repFotos.length, units_detail: repUnits.length },
-            ...(capped ? { capped_from: unitIds.length, capped_to: effectiveUnitIds.length, reason: "hanya unit yang dilaporkan di laporan teknisi" } : {}),
           });
         }
 

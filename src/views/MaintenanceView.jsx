@@ -198,6 +198,7 @@ function statusPill(s) {
 // diimpor di atas, definisi lokal dihapus supaya tidak ada dua sumber kebenaran.
 
 export default function MaintenanceView({
+  monitorFocus = null,
   currentUser, apiFetch, showNotif, showConfirm,
   quotationsData, setQuotationsData, setOrdersData, ordersData,
   teknisiData, createOrderFn, createTeamSplitFn,
@@ -259,6 +260,18 @@ export default function MaintenanceView({
       setUnits(u.units || []); setLogs(l.logs || []);
     } catch (e) { showNotif("❌ " + e.message); }
   }, [call, showNotif]);
+
+  const openedMonitorFocus = useRef("");
+  useEffect(() => {
+    const id = monitorFocus?.clientId;
+    const key = `${id || ""}:${monitorFocus?.orderId || ""}`;
+    if (!id || !clients.length || openedMonitorFocus.current === key) return;
+    const client = clients.find(c => String(c.id) === String(id));
+    if (!client) return;
+    openedMonitorFocus.current = key;
+    openClient(client);
+    setTab("link");
+  }, [clients, monitorFocus, openClient]);
 
   const [clientModal, setClientModal] = useState(null);
 
@@ -391,7 +404,7 @@ export default function MaintenanceView({
             )}
             {tab === "price"   && <PriceTab sel={sel} units={units} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} />}
             {tab === "invoice" && <InvoiceTab sel={sel} units={units} logs={logs} call={call} showNotif={showNotif} />}
-            {tab === "link"    && <LinkTab sel={sel} units={units} call={call} showNotif={showNotif} showConfirm={showConfirm} />}
+            {tab === "link"    && <LinkTab sel={sel} units={units} call={call} showNotif={showNotif} showConfirm={showConfirm} focusOrderId={monitorFocus?.orderId} />}
             {tab === "portal" && <PortalTab sel={sel} setSel={setSel} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} onChanged={loadClients} />}
           </>
         );
@@ -3448,7 +3461,7 @@ function PriceTab({ sel, call, showNotif, showConfirm, isOwner }) {
 }
 
 // ─────────── CEK LINK TAB (audit per perusahaan, reuse link-audit) ───────────
-function LinkTab({ sel, units, call, showNotif, showConfirm }) {
+function LinkTab({ sel, units, call, showNotif, showConfirm, focusOrderId }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState(365);
@@ -3466,11 +3479,16 @@ function LinkTab({ sel, units, call, showNotif, showConfirm }) {
   // berubah tiap render App → deps [load] = re-fetch spam (trap loadClients).
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [days]);
+  useEffect(() => {
+    if (!data || !focusOrderId) return;
+    const timer = setTimeout(() => document.getElementById(`maintenance-link-${focusOrderId}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 80);
+    return () => clearTimeout(timer);
+  }, [data, focusOrderId]);
 
   // Tautkan 1 klik: order kandidat (HP cocok) → set maintenance_client_id ke perusahaan ini.
   const doLink = async (r) => {
-    const cid = r.suggest_client_id || sel.id;
-    const ok = await showConfirm?.({ title: "Tautkan order?", message: `Tautkan ${r.order_id} (${r.customer}) ke ${sel.name}?` });
+    const cid = sel.id;
+    const ok = await showConfirm?.({ title: "Tautkan order?", message: `Pastikan perusahaan/lokasi benar. Tautkan ${r.order_id} (${r.customer}) ke ${sel.name}? Nomor HP saja tidak membuktikan lokasi.` });
     if (showConfirm && !ok) return;
     setLinkingId(r.order_id);
     try {
@@ -3481,15 +3499,15 @@ function LinkTab({ sel, units, call, showNotif, showConfirm }) {
     finally { setLinkingId(null); }
   };
 
-  const name = sel.name;
   const mine = {
-    missing_logs: (data?.missing_logs || []).filter(r => r.client === name),
-    weak_links: (data?.weak_links || []).filter(r => r.client === name),
-    unverified: (data?.unverified || []).filter(r => r.customer === name),
-    invoice_unlinked: (data?.invoice_unlinked || []).filter(r => r.customer === name),
-    unlinked_candidates: (data?.unlinked_candidates || []).filter(r => r.suggest_client === name),
+    missing_logs: (data?.missing_logs || []).filter(r => r.client_id === sel.id),
+    needs_unit_mapping: (data?.needs_unit_mapping || []).filter(r => r.client_id === sel.id),
+    weak_links: (data?.weak_links || []).filter(r => r.client_id === sel.id),
+    unverified: (data?.unverified || []).filter(r => r.client_id === sel.id),
+    invoice_unlinked: (data?.invoice_unlinked || []).filter(r => r.client_id === sel.id),
+    unlinked_candidates: (data?.unlinked_candidates || []).filter(r => (r.candidate_client_ids || []).includes(sel.id)),
   };
-  const total = Object.values(mine).reduce((a, r) => a + r.length, 0);
+  const total = new Set(Object.values(mine).flat().map(r => r.order_id || r.invoice_id)).size;
 
   const Sec = ({ title, hint, color, rows, render }) => (
     <div style={{ marginBottom: 12 }}>
@@ -3508,13 +3526,16 @@ function LinkTab({ sel, units, call, showNotif, showConfirm }) {
   );
   // Baris dengan tombol "Petakan Unit" (untuk History kosong & Link lemah).
   const mapRow = (r, badge, bc) => (
-    <div key={r.order_id} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", alignItems: "center", gap: 8, padding: "8px 12px", background: cs.surface, borderRadius: 8, fontSize: 11 }}>
+    <div key={r.order_id} id={focusOrderId === r.order_id ? `maintenance-link-${r.order_id}` : undefined}
+      style={{ display: "grid", gridTemplateColumns: "1fr auto auto", alignItems: "center", gap: 8, padding: "8px 12px", background: cs.surface, border: focusOrderId === r.order_id ? `1px solid ${cs.accent}` : "1px solid transparent", borderRadius: 8, fontSize: 11 }}>
       <div>
         <div style={{ color: cs.text, fontWeight: 700 }}>{r.customer}</div>
         <div style={{ color: cs.muted, fontSize: 10, fontFamily: "monospace" }}>{r.order_id} · {r.service} · {r.date}</div>
       </div>
       <span style={{ color: bc, fontWeight: 800, fontSize: 10, whiteSpace: "nowrap" }}>{badge}</span>
-      <button onClick={() => setMapOrder({ order_id: r.order_id, customer: r.customer })} style={{ ...btn, fontSize: 11, padding: "6px 10px" }}>🔧 Petakan Unit</button>
+      {r.has_logs
+        ? <span style={{ color: cs.yellow, fontSize: 10 }}>Audit manual log lama</span>
+        : <button onClick={() => setMapOrder({ order_id: r.order_id, customer: r.customer })} style={{ ...btn, fontSize: 11, padding: "6px 10px" }}>🔧 Petakan Unit</button>}
     </div>
   );
 
@@ -3533,11 +3554,14 @@ function LinkTab({ sel, units, call, showNotif, showConfirm }) {
       </div>
       {!data ? <div style={{ color: cs.muted, padding: 20 }}>{loading ? "⏳ Memindai…" : "—"}</div> : (
         <>
-          <Sec title="🔴 History unit kosong" hint="Laporan VERIFIED ber-unit tapi 0 log. Klik Petakan Unit untuk memetakan unit laporan ke unit terdaftar (auto-tebak)." color={cs.red}
+          <Sec title="🔴 Unit laporan perlu ID" hint="Semua unit aktual harus punya ID registry yang unik. Log lama tidak dihapus otomatis; audit manual bila sudah ada riwayat." color={cs.red}
+            rows={mine.needs_unit_mapping} render={r => mapRow(r, `${r.units_no_id} kosong · ${r.units_duplicate_id} ganda · ${r.units_unknown_id} tidak dikenal · ${r.units_other_client} beda klien`, cs.red)} />
+          <Sec title="🔴 History unit kosong" hint="Laporan VERIFIED ber-unit tapi 0 log. Petakan setiap unit ke registry dan konfirmasi identitasnya." color={cs.red}
             rows={mine.missing_logs} render={r => mapRow(r, "0 log", cs.red)} />
           <Sec title="🟠 Order belum di-link (HP cocok)" hint="HP order cocok PIC perusahaan tapi belum ditautkan. Klik Tautkan untuk menautkan ke perusahaan ini." color={cs.yellow}
             rows={mine.unlinked_candidates} render={r => (
-              <div key={r.order_id} style={{ display: "grid", gridTemplateColumns: "1fr auto", alignItems: "center", gap: 8, padding: "8px 12px", background: cs.surface, borderRadius: 8, fontSize: 11 }}>
+              <div key={r.order_id} id={focusOrderId === r.order_id ? `maintenance-link-${r.order_id}` : undefined}
+                style={{ display: "grid", gridTemplateColumns: "1fr auto", alignItems: "center", gap: 8, padding: "8px 12px", background: cs.surface, border: focusOrderId === r.order_id ? `1px solid ${cs.accent}` : "1px solid transparent", borderRadius: 8, fontSize: 11 }}>
                 <div>
                   <div style={{ color: cs.text, fontWeight: 700 }}>{r.customer}</div>
                   <div style={{ color: cs.muted, fontSize: 10, fontFamily: "monospace" }}>{r.order_id} · {r.service} · {r.date}</div>
@@ -3552,8 +3576,8 @@ function LinkTab({ sel, units, call, showNotif, showConfirm }) {
             rows={mine.unverified} render={r => row(r.order_id, r.customer, `${r.order_id} · ${r.service} · ${r.date}`, "SUBMITTED", cs.yellow)} />
           <Sec title="🟠 Invoice belum ter-link" hint="Invoice order maintenance tanpa maintenance_client_id." color={cs.yellow}
             rows={mine.invoice_unlinked} render={r => row(r.invoice_id, r.customer, `${r.invoice_id} · ${r.order_id} · ${r.status}`, fmtRp(r.total), cs.yellow)} />
-          <Sec title="🔵 Link lemah (via posisi)" hint="Ada log tapi sebagian unit tanpa maint_unit_id — rawan salah AC. Petakan ulang untuk perbaiki." color={cs.accent}
-            rows={mine.weak_links} render={r => mapRow(r, `${r.units_no_id}/${r.units_total} tanpa ID`, cs.accent)} />
+          <Sec title="🔵 Link lemah (via posisi)" hint="Ada log lama tanpa ID unit. Audit manual dulu; sistem tidak akan menghapus riwayat yang sudah ada." color={cs.accent}
+            rows={mine.weak_links} render={r => mapRow({ ...r, has_logs: true }, `${r.units_no_id}/${r.units_total} tanpa ID`, cs.accent)} />
           <div style={{ fontSize: 10, color: cs.muted }}>Window {data.window_days} hari · membaca data; tombol Tautkan/Petakan menulis perbaikan. Sisanya dari Planning Order / Laporan Tim.</div>
         </>
       )}
@@ -3562,7 +3586,7 @@ function LinkTab({ sel, units, call, showNotif, showConfirm }) {
   );
 }
 
-// Skor kemiripan unit laporan ↔ unit registry (untuk auto-tebak pemetaan).
+// Skor kemiripan unit laporan ↔ registry, hanya untuk saran (tanpa auto-select).
 function unitMatchScore(rep, reg) {
   let s = 0;
   const rl = (rep.label || "").toLowerCase();
@@ -3582,11 +3606,11 @@ function unitMatchScore(rep, reg) {
 }
 const regUnitLabel = (u) => u.unit_code + (u.location ? " — " + u.location : "");
 
-// Modal "Petakan Unit": petakan tiap unit laporan → unit registry (auto-tebak, owner konfirmasi).
+// Modal "Petakan Unit": saran identitas tidak pernah dipilih otomatis.
 function MapUnitsModal({ order, registryUnits, call, showNotif, onClose, onDone }) {
   const [reportUnits, setReportUnits] = useState(null);
   const [pick, setPick] = useState({});   // idx → maint_unit_id
-  const [conf, setConf] = useState({});    // idx → skor tebakan
+  const [suggestion, setSuggestion] = useState({});
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -3596,20 +3620,16 @@ function MapUnitsModal({ order, registryUnits, call, showNotif, onClose, onDone 
         if (!alive) return;
         const units = j.units || [];
         setReportUnits(units);
-        // Auto-tebak greedy global (skor tertinggi dulu, registry tak dipakai ulang).
-        const pairs = [];
-        units.forEach((rep) => registryUnits.forEach(reg => {
-          const sc = unitMatchScore(rep, reg);
-          if (sc > 0) pairs.push({ idx: rep.idx, uid: reg.id, sc });
-        }));
-        pairs.sort((a, b) => b.sc - a.sc);
-        const mp = {}, cf = {}, used = new Set();
-        units.forEach(rep => { if (rep.maint_unit_id) { mp[rep.idx] = rep.maint_unit_id; cf[rep.idx] = 999; used.add(rep.maint_unit_id); } });
-        for (const p of pairs) {
-          if (mp[p.idx] != null || used.has(p.uid)) continue;
-          mp[p.idx] = p.uid; cf[p.idx] = p.sc; used.add(p.uid);
-        }
-        setPick(mp); setConf(cf);
+        const validIds = new Set(registryUnits.map(reg => reg.id));
+        const existing = {};
+        const suggestions = {};
+        units.forEach(rep => {
+          if (validIds.has(rep.maint_unit_id)) existing[rep.idx] = rep.maint_unit_id;
+          const ranked = registryUnits.map(reg => ({ reg, score: unitMatchScore(rep, reg) }))
+            .sort((a, b) => b.score - a.score);
+          if (ranked[0]?.score > 0) suggestions[rep.idx] = regUnitLabel(ranked[0].reg);
+        });
+        setPick(existing); setSuggestion(suggestions);
       })
       .catch(e => showNotif("❌ " + e.message));
     return () => { alive = false; };
@@ -3623,12 +3643,15 @@ function MapUnitsModal({ order, registryUnits, call, showNotif, onClose, onDone 
 
   const save = async () => {
     const mapping = Object.entries(pick).filter(([, uid]) => uid).map(([idx, uid]) => ({ idx: Number(idx), maint_unit_id: uid }));
-    if (!mapping.length) { showNotif("❌ Pilih minimal 1 unit"); return; }
+    if (mapping.length !== reportUnits?.length) { showNotif("❌ Semua unit laporan harus dipetakan ke ID unit yang berbeda"); return; }
     if (dupIds.size) { showNotif("❌ Ada unit registry dipilih lebih dari sekali — perbaiki dulu"); return; }
     setSaving(true);
     try {
       await call("remap-report-units", { order_id: order.order_id, mapping });
-      await call("autolog-from-order", { order_id: order.order_id });
+      const result = await call("autolog-from-order", { order_id: order.order_id });
+      if (result.needs_unit_selection || result.needs_manual_review || (!result.created && !result.skipped)) {
+        throw new Error(`ID tersimpan, tetapi riwayat belum dibuat (${result.reason || "perlu pemeriksaan"}). Cek ulang dari tab ini.`);
+      }
       showNotif(`✅ ${mapping.length} unit dipetakan & history dibuat`);
       onDone?.(); onClose();
     } catch (e) { showNotif("❌ " + e.message); }
@@ -3639,28 +3662,27 @@ function MapUnitsModal({ order, registryUnits, call, showNotif, onClose, onDone 
     <Overlay onClose={onClose}>
       <div style={{ fontWeight: 700, color: cs.text, fontSize: 16, marginBottom: 4 }}>🔧 Petakan Unit — {order.order_id}</div>
       <div style={{ color: cs.muted, fontSize: 11, marginBottom: 12 }}>
-        Cocokkan tiap unit di laporan ke unit terdaftar. Tebakan otomatis berdasarkan lokasi/merk/tipe/PK — periksa lalu simpan. Baris kuning = tebakan kurang yakin.
+        Cocokkan setiap unit laporan ke unit terdaftar. Saran berdasarkan lokasi/merk/tipe/PK tidak dipilih otomatis; admin harus memilih dan memeriksa semuanya.
       </div>
       {reportUnits === null ? <div style={{ color: cs.muted, padding: 20 }}>Memuat unit laporan…</div> :
        reportUnits.length === 0 ? <div style={{ color: cs.muted, padding: 20 }}>Laporan tidak punya unit.</div> : (
         <div style={{ display: "grid", gap: 8, maxHeight: 420, overflowY: "auto" }}>
           {reportUnits.map(u => {
-            const uncertain = (conf[u.idx] || 0) < 60 && conf[u.idx] !== 999;
             const isDup = pick[u.idx] && dupIds.has(pick[u.idx]);
             return (
               <div key={u.idx} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, alignItems: "center", padding: "8px 10px", borderRadius: 8,
-                background: isDup ? cs.red + "12" : uncertain ? (cs.yellow + "10") : cs.surface, border: "1px solid " + (isDup ? cs.red + "55" : uncertain ? cs.yellow + "44" : cs.border) }}>
+                background: isDup ? cs.red + "12" : cs.surface, border: "1px solid " + (isDup ? cs.red + "55" : cs.border) }}>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ color: cs.text, fontSize: 12, fontWeight: 600 }}>#{u.idx + 1} {u.label || "(tanpa label)"}</div>
                   <div style={{ color: cs.muted, fontSize: 11 }}>{[u.merk, u.pk, u.tipe].filter(Boolean).join(" · ") || "—"}</div>
                 </div>
                 <div>
-                  <select value={pick[u.idx] || ""} onChange={e => { setPick(p => ({ ...p, [u.idx]: e.target.value })); setConf(c => ({ ...c, [u.idx]: 999 })); }}
-                    style={{ ...inp, borderColor: isDup ? cs.red : uncertain ? cs.yellow : cs.border }}>
+                  <select value={pick[u.idx] || ""} onChange={e => setPick(p => ({ ...p, [u.idx]: e.target.value }))}
+                    style={{ ...inp, borderColor: isDup ? cs.red : cs.border }}>
                     <option value="">— belum dipetakan —</option>
                     {registryUnits.map(r => <option key={r.id} value={r.id}>{regUnitLabel(r)}</option>)}
                   </select>
-                  {uncertain && <div style={{ color: cs.yellow, fontSize: 10, marginTop: 2 }}>⚠ tebakan kurang yakin — periksa</div>}
+                  {suggestion[u.idx] && !pick[u.idx] && <div style={{ color: cs.yellow, fontSize: 10, marginTop: 2 }}>Saran (belum dipilih): {suggestion[u.idx]}</div>}
                   {isDup && <div style={{ color: cs.red, fontSize: 10, marginTop: 2 }}>⚠ unit ini dipilih ganda</div>}
                 </div>
               </div>

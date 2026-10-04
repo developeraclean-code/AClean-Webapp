@@ -1043,7 +1043,7 @@ function TabInvoiceRecon({ supabase }) {
 }
 
 // 🏢 Link Maintenance — pemeriksa missing-link: order maintenance yang putus link unit/client/invoice
-function TabMaintLink({ apiHeaders }) {
+function TabMaintLink({ apiHeaders, onNavigate }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [days, setDays] = useState(120);
@@ -1069,7 +1069,13 @@ function TabMaintLink({ apiHeaders }) {
   useEffect(() => { if (apiHeaders) load(); /* eslint-disable-next-line */ }, [apiHeaders, days]);
 
   const s = data?.summary || {};
-  const totalIssues = (s.missing_logs || 0) + (s.unverified || 0) + (s.invoice_unlinked || 0) + (s.unlinked_candidates || 0);
+  const totalIssues = data ? new Set([
+    ...(data.missing_logs || []).map(r => r.order_id),
+    ...(data.needs_unit_mapping || []).map(r => r.order_id),
+    ...(data.unverified || []).map(r => r.order_id),
+    ...(data.invoice_unlinked || []).map(r => r.order_id || r.invoice_id),
+    ...(data.unlinked_candidates || []).map(r => r.order_id),
+  ].filter(Boolean)).size : 0;
 
   const Section = ({ title, hint, color, rows, render }) => (
     <div>
@@ -1083,13 +1089,16 @@ function TabMaintLink({ apiHeaders }) {
     </div>
   );
 
-  const card = (key, main, sub, badge, badgeColor) => (
+  const card = (key, main, sub, badge, badgeColor, target, focus = null) => (
     <div key={key} style={{ display: "grid", gridTemplateColumns: "1fr auto", alignItems: "center", gap: 8, padding: "8px 12px", background: cs.surface, borderRadius: 8, fontSize: 11 }}>
       <div>
         <div style={{ color: cs.text, fontWeight: 700 }}>{main}</div>
         <div style={{ color: cs.muted, fontSize: 10, fontFamily: "monospace" }}>{sub}</div>
       </div>
-      {badge && <span style={{ color: badgeColor, fontWeight: 800, fontSize: 10, whiteSpace: "nowrap" }}>{badge}</span>}
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        {badge && <span style={{ color: badgeColor, fontWeight: 800, fontSize: 10, whiteSpace: "nowrap" }}>{badge}</span>}
+        {target && <button onClick={() => onNavigate?.(target, focus)} style={{ padding: "4px 8px", borderRadius: 6, border: `1px solid ${cs.accent}55`, background: cs.accent + "18", color: cs.accent, cursor: "pointer", fontSize: 10 }}>Buka menu →</button>}
+      </div>
     </div>
   );
 
@@ -1119,35 +1128,42 @@ function TabMaintLink({ apiHeaders }) {
             hint="Pekerjaan selesai & terverifikasi tapi belum tercatat ke unit mana pun. Pilih unit di order lalu verifikasi ulang laporan."
             color="#ef4444"
             rows={data.missing_logs || []}
-            render={(r) => card(r.order_id, `${r.customer} — ${r.client}`, `${r.order_id} · ${r.service} · ${r.date} · ${r.status}`, "0 log", "#ef4444")}
+            render={(r) => card(r.order_id, `${r.customer} — ${r.client}`, `${r.order_id} · ${r.service} · ${r.date} · ${r.status}`, "0 log", "#ef4444", "maintenance", { clientId: r.client_id, orderId: r.order_id })}
+          />
+          <Section
+            title="🔴 Unit laporan perlu dipetakan"
+            hint="ID unit kosong/ganda pada laporan VERIFIED. Petakan semua unit aktual di Maintenance → Cek Link; bila log lama sudah ada, audit manual diperlukan agar riwayat tidak terhapus."
+            color="#ef4444"
+            rows={data.needs_unit_mapping || []}
+            render={(r) => card(r.order_id, `${r.customer} — ${r.client}`, `${r.order_id} · ${r.date} · ${r.units_no_id} kosong · ${r.units_duplicate_id} ganda · ${r.units_unknown_id} tidak dikenal · ${r.units_other_client} beda klien`, r.has_logs ? "log lama: audit" : "petakan unit", "#ef4444", "maintenance", { clientId: r.client_id, orderId: r.order_id })}
           />
           <Section
             title="🟠 Order belum di-link (HP cocok perusahaan)"
             hint="Nomor HP order cocok dengan PIC perusahaan maintenance tapi order belum ditautkan. Tautkan supaya history tercatat."
             color="#f59e0b"
             rows={data.unlinked_candidates || []}
-            render={(r) => card(r.order_id, `${r.customer} → ${r.suggest_client}`, `${r.order_id} · ${r.service} · ${r.date} · ${r.status}`, "perlu link", "#f59e0b")}
+            render={(r) => card(r.order_id, `${r.customer} → ${r.suggest_client}`, `${r.order_id} · ${r.service} · ${r.date} · ${r.status}`, "perlu link", "#f59e0b", "maintenance", { clientId: r.suggest_client_id, orderId: r.order_id })}
           />
           <Section
             title="🟡 Laporan maintenance belum diverifikasi"
             hint="Autolog baru jalan saat laporan diverifikasi. Verifikasi di Laporan Tim agar history terisi."
             color="#eab308"
             rows={data.unverified || []}
-            render={(r) => card(r.order_id, r.customer, `${r.order_id} · ${r.service} · ${r.date}`, "SUBMITTED", "#eab308")}
+            render={(r) => card(r.order_id, r.customer, `${r.order_id} · ${r.service} · ${r.date}`, "SUBMITTED", "#eab308", "laporantim")}
           />
           <Section
             title="🟠 Invoice belum ter-link ke perusahaan"
             hint="Invoice order maintenance tapi maintenance_client_id kosong — tak muncul di tagihan B2B perusahaan."
             color="#f59e0b"
             rows={data.invoice_unlinked || []}
-            render={(r) => card(r.invoice_id, r.customer, `${r.invoice_id} · ${r.order_id} · ${r.status}`, fmtIDR(r.total), "#f59e0b")}
+            render={(r) => card(r.invoice_id, r.customer, `${r.invoice_id} · ${r.order_id} · ${r.status}`, fmtIDR(r.total), "#f59e0b", "invoice")}
           />
           <Section
             title="🔵 Link lemah (tercatat via posisi, bukan ID unit)"
             hint="Sudah ada log tapi sebagian unit laporan tak punya maint_unit_id (dicocokkan posisi — rawan salah AC bila urutan beda). Idealnya teknisi pilih unit via 'Tambah dari Daftar Maintenance'."
             color="#3b82f6"
             rows={data.weak_links || []}
-            render={(r) => card(r.order_id, `${r.customer} — ${r.client}`, `${r.order_id} · ${r.service} · ${r.date}`, `${r.units_no_id}/${r.units_total} tanpa ID`, "#3b82f6")}
+            render={(r) => card(r.order_id, `${r.customer} — ${r.client}`, `${r.order_id} · ${r.service} · ${r.date}`, `${r.units_no_id}/${r.units_total} tanpa ID`, "#3b82f6", "maintenance", { clientId: r.client_id, orderId: r.order_id })}
           />
           <div style={{ fontSize: 10, color: cs.muted }}>
             Window {data.window_days} hari. Pemeriksa ini hanya membaca data (tidak mengubah apa pun). Lakukan perbaikan dari menu terkait (Planning Order / Laporan Tim / Maintenance).
@@ -1308,7 +1324,7 @@ function TabDataHealth({ supabase }) {
   );
 }
 
-function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHeaders, supabase }) {
+function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHeaders, supabase, onNavigate }) {
   const [activeTab, setActiveTab] = useState("overview");
 
   const refreshOverview = async () => {
@@ -1373,7 +1389,7 @@ function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHe
       {activeTab === "wa"        && <TabWa supabase={supabase} />}
       {activeTab === "observations" && <TabWaObservations supabase={supabase} />}
       {activeTab === "recon"     && <TabInvoiceRecon supabase={supabase} />}
-      {activeTab === "maintlink" && <TabMaintLink apiHeaders={_apiHeaders} />}
+      {activeTab === "maintlink" && <TabMaintLink apiHeaders={_apiHeaders} onNavigate={onNavigate} />}
       {activeTab === "datahealth" && <TabDataHealth supabase={supabase} />}
       {activeTab === "audit"     && <TabAudit supabase={supabase} />}
     </div>

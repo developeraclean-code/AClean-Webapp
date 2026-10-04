@@ -14,15 +14,18 @@ export function getTeamSplitProgress(order, orders = [], reports = []) {
   ));
   const memberIds = new Set(members.map((item) => item.id));
   const groupReports = (reports || []).filter((report) => memberIds.has(report.job_id));
-  const submittedIds = new Set(groupReports.map((report) => report.job_id));
-  const verifiedIds = new Set(groupReports.filter((report) => report.status === "VERIFIED").map((report) => report.job_id));
+  const submittedIds = new Set(groupReports.filter(report => ["SUBMITTED", "VERIFIED"].includes(report.status)).map((report) => report.job_id));
+  const verifiedReports = groupReports.filter((report) => report.status === "VERIFIED");
+  const verifiedIds = new Set(verifiedReports.map((report) => report.job_id));
+  const duplicateVerifiedJobs = verifiedReports.length - verifiedIds.size;
   return {
     groupId,
     teamCount: members.length,
     submittedCount: submittedIds.size,
     verifiedCount: verifiedIds.size,
+    duplicateVerifiedJobs,
     allSubmitted: members.length > 0 && submittedIds.size === members.length,
-    allVerified: members.length > 0 && verifiedIds.size === members.length,
+    allVerified: members.length > 0 && verifiedIds.size === members.length && duplicateVerifiedJobs === 0,
   };
 }
 
@@ -40,4 +43,3 @@ export function getTeamFinalizationOutcome(data) {
     invoice: data?.invoice || null,
   };
 }
-

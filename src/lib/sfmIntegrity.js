@@ -244,12 +244,15 @@ export function applySafeIntegrityRepairs(input, audit = auditOperationalIntegri
 
 export function createSyntheticOperationalState(totalJobs = 100) {
   const state = { orders: [], reports: [], invoices: [], invoicePayments: [], schedules: [] };
+  const reportLimit = Math.ceil(totalJobs * 0.8);
+  const invoiceLimit = Math.ceil(totalJobs * 0.7);
+  const paidLimit = Math.ceil(totalJobs * 0.5);
   for (let index = 1; index <= totalJobs; index += 1) {
     const suffix = String(index).padStart(3, "0");
     const orderId = `SIM-JOB-${suffix}`;
-    const hasReport = index <= 80;
-    const hasInvoice = index <= 70;
-    const isPaid = index <= 50;
+    const hasReport = index <= reportLimit;
+    const hasInvoice = index <= invoiceLimit;
+    const isPaid = index <= paidLimit;
     const status = isPaid ? "PAID" : hasInvoice ? "INVOICE_APPROVED" : hasReport ? "REPORT_SUBMITTED" : "DISPATCHED";
     state.orders.push({ id: orderId, status, customer: `Sim Customer ${suffix}` });
     state.schedules.push({ id: `SIM-SLOT-${suffix}`, order_id: orderId, status: ACTIVE_ORDER_STATUSES.has(status) ? "ACTIVE" : "INACTIVE" });
@@ -304,6 +307,9 @@ export function simulateOperationalIntegrity(totalJobs = 100) {
 // nothing invariants before the equivalent RPCs are introduced in production.
 export function simulateAtomicLifecycleBatch(totalJobs = 100) {
   let state = { orders: [], reports: [], invoices: [], invoicePayments: [], schedules: [] };
+  const reportLimit = Math.ceil(totalJobs * 0.8);
+  const invoiceLimit = Math.ceil(totalJobs * 0.7);
+  const paidLimit = Math.ceil(totalJobs * 0.5);
   let forcedFailures = 0;
   let verifiedRollbacks = 0;
 
@@ -334,7 +340,7 @@ export function simulateAtomicLifecycleBatch(totalJobs = 100) {
       draft.schedules.push({ id: `LOAD-SLOT-${suffix}`, order_id: orderId, status: "ACTIVE" });
     }, index % 25 === 0 ? "CREATE_AFTER_ORDER" : null);
 
-    if (index <= 80) executeWithFailureRetry((draft, checkpoint) => {
+    if (index <= reportLimit) executeWithFailureRetry((draft, checkpoint) => {
       if (draft.reports.some(row => row.job_id === orderId)) throw new Error("DUPLICATE_REPORT");
       draft.reports.push({ id: reportId, job_id: orderId, status: "VERIFIED" });
       checkpoint("REPORT_AFTER_INSERT");
@@ -342,13 +348,13 @@ export function simulateAtomicLifecycleBatch(totalJobs = 100) {
       draft.schedules.find(row => row.order_id === orderId).status = "INACTIVE";
     }, index % 20 === 0 ? "REPORT_AFTER_INSERT" : null);
 
-    if (index <= 70) executeWithFailureRetry((draft, checkpoint) => {
+    if (index <= invoiceLimit) executeWithFailureRetry((draft, checkpoint) => {
       draft.invoices.push({ id: invoiceId, job_id: orderId, status: "UNPAID", total, paid_amount: 0, remaining_amount: total });
       checkpoint("INVOICE_AFTER_INSERT");
       draft.orders.find(row => row.id === orderId).status = "INVOICE_APPROVED";
     }, index % 23 === 0 ? "INVOICE_AFTER_INSERT" : null);
 
-    if (index <= 50) executeWithFailureRetry((draft, checkpoint) => {
+    if (index <= paidLimit) executeWithFailureRetry((draft, checkpoint) => {
       if (draft.invoicePayments.some(row => row.id === paymentId)) throw new Error("DUPLICATE_PAYMENT");
       draft.invoicePayments.push({ id: paymentId, invoice_id: invoiceId, amount: total, status: "POSTED" });
       checkpoint("PAYMENT_AFTER_LEDGER");

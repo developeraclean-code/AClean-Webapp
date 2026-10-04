@@ -760,6 +760,7 @@ export default function ACleanWebApp() {
       return saved || "dashboard";
     } catch { return "dashboard"; }
   });
+  const [maintenanceMonitorFocus, setMaintenanceMonitorFocus] = useState(null);
   const [activeRole, setActiveRole] = useState("owner");
 
   // ── Customer ──
@@ -4432,7 +4433,8 @@ export default function ACleanWebApp() {
   }, [activeMenu, currentUser]);
 
   const renderMonitoring = () => (
-    <MonitoringView monitorData={monitorData} setMonitorLoading={setMonitorLoading} setMonitorData={setMonitorData} _apiHeaders={_apiHeaders} supabase={supabase} />
+    <MonitoringView monitorData={monitorData} setMonitorLoading={setMonitorLoading} setMonitorData={setMonitorData} _apiHeaders={_apiHeaders} supabase={supabase}
+      onNavigate={(menu, focus) => { if (menu === "maintenance") setMaintenanceMonitorFocus(focus || null); setActiveMenu(menu); }} />
   );
 
   const renderWaGroupMonitor = () => (
@@ -4508,6 +4510,7 @@ export default function ACleanWebApp() {
       case "maintenance": return (
         <Suspense fallback={<div style={{ color: cs.muted, padding: 20 }}>Memuat...</div>}>
           <MaintenanceView
+            monitorFocus={maintenanceMonitorFocus}
             currentUser={currentUser} apiFetch={_apiFetch}
             showNotif={showNotif} showConfirm={showConfirm}
             quotationsData={quotationsData} setQuotationsData={setQuotationsData}

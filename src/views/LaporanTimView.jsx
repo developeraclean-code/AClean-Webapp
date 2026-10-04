@@ -790,10 +790,20 @@ const verifyLaporan = async (r) => {
         } else if (resp.ok && jj.needs_unit_selection) {
           // Order maintenance tapi unit belum ditentukan di mana pun → history TIDAK terisi.
           // Beri alert merah ke admin supaya link tidak diam-diam putus.
-          showNotif(`⚠️ Laporan ${r.job_id} = customer maintenance tapi unitnya belum dipilih — history unit TIDAK tercatat. Pilih AC di order (atau teknisi pilih via "Tambah dari Daftar Maintenance"), lalu verifikasi ulang. Cek Monitoring → Link Maintenance.`);
-          addAgentLog("MAINTENANCE_AUTOLOG_SKIP", `Order ${r.job_id} maintenance tapi unit belum dipilih — 0 log`, "WARNING");
+          showNotif(`⚠️ Laporan ${r.job_id} terverifikasi, tetapi ID unit aktual belum lengkap/valid (${jj.reason || "perlu pemetaan"}). Riwayat unit belum dibuat. Petakan di Maintenance → Cek Link; tidak perlu mengubah angka invoice.`);
+          addAgentLog("MAINTENANCE_AUTOLOG_SKIP", `Order ${r.job_id}: ${jj.reason || "unit belum dipetakan"} — 0 log`, "WARNING");
+        } else if (resp.ok && jj.needs_manual_review) {
+          showNotif(`⚠️ Riwayat maintenance ${r.job_id} berbeda dari unit aktual. Log lama tidak diubah; periksa Monitoring → Link Maintenance.`);
+          addAgentLog("MAINTENANCE_AUTOLOG_REVIEW", `Order ${r.job_id}: ${jj.reason}`, "WARNING");
+        } else if (!resp.ok) {
+          const reason = jj.error || `HTTP ${resp.status}`;
+          showNotif(`⚠️ Laporan terverifikasi, tetapi riwayat unit ${r.job_id} belum tercatat: ${reason}. Periksa Monitoring.`);
+          addAgentLog("MAINTENANCE_AUTOLOG_FAILED", `${r.job_id}: ${reason}`, "WARNING");
         }
-      } catch (_) { /* non-blocking — verifikasi tetap sukses */ }
+      } catch (error) {
+        showNotif(`⚠️ Laporan terverifikasi, tetapi sinkronisasi riwayat unit ${r.job_id} gagal. Periksa Monitoring.`);
+        addAgentLog("MAINTENANCE_AUTOLOG_FAILED", `${r.job_id}: ${error?.message || error}`, "WARNING");
+      }
     })();
   };
 

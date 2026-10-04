@@ -38,6 +38,18 @@ describe("team split workflow", () => {
     expect(state.allVerified).toBe(true);
   });
 
+  it("laporan REJECTED tidak dihitung sebagai masuk dan duplikat VERIFIED dikarantina", () => {
+    expect(getTeamSplitProgress(orders[0], orders, [
+      { id: "R-1", job_id: "G-1", status: "VERIFIED" },
+      { id: "R-2", job_id: "G-2", status: "REJECTED" },
+    ])?.allSubmitted).toBe(false);
+    expect(getTeamSplitProgress(orders[0], orders, [
+      { id: "R-1", job_id: "G-1", status: "VERIFIED" },
+      { id: "R-1-DUP", job_id: "G-1", status: "VERIFIED" },
+      { id: "R-2", job_id: "G-2", status: "VERIFIED" },
+    ])).toMatchObject({ allVerified: false, duplicateVerifiedJobs: 1 });
+  });
+
   it("menerjemahkan hasil RPC tanpa menebak status dari UI", () => {
     expect(getTeamFinalizationOutcome({
       group: { id: "G-1", team_count: 3, verified_count: 2, ready: false },
@@ -48,4 +60,3 @@ describe("team split workflow", () => {
     });
   });
 });
-
