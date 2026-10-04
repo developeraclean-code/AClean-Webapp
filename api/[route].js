@@ -7,6 +7,7 @@ import { customerStatus, submitRating, generateCustomerToken } from "./_handlers
 import { testConnection, health, getLlmConfig, getApiToken, manageUser } from "./_handlers/auth-token.js";
 import { projectDelete, maintenance, mPortal, projectPortal } from "./_handlers/portal.js";
 import { sendWa, notifyAbsence, receiveWa, waGroups } from "./_handlers/wa.js";
+import { waWorkspaceSend } from "./_handlers/wa-workspace.js";
 import { uploadFoto, foto, syncFotos } from "./_handlers/foto.js";
 import { araChat, cronReminder } from "./_handlers/misc.js";
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
@@ -34,6 +35,7 @@ const HANDLERS = {
   "m-portal": mPortal,
   "project-portal": projectPortal,
   "send-wa": sendWa,
+  "wa-workspace-send": waWorkspaceSend,
   "notify-absence": notifyAbsence,
   "receive-wa": receiveWa,
   "wa-groups": waGroups,

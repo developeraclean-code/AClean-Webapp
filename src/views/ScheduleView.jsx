@@ -1,26 +1,15 @@
 import { memo } from "react";
+import TeamScheduleBoard from "./TeamScheduleBoard.jsx";
+import { planningWeek } from "../lib/teamPlanning.js";
 import { cs } from "../theme/cs.js";
 import { statusColor, statusLabel } from "../constants/status.js";
 import { smartSearchNormalize } from "../lib/phone.js";
 import { useAppContext } from "../context/AppContext.js";
 
-function ScheduleView({ ordersData, setOrdersData, laporanReports, customersData, teknisiData, weekOffset, setWeekOffset, scheduleView, setScheduleView, filterTeknisi, setFilterTeknisi, calLaporanFilter, setCalLaporanFilter, searchSchedule, setSearchSchedule, schedListFilter, setSchedListFilter, schedPage, setSchedPage, setModalOrder, setSelectedCustomer, setCustomerTab, setActiveMenu, setEditOrderItem, setEditOrderForm, setModalEditOrder, setHistoryPreview, setWaTekTarget, setModalWaTek, getTechColor, dispatchStatus, sendDispatchWA, dispatchWA, deleteOrder, openWA, openLaporanModal, openJobReport, materialsBroughtMap, sendWA, updateOrderStatus, hitungJamSelesai, downloadRekapHarian, triggerRekapHarian, SCHED_PAGE_SIZE, getLocalDate, userAccounts, uploadServiceReportPDFForWA, invoicesData, setLaporanReports, sendDocumentWA }) {
+function ScheduleView({ onPlanOrder, ordersData, setOrdersData, laporanReports, customersData, teknisiData, weekOffset, setWeekOffset, scheduleView, setScheduleView, filterTeknisi, setFilterTeknisi, calLaporanFilter, setCalLaporanFilter, searchSchedule, setSearchSchedule, schedListFilter, setSchedListFilter, schedPage, setSchedPage, setModalOrder, setSelectedCustomer, setCustomerTab, setActiveMenu, setEditOrderItem, setEditOrderForm, setModalEditOrder, setHistoryPreview, setWaTekTarget, setModalWaTek, getTechColor, dispatchStatus, sendDispatchWA, dispatchWA, deleteOrder, openWA, openLaporanModal, openJobReport, materialsBroughtMap, sendWA, updateOrderStatus, hitungJamSelesai, downloadRekapHarian, triggerRekapHarian, SCHED_PAGE_SIZE, getLocalDate, userAccounts, uploadServiceReportPDFForWA, invoicesData, setLaporanReports, sendDocumentWA }) {
   // Fase 1: primitif global dari AppContext.
   const { currentUser, isMobile, addAgentLog, auditUserName, showConfirm, showNotif, supabase, TODAY } = useAppContext();
-// Hitung minggu dinamis berdasarkan weekOffset
-const dayNames = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
-const baseDate = new Date();
-// Cari Minggu (hari pertama minggu ini)
-const dayOfWeek = baseDate.getDay();
-const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-const weekStart = new Date(baseDate);
-weekStart.setDate(baseDate.getDate() + mondayOffset + (weekOffset * 7));
-const weekDays = Array.from({ length: 7 }, (_, i) => {
-  const d = new Date(weekStart);
-  d.setDate(weekStart.getDate() + i);
-  const iso = d.toISOString().slice(0, 10);
-  return { date: iso, label: `${dayNames[d.getDay()]} ${d.getDate()}` };
-});
+const weekDays = planningWeek(TODAY, weekOffset);
 const weekLabel = `${weekDays[0].date.slice(5).replace("-", "/")} – ${weekDays[6].date.slice(5).replace("-", "/")}`;
 const techColors = Object.fromEntries([...new Set(ordersData.map(o => o.teknisi).filter(Boolean))].map(n => [n, getTechColor(n, teknisiData)]))
 
@@ -48,13 +37,6 @@ const filteredOrders = !_sqSched ? _baseOrders : _baseOrders.filter(o =>
   (o.service || "").toLowerCase().includes(_sqSched) ||
   (o.phone || "").includes(searchSchedule.trim())
 );
-// Smart teknisiList: HANYA teknisi yang punya job minggu ini (baris kosong tak
-// dirender — bikin grid ramping). Helper tak punya baris sendiri, tampil sbg chip
-// di dalam card. Kalau user filter ke teknisi spesifik, tetap tampil walau kosong.
-const weekDateSet = new Set(weekDays.map(d => d.date));
-const teksWithJobThisWeek = new Set(ordersData.filter(o => weekDateSet.has(o.date) && o.status !== "CANCELLED" && o.teknisi).map(o => o.teknisi));
-const smartTekNames = [...teksWithJobThisWeek].sort();
-const teknisiList = activeTek === "Semua" ? smartTekNames : [activeTek];
 // Untuk teknisi/helper: filter hanya hari ini
 const todayOrdersTek = isTekRole ? filteredOrders.filter(o => o.date === TODAY) : filteredOrders;
 
@@ -160,14 +142,14 @@ return (
           </div>
         )}
         {!isTekRole && (
-          <button onClick={() => setModalOrder(true)} style={{ background: "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", color: "#0a0f1e", padding: "9px 16px", borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>+ Order</button>
+          <button onClick={() => onPlanOrder ? onPlanOrder(null, { date: TODAY }) : setModalOrder(true)} style={{ background: "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", color: "#0a0f1e", padding: "9px 16px", borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>+ Order</button>
 
         )}
       </div>
     </div>
 
-    {/* Teknisi filter pills — Owner/Admin only */}
-    {!isTekRole && (
+    {/* Person filter remains available in the work list. Weekly planning uses Team. */}
+    {!isTekRole && scheduleView === "list" && (
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
         <span style={{ fontSize: 11, color: cs.muted, fontWeight: 600, marginRight: 4 }}>Filter:</span>
         {["Semua", ...allTekNames].map(name => {
@@ -267,7 +249,7 @@ return (
     )}
 
     {/* Stats bar for filtered teknisi */}
-    {activeTek !== "Semua" && (
+    {activeTek !== "Semua" && (isTekRole || scheduleView === "list") && (
       <div style={{ background: cs.card, border: "1px solid " + (techColors[activeTek] || cs.accent) + "44", borderRadius: 12, padding: "12px 16px", display: "flex", gap: 20, alignItems: "center" }}>
         <div style={{ width: 36, height: 36, borderRadius: 9, background: "linear-gradient(135deg," + (techColors[activeTek] || cs.accent) + "," + (techColors[activeTek] || cs.accent) + "66)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 16, color: "#fff" }}>
           {activeTek.charAt(0)}
@@ -422,95 +404,21 @@ return (
       <>
         {/* WEEK CALENDAR VIEW */}
         {scheduleView === "week" ? (
-          <div style={{ overflowX: "auto" }}>
-            <div style={{ minWidth: 600 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "70px repeat(7,1fr)", gap: 2, marginBottom: 2 }}>
-                <div />
-                {weekDays.map(d => (
-                  <div key={d.date} style={{ background: d.date === TODAY ? cs.accent + "22" : cs.surface, border: "1px solid " + (d.date === TODAY ? cs.accent : cs.border), borderRadius: 7, padding: "7px 4px", textAlign: "center", fontSize: 11, fontWeight: 700, color: d.date === TODAY ? cs.accent : cs.muted }}>{d.label}</div>
-                ))}
-              </div>
-              {teknisiList.length === 0 && (
-                <div style={{ textAlign: "center", padding: "28px 12px", color: cs.muted, fontSize: 13, background: cs.card, border: "1px dashed " + cs.border, borderRadius: 8 }}>
-                  📭 Tidak ada teknisi dengan jadwal minggu ini.
-                </div>
-              )}
-              {teknisiList.map(tek => (
-                <div key={tek} style={{ display: "grid", gridTemplateColumns: "70px repeat(7,1fr)", gap: 2, marginBottom: 2 }}>
-                  <div style={{ background: cs.card, border: "1px solid " + (techColors[tek] || cs.border), borderRadius: 7, padding: "6px 4px", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <span style={{ fontSize: 9, fontWeight: 800, color: techColors[tek] || cs.muted, textAlign: "center", lineHeight: 1.3 }}>{(tek || "").split(" ")[0]}</span>
-                  </div>
-                  {weekDays.map(d => {
-                    // Job hanya muncul di baris teknisi UTAMA — helper ditampilkan sebagai chip di dalam card
-                    const jobs = ordersData
-                      .filter(o => o.teknisi === tek && o.date === d.date)
-                      .filter(o => {
-                        if (calLaporanFilter === "semua") return true;
-                        const lap = getLaporan(o.id);
-                        const verified = !!lap && ["VERIFIED", "APPROVED"].includes(lap.status);
-                        const cardSent = isReportSent(o.id);
-                        const invState = invoiceStatus(o.id, o.invoice_id).state;
-                        if (calLaporanFilter === "sudah") return cardSent;                                  // card terkirim
-                        if (calLaporanFilter === "belum") return verified && !cardSent;                     // card siap tapi belum kirim
-                        if (calLaporanFilter === "report_belum") return !verified;                          // report belum diverifikasi
-                        if (calLaporanFilter === "invoice_belum") return ["none", "unsent", "draft"].includes(invState);
-                        return true;
-                      });
-                    return (
-                      <div key={d.date} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, padding: 4, minHeight: 60 }}>
-                        {jobs.map(j => {
-                          const hasLaporan = laporanReports.some(r => r.job_id === j.id);
-                          const lap = laporanReports.find(r => r.job_id === j.id);
-                          const lapStatus = lap?.status;
-                          const lapVerified = lapStatus === "VERIFIED" || lapStatus === "APPROVED";
-                          const sent = isReportSent(j.id);
-                          const col = techColors[tek] || cs.accent;
-                          const borderHL = sent ? cs.green : hasLaporan ? (lapVerified ? cs.green : "#facc15") : col;
-                          const canSend = lapVerified && !sent;
-                          // ── Strip status 3-titik: Report · Card · Invoice (klik = aksi 1-langkah) ──
-                          const invSt = invoiceStatus(j.id, j.invoice_id);
-                          const reportColor = lapVerified ? cs.green : hasLaporan ? "#facc15" : cs.muted;
-                          const reportTitle = (lapVerified ? "📋 Report: VERIFIED" : hasLaporan ? "📋 Report: SUBMITTED (belum diverifikasi)" : "📋 Report: belum dibuat teknisi") + " · klik: buka report";
-                          const cardColor = sent ? cs.green : cs.muted;
-                          const cardTitle = (sent ? "📤 Report card: TERKIRIM" : lapVerified ? "📤 Report card: BELUM dikirim" : "📤 Report card: menunggu verifikasi") + (canSend ? " · klik: kirim" : "");
-                          const dotStyle = (c) => ({ width: 5, height: 5, borderRadius: "50%", background: c, display: "inline-block", flexShrink: 0 });
-                          // ── At-risk: job sudah lewat 2+ hari tapi report belum diverifikasi ──
-                          const twoDaysAgo = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10);
-                          const atRisk = j.date && j.date <= twoDaysAgo && !lapVerified && j.status !== "CANCELLED";
-                          const leftBar = atRisk ? cs.red : borderHL;
-                          const chip = (title, color, icon, onClick) => (
-                            <span title={title} onClick={onClick ? (e) => { e.stopPropagation(); onClick(); } : undefined}
-                              style={{ fontSize: 8, display: "flex", alignItems: "center", gap: 1, cursor: onClick ? "pointer" : "default" }}>
-                              {icon}<span style={dotStyle(color)} />
-                            </span>
-                          );
-                          return (
-                            <div key={j.id} style={{ background: col + "22", border: "1px solid " + (atRisk ? cs.red : leftBar) + "66", borderLeft: "3px solid " + leftBar, borderRadius: 5, padding: "3px 5px", marginBottom: 2 }}>
-                              <div style={{ fontSize: 9, fontWeight: 800, color: col }}>{j.time}{atRisk && <span title="⚠️ Sudah 2+ hari, report belum diverifikasi" style={{ marginLeft: 3, color: cs.red }}>⚠️</span>}</div>
-                              <div style={{ fontSize: 9, color: cs.text }}>{(j.customer || "").slice(0, 14)}{(j.customer || "").length > 14 ? "…" : ""}</div>
-                              <div style={{ fontSize: 8, color: cs.muted }}>{j.service}{j.helper ? " · 🤝" + (j.helper).split(" ")[0] : ""}</div>
-                              {/* Strip status klik-aksi: 📋 buka report · 📤 kirim card · 🧾 buka invoice */}
-                              <div style={{ display: "flex", gap: 6, marginTop: 3, alignItems: "center" }}>
-                                {chip(reportTitle, reportColor, "📋", () => openLaporanModal(j))}
-                                {chip(cardTitle, cardColor, "📤", canSend ? () => kirimReportCard(j) : undefined)}
-                                {chip("🧾 " + invSt.label + " · klik: buka Invoice", invSt.color, "🧾", () => setActiveMenu("invoice"))}
-                              </div>
-                              {canSend && (
-                                <button onClick={(e) => { e.stopPropagation(); kirimReportCard(j); }}
-                                  title="Kirim report card ke customer"
-                                  style={{ marginTop: 3, width: "100%", background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, borderRadius: 3, fontSize: 7, fontWeight: 700, cursor: "pointer", padding: "1px 0" }}>
-                                  📤 Kirim Card
-                                </button>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    );
-                  })}                </div>
-              ))}
-            </div>
-          </div>
+          <TeamScheduleBoard supabase={supabase} days={weekDays} revision={ordersData} search={searchSchedule}
+            onPlan={onPlanOrder} onManageTeams={() => setActiveMenu("wa-inbox")}
+            accepts={o => {
+              const lap = getLaporan(o.id), verified = !!lap && ["VERIFIED", "APPROVED"].includes(lap.status);
+              if (calLaporanFilter === "sudah") return isReportSent(o.id);
+              if (calLaporanFilter === "belum") return verified && !isReportSent(o.id);
+              if (calLaporanFilter === "report_belum") return !verified;
+              if (calLaporanFilter === "invoice_belum") return ["none", "unsent", "draft"].includes(invoiceStatus(o.id, o.invoice_id).state);
+              return true;
+            }}
+            renderActions={job => <div className="team-job-actions">
+              <button onClick={() => openLaporanModal(job)}>Laporan</button>
+              <button onClick={() => setActiveMenu("invoice")}>Invoice</button>
+              {["VERIFIED", "APPROVED"].includes(getLaporan(job.id)?.status) && !isReportSent(job.id) && <button onClick={() => kirimReportCard(job)}>Kirim card</button>}
+            </div>} />
         ) : (
           /* LIST VIEW */
           <div style={{ display: "grid", gap: 10 }}>
@@ -640,7 +548,7 @@ return (
                             <button onClick={() => sendDispatchWA(o)} style={{ background: "#25D36622", border: "1px solid #25D36644", color: "#25D366", padding: "6px 10px", borderRadius: 7, cursor: "pointer", fontSize: 11 }}>📱 Dispatch</button>
                           )}
                           {!isTekRole && (
-                            <button onClick={() => { setEditOrderItem(o); setEditOrderForm({ customer: o.customer, phone: o.phone || "", address: o.address || "", area: o.area || "", service: o.service, type: o.type || "", units: o.units || 1, teknisi: o.teknisi, helper: o.helper || "", teknisi2: o.teknisi2 || "", helper2: o.helper2 || "", teknisi3: o.teknisi3 || "", helper3: o.helper3 || "", date: o.date, time: o.time || "09:00", status: o.status, notes: o.notes || "" }); setModalEditOrder(true); }} style={{ background: cs.yellow + "22", border: "1px solid " + cs.yellow + "44", color: cs.yellow, padding: "6px 10px", borderRadius: 7, cursor: "pointer", fontSize: 11 }}>✏️ Edit</button>
+                            <button onClick={() => { if (onPlanOrder && ["PENDING","CONFIRMED","DISPATCHED"].includes(o.status) && !o.project_id) { onPlanOrder(o); return; } setEditOrderItem(o); setEditOrderForm({ customer: o.customer, phone: o.phone || "", address: o.address || "", area: o.area || "", service: o.service, type: o.type || "", units: o.units || 1, teknisi: o.teknisi, helper: o.helper || "", teknisi2: o.teknisi2 || "", helper2: o.helper2 || "", teknisi3: o.teknisi3 || "", helper3: o.helper3 || "", date: o.date, time: o.time || "09:00", status: o.status, notes: o.notes || "" }); setModalEditOrder(true); }} style={{ background: cs.yellow + "22", border: "1px solid " + cs.yellow + "44", color: cs.yellow, padding: "6px 10px", borderRadius: 7, cursor: "pointer", fontSize: 11 }}>✏️ Edit</button>
                           )}
                           {currentUser?.role === "Owner" && !(["COMPLETED", "PAID"].includes(o.status)) && (
                             <button onClick={async () => {

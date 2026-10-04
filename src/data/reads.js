@@ -149,7 +149,7 @@ export const searchInvoicesServer = (supabase, query) => {
     .limit(100);
 };
 
-const CUSTOMER_COLS = "id,name,phone,address,area,email,is_vip,notes,joined_date,total_orders,last_service,membership_tier,total_units_serviced";
+const CUSTOMER_COLS = "id,name,phone,address,area,email,is_vip,notes,joined_date,total_orders,last_service,last_rating_request,membership_tier,total_units_serviced";
 // Bootstrap capped (hemat egress) — PostgREST batas keras 1000 baris/request. Customer di
 // atas 1000 (urut nama) TIDAK ter-load; pencarian ke sana ditembus server-side via
 // searchCustomersServer (pola sama order/invoice/laporan). Lookup presisi per-phone tetap

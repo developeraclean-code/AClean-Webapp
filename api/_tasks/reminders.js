@@ -1,5 +1,8 @@
 // api/_tasks/reminders.js — Task cron grup reminders (dipindah APA ADANYA dari
 // api/cron-reminder.js, pemecahan _tasks/ Jul 2026). Entry & jadwal tetap di cron-reminder.js.
+import { randomUUID } from "node:crypto";
+import { dispatchWorkspaceMessage, deliverWorkspaceMessage } from "../_wa-workspace.js";
+import { validateAndNormalizePhone } from "../_validate.js";
 import { sb, sendWA, isCronJobEnabled, fmt, daysSince, log, OWNER_PHONE } from "./_shared.js";
 
 // ══════════════════════════════════════════════════
@@ -244,7 +247,21 @@ export async function taskServisReminder() {
       `Mau jadwalkan servis berikutnya? Balas pesan ini atau:\n${link}\n\n` +
       `— AClean Service`;
 
-    const ok = await sendWA(c.phone, msg);
+    // Shared durable claim/cooldown with the manual WhatsApp workspace.
+    // If storage is unavailable, skip instead of sending an untracked duplicate.
+    let ok = false;
+    try {
+      const row = await dispatchWorkspaceMessage(sb, randomUUID(), {
+        phone: validateAndNormalizePhone(c.phone), kind: "SERVICE_REMINDER", customer_id: String(c.id),
+        document_id: null, message: msg, url: null, filename: null,
+      }, "Reminder otomatis", deliverWorkspaceMessage);
+      ok = row.status === "ACCEPTED";
+      if (!ok) { skipped++; await log("SERVIS_REMINDER", `Reminder ${c.name}: ${row.status}`, "WARNING"); }
+    } catch (error) {
+      skipped++;
+      await log("SERVIS_REMINDER", `Dilewati ${c.name}: ${error.message}`, "WARNING");
+      continue;
+    }
     if (ok) {
       sent++;
       // Update last_rating_request agar tidak spam

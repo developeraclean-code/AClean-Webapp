@@ -1,3 +1,4 @@
+import { planningWeekOffset } from "./lib/teamPlanning.js";
 import { useState, useEffect, useRef, useCallback, useMemo, Component, lazy, Suspense } from "react";
 import { supabase } from "./supabaseClient.js";
 import { normalizePhone, samePhone } from "./lib/phone.js";
@@ -139,6 +140,7 @@ const RestockModal           = lazy(() => import("./views/RestockModal.jsx"));
 const ApproveInvoiceModal    = lazy(() => import("./views/ApproveInvoiceModal.jsx"));
 const EditPasswordModal      = lazy(() => import("./views/EditPasswordModal.jsx"));
 const CustomerHistoryModal   = lazy(() => import("./views/CustomerHistoryModal.jsx"));
+const SchedulePlanModal = lazy(() => import("./views/SchedulePlanModal.jsx"));
 const WaPanel                = lazy(() => import("./views/WaPanel.jsx"));
 const BrainEditModal         = lazy(() => import("./views/BrainEditModal.jsx"));
 const WaTekModal             = lazy(() => import("./views/WaTekModal.jsx"));
@@ -839,6 +841,8 @@ export default function ACleanWebApp() {
 
   // ── WA panel ──
   const [waPanel, setWaPanel] = useState(false);
+  const [waPlanningDraft, setWaPlanningDraft] = useState(null);
+  const [schedulePlanRequest, setSchedulePlanRequest] = useState(null);
   const [selectedConv, setSelectedConv] = useState(null);
   const [waInput, setWaInput] = useState("");
 
@@ -3933,6 +3937,7 @@ export default function ACleanWebApp() {
   // ============================================================
   const renderOrderInbox = () => (
     <OrderInboxView
+      incomingDraft={waPlanningDraft} onDraftConsumed={() => setWaPlanningDraft(null)}
       ordersData={ordersData} setOrdersData={setOrdersData}
       customersData={customersData} setCustomersData={setCustomersData} teknisiData={teknisiData}
       sendWA={sendWA} showUndoToast={showUndoToast}
@@ -4057,7 +4062,7 @@ export default function ACleanWebApp() {
   // RENDER SCHEDULE
   // ============================================================
   const renderSchedule = () => (
-    <ScheduleView ordersData={ordersData} setOrdersData={setOrdersData} laporanReports={laporanReports} customersData={customersData}
+    <ScheduleView onPlanOrder={(order, form) => setSchedulePlanRequest({ id: crypto.randomUUID(), order, form, source: "manual" })} ordersData={ordersData} setOrdersData={setOrdersData} laporanReports={laporanReports} customersData={customersData}
       teknisiData={teknisiData} weekOffset={weekOffset} setWeekOffset={setWeekOffset}
       scheduleView={scheduleView} setScheduleView={setScheduleView} filterTeknisi={filterTeknisi} setFilterTeknisi={setFilterTeknisi}
       calLaporanFilter={calLaporanFilter} setCalLaporanFilter={setCalLaporanFilter} searchSchedule={searchSchedule} setSearchSchedule={setSearchSchedule}
@@ -5168,10 +5173,82 @@ export default function ACleanWebApp() {
           waInput={waInput} setWaInput={setWaInput}
           customersData={customersData} setCustomersData={setCustomersData}
           ordersData={ordersData}
+          invoicesData={invoicesDataMerged} paymentSuggestions={paymentSuggestions}
+          technicians={teknisiData} duration={hitungDurasi} reports={laporanReports}
+          sendWorkspaceMessage={async payload => {
+            const response = await _apiFetch("/api/wa-workspace-send", {
+              method: "POST", headers: await _apiHeaders(), body: JSON.stringify(payload),
+            });
+            const result = await response.json();
+            if (!response.ok || !result.row) throw new Error(result.error || "Status kirim belum dapat dipastikan");
+            return result.row;
+          }}
+          onSendDocument={async (kind, item, id, phone) => {
+            const table = kind === "INVOICE" ? "invoices" : "service_reports";
+            const { data, error } = await supabase.from(table).select("*").eq("id", item.id).single();
+            if (error || !data) throw new Error("Dokumen terbaru gagal dimuat. Pengiriman dibatalkan.");
+            let url, filename;
+            if (kind === "INVOICE") {
+              if (!samePhone(data.phone, phone) || !["APPROVED", "UNPAID", "OVERDUE", "PARTIAL_PAID", "PAID"].includes(data.status)) throw new Error("Invoice belum disetujui atau nomor tidak sesuai");
+              url = await uploadInvoicePDFForWA(parseInvoiceRow(data));
+              filename = `Invoice-${data.id}.pdf`;
+            } else {
+              const { data: order, error: orderError } = await supabase.from("orders").select("phone").eq("id", data.job_id).single();
+              if (orderError || data.status !== "VERIFIED" || !samePhone(order?.phone, phone)) throw new Error("Laporan belum diverifikasi atau nomor tidak sesuai");
+              url = await uploadServiceReportPDFForWA(parseLaporanRow(data), invoicesDataMerged.find(i=>i.job_id===data.job_id));
+              filename = `Laporan-${data.job_id}.pdf`;
+            }
+            if (!url) throw new Error("PDF gagal disiapkan. Tidak ada pesan yang dikirim.");
+            const response = await _apiFetch("/api/wa-workspace-send", { method: "POST", headers: await _apiHeaders(),
+              body: JSON.stringify({ id, phone, kind, document_id: data.id, message: `Halo, berikut ${kind === "INVOICE" ? "invoice" : "laporan servis"} AClean ${data.id}. Terima kasih.`, url, filename }),
+            });
+            const result = await response.json();
+            if (!response.ok || !result.row) throw new Error(result.error || "Status pengiriman belum pasti. Periksa riwayat sebelum mencoba lagi.");
+            return result.row;
+          }}
+          onAppliedPayments={(rows, suggestionId) => {
+            const changed = new Map(rows.map(row=>[row.id,parseInvoiceRow(row)]));
+            setInvoicesData(prev=>prev.map(i=>changed.has(i.id)?{...i,...changed.get(i.id)}:i));
+            setSearchInvExt(prev=>prev.map(i=>changed.has(i.id)?{...i,...changed.get(i.id)}:i));
+            setPaymentSuggestions(prev=>prev.filter(s=>s.id!==suggestionId));
+            setPaymentSuggestBanner(prev=>prev?.id===suggestionId?null:prev);
+            setOrdersData(prev=>prev.map(o=>rows.some(i=>i.job_id===o.id && i.status==="PAID")?{...o,status:"PAID"}:o));
+          }}
+          onCreateOrder={draft => setSchedulePlanRequest({ id: crypto.randomUUID(), form: draft, source: "whatsapp" })}
+          onOpenInvoice={query => {
+            setSearchInvoice(query || "");
+            setInvoiceFilter("Semua");
+            setInvoicePage(1);
+            setInvoiceDateFrom(""); setInvoiceDateTo("");
+            setWaPanel(false);
+            setActiveMenu("invoice");
+          }}
+          onOpenSchedule={(customer, conv) => {
+            setSearchSchedule(customer?.name || conv.phone || "");
+            setFilterTeknisi("Semua");
+            setCalLaporanFilter("semua");
+            setScheduleView("list");
+            setSchedListFilter("semua");
+            setSchedPage(1);
+            setWaPanel(false);
+            setActiveMenu("schedule");
+          }}
           waProvider={waProvider} isMobile={isMobile} currentUser={currentUser}
           supabase={supabase} showNotif={showNotif} sendWA={sendWA}
-          addAgentLog={addAgentLog} setActiveMenu={setActiveMenu}
+          addAgentLog={addAgentLog}
         />
+        {schedulePlanRequest && <SchedulePlanModal key={schedulePlanRequest.id} request={schedulePlanRequest} supabase={supabase}
+          onClose={() => setSchedulePlanRequest(null)}
+          onSaved={row => { invalidateCache("orders"); setOrdersData(prev => prev.some(o => o.id === row.id) ? prev.map(o => o.id === row.id ? { ...o, ...row } : o) : [row, ...prev]); }}
+          onViewSchedule={row => {
+            setSchedulePlanRequest(null); setWaPanel(false); setActiveMenu("schedule");
+            setWeekOffset(planningWeekOffset(getLocalDate(), row.date)); setScheduleView("week");
+            setFilterTeknisi("Semua"); setSearchSchedule(""); setCalLaporanFilter("semua");
+          }}
+          onOpenPlanning={form => {
+            if (!schedulePlanRequest.order) setWaPlanningDraft({ id: crypto.randomUUID(), form });
+            setSchedulePlanRequest(null); setWaPanel(false); setActiveMenu("wa-inbox");
+          }} />}
       </Suspense>
 
       {/* ═══════ MODAL TAMBAH/EDIT PENGGUNA ═══════ */}

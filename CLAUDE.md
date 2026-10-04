@@ -3,7 +3,6 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## ⚡ Protokol Eksekusi (WAJIB — sebelum menulis kode apa pun)
-
 **Baca [docs/AGENT_PLAYBOOK.md](docs/AGENT_PLAYBOOK.md) section yang sesuai tipe tugasmu** sebelum
 edit pertama. Ringkasnya:
 
@@ -35,19 +34,15 @@ Copy `env.example` to `.env.local`. Required variables:
 Optional integrations: `FONNTE_TOKEN` (WhatsApp via Fonnte), `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY`/`GROQ_API_KEY` (AI), `R2_*` variables (Cloudflare R2 image storage), `INTERNAL_API_SECRET` (backend token auth), `OWNER_PHONE` (required for cron WA alerts).
 
 ## Architecture
-
 **Frontend:** React app with a monolithic root component in [src/App.jsx](src/App.jsx) (~5,000 lines — sudah dipangkas dari 13k via ekstraksi view/modal). Navigation is handled by `activeMenu` state → `renderContent()` → lazy-loaded view components.
 
 Views are split into dedicated files under `src/views/`. Heavy views are lazy-loaded via `React.lazy()`.
-
 **Backend:** Vercel serverless functions in [api/](api/):
 - [`api/[route].js`](api/[route].js) — Unified router (~80 baris), route di-delegate ke modul [api/_handlers/](api/_handlers/) (auth-token, customer, foto, misc, monitor, portal, voucher, wa)
 - [`api/ara-chat.js`](api/ara-chat.js) — AI assistant proxy (Claude/OpenAI/Gemini/Groq with fallback)
 - [`api/cron-reminder.js`](api/cron-reminder.js) — Dispatcher cron (~220 baris), task di modul [api/_tasks/](api/_tasks/) (reminders, ops, cleanup, wa-ai, _shared). Task baru = tambah di _tasks/, BUKAN cron entry vercel.json
 - [`api/_auth.js`](api/_auth.js) — Shared middleware: CORS, rate limiting, internal token validation
-
 **Database:** Supabase (PostgreSQL). Frontend connects via `@supabase/supabase-js` (anon key). Backend uses `SUPABASE_SERVICE_KEY`. No ORM — raw Supabase query builder throughout.
-
 **Deployment:** Vercel. Cron jobs defined in [`vercel.json`](vercel.json) — 20+ scheduled jobs.
 
 ## Role Access Control (ENFORCE THIS — see also docs/SOP_ADMIN_ROLE.md)
@@ -75,7 +70,6 @@ Role hierarchy: **Owner > Admin > Teknisi > Helper**. Enforced in `canAccess()` 
 | Stok Material | ✅ | ✅ | ❌ | ❌ |
 | Biaya | ✅ | ✅ | ❌ | ❌ |
 | **Laporan Saya** | ❌ | ❌ | ✅ | ✅ |
-
 **Critical rules (DO NOT violate):**
 - `pricelist` menu dan edit buttons → Owner only. Admin diblok di `canAccess()` dan di `canEdit` PriceListView.
 - `settings` → Owner only. Admin tidak bisa ubah toggle WA/AI/cron.
@@ -85,7 +79,6 @@ Role hierarchy: **Owner > Admin > Teknisi > Helper**. Enforced in `canAccess()` 
 - Supabase `user_profiles` DELETE tidak punya RLS policy untuk anon key → pakai `/api/manage-user` endpoint untuk delete user.
 
 ## Key Business Rules
-
 **Invoice:**
 - Overdue threshold: **7 hari** setelah invoice di-approve
 - Status flow: Draft → APPROVED → UNPAID → PAID / OVERDUE / PARTIAL_PAID
@@ -251,18 +244,13 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
 154       # Applied 28 Agu 2026 — trigger trg_guard_inventory_price: hanya Owner/Admin boleh
           #   ubah price/purchase_price/pack_* (policy `inventory_all` blanket authenticated
           #   — teknisi TERBUKTI bisa menulis; stok tetap bebas agar potong stok jalan)
-155-163   # Applied Agu-Sep 2026 — skema insentif 2025, tutup payment suggestion basi,
-          #   sinkron stok unit, approval expense, baseline timbang freon, metadata unit,
-          #   koreksi label tabung, dan penutupan sesi material lama
-164       # Applied 11 Sep 2026 — 10 komisi order s/d 30 Apr 2026 ditandai PAID manual;
-          #   paid_at historis 30 Apr agar tidak masuk arus kas/payroll minggu berjalan
-165       # Applied 11 Sep 2026 — 31 kandidat bonus April yang belum diinput ditutup sebagai
-          #   Bonus Manual Rp 0 PAID; seluruh review bonus April kini selesai
-166       # Applied 12 Sep 2026 — efisiensi free tier: aktifkan cleanup foto expense, RPC ukuran DB,
-          #   snapshot + alarm WA kuota Supabase DB/R2
+155-163   # Applied Agu-Sep 2026 — skema insentif 2025, tutup payment suggestion basi, sinkron stok unit, approval expense, baseline timbang freon, metadata unit, koreksi label tabung, dan penutupan sesi material lama
+164       # Applied 11 Sep 2026 — 10 komisi order s/d 30 Apr 2026 ditandai PAID manual; paid_at historis 30 Apr agar tidak masuk arus kas/payroll minggu berjalan
+165       # Applied 11 Sep 2026 — 31 kandidat bonus April yang belum diinput ditutup sebagai Bonus Manual Rp 0 PAID; seluruh review bonus April kini selesai
+166       # Applied 12 Sep 2026 — efisiensi free tier: aktifkan cleanup foto expense, RPC ukuran DB, snapshot + alarm WA kuota Supabase DB/R2
 167       # Applied 13 Sep 2026 — RPC snapshot Dashboard untuk bootstrap ringan Owner/Admin
-168       # Applied 13 Sep 2026 — Monitoring exact/paginasi, approval dan provenance Biaya,
-          #   budget bulanan serta tautan nota-ke-stok atomik
+168       # Applied 13 Sep 2026 — Monitoring exact/paginasi, approval dan provenance Biaya, budget bulanan serta tautan nota-ke-stok atomik
+193–194   # Applied 5 Okt 2026 — WA workspace/RLS/outbox/pembayaran + planning Team atomik; schema produksi dan transaksi Owner/Admin/Teknisi diverifikasi dengan rollback
 ```
 
 > Daftar di atas pernah tertinggal jauh (berhenti di 126 padahal file sudah 132).

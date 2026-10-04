@@ -7,11 +7,14 @@ import { getTechColor } from "../lib/techColor.js";
 import { detectContinuationCandidates, calcContinuationDayNum, multiDayProgress } from "../lib/orders.js";
 import { withMaintenanceLink, findMaintClientByPhoneAddr } from "../lib/maintenanceLink.js";
 import { planningDisplayStatus, submittedReportJobIds } from "../lib/planningStatus.js";
+import { planningTeams } from "../lib/teamPlanning.js";
+import { createWaPlanningForm } from "../lib/waWorkspace.js";
 import {
   ORDER_TEKNISI_FIELDS,
   ORDER_HELPER_FIELDS,
   buildOrderTeamAssignment,
   resolveRegularOrderTeam,
+  emptyOrderTeamAssignment,
 } from "../lib/teamAssignment.js";
 import QuickScheduleModal from "../components/QuickScheduleModal.jsx";
 import MaintUnitPickerModal from "./MaintUnitPickerModal.jsx";
@@ -855,16 +858,17 @@ function SafetyNetPanel({ slotDate, dailySlots, availability, ordersData, teknis
   );
 }
 
-function getWeekDays(offset = 0) {
-  const base = new Date();
-  const dow = base.getDay();
+function getWeekDays(offset, today) {
+  // Use the app's WIB date, independent of the device timezone.
+  const base = new Date(today + "T00:00:00Z");
+  const dow = base.getUTCDay();
   const toMon = dow === 0 ? -6 : 1 - dow;
   const weekStart = new Date(base);
-  weekStart.setDate(base.getDate() + toMon + offset * 7);
+  weekStart.setUTCDate(base.getUTCDate() + toMon + offset * 7);
   return Array.from({ length: 7 }, (_, i) => {
     const d = new Date(weekStart);
-    d.setDate(weekStart.getDate() + i);
-    return { date: d.toISOString().slice(0, 10), label: `${WEEK_DAYS[i]} ${d.getDate()}` };
+    d.setUTCDate(weekStart.getUTCDate() + i);
+    return { date: d.toISOString().slice(0, 10), label: `${WEEK_DAYS[i]} ${d.getUTCDate()}` };
   });
 }
 
@@ -878,12 +882,6 @@ function calcTimeEnd(timeStart, service, units) {
   return String(nh).padStart(2, "0") + ":" + String(nm).padStart(2, "0");
 }
 
-// Slot tim tetap: Team 01-10 (utama) + Maintenance 01-02 (paling akhir); ekstra dari team_presets
-const TEAM_SLOTS_BASE = [
-  ...Array.from({ length: 10 }, (_, i) => `Team ${String(i + 1).padStart(2, "0")}`),
-  "Maintenance 01", "Maintenance 02",
-  ...Array.from({ length: 4 }, (_, i) => `Malam ${String(i + 1).padStart(2, "0")}`),
-];
 const MEMBER_ROLES = ["teknisi", "helper"];
 // Kapasitas tim: 8 orang (4 teknisi + 4 helper) — migrasi 127, naik dari 4 orang.
 const MEMBER_COUNT = 8;
@@ -1074,7 +1072,7 @@ function SuggestRow({ c, maint, lastDate }) {
   );
 }
 
-export default function OrderInboxView({ ordersData, setOrdersData, customersData, setCustomersData, teknisiData, sendWA, showUndoToast, insertOrder, apiHeaders, laporanReports }) {
+export default function OrderInboxView({ ordersData, setOrdersData, customersData, setCustomersData, teknisiData, sendWA, showUndoToast, insertOrder, apiHeaders, laporanReports, incomingDraft, onDraftConsumed }) {
   // Fase 1 refactor: primitif global (currentUser/supabase/showNotif/showConfirm/
   // auditUserName/TODAY) dibaca dari AppContext, bukan prop-drilling. View ini
   // selalu dirender di dalam <App> (Provider), aman pakai useAppContext.
@@ -1125,19 +1123,9 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     return () => { alive = false; };
   }, [supabase]);
 
-  // Slot tim aktif: base 10 + tim ekstra dari preset, urut by nomor.
-  // Team NN SELALU didahulukan, Maintenance NN (dan preset lain) di akhir —
-  // sebelumnya sort murni by digit ("Maintenance 01" vs "Team 01" sama-sama
-  // angka 1) bikin Maintenance menyelip di antara Team 01/02 (temuan 20 Jul 2026).
-  const TEAM_SLOTS = useMemo(() => {
-    const all = Array.from(new Set([...TEAM_SLOTS_BASE, ...Object.keys(teamPresets)]));
-    const rank = (name) => name.startsWith("Team ") ? 0 : name.startsWith("Maintenance ") ? 1 : name.startsWith("Malam ") ? 2 : 3;
-    return all.sort((a, b) => {
-      const r = rank(a) - rank(b);
-      if (r !== 0) return r;
-      return (parseInt(a.match(/\d+/)?.[0] || "0", 10)) - (parseInt(b.match(/\d+/)?.[0] || "0", 10));
-    });
-  }, [teamPresets]);
+  const TEAM_SLOTS = useMemo(() => planningTeams(
+    Object.keys(teamPresets).map(slot => ({ slot })), dailySlots, ordersData.filter(o => o.date >= TODAY && o.status !== "CANCELLED")
+  ), [teamPresets, dailySlots, ordersData, TODAY]);
 
   // Load data saat mount
   useEffect(() => {
@@ -1158,7 +1146,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     load();
   }, []);
 
-  const weekDays = useMemo(() => getWeekDays(weekOffset), [weekOffset]);
+  const weekDays = useMemo(() => getWeekDays(weekOffset, TODAY), [weekOffset, TODAY]);
   const weekLabel = `${weekDays[0].date.slice(5).replace("-", "/")} – ${weekDays[6].date.slice(5).replace("-", "/")}`;
 
   // Semua anggota aktif (teknisi + helper)
@@ -1300,6 +1288,26 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   // ── Multi-hari: state saat form diisi sebagai lanjutan order lain ──
   const [continuationFrom, setContinuationFrom] = useState(null); // order induk
   const [continuationDismissed, setContinuationDismissed] = useState(false);
+
+  const consumedDraft = useRef(null);
+  useEffect(() => {
+    if (!incomingDraft || consumedDraft.current === incomingDraft.id) return;
+    consumedDraft.current = incomingDraft.id;
+    setForm(createWaPlanningForm(incomingDraft.form, calcTimeEnd));
+    setEditId(null);
+    setContinuationFrom(null);
+    setFilterStatus("ALL"); setFilterTeam("ALL"); setSearchQ("");
+    setGridDate(null);
+    onDraftConsumed?.();
+    window.scrollTo({ top: 0 });
+  }, [incomingDraft, onDraftConsumed]);
+
+  function focusPlanningDate(date) {
+    const monday = getWeekDays(0, TODAY)[0].date;
+    setWeekOffset(Math.floor((Date.parse(date + "T00:00:00Z") - Date.parse(monday + "T00:00:00Z")) / (7 * 86400000)));
+    setGridDate(date); setTimeGridDate(date); setSlotDate(date);
+    setFilterStatus("ALL"); setFilterTeam("ALL"); setSearchQ("");
+  }
 
   // Auto-detect pekerjaan lanjutan berdasarkan no HP
   const autoDetectedJobs = useMemo(() => {
@@ -1714,8 +1722,9 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     }
     // State lokal pakai row lengkap (bawa maintenance_client_id + unit_ids) → badge langsung muncul.
     setOrdersData(prev => [{ ...row, created_at: new Date().toISOString() }, ...prev]);
+    focusPlanningDate(row.date);
     const unitMsg = unitIds && unitIds.length ? ` · ${unitIds.length} unit dipilih` : "";
-    showNotif(continuation ? `✅ Order lanjutan Hari ${basePayload.day_number} dibuat${unitMsg}` : `Order masuk disimpan${unitMsg}`);
+    showNotif(continuation ? `✅ Order lanjutan Hari ${basePayload.day_number} dibuat${unitMsg}` : `Planning Order tersimpan untuk ${row.date}${unitMsg}${!row.teknisi ? " · Tim dapat diisi kemudian" : ""}`);
   }
 
   // Finalisasi order dari popup pilih-unit (dipanggil onConfirm/onSkip).
@@ -1821,6 +1830,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         members: slot ? slotMemberRoles(slot) : [],
         presetTeknisi: form.team_slot ? teamPresets[form.team_slot] : "",
       });
+      if (!personnelPayload && ["PENDING", "CONFIRMED"].includes(form.status)) personnelPayload = emptyOrderTeamAssignment();
       if (!personnelPayload) {
         setSaving(false);
         unlock();
@@ -2048,11 +2058,12 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       // hanya update team_slot, biarkan TFIELDS/HFIELDS tetap
     } else if (field === "team_slot") {
       const slot = value ? getSlotData(order.date, value) : null;
-      const assignment = resolveRegularOrderTeam({
+      let assignment = resolveRegularOrderTeam({
         teamSlot: value,
         members: slot ? slotMemberRoles(slot) : [],
         presetTeknisi: value ? teamPresets[value] : "",
       });
+      if (!assignment && ["PENDING", "CONFIRMED"].includes(order.status)) assignment = emptyOrderTeamAssignment();
       if (!assignment) {
         showNotif("⚠️ Tim " + value + " belum punya anggota & belum ada preset", "warning");
         return false;
@@ -2401,7 +2412,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
           {/* Tanggal */}
           <div>
             <label style={labelStyle}>Tanggal *</label>
-            <input style={inputStyle} type="date" value={form.date}
+            <input aria-label="Tanggal pengerjaan" style={inputStyle} type="date" value={form.date}
               onChange={e => setField("date", e.target.value)} />
           </div>
 
@@ -2434,9 +2445,9 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
           {/* Team Slot */}
           <div>
             <label style={labelStyle}>Assign ke Tim</label>
-            <div style={{ color: cs.muted, fontSize: 10, marginBottom: 4 }}>Untuk mulai 18:00 ke atas, pilih slot Malam agar roster teknisi/helper terpisah.</div>
-            <select style={inputStyle} value={form.team_slot} onChange={e => setField("team_slot", e.target.value)}>
-              <option value="">— Pilih tim —</option>
+            <div style={{ color: cs.muted, fontSize: 10, marginBottom: 4 }}>Opsional saat planning. Teknisi dan helper bisa diisi pada hari pengerjaan. Untuk mulai 18:00 ke atas, gunakan slot Malam.</div>
+            <select aria-label="Tim planning" style={inputStyle} value={form.team_slot} onChange={e => setField("team_slot", e.target.value)}>
+              <option value="">— Tentukan tim nanti —</option>
               {TEAM_SLOTS.map(s => {
                 const slot = getSlotData(form.date || TODAY, s);
                 const members = slotMembers(slot);
