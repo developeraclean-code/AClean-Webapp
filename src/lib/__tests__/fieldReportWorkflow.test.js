@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   findDelayedFieldReports, isFieldOrderAssigned, loadFieldReportDraft, saveFieldReportDraft, uploadWithRetry,
 } from "../fieldReportWorkflow.js";
+import { openLaporanModal } from "../openLaporanModal.js";
+import { fieldUserKey } from "../fieldOfflineQueue.js";
 
 const makeStorage = () => {
   const data = new Map();
@@ -37,6 +39,29 @@ describe("field report workflow", () => {
     expect(loadFieldReportDraft("JOB1", "tech-a").units[0].label).toBe("Milik A");
     expect(loadFieldReportDraft("JOB1", "tech-b").units[0].label).toBe("Milik B");
     expect(loadFieldReportDraft("JOB1", "tech-c")).toBeNull();
+  });
+
+  it("does not let async maintenance prefill replace the signed-in user's draft", async () => {
+    const currentUser = { id: "TECH-1", name: "Dedi" };
+    saveFieldReportDraft("JOB-MAINT", { units: [{ label: "Draft Unit" }] }, fieldUserKey(currentUser));
+    const setLaporanUnits = vi.fn();
+    const noOp = vi.fn();
+    const ctx = new Proxy({
+      currentUser,
+      laporanReports: [],
+      setLaporanUnits,
+      submitLaporanLock: { current: false },
+      _apiFetch: vi.fn(async () => ({ ok: true, json: async () => ({ units: [{ id: "REGISTRY-1" }] }) })),
+      supabase: { from: () => ({ select: () => ({ eq: () => ({ in: () => ({ order: async () => ({ data: [] }) }) }) }) }) },
+    }, { get: (target, key) => key in target ? target[key] : noOp });
+
+    openLaporanModal({ id: "JOB-MAINT", maintenance_client_id: "CLIENT-1", maintenance_unit_ids: ["REGISTRY-1"], units: 1 }, ctx);
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    // Pembukaan modal mengosongkan form; registry yang datang async tidak boleh
+    // mengisi ulangnya karena draft akun aktif akan dipulihkan oleh modal.
+    expect(setLaporanUnits).toHaveBeenCalledTimes(1);
+    expect(setLaporanUnits).toHaveBeenCalledWith([]);
   });
 
   it("retries a failed background upload", async () => {

@@ -3,6 +3,7 @@
 // TIDAK memutasi DB — hanya set state UI. Diekstrak dari App.jsx (Fase 2, pola ctx).
 // ctx = param ke-2. Body verbatim (behavior-preserving).
 import { hasFieldReportDraft } from "./fieldReportWorkflow.js";
+import { fieldUserKey } from "./fieldOfflineQueue.js";
 
 export function openLaporanModal(order, {
   AC_REGISTRY_CUTOFF, _apiFetch, acUnitToHist, buildCustomerHistory, currentUser,
@@ -18,7 +19,10 @@ export function openLaporanModal(order, {
   setShowUnitPresetModal, setUnitPresetHistory, setUnitPresetSelected, showNotif,
   submitLaporanLock, supabase,
 } = {}) {
-    const hadDraftAtOpen = hasFieldReportDraft(order?.id);
+    // Draft lokal di-scope per akun agar data dua teknisi pada perangkat bersama
+    // tidak tertukar. Gunakan scope yang sama saat mencegah async prefill registry
+    // menimpa draft yang akan dipulihkan oleh LaporanTeknisiModal.
+    const hadDraftAtOpen = hasFieldReportDraft(order?.id, fieldUserKey(currentUser));
     // ANTI-DUPLIKAT: cek apakah sudah ada laporan untuk job ini
     const existingReport = laporanReports.find(r => r.job_id === (order._rewriteId ? order.id : order.id) && r.status !== "PENDING");
     if (existingReport && !order._rewriteId) {
