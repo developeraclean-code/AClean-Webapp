@@ -64,7 +64,7 @@ Script membangun schema pendukung minimal, memuat fungsi asli migrasi 170/171/17
 Hasil verifikasi lokal setelah pembaruan Jadwal Team, 5 Oktober 2026:
 
 - 811 test dalam 87 file Vitest lulus pada salinan commit WA/Jadwal (perubahan Mode Darurat terpisah tidak disertakan).
-- 22 test browser WhatsApp/Planning lulus, termasuk desktop/HP, pop-up, preset yang bertambah, anggota per hari, absensi, reschedule, konflik admin, dan kegagalan jaringan.
+- 24 test browser WhatsApp/Planning lulus, termasuk desktop/HP, pop-up, preset yang bertambah, anggota per hari, absensi, reschedule, konflik admin, kegagalan jaringan, grid sampai 19:00, navigasi hari lintas minggu, dan planning malam dari WA yang tetap terlihat di Planning Order.
 - 13 kelompok kontrak SQL WhatsApp dan 13 kelompok kontrak SQL planning lulus dengan PostgreSQL/WASM.
 - Build produksi, lint `src`, typecheck, pemeriksaan sintaks backend, dan `git diff --check` lulus.
 - Smoke test preview localhost lulus: navigasi reorder, kirim berhasil/gagal, slot jadwal, alokasi pembayaran, reset; tanpa error JavaScript atau permintaan jaringan eksternal.

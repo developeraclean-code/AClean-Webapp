@@ -362,3 +362,59 @@ test('failed calendar reads cannot offer a new slot as if it were free',async({p
   await expect(page.getByRole('alert')).toHaveCount(0);
   await expect(page.getByRole('button',{name:'+ Rencanakan',exact:true}).first()).toBeEnabled();
 });
+
+test('Jadwal stops at 19:00, estimates missing end times, and keeps night bookings in Planning Order',async({page})=>{
+  await openTeamCalendar(page);
+  await page.evaluate(()=>{
+    window.waTest.presets.push({slot:'Malam 01',sort_order:99});
+    window.waTest.orders.push({id:'LATE-TEST',customer:'Pekerjaan sore uji',service:'Repair',units:2,status:'CONFIRMED',date:'2026-10-05',time:'17:00',time_end:'20:00',team_slot:'Team 08'});
+  });
+  await page.getByRole('button',{name:'↻ Muat ulang',exact:true}).click();
+  await page.getByRole('button',{name:'Buka WhatsApp',exact:true}).click();
+  await chooseMaya(page);
+  await page.getByRole('button',{name:'+ Jadwalkan',exact:true}).click();
+  const popup=page.getByRole('dialog',{name:'Rencanakan dari WhatsApp'});
+  await popup.getByLabel('Tanggal pengerjaan').fill('2026-10-05');
+  await popup.getByLabel('Team',{exact:true}).selectOption('Malam 01');
+  await popup.getByLabel('Jumlah unit',{exact:true}).fill('2');
+  await popup.getByLabel('Jam mulai',{exact:true}).fill('19:00');
+  await popup.getByRole('button',{name:'Simpan planning',exact:true}).click();
+  await expect(popup.getByRole('heading',{name:'Planning tersimpan'})).toBeVisible();
+  await popup.getByRole('button',{name:'Lihat di Jadwal'}).click();
+  await expect(page.locator('.team-time-head span')).toHaveText(Array.from({length:11},(_,i)=>`${String(i+9).padStart(2,'0')}:00`));
+  await expect(page.locator('.team-row-label')).toHaveCount(9);
+  await expect(page.getByLabel('Filter Team jadwal')).not.toContainText('Malam');
+  await expect(page.locator('.team-board')).not.toContainText('Ibu Maya');
+  await expect(page.getByLabel('Timeline harian')).toContainText('09:00–12:00');
+  const late=page.getByLabel('Timeline harian').getByRole('button',{name:/Pekerjaan sore uji/});
+  expect(await late.evaluate(el=>({left:el.style.left,width:el.style.width}))).toEqual({left:'80%',width:'20%'});
+  expect(await page.evaluate(()=>window.waTest.orders.find(o=>o.team_slot==='Malam 01').time_end)).toBe('21:00');
+  await page.getByRole('button',{name:'Planning Order',exact:true}).click();
+  await expect(page.getByRole('region',{name:'Planning Order lokal'})).toContainText('Ibu Maya');
+});
+
+test('day arrows navigate across both week boundaries and retain hourly booking actions',async({page})=>{
+  await openTeamCalendar(page);
+  const day=page.locator('.team-day-navigation h3');
+  await expect(day).toHaveText('2026-10-05');
+  await page.getByRole('button',{name:'Hari sebelumnya',exact:true}).click();
+  await expect(day).toHaveText('2026-10-04');
+  await expect(page.locator('.team-day.selected')).toContainText('04/10');
+  await page.getByRole('button',{name:'Hari berikutnya',exact:true}).click();
+  await expect(day).toHaveText('2026-10-05');
+  await page.getByRole('button',{name:'Hari berikutnya',exact:true}).click();
+  await expect(day).toHaveText('2026-10-06');
+  const timeline=page.getByLabel('Timeline harian');
+  await timeline.getByRole('button',{name:/Ibu Ratna/}).click();
+  await expect(page.getByRole('dialog',{name:'Ubah rencana pekerjaan'}).getByLabel('Tanggal pengerjaan')).toHaveValue('2026-10-06');
+  await page.getByRole('button',{name:'Tutup rencana'}).click();
+  await page.locator('.team-day').filter({hasText:'11/10'}).click();
+  await page.getByRole('button',{name:'Hari berikutnya',exact:true}).click();
+  await expect(day).toHaveText('2026-10-12');
+  await expect(page.locator('.team-day.selected')).toContainText('12/10');
+  await page.setViewportSize({width:390,height:844});
+  await expect(page.getByRole('button',{name:'Hari sebelumnya'})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Hari berikutnya'})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+  await page.screenshot({path:'/tmp/aclean-team-day-navigation-mobile.png'});
+});

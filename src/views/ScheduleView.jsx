@@ -405,7 +405,7 @@ return (
         {/* WEEK CALENDAR VIEW */}
         {scheduleView === "week" ? (
           <TeamScheduleBoard supabase={supabase} days={weekDays} revision={ordersData} search={searchSchedule}
-            onPlan={onPlanOrder} onManageTeams={() => setActiveMenu("wa-inbox")}
+            onShiftWeek={delta=>setWeekOffset(n=>n+delta)} onPlan={onPlanOrder} onManageTeams={() => setActiveMenu("wa-inbox")}
             accepts={o => {
               const lap = getLaporan(o.id), verified = !!lap && ["VERIFIED", "APPROVED"].includes(lap.status);
               if (calLaporanFilter === "sudah") return isReportSent(o.id);

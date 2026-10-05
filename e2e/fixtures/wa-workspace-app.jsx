@@ -161,7 +161,7 @@ export default function WorkspaceFixture({ onAction, onNotice, planningMode = fa
   };
   return <><button className="demo-launch" onClick={() => setOpen(true)}>Buka WhatsApp</button>
     {planningMode && <><button className="demo-launch" onClick={()=>{setOpen(false);setBoardOpen(true);setPlanningOpen(false);}}>Jadwal Tim</button><button className="demo-launch" onClick={()=>{setOpen(false);setPlanningOpen(true);setBoardOpen(false);}}>Planning Order</button></>}
-    {boardOpen && <><div className="team-actions"><button onClick={()=>setWeekOffset(n=>n-1)}>← Minggu sebelumnya</button><button onClick={()=>setWeekOffset(n=>n+1)}>Minggu berikutnya →</button></div><TeamScheduleBoard supabase={db} days={planningWeek(getLocalDate(),weekOffset)} revision={orderRows}
+    {boardOpen && <><div className="team-actions"><button onClick={()=>setWeekOffset(n=>n-1)}>← Minggu sebelumnya</button><button onClick={()=>setWeekOffset(n=>n+1)}>Minggu berikutnya →</button></div><TeamScheduleBoard supabase={db} days={planningWeek(getLocalDate(),weekOffset)} revision={orderRows} onShiftWeek={delta=>setWeekOffset(n=>n+delta)}
       onPlan={(order,form)=>setPlanRequest({id:crypto.randomUUID(),order:order?{...order}:null,form,source:"manual"})} onManageTeams={()=>{setBoardOpen(false);setPlanningOpen(true);}} /></>}
     {planRequest && <SchedulePlanModal key={planRequest.id} request={planRequest} supabase={db} onClose={()=>setPlanRequest(null)}
       onSaved={row=>setOrderRows(prev=>prev.some(o=>o.id===row.id)?prev.map(o=>o.id===row.id?row:o):[row,...prev])}
