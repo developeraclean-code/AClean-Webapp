@@ -60,6 +60,8 @@ import {
 // Registry unit AC permanen hanya berlaku maju (order >= tanggal ini). Historis dibiarkan.
 const AC_REGISTRY_CUTOFF = "2026-06-25";
 import DashboardView from "./views/DashboardView.jsx";
+import EmergencyModeView from "./views/EmergencyModeView.jsx";
+import { getEmergencyVaultMeta } from "./lib/emergencyVault.js";
 import ConfirmModal from "./views/ConfirmModal.jsx";
 import CommissionPinModal from "./views/CommissionPinModal.jsx";
 import KasbonWidget from "./views/KasbonWidget.jsx";
@@ -734,10 +736,11 @@ function GroupPaymentModal({ ctx, onConfirm, onClose, fmt, cs }) {
   );
 }
 
-export default function ACleanWebApp() {
+export default function ACleanWebApp({ onEmergencyActivated }) {
   // ── Auth & Role ──
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
+  const [emergencySetupOpen, setEmergencySetupOpen] = useState(false);
   const [dataLoading, setDataLoading] = useState(false);
   const [bootstrapReady, setBootstrapReady] = useState(false);
   const [paymentsData, setPaymentsData] = useState([]);
@@ -1694,8 +1697,8 @@ export default function ACleanWebApp() {
   // ── LLM Settings: Load from backend endpoint instead of localStorage ──
   // SECURITY FIX: Never store API keys in localStorage
   // Backend endpoint /api/get-llm-config returns available providers & default
-  const [llmProvider, setLlmProvider] = useState(() => _ls("llmProvider", "claude"));
-  const [llmModel, setLlmModel] = useState(() => { const p = _ls("llmProvider", "claude"); const m = _ls("llmModel", ""); if (m) return m; return p === "minimax" ? "MiniMax-M2.5" : "claude-haiku-4-5-20251001"; });
+  const [llmProvider, setLlmProvider] = useState(() => _ls("llmProvider", "claude") === "minimax" ? "claude" : _ls("llmProvider", "claude"));
+  const [llmModel, setLlmModel] = useState(() => { const p = _ls("llmProvider", "claude"); return p === "openai" ? "gpt-6-luna" : "claude-haiku-4-5"; });
   const [llmConfig, setLlmConfig] = useState(null); // stores backend response
   const [availableProviders, setAvailableProviders] = useState([]);
   const [ollamaUrl, setOllamaUrl] = useState(() => _ls("ollamaUrl", "http://localhost:11434"));
@@ -2639,24 +2642,6 @@ export default function ACleanWebApp() {
   }, []);
 
   useEffect(() => { _lsSave("llmProvider", llmProvider); }, [llmProvider]);
-  // Sync llmProvider to Supabase app_settings so Owner/Admin use same provider globally
-  useEffect(() => {
-    if (!isLoggedIn || !llmProvider) return;
-    (async () => {
-      try {
-        await supabase.from("app_settings").upsert({ key: "llm_provider", value: llmProvider }, { onConflict: "key" });
-      } catch (e) { console.warn("[Settings] Failed to sync llmProvider:", e.message); }
-    })();
-  }, [llmProvider, isLoggedIn]);
-  // Sync llmModel to Supabase app_settings for global consistency
-  useEffect(() => {
-    if (!isLoggedIn || !llmModel) return;
-    (async () => {
-      try {
-        await supabase.from("app_settings").upsert({ key: "llm_model", value: llmModel }, { onConflict: "key" });
-      } catch (e) { console.warn("[Settings] Failed to sync llmModel:", e.message); }
-    })();
-  }, [llmModel, isLoggedIn]);
   // Server-side autolookup customer by phone (form Buat Order) — debounced.
   // Menjamin customer existing terdeteksi walau di luar limit fetchCustomers.
   useEffect(() => {
@@ -2856,7 +2841,7 @@ export default function ACleanWebApp() {
 
   // ── Load LLM Configuration hanya saat fitur AI/pengaturan diminta ──
   // ✨ FIX #2: Hanya VALIDASI provider yang tersedia, JANGAN override pilihan user.
-  // Source of truth = Supabase app_settings.llm_provider. Default = "minimax".
+  // Source of truth = Supabase app_settings.llm_provider. Default = "claude".
   useEffect(() => {
     if (!isLoggedIn || !["ara", "settings"].includes(activeMenu)) return;
     const loadLlmConfig = async () => {
@@ -2874,7 +2859,7 @@ export default function ACleanWebApp() {
             "| DB app_settings.llm_provider akan override.");
         }
       } catch (err) {
-        console.warn("[LLM Config Load Error]", err.message, "— will use default minimax");
+        console.warn("[LLM Config Load Error]", err.message, "— will use default claude");
       }
     };
     loadLlmConfig();
@@ -3781,8 +3766,8 @@ export default function ACleanWebApp() {
       setBrainMd(brainMap.brain_md);
       _lsSave("brainMd", brainMap.brain_md);
 
-      // Label provider dinamis (bukan hardcode "Minimax 2.5") — ikut provider aktif.
-      const _provLabel = llmProvider === "claude" ? "Anthropic Claude" : llmProvider === "minimax" ? "Minimax" : llmProvider === "openai" ? "ChatGPT (OpenAI)" : llmProvider === "groq" ? "Groq" : llmProvider === "ollama" ? "Ollama" : (llmProvider || "LLM");
+      // Label provider dinamis mengikuti provider aktif.
+      const _provLabel = llmProvider === "claude" ? "Anthropic Claude" : llmProvider === "openai" ? "OpenAI" : llmProvider === "groq" ? "Groq" : llmProvider === "ollama" ? "Ollama" : (llmProvider || "LLM");
       showNotif(`✅ ARA Brain berhasil terhubung dengan ${_provLabel}${llmModel ? " (" + llmModel + ")" : ""}!`);
     } catch (e) {
       console.error("[connectAraBrain]", e);
@@ -4599,6 +4584,9 @@ export default function ACleanWebApp() {
   // ============================================================
   // MAIN RENDER
   // ============================================================
+  if (emergencySetupOpen) {
+    return <EmergencyModeView currentUser={currentUser} onBack={() => setEmergencySetupOpen(false)} onActivated={onEmergencyActivated} />;
+  }
   // ─────────────── LOGIN SCREEN ───────────────
   if (!isLoggedIn) {
     // Quick login hints dihapus — gunakan email & password dari Supabase
@@ -4660,6 +4648,11 @@ export default function ACleanWebApp() {
           <div style={{ textAlign: "center", marginTop: 16, fontSize: 11, color: cs.muted }}>
             Tidak punya akun? Hubungi Owner untuk mendapatkan akses.
           </div>
+          {getEmergencyVaultMeta()?.incidentId == null && getEmergencyVaultMeta() && (
+            <button onClick={() => setEmergencySetupOpen(true)} style={{ width: "100%", marginTop: 14, padding: 11, borderRadius: 9, background: "#513419", border: "1px solid #a76a1c", color: "#ffe0a4", cursor: "pointer" }}>
+              🚨 Aktifkan perangkat darurat yang telah disiapkan Owner
+            </button>
+          )}
         </div>
         <style>{"*{box-sizing:border-box} input::placeholder{color:#4a5568}"}</style>
       </div>
@@ -4796,6 +4789,7 @@ export default function ACleanWebApp() {
           ))}
         </nav>
         <div style={{ padding: "12px 14px", borderTop: "1px solid " + cs.border, display: "grid", gap: 6 }}>
+          {currentUser?.role === "Owner" && <button onClick={() => setEmergencySetupOpen(true)} style={{ width: "100%", background: "#f59e0b18", border: "1px solid #f59e0b66", color: "#fbbf24", padding: "8px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>🚨 Mode Darurat</button>}
           {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && appSettings?.wa_monitor_enabled === "true" && (
             <button onClick={() => setWaPanel(true)} style={{ width: "100%", background: "#25D36618", border: "1px solid #25D36644", color: "#25D366", padding: "8px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12, position: "relative" }}>
               📱 WhatsApp
@@ -4819,6 +4813,7 @@ export default function ACleanWebApp() {
           {isMobile && (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, paddingBottom: 12, borderBottom: "1px solid " + cs.border }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {currentUser?.role === "Owner" && <button onClick={() => setEmergencySetupOpen(true)} style={{ background: "#f59e0b22", color: "#fbbf24", border: "1px solid #f59e0b66", borderRadius: 8, padding: "5px 8px", cursor: "pointer" }}>🚨</button>}
                 <span style={{ fontSize: 18 }}>{ALL_MENU.find(m => m.id === activeMenu)?.icon}</span>
                 <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>{ALL_MENU.find(m => m.id === activeMenu)?.label}</div>
               </div>

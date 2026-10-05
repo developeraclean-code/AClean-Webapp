@@ -11,6 +11,7 @@ import { analyzeToolBagPhoto } from "../_tool-bag-vision.js";
 import { classifyText, matchSelesaiToOrder, persistTextClassification, extractMaterialUsage, resolveUsageJobs, looksLikeMaterialUsage } from "../_ai-text.js";
 import { uploadBufferToR2, downloadToBuffer, hasR2Config } from "../_r2-upload.js";
 import { classifyPaymentMedia, ensurePaymentSuggestion, registerPaymentMediaReference, stagePaymentMedia, updatePaymentMediaJob } from "../_payment-media.js";
+import { callVision } from "../_vision-provider.js";
 import { md5Buffer, checkImageDuplicate } from "../_image-dedup.js";
 import { parseKasbonText, matchKasbonName, isKasbonApprovalMessage, isKasbonRevisionMessage, resolveKasbonEntry, KASBON_APPROVER_PHONES } from "../_kasbon-parser.js";
 import { parseCarrierFromCaption, matchCarrierName, parseLaporanTeam, matchLaporanToOrder, parseBiayaExtended } from "../_shadow-parsers.js";
@@ -1042,7 +1043,7 @@ export async function receiveWa(req, res) {
         const anyAiOn = !!(groupConfig.ai_expense_enabled || groupConfig.ai_material_enabled || groupConfig.ai_payment_enabled);
         const textHandledExpense = parsedType === "biaya" && parsedOk && expenseSaved;
         let aiStatus = imageDedupSkip ? "skip_dup" : (textHandledExpense ? "skip_text_handled" : "skipped");
-        if (!imageDedupSkip && !textHandledExpense && groupImageUrl && anyAiOn && SU_g && SK_g && (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY)) {
+        if (!imageDedupSkip && !textHandledExpense && groupImageUrl && anyAiOn && SU_g && SK_g && (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY)) {
           let isDup = false;
           // (dedup gate dipindah ke Step 2.5 grpImg_ — block ini dipertahankan untuk safety)
           try {
@@ -1543,7 +1544,7 @@ export async function receiveWa(req, res) {
       // Flow: download foto → Claude Vision analisa vs checklist → upload R2 → simpan DB → WA warning ke Owner
       if (isToolBagPhoto && mediaUrl && SU && SK) {
         const AK = (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY || "").trim();
-        if (AK && toolBagCaption.bagId) {
+        if ((AK || process.env.OPENAI_API_KEY) && toolBagCaption.bagId) {
           // CLAIM LOCK: cegah Fonnte retry paralel proses webhook yg sama
           // dedup_key = hash sederhana dari (sender + caption + mediaUrl). INSERT dengan PRIMARY KEY
           // akan gagal (409) untuk retry kedua dan seterusnya → kita skip semua proses.
@@ -1860,7 +1861,7 @@ export async function receiveWa(req, res) {
 
           // Vision count-only + R2 upload
           let aiDetected = {}; let aiStatus = "SKIPPED"; let photoR2Path = null; let imgBuf = null; let mimeType = "image/jpeg";
-          if (AK) {
+          if (AK || process.env.OPENAI_API_KEY) {
             const imgFetch = await fetch(mediaUrl, { signal: AbortSignal.timeout(15000) });
             if (imgFetch.ok) {
               imgBuf = await imgFetch.arrayBuffer();
@@ -1874,24 +1875,13 @@ HITUNG benda yang terlihat jelas:
 PENTING: foto TIDAK bisa mengukur panjang meter atau berat kg — JANGAN menebak angka itu.
 Jika foto buram/gelap/tak jelas → photo_quality "unreadable".
 FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":0,"roll_count":0,"confidence":"high|medium|low","notes":"singkat"}`;
-                const visionRes = await fetch("https://api.anthropic.com/v1/messages", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json", "x-api-key": AK, "anthropic-version": "2023-06-01" },
-                  body: JSON.stringify({
-                    model: "claude-haiku-4-5", max_tokens: 400,
-                    messages: [{ role: "user", content: [
-                      { type: "image", source: { type: "base64", media_type: mimeType, data: base64Img } },
-                      { type: "text", text: visionPrompt }
-                    ] }]
-                  })
-                });
-                if (visionRes.ok) {
-                  const vd = await visionRes.json();
-                  logAi("wa-material-vision", "claude-haiku-4-5", vd);
-                  const rawText = (vd.content || []).map(c => c.text || "").join("").trim();
+                try {
+                  const vd = await callVision({ imageBase64: base64Img, mimeType, prompt: visionPrompt, maxTokens: 400, claudeApiKey: AK });
+                  logAiUsageRest({ SU, SK, provider: vd.provider, model: vd.model, feature: "wa-material-vision", usage: vd.usage });
+                  const rawText = vd.text.trim();
                   const jm = rawText.match(/\{[\s\S]*\}/);
                   if (jm) { try { aiDetected = JSON.parse(jm[0]); } catch (_) {} }
-                }
+                } catch (error) { console.warn("[WA_MATERIAL_VISION]", error.message); }
                 const pq = aiDetected.photo_quality;
                 aiStatus = !pq ? "SKIPPED" : (pq === "ok" ? "OK" : "UNREADABLE");
 
@@ -2066,8 +2056,8 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
               let savedImageUrl = classifyResult.ok && classifyResult.classification?.category === "bukti_transfer"
                 ? (stagedMedia?.url || null) : null;
               if (classifyResult.ok) {
-                const classifyData = classifyResult.data;
-                logAi("wa-personal-vision", "claude-haiku-4-5", classifyData);
+                logAiUsageRest({ SU, SK, provider: classifyResult.provider, model: classifyResult.model,
+                  feature: "wa-personal-vision", usage: classifyResult.usage });
                 const classified = classifyResult.classification;
                 if (classified) {
                   if (stagedMedia?.job) {
@@ -2414,14 +2404,15 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
       let reply = null;
       if (chatbotOn && SU && SK) {
         const AK = (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY || "").trim();
-        if (AK) {
+        if (AK || process.env.OPENAI_API_KEY) {
           try {
-            const [brainRes, histRes] = await Promise.all([
+            const [brainRes, histRes, providerRes] = await Promise.all([
               fetch(SU + "/rest/v1/ara_brain?select=key,value&key=eq.brain_customer&limit=1",
                 { headers: { apikey: SK, Authorization: "Bearer " + SK } }),
               fetch(SU + "/rest/v1/wa_messages?phone=eq." + encodeURIComponent(sender) +
                 "&order=created_at.desc&limit=10&select=role,content",
-                { headers: { apikey: SK, Authorization: "Bearer " + SK } })
+                { headers: { apikey: SK, Authorization: "Bearer " + SK } }),
+              fetch(SU + "/rest/v1/app_settings?key=eq.llm_provider&select=value", { headers: { apikey: SK, Authorization: "Bearer " + SK } }),
             ]);
             const brainRows = brainRes.ok ? await brainRes.json() : [];
             const histRows  = histRes.ok  ? await histRes.json()  : [];
@@ -2433,25 +2424,35 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
             }));
             history.push({ role: "user", content: message });
 
-            const araRes = await fetch("https://api.anthropic.com/v1/messages", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "x-api-key": AK,
-                "anthropic-version": "2023-06-01",
-                "anthropic-beta": "prompt-caching-2024-07-31",
-              },
-              body: JSON.stringify({
-                model: "claude-haiku-4-5",
-                max_tokens: 500,
-                system: [{ type: "text", text: customerBrain, cache_control: { type: "ephemeral" } }],
-                messages: history
+            if (!providerRes.ok) throw new Error(`ARA provider setting HTTP ${providerRes.status}`);
+            const providerRows = await providerRes.json();
+            const araProvider = providerRows?.[0]?.value === "openai" ? "openai" : "claude";
+            if (araProvider === "openai" && !process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY tidak tersedia untuk ARA WA");
+            if (araProvider === "claude" && !AK) throw new Error("ANTHROPIC_API_KEY tidak tersedia untuk ARA WA");
+            const araRes = araProvider === "openai"
+              ? await fetch("https://api.openai.com/v1/chat/completions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+                body: JSON.stringify({ model: "gpt-6-luna", reasoning_effort: "none", max_completion_tokens: 500,
+                  messages: [{ role: "system", content: customerBrain }, ...history] }),
+                signal: AbortSignal.timeout(20000),
               })
-            });
+              : await fetch("https://api.anthropic.com/v1/messages", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "x-api-key": AK, "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31" },
+                body: JSON.stringify({ model: "claude-haiku-4-5", max_tokens: 500,
+                  system: [{ type: "text", text: customerBrain, cache_control: { type: "ephemeral" } }], messages: history }),
+                signal: AbortSignal.timeout(20000),
+              });
             if (araRes.ok) {
               const araData = await araRes.json();
-              logAi("wa-ara-customer", "claude-haiku-4-5", araData, { user_name: typeof sender === "string" ? sender : null });
-              reply = (araData.content||[]).map(c=>c.text||"").join("").trim() || null;
+              if (araProvider === "openai") logAiUsageRest({ SU, SK, provider: "openai", model: "gpt-6-luna", feature: "wa-ara-customer",
+                usage: { input_tokens: araData.usage?.prompt_tokens, output_tokens: araData.usage?.completion_tokens }, user_name: sender });
+              else logAi("wa-ara-customer", "claude-haiku-4-5", araData, { user_name: sender });
+              reply = araProvider === "openai"
+                ? (araData.choices?.[0]?.message?.content || "").trim()
+                : (araData.content || []).map(c => c.text || "").join("").trim();
+              reply ||= null;
               if (reply && FT) {
                 fetch("https://api.fonnte.com/send", {
                   method: "POST",

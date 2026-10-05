@@ -310,7 +310,7 @@ function TeamPresetsPanel({ supabase, showNotif, showConfirm, currentUser }) {
 function SettingsView({
   currentUser, isMobile, appSettings, setAppSettings,
   waProvider, setWaProvider, waToken, setWaToken, waDevice, setWaDevice, waStatus, setWaStatus,
-  llmProvider, setLlmProvider, llmModel, setLlmModel, llmApiKey, setLlmApiKey,
+  llmProvider, setLlmProvider, llmModel, setLlmModel,
   ollamaUrl, setOllamaUrl, llmStatus, setLlmStatus,
   storageProvider, brainMd, brainMdCustomer,
   dbProvider, setDbProvider, cronJobs, setCronJobs,
@@ -320,7 +320,7 @@ function SettingsView({
   setModalBrainEdit, setModalBrainCustomerEdit,
   setNewUserForm, setModalAddUser,
   setEditPwdTarget, setEditPwdForm, setModalEditPwd,
-  showNotif, showConfirm, addAgentLog, _apiHeaders, _ls, supabase,
+  showNotif, showConfirm, addAgentLog, _apiHeaders, supabase,
 }) {
 
   const isOwner = currentUser?.role === "Owner";
@@ -335,33 +335,29 @@ function SettingsView({
     { id: "akses",   icon: "👥", label: "Akses & Tim" },
   ];
 
-  // ── LLM Providers (Owner view: hanya Anthropic + Minimax) ─────────────────
+  // ── Provider ARA terpisah dari AI Vision ──────────────────────────────────
   // Model dibatasi 1 per provider — otomatis terset saat ganti provider
   const LLM_PROVIDERS = [
     {
       id: "claude", label: "Anthropic Claude", icon: "🟣", default: true,
-      defaultModel: "claude-haiku-4-5-20251001",
-      models: ["claude-haiku-4-5-20251001"],
+      defaultModel: "claude-haiku-4-5",
+      models: ["claude-haiku-4-5"],
       fields: [{ k: "key", label: "API Key", ph: "sk-ant-api03-...", t: "password" }],
       guide: ["Buka console.anthropic.com", "API Keys → Create Key", "Set sebagai ANTHROPIC_API_KEY di Vercel → Environment Variables (Production), lalu Redeploy"],
-      note: "Default ARA Brain · claude-haiku-4-5-20251001 — cepat & hemat kredit",
+      note: "Default ARA Brain · Claude Haiku 4.5 — cepat & hemat kredit",
     },
     {
-      id: "minimax", label: "Minimax", icon: "🟦", default: false,
-      defaultModel: "MiniMax-M2.5",
-      models: ["MiniMax-M2.5"],
-      fields: [
-        { k: "key", label: "API Key", ph: "eyJhbGci...", t: "password" },
-        { k: "group_id", label: "Group ID", ph: "1234567890" },
-      ],
-      guide: ["Buka platform.minimaxi.com", "API → API Keys → Create", "Set MINIMAX_API_KEY & MINIMAX_GROUP_ID di Vercel → Environment Variables, lalu Redeploy"],
-      note: "MiniMax-M2.5",
+      id: "openai", label: "OpenAI", icon: "🟢", default: false,
+      defaultModel: "gpt-6-luna",
+      models: ["gpt-6-luna"],
+      fields: [{ k: "key", label: "API Key", ph: "sk-...", t: "password" }],
+      guide: ["Buka platform.openai.com", "Buat API key dan pastikan kredit API tersedia", "Set OPENAI_API_KEY di Vercel → Environment Variables, lalu Redeploy"],
+      note: "GPT-6 Luna · model keluarga terbaru untuk tugas volume tinggi dan hemat biaya",
     },
   ];
 
   // LLM Admin view (hanya pilih provider, tidak perlu konfigurasi key)
   const LLM_PROVIDERS_ADMIN = [
-    { id: "minimax", label: "Minimax" },
     { id: "claude", label: "Anthropic Claude" },
     { id: "openai", label: "ChatGPT (OpenAI)" },
     { id: "groq", label: "Groq" },
@@ -403,31 +399,6 @@ function SettingsView({
     </div>
   );
 
-  const LLMFields = () => {
-    const fields = activeLLM.fields;
-    return (
-      <div style={{ display: "grid", gap: 8, marginBottom: 12 }}>
-        {fields.map(f => {
-          const isKey = f.k === "key";
-          const isGroupId = f.k === "group_id";
-          const val = isKey ? llmApiKey : isGroupId ? (localStorage.getItem("llmGroupId") || "") : "";
-          const setter = isKey ? (e => setLlmApiKey(e.target.value)) : isGroupId ? (e => localStorage.setItem("llmGroupId", e.target.value)) : undefined;
-          return (
-            <div key={f.k}>
-              <div style={{ fontSize: 11, color: cs.muted, marginBottom: 3, fontWeight: 600 }}>{f.label}</div>
-              <input
-                type={f.t || "text"} placeholder={f.ph} value={val}
-                onChange={setter}
-                style={{ width: "100%", background: cs.surface, border: "1px solid " + (val ? cs.green : cs.border), borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }}
-              />
-              {val && <div style={{ fontSize: 10, color: cs.green, marginTop: 3 }}>✓ {f.label} tersimpan</div>}
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
-
   const GuideBox = ({ guide, title }) => (
     <div style={{ background: "#0ea5e910", border: "1px solid #0ea5e930", borderRadius: 8, padding: "10px 14px", marginBottom: 12 }}>
       <div style={{ fontSize: 11, fontWeight: 700, color: "#7dd3fc", marginBottom: 6 }}>📋 {title}</div>
@@ -441,12 +412,11 @@ function SettingsView({
   );
 
   const testLLM = async () => {
-    if (!llmApiKey && llmProvider !== "ollama") { showNotif("❌ Masukkan API Key dulu"); return; }
     setLlmStatus("testing");
     try {
-      const type = llmProvider === "minimax" ? "minimax" : "llm";
+      const type = llmProvider === "openai" ? "openai" : "claude";
       const r = await fetch("/api/test-connection?type=" + type, { headers: await _apiHeaders() });
-const d = await r.json();
+      const d = await r.json();
       if (!r.ok || !d.ok) throw new Error(d.error || d.message || "Test gagal");
       setLlmStatus("connected");
       showNotif("✅ Koneksi " + activeLLM.label + (llmModel ? " (" + llmModel + ")" : "") + " berhasil!");
@@ -504,8 +474,8 @@ const d = await r.json();
 
       {/* ── ADMIN: info read-only, tidak bisa ubah provider ── */}
       {currentUser?.role === "Admin" && (() => {
-        const providerLabel = llmProvider === "minimax" ? "Minimax" : llmProvider === "claude" ? "Anthropic Claude" : llmProvider;
-        const modelLabel = llmModel || (llmProvider === "minimax" ? "MiniMax-M2.5" : "claude-haiku-4-5-20251001");
+        const providerLabel = llmProvider === "openai" ? "OpenAI" : llmProvider === "claude" ? "Anthropic Claude" : llmProvider;
+        const modelLabel = llmModel || (llmProvider === "openai" ? "gpt-6-luna" : "claude-haiku-4-5");
         return (
           <Card>
             <CardHeader icon="🤖" title="ARA Brain — Status" subtitle="Provider & model diatur oleh Owner"
@@ -774,12 +744,26 @@ const d = await r.json();
           {/* Provider picker — 2 opsi saja */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
             {LLM_PROVIDERS.map(p => (
-              <div key={p.id} onClick={() => {
-                setLlmProvider(p.id);
-                setLlmModel(p.defaultModel); // auto-set model yang sesuai
-                setLlmStatus("not_connected");
-                const savedKey = _ls("llmApiKey_" + p.id, "") || _ls("llmApiKey", "");
-                setLlmApiKey(savedKey);
+              <div key={p.id} onClick={async () => {
+                if (p.id === llmProvider && p.defaultModel === llmModel) return;
+                try {
+                  if (p.id === "openai") {
+                    const response = await fetch("/api/test-connection?type=openai", { headers: await _apiHeaders() });
+                    const result = await response.json();
+                    if (!response.ok || !result.ok) throw new Error(result.error || "Koneksi OpenAI gagal");
+                  }
+                  const { error } = await supabase.from("app_settings").upsert([
+                    { key: "llm_provider", value: p.id },
+                    { key: "llm_model", value: p.defaultModel },
+                  ], { onConflict: "key" });
+                  if (error) throw error;
+                  setLlmProvider(p.id);
+                  setLlmModel(p.defaultModel);
+                  setLlmStatus("not_connected");
+                  showNotif("✅ Provider ARA disimpan: " + p.label);
+                } catch (error) {
+                  showNotif("❌ Provider ARA tidak berubah: " + error.message);
+                }
               }}
                 style={{
                   background: llmProvider === p.id ? cs.accent + "12" : cs.surface,
@@ -801,8 +785,8 @@ const d = await r.json();
             <div style={{ fontSize: 11, color: cs.muted, fontWeight: 700, marginBottom: 6 }}>Model</div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               {activeLLM.models.map(m => (
-                <span key={m} onClick={() => setLlmModel(m)}
-                  style={{ padding: "5px 11px", borderRadius: 7, background: llmModel === m ? cs.accent + "22" : cs.surface, border: "1px solid " + (llmModel === m ? cs.accent : cs.border), fontSize: 11, color: llmModel === m ? cs.accent : cs.muted, fontFamily: "monospace", cursor: "pointer" }}>
+                <span key={m}
+                  style={{ padding: "5px 11px", borderRadius: 7, background: llmModel === m ? cs.accent + "22" : cs.surface, border: "1px solid " + (llmModel === m ? cs.accent : cs.border), fontSize: 11, color: llmModel === m ? cs.accent : cs.muted, fontFamily: "monospace" }}>
                   {m}
                 </span>
               ))}
@@ -810,13 +794,10 @@ const d = await r.json();
             {activeLLM.note && <div style={{ marginTop: 6, fontSize: 11, color: cs.accent }}>💡 {activeLLM.note}</div>}
           </div>
 
-          {/* Credential fields */}
-          <div style={{ fontSize: 12, fontWeight: 700, color: cs.text, marginBottom: 8 }}>🔑 Kredensial {activeLLM.label}</div>
-          {/* ── Klarifikasi: API key AKTIF ARA ada di Vercel Env Vars, BUKAN field ini ── */}
+          {/* Kunci API tidak pernah diminta di browser. */}
           <div style={{ background: cs.yellow + "12", border: "1px solid " + cs.yellow + "55", borderRadius: 9, padding: "10px 12px", marginBottom: 10, fontSize: 11, color: cs.text, lineHeight: 1.6 }}>
-            ⚠️ <b>API Key yang benar-benar dipakai ARA di-set di Vercel → Environment Variables</b> (<code>ANTHROPIC_API_KEY</code>, <code>MINIMAX_API_KEY</code>, dst), <b>bukan</b> di field ini. Field di bawah hanya untuk <b>uji koneksi & referensi</b>. Untuk memakai <b>{activeLLM.label}</b> di produksi: set env var-nya di Vercel, lalu pilih provider ini di atas & Simpan. Backend otomatis memilih provider sesuai pilihan ini <i>selama env key-nya tersedia</i>; jika tidak, ARA fallback ke provider lain yang key-nya ada.
+            ⚠️ <b>API Key yang dipakai ARA ada di Vercel Environment Variables</b> (<code>ANTHROPIC_API_KEY</code> / <code>OPENAI_API_KEY</code>). Tombol uji memeriksa provider terpilih di server. Pengaturan ARA tidak mengubah AI Vision.
           </div>
-          <LLMFields />
           <GuideBox guide={activeLLM.guide} title={"Cara dapat API Key — " + activeLLM.label} />
 
           {/* Brain.md preview */}
@@ -868,11 +849,34 @@ const d = await r.json();
           <div style={{ display: "flex", gap: 8 }}>
             <button onClick={testLLM}
               style={{ flex: 2, background: "linear-gradient(135deg," + cs.ara + ",#7c3aed)", border: "none", color: "#fff", padding: "10px", borderRadius: 8, cursor: "pointer", fontWeight: 800, fontSize: 13 }}>
-              {llmStatus === "testing" ? "⏳ Testing..." : "🔌 Test & Simpan — " + activeLLM.label}
+              {llmStatus === "testing" ? "⏳ Testing..." : "🔌 Uji koneksi — " + activeLLM.label}
             </button>
             <button onClick={() => { setLlmStatus("not_connected"); showNotif("Koneksi LLM direset"); }}
               style={{ flex: 1, background: cs.surface, border: "1px solid " + cs.border, color: cs.muted, padding: "10px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}>Reset</button>
           </div>
+        </Card>
+
+        <Card>
+          <CardHeader icon="📷" title="AI Vision — Provider Foto" subtitle="Terpisah dari ARA: bukti bayar, struk biaya, foto material, dan tas teknisi" />
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {[{ id: "claude", label: "Claude Haiku (aktif bawaan)" }, { id: "openai", label: "OpenAI GPT-6 Luna" }].map(option => {
+              const active = (appSettings.vision_provider || "claude") === option.id;
+              return <button key={option.id} disabled={active} onClick={async () => {
+                try {
+                  if (option.id === "openai") {
+                    const check = await fetch("/api/test-connection?type=openai", { headers: await _apiHeaders() });
+                    const result = await check.json();
+                    if (!check.ok || !result.ok) throw new Error(result.error || "Koneksi OpenAI gagal");
+                  }
+                  const { error } = await supabase.from("app_settings").upsert({ key: "vision_provider", value: option.id }, { onConflict: "key" });
+                  if (error) throw error;
+                  setAppSettings(prev => ({ ...prev, vision_provider: option.id }));
+                  showNotif("✅ AI Vision menggunakan " + option.label + " (aktif di server dalam ±30 detik)");
+                } catch (error) { showNotif("❌ AI Vision tidak berubah: " + error.message); }
+              }} style={{ background: active ? cs.accent + "22" : cs.surface, border: "1px solid " + (active ? cs.accent : cs.border), borderRadius: 9, color: active ? cs.accent : cs.text, padding: "9px 12px", cursor: active ? "default" : "pointer" }}>{option.label}{active ? " ✓" : ""}</button>;
+            })}
+          </div>
+          <div style={{ color: cs.muted, fontSize: 11, marginTop: 10 }}>OpenAI hanya bisa diaktifkan setelah uji API berhasil. Pilihan ARA di atas tidak ikut berubah. Jika OpenAI gagal saat proses foto, catatan masuk jalur tinjau/retry—tidak otomatis menandai pembayaran lunas.</div>
         </Card>
 
         {/* ARA Training Rules */}

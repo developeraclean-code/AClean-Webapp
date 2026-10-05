@@ -39,44 +39,25 @@ export async function araChat(req, res) {
         return res.status(200).json({ reply: (cd.content||[]).map(c => c.text||"").join(""), model: mdl, provider: "claude" });
       }
 
-      if (prov === "minimax") {
-        const MK = process.env.MINIMAX_API_KEY || process.env.LLM_API_KEY;
-        if (!MK) return res.status(500).json({ error: "MINIMAX_API_KEY belum diset" });
-        // Support Minimax 2.5, 2.7-highspeed
-        const mm = model || process.env.MINIMAX_MODEL || "MiniMax-M2.5";
-        const mg = process.env.MINIMAX_GROUP_ID || "";
-
-        try {
-          const mmPayload = {
-            model: mm, max_tokens: 2048,
-            messages: [{ role:"system", content: sysP }, ...messages.map(m=>({ role:m.role, content:typeof m.content==="string"?m.content:JSON.stringify(m.content) }))],
-          };
-          if (mg) mmPayload.group_id = mg;
-
-          const mr = await fetch("https://api.minimaxi.chat/v1/text/chatcompletion_v2", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": "Bearer " + MK },
-            body: JSON.stringify(mmPayload)
-          });
-          const md = await mr.json();
-
-          if (!mr.ok) {
-            const errMsg = md.base_resp?.status_msg || md.error?.message || "Minimax API error";
-            console.error(`Minimax error (${mm}):`, errMsg, "Status:", mr.status);
-            return res.status(502).json({ error: errMsg, detail: md, model: mm });
-          }
-
-          const reply = md.choices?.[0]?.message?.content || "";
-          if (!reply) {
-            console.warn("Minimax returned empty reply:", md);
-            return res.status(502).json({ error: "Minimax returned empty response", model: mm });
-          }
-
-          return res.status(200).json({ reply, model: mm, provider: "minimax" });
-        } catch(e) {
-          console.error("Minimax request error:", e.message);
-          return res.status(502).json({ error: "Minimax request failed: " + e.message, model: mm });
-        }
+      if (prov === "openai") {
+        if (!process.env.OPENAI_API_KEY) return res.status(500).json({ error: "OPENAI_API_KEY belum diset" });
+        const mdl = "gpt-6-luna";
+        const oMsgs = messages.map((m, i) => {
+          const content = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+          if (i === messages.length - 1 && imageData && m.role === "user") return { role: "user", content: [
+            { type: "text", text: content },
+            { type: "image_url", image_url: { url: `data:${imageType || "image/jpeg"};base64,${imageData}` } },
+          ] };
+          return { role: m.role, content };
+        });
+        const r = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+          body: JSON.stringify({ model: mdl, reasoning_effort: "none", max_completion_tokens: 2048,
+            messages: [{ role: "system", content: sysP }, ...oMsgs] }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) return res.status(502).json({ error: d.error?.code || d.error?.message || "OpenAI API error" });
+        return res.status(200).json({ reply: d.choices?.[0]?.message?.content || "", model: mdl, provider: "openai" });
       }
 
       if (prov === "ollama") {
@@ -117,4 +98,3 @@ export async function cronReminder(req, res) {
       }
       return res.status(200).json({ ok:true, overdue_found:(invs||[]).length, updated, reminders_sent:sent });
 }
-

@@ -5,15 +5,13 @@
 
 import { expenseDuplicateExists, buildExpenseDedupKey } from "./_expense-dedup.js";
 import { calcAiCost } from "./_logger.js";
+import { callVision } from "./_vision-provider.js";
 import * as Sentry from "@sentry/node";
 
 // Helper: ganti `.catch(() => {})` agar exception ke-track di Sentry
 const sentryCatch = (op, extra) => (e) => {
   try { Sentry.captureException(e, { tags: { op }, extra: extra || {} }); } catch (_) {}
 };
-
-const ANTHROPIC_MODEL = "claude-haiku-4-5";
-const ANTHROPIC_API = "https://api.anthropic.com/v1/messages";
 
 // Harga diambil dari tabel tunggal di _logger.js (dulu diduplikasi di sini → rawan drift).
 
@@ -173,53 +171,21 @@ Kalau intent tidak cocok dengan apapun → return intent:"unknown", confidence:"
 //   { imageUrl }                          — Anthropic fetches by URL (fragile kalau Fonnte TTL habis)
 //   { imageBase64, mimeType }             — kirim base64 langsung (tahan TTL Fonnte)
 export async function classifyImage({ imageUrl, imageBase64, mimeType, groupCfg, sender, messageText }) {
-  const apiKey = (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY || "").trim();
-  if (!apiKey) return { error: "no_anthropic_key" };
   if (!imageUrl && !imageBase64) return { error: "no_image" };
 
   const prompt = buildPrompt(groupCfg);
   const userText = messageText ? `Caption WhatsApp: "${messageText}"\n\nKlasifikasikan foto.` : "Klasifikasikan foto.";
 
-  const imageContent = imageBase64
-    ? { type: "image", source: { type: "base64", media_type: mimeType || "image/jpeg", data: imageBase64 } }
-    : { type: "image", source: { type: "url", url: imageUrl } };
-
-  const body = {
-    model: ANTHROPIC_MODEL,
-    max_tokens: 600,
-    system: prompt,
-    messages: [{
-      role: "user",
-      content: [
-        imageContent,
-        { type: "text", text: userText }
-      ]
-    }]
-  };
-
   let response;
   try {
-    const r = await fetch(ANTHROPIC_API, {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json"
-      },
-      body: JSON.stringify(body)
-    });
-    if (!r.ok) {
-      const errTxt = await r.text().catch(() => "");
-      return { error: "anthropic_http_" + r.status, detail: errTxt.slice(0, 300) };
-    }
-    response = await r.json();
+    response = await callVision({ imageUrl, imageBase64, mimeType, prompt: userText, system: prompt, maxTokens: 600 });
   } catch (e) {
-    return { error: "anthropic_fetch", detail: e.message };
+    return { error: "vision_fetch", detail: e.message };
   }
 
-  const tokensIn  = response?.usage?.input_tokens  || 0;
+  const tokensIn  = response?.usage?.input_tokens || 0;
   const tokensOut = response?.usage?.output_tokens || 0;
-  const costUsd   = calcAiCost({ model: ANTHROPIC_MODEL, input_tokens: tokensIn, output_tokens: tokensOut });
+  const costUsd   = calcAiCost({ model: response.model, input_tokens: tokensIn, output_tokens: tokensOut });
 
   // Log cost ke ai_usage SEKARANG (sebelum parse) — tetap track meski hasil parse fail
   const SU0 = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
@@ -230,8 +196,8 @@ export async function classifyImage({ imageUrl, imageBase64, mimeType, groupCfg,
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: SK0, Authorization: "Bearer " + SK0, Prefer: "return=minimal" },
       body: JSON.stringify({
-        provider: "claude",
-        model: ANTHROPIC_MODEL,
+        provider: response.provider,
+        model: response.model,
         feature: "wa-group-vision",
         input_tokens: tokensIn,
         output_tokens: tokensOut,
@@ -252,7 +218,7 @@ export async function classifyImage({ imageUrl, imageBase64, mimeType, groupCfg,
     }).catch(sentryCatch("ai_usage_log", { feature: "wa-group-vision" }));
   };
 
-  const text = response?.content?.[0]?.text || "";
+  const text = response.text || "";
   let parsed = null;
   try {
     const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -274,7 +240,7 @@ export async function classifyImage({ imageUrl, imageBase64, mimeType, groupCfg,
     data: parsed.data || {},
     reasoning: parsed.reasoning || null,
     tokensIn, tokensOut, costUsd,
-    model: ANTHROPIC_MODEL,
+    model: response.model,
   };
   logUsage({ intent: result.intent, confidence: result.confidence });
   return result;

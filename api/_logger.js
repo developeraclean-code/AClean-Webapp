@@ -26,6 +26,7 @@ const AI_PRICING = {
   // OpenAI
   "gpt-4o":              {  input: 2.50, output: 10.00 },
   "gpt-4o-mini":         {  input: 0.15, output:  0.60 },
+  "gpt-6-luna":          {  input: 0.10, output:  0.50 },
   // Gemini (estimated)
   "gemini-2.0-flash":    {  input: 0.10, output:  0.40 },
   // Groq — gratis untuk most models, set 0
@@ -201,7 +202,7 @@ export async function runWithCronLogging(sb, taskName, fn, opts = {}) {
 // ── 3. AI usage logging ──
 // Wrap fetch call atau panggil setelah dapat response.
 export async function logAiUsage(sb, {
-  provider,                    // claude | openai | gemini | groq | minimax
+  provider,                    // claude | openai | gemini | groq
   model,
   feature = null,              // ara-chat | tool-bag-vision | auto-dispatch | payment-suggestion
   input_tokens = 0,

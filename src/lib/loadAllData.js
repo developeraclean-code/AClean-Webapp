@@ -136,20 +136,20 @@ export async function loadAllData({
             }
             // ── FIXED: Load dari DB dan LOG untuk debugging ──
             // PRIORITAS: DB > localStorage > default "claude"
-            const VALID_PROVIDERS = ["minimax", "claude", "openai", "groq", "ollama"];
+            const VALID_PROVIDERS = ["claude", "openai", "groq", "ollama"];
             const currentLS = _ls("llmProvider", null);
             console.log("[Settings] DEBUG — localStorage llmProvider:", currentLS, "DB llm_provider:", sMap.llm_provider);
 
             const dbProvider = sMap.llm_provider;
             // Model default per provider — harus konsisten dengan LLM_PROVIDERS di SettingsView
-            const DEFAULT_MODEL = { minimax: "MiniMax-M2.5", claude: "claude-haiku-4-5-20251001" };
+            const DEFAULT_MODEL = { claude: "claude-haiku-4-5", openai: "gpt-6-luna" };
             const resolvedProvider = (dbProvider && VALID_PROVIDERS.includes(dbProvider)) ? dbProvider : "claude";
             setLlmProvider(resolvedProvider);
             _lsSave("llmProvider", resolvedProvider);
             // Model HARUS konsisten dgn provider — cegah mismatch (mis. provider=claude
-            // tapi llm_model DB masih "MiniMax-M2.5" -> badge & call ARA salah). Provider
-            // dgn 1 model kanonik (claude/minimax) DIPAKSA ke DEFAULT_MODEL-nya; provider
-            // lain (openai/groq/ollama) pakai llm_model DB kalau ada & bukan gemini.
+            // tapi llm_model DB masih model provider lama -> badge & call ARA salah). Provider
+            // dgn 1 model kanonik (claude/openai) DIPAKSA ke DEFAULT_MODEL-nya; provider
+            // lain pakai llm_model DB kalau ada & bukan gemini.
             const dbModel = sMap.llm_model;
             const validModel = DEFAULT_MODEL[resolvedProvider]
               || (dbModel && !dbModel.includes("gemini") ? dbModel : "claude-haiku-4-5-20251001");

@@ -5,6 +5,7 @@
 
 import { sanitizeForPrompt } from "./_validate.js";
 import { logAiUsageRest } from "./_logger.js";
+import { callVision } from "./_vision-provider.js";
 
 const TOOL_VISUAL_GUIDE = `
 PANDUAN VISUAL ALAT (gunakan untuk identifikasi):
@@ -72,38 +73,22 @@ FORMAT RESPONSE — JSON SAJA, tanpa teks lain:
 // checklist: [{ tool_name, qty_min, is_priority }] — hasil query tool_bag_checklist utk bag_id terkait.
 export async function analyzeToolBagPhoto({ imageBase64, mimeType, checklist }) {
   const AK = (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY || "").trim();
-  if (!AK) throw new Error("AI vision belum dikonfigurasi (ANTHROPIC_API_KEY kosong)");
 
   const activeChecklist = checklist.filter(t => (t.qty_min ?? 1) > 0);
   const visionPrompt = buildVisionPrompt(checklist);
 
-  let visionRes;
+  let visionData;
   try {
-    visionRes = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": AK, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5",
-        max_tokens: 800,
-        messages: [{ role: "user", content: [
-          { type: "image", source: { type: "base64", media_type: mimeType, data: imageBase64 } },
-          { type: "text", text: visionPrompt }
-        ]}]
-      }),
-      signal: AbortSignal.timeout(25000)
-    });
+    visionData = await callVision({ imageBase64, mimeType, prompt: visionPrompt, maxTokens: 800, timeoutMs: 25000, claudeApiKey: AK });
   } catch (e) { throw new Error("AI vision gagal/timeout: " + e.message); }
-  if (!visionRes.ok) throw new Error("AI vision HTTP " + visionRes.status);
-
-  const visionData = await visionRes.json();
   // Catat biaya — sebelumnya jalur tool-bag tidak pernah masuk ai_usage.
   logAiUsageRest({
     SU: process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL,
     SK: process.env.SUPABASE_SERVICE_KEY,
-    provider: "claude", model: "claude-haiku-4-5", feature: "tool-bag-vision",
+    provider: visionData.provider, model: visionData.model, feature: "tool-bag-vision",
     usage: visionData?.usage,
   });
-  const rawText = (visionData.content || []).map(c => c.text || "").join("").trim();
+  const rawText = visionData.text.trim();
   let analysisResult = null;
   const jsonMatch = rawText.match(/\{[\s\S]*\}/);
   if (jsonMatch) {

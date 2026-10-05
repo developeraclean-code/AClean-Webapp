@@ -1,6 +1,8 @@
-import React, { lazy, Suspense } from 'react'
+import React, { lazy, Suspense, useRef, useState } from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
+import EmergencyModeView from './views/EmergencyModeView.jsx'
+import { getEmergencyVaultMeta } from './lib/emergencyVault.js'
 import * as Sentry from "@sentry/react"
 
 if ("serviceWorker" in navigator) {
@@ -42,6 +44,7 @@ window.addEventListener('vite:preloadError', (event) => {
 const CustomerPortalView = lazy(() => import('./views/CustomerPortalView.jsx'))
 const MaintenancePortalView = lazy(() => import('./views/MaintenancePortalView.jsx'))
 const ProjectPortalView = lazy(() => import('./views/ProjectPortalView.jsx'))
+const FieldEmergencyReportView = lazy(() => import('./views/FieldEmergencyReportView.jsx'))
 
 // Deteksi path token portal — render portal tanpa App shell.
 // Customer portal: /status/<48-hex> atau /<48-hex>
@@ -70,6 +73,11 @@ const portalFallback = (
 )
 
 function Root() {
+  const [emergencyActive, setEmergencyActive] = useState(() => Boolean(getEmergencyVaultMeta()?.active))
+  const emergencyInitialAccess = useRef(null)
+  if (window.location.pathname === '/field-emergency') {
+    return <Sentry.ErrorBoundary fallback={portalFallback}><Suspense fallback={portalFallback}><FieldEmergencyReportView /></Suspense></Sentry.ErrorBoundary>
+  }
   if (maintMatch) {
     return (
       <Sentry.ErrorBoundary fallback={portalFallback}>
@@ -122,7 +130,9 @@ function Root() {
         </div>
       </div>
     }>
-      <App />
+      {emergencyActive
+        ? <EmergencyModeView initialAccess={emergencyInitialAccess.current} onInitialAccessConsumed={() => { emergencyInitialAccess.current = null }} onClosed={() => setEmergencyActive(false)} />
+        : <App onEmergencyActivated={access => { emergencyInitialAccess.current = access; setEmergencyActive(true) }} />}
     </Sentry.ErrorBoundary>
   )
 }

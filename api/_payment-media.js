@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { downloadBufferFromR2, downloadToBuffer, uploadBufferToR2 } from "./_r2-upload.js";
+import { callVision, getVisionProvider } from "./_vision-provider.js";
 
 export const PAYMENT_MEDIA_PROMPT = `Klasifikasikan gambar ini. Pilih SATU kategori: "bukti_transfer" (struk transfer/screenshot m-banking), "kerusakan_ac", "dokumen", atau "tidak_relevan".
 Jika bukti_transfer, pisahkan dengan tepat:
@@ -51,30 +52,13 @@ export function parsePaymentClassification(rawText) {
 
 export async function classifyPaymentMedia({ buffer, mimeType, apiKey, timeoutMs = 12000, fetchImpl = fetch }) {
   if (!buffer?.length) return { ok: false, error: "media buffer kosong", retryable: false };
-  if (!apiKey) return { ok: false, error: "LLM API key belum dikonfigurasi", retryable: true };
   try {
-    const response = await fetchImpl("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5",
-        max_tokens: 300,
-        messages: [{ role: "user", content: [
-          { type: "image", source: { type: "base64", media_type: mimeType || "image/jpeg", data: Buffer.from(buffer).toString("base64") } },
-          { type: "text", text: PAYMENT_MEDIA_PROMPT },
-        ] }],
-      }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      return { ok: false, error: `Anthropic ${response.status}: ${body.slice(0, 300)}`, retryable: response.status === 429 || response.status >= 500 };
-    }
-    const data = await response.json();
-    const raw = (data.content || []).map(item => item.text || "").join("").trim();
-    const classification = parsePaymentClassification(raw);
-    if (!classification) return { ok: false, error: "Respons AI bukan JSON klasifikasi yang valid", retryable: true, data };
-    return { ok: true, classification, data };
+    const provider = await getVisionProvider();
+    const result = await callVision({ imageBase64: Buffer.from(buffer).toString("base64"), mimeType: mimeType || "image/jpeg",
+      prompt: PAYMENT_MEDIA_PROMPT, maxTokens: 300, timeoutMs, fetchImpl, provider, claudeApiKey: apiKey });
+    const classification = parsePaymentClassification(result.text);
+    if (!classification) return { ok: false, error: "Respons AI bukan JSON klasifikasi yang valid", retryable: true, data: result.raw, provider: result.provider, model: result.model };
+    return { ok: true, classification, data: result.raw, provider: result.provider, model: result.model, usage: result.usage };
   } catch (error) {
     return { ok: false, error: error?.message || "Klasifikasi media gagal", retryable: true };
   }

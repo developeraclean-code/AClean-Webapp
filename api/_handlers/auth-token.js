@@ -1,6 +1,6 @@
 // api/_handlers/auth-token.js — Handler grup auth/token/config/health (Batch 2 pemecahan
 // router, Jul 2026). Isi dipindah APA ADANYA dari api/[route].js — di-dispatch oleh router.
-import { checkRateLimit, signAppToken } from "../_auth.js";
+import { checkRateLimit, signAppToken, validateInternalToken } from "../_auth.js";
 
 // ── TEST-CONNECTION (public) ──
 export async function testConnection(req, res) {
@@ -41,20 +41,24 @@ export async function testConnection(req, res) {
     } catch(e) { return res.status(200).json({ ok:false, provider: "claude", error:e.message }); }
   }
 
-  if (type === "minimax") {
-    const MK = process.env.MINIMAX_API_KEY;
-    if (!MK) return res.status(200).json({ ok: false, error: "MINIMAX_API_KEY tidak diset di env" });
+  if (type === "openai") {
+    // Endpoint publik ini tidak boleh menghabiskan kredit API tanpa token internal.
+    if (!await validateInternalToken(req, res)) return;
+    if (!await checkRateLimit(req, res, 3, 60000)) return;
+    const key = process.env.OPENAI_API_KEY;
+    if (!key) return res.status(200).json({ ok: false, provider: "openai", error: "OPENAI_API_KEY belum diset di server" });
     try {
-      const mm = process.env.MINIMAX_MODEL || "MiniMax-M2.5";
-      const r = await fetch("https://api.minimaxi.chat/v1/text/chatcompletion_v2", {
-        method:"POST",
-        headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+MK },
-        body: JSON.stringify({ model: mm, max_tokens: 10, messages: [{ role:"system", content:"Respond with 'OK'" }, { role:"user", content:"ping" }] })
+      const r = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+        body: JSON.stringify({ model: "gpt-6-luna", reasoning_effort: "none", max_completion_tokens: 12,
+          messages: [{ role: "user", content: "Balas OK" }] }),
+        signal: AbortSignal.timeout(10000),
       });
-      const d = await r.json().catch(()=>({}));
-      const hasReply = d.choices?.[0]?.message?.content || d.reply || null;
-      return res.status(200).json({ ok: r.ok && !!hasReply, provider: "minimax", model: mm, error: (d.base_resp?.status_msg||d.error?.message)||null, raw: !r.ok?d:null });
-    } catch(e) { return res.status(200).json({ ok:false, provider: "minimax", error:e.message }); }
+      const d = await r.json().catch(() => ({}));
+      return res.status(200).json({ ok: r.ok && !!d.choices?.[0]?.message?.content,
+        provider: "openai", model: "gpt-6-luna", error: r.ok ? null : (d.error?.code || d.error?.message || `HTTP ${r.status}`) });
+    } catch (e) { return res.status(200).json({ ok: false, provider: "openai", error: e.message }); }
   }
 
   if (type === "groq") {
@@ -130,19 +134,16 @@ export async function getLlmConfig(req, res) {
   // Determines which provider is available based on env vars
   const providers = [];
   if (process.env.ANTHROPIC_API_KEY) providers.push({name: "claude", label: "Claude (Anthropic)", disabled: false});
-  if (process.env.OPENAI_API_KEY) providers.push({name: "openai", label: "OpenAI (GPT-4)", disabled: false});
-  if (process.env.MINIMAX_API_KEY) providers.push({name: "minimax", label: "MiniMax 2.5", disabled: false});
+  if (process.env.OPENAI_API_KEY) providers.push({name: "openai", label: "OpenAI (GPT-6 Luna)", disabled: false});
   if (process.env.GROQ_API_KEY) providers.push({name: "groq", label: "Groq (Llama)", disabled: false});
 
   // Determine default provider based on what's actually available
-  // Priority: claude > openai > minimax > groq > first available
+  // Priority: claude > openai > groq > first available
   let defaultProvider = "claude"; // fallback default
   if (process.env.ANTHROPIC_API_KEY) {
     defaultProvider = "claude";
   } else if (process.env.OPENAI_API_KEY) {
     defaultProvider = "openai";
-  } else if (process.env.MINIMAX_API_KEY) {
-    defaultProvider = "minimax";
   } else if (process.env.GROQ_API_KEY) {
     defaultProvider = "groq";
   }

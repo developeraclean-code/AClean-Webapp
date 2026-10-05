@@ -1,5 +1,5 @@
-// sendToARA — handler chat ARA (AI agent): panggil LLM (Claude/OpenAI/Groq/Ollama/
-// MiniMax) + parse [ACTION] + eksekusi mutasi (order/invoice/inventory/customer/
+// sendToARA — handler chat ARA (AI agent): panggil LLM (Claude/OpenAI/Groq/Ollama)
+// + parse [ACTION] + eksekusi mutasi (order/invoice/inventory/customer/
 // expense). Diekstrak dari App.jsx (Fase 2, pola ctx stateful). SEMUA dependency
 // (70) dioper lewat objek ctx → fungsi lepas dari closure App.jsx. Body verbatim
 // KECUALI 1 bugfix: setMessages(...) -> setAraMessages(...) (setMessages tak pernah

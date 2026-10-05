@@ -1,6 +1,6 @@
 // api/ara-chat.js
 // POST /api/ara-chat { messages, bizContext, provider, model, brainMd }
-// Backend proxy ARA — support Claude, OpenAI, Minimax, Groq
+// Backend proxy ARA — support Claude, OpenAI, Groq
 
 import { createClient }                                 from "@supabase/supabase-js";
 import { validateInternalToken, checkRateLimit, setCorsHeaders, fetchWithTimeout } from "./_auth.js";
@@ -79,6 +79,7 @@ ${JSON.stringify(bizClean)}
 async function callClaude(msgs, sys, model) {
   const ALLOWED_CLAUDE = ["claude-haiku-4-5"];
   const safeModel = ALLOWED_CLAUDE.includes(model) ? model : "claude-haiku-4-5";
+  const apiKey = (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY || "").trim();
   // Split system prompt: static part (brain + price list) cached, dynamic part not
   // Cache TTL is 5 minutes — saves ~70-80% token cost on repeated ARA/chatbot calls
   const staticBreak = sys.indexOf("## DATA BISNIS LIVE");
@@ -97,7 +98,7 @@ async function callClaude(msgs, sys, model) {
     method:"POST",
     headers:{
       "Content-Type":"application/json",
-      "x-api-key":process.env.ANTHROPIC_API_KEY,
+      "x-api-key":apiKey,
       "anthropic-version":"2023-06-01",
       "anthropic-beta":"prompt-caching-2024-07-31",
     },
@@ -110,35 +111,14 @@ async function callClaude(msgs, sys, model) {
 }
 
 async function callOpenAI(msgs, sys, model) {
-  const safeModel = model || "gpt-4o";
+  const safeModel = model === "gpt-6-luna" ? model : "gpt-6-luna";
   const r = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
     method:"POST",
     headers:{"Content-Type":"application/json","Authorization":"Bearer "+process.env.OPENAI_API_KEY},
-    body: JSON.stringify({model:safeModel, max_tokens:1024, messages:[{role:"system",content:sys},...msgs]})
+    body: JSON.stringify({model:safeModel, reasoning_effort:"none", max_completion_tokens:1024, messages:[{role:"system",content:sys},...msgs]})
   }, 30000);
   const d = await r.json();
   if (!r.ok) throw new Error(d.error?.message||"OpenAI error");
-  const text = d.choices?.[0]?.message?.content||"";
-  return { text, usage: extractOpenAIUsage(d), model: safeModel };
-}
-
-async function callMinimax(msgs, sys, model) {
-  const key      = process.env.MINIMAX_API_KEY;
-  const groupId  = process.env.MINIMAX_GROUP_ID || "";
-  const ALLOWED_MINIMAX = ["MiniMax-M2.5"];
-  const safeModel = ALLOWED_MINIMAX.includes(model) ? model : "MiniMax-M2.5";
-  const r = await fetchWithTimeout("https://api.minimaxi.chat/v1/text/chatcompletion_v2", {
-    method:"POST",
-    headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
-    body: JSON.stringify({
-      model: safeModel,
-      max_tokens: 1024,
-      messages: [{role:"system",content:sys}, ...msgs],
-      ...(groupId ? { group_id: groupId } : {})
-    })
-  }, 30000);
-  const d = await r.json();
-  if (!r.ok) throw new Error(d.base_resp?.status_msg || d.error?.message || "Minimax error");
   const text = d.choices?.[0]?.message?.content||"";
   return { text, usage: extractOpenAIUsage(d), model: safeModel };
 }
@@ -169,48 +149,31 @@ export default async function handler(req, res) {
   // ── SEC-02: Validasi internal token ──
   if (!await validateInternalToken(req, res)) return;
 
-  const { messages, bizContext={}, provider: rawProvider, model, brainMd="" } = req.body||{};
-  // ── Smart provider fallback: pakai provider dari frontend, tapi fallback ke env yang tersedia ──
+  const { messages, bizContext={}, provider: rawProvider, model, brainMd="", imageData, imageType } = req.body||{};
+  // Pilihan provider eksplisit tidak boleh dialihkan diam-diam ke layanan lain.
   const detectProvider = () => {
-    // ── DEBUG: Log provider detection flow ──
-    console.log("[ARA-CHAT] Provider detection:", {
-      rawProvider,
-      model,
-      hasMinimaxKey: !!process.env.MINIMAX_API_KEY,
-      hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY,
-      hasOpenAIKey: !!process.env.OPENAI_API_KEY,
-      hasGroqKey: !!process.env.GROQ_API_KEY
-    });
-
-    // Ikuti pilihan frontend jika key tersedia
-    if (rawProvider === "claude" && process.env.ANTHROPIC_API_KEY) {
-      console.log("[ARA-CHAT] Using Claude (frontend + key exists)");
-      return "claude";
-    }
-    if (rawProvider === "minimax" && process.env.MINIMAX_API_KEY) {
-      console.log("[ARA-CHAT] Using Minimax (frontend + key exists)");
-      return "minimax";
-    }
-    if (rawProvider === "openai" && process.env.OPENAI_API_KEY) return "openai";
-    if (rawProvider === "groq" && process.env.GROQ_API_KEY) return "groq";
-    // Fallback: cek env vars yang tersedia, prioritas claude dulu
-    if (process.env.ANTHROPIC_API_KEY) {
-      console.log("[ARA-CHAT] Fallback: Using Claude");
-      return "claude";
-    }
-    if (process.env.MINIMAX_API_KEY) {
-      console.log("[ARA-CHAT] Fallback: Using Minimax");
-      return "minimax";
-    }
-    if (process.env.OPENAI_API_KEY) return "openai";
-    if (process.env.GROQ_API_KEY) return "groq";
-    console.log(`[ARA-CHAT] Last resort: ${rawProvider||"claude"}`);
-    return rawProvider || "claude";
+    const chosen = rawProvider || "claude";
+    if (!["claude", "openai", "groq"].includes(chosen)) return null;
+    return chosen;
   };
   const provider = detectProvider();
+  if (!provider) return res.status(400).json({ error: "Provider ARA tidak dikenal" });
+  const providerKey = { claude: "ANTHROPIC_API_KEY / LLM_API_KEY", openai: "OPENAI_API_KEY", groq: "GROQ_API_KEY" }[provider];
+  const hasProviderKey = provider === "claude"
+    ? !!(process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY)
+    : !!process.env[providerKey];
+  if (!hasProviderKey) return res.status(503).json({ error: `${providerKey} belum dikonfigurasi` });
   if (!messages?.length) return res.status(400).json({error:"messages wajib diisi"});
 
   const sys = buildSystem(bizContext, brainMd);
+  const messagesWithImage = imageData ? messages.map((message, index) => {
+    if (index !== messages.length - 1 || message.role !== "user") return message;
+    const content = typeof message.content === "string" ? message.content : JSON.stringify(message.content);
+    return { ...message, content: [
+      { type: "text", text: content },
+      { type: "image_url", image_url: { url: `data:${imageType || "image/jpeg"};base64,${imageData}` } },
+    ] };
+  }) : messages;
 
   const callStart = Date.now();
   try {
@@ -219,18 +182,24 @@ export default async function handler(req, res) {
 
     const runCall = async (p) => {
       switch(p) {
-        case "openai":  return await callOpenAI(messages, sys, model);
-        case "minimax": return await callMinimax(messages, sys, model);
+        case "openai":  return await callOpenAI(messagesWithImage, sys, model);
         case "groq":    return await callGroq(messages, sys, model);
-        default:        return await callClaude(messages, sys, model);
+        default:        return await callClaude(imageData ? messages.map((message, index) => {
+          if (index !== messages.length - 1 || message.role !== "user") return message;
+          return { ...message, content: [
+            { type: "image", source: { type: "base64", media_type: imageType || "image/jpeg", data: imageData } },
+            { type: "text", text: typeof message.content === "string" ? message.content : JSON.stringify(message.content) },
+          ] };
+        }) : messages, sys, model);
       }
     };
 
     try {
       callResult = await runCall(provider);
     } catch(primErr) {
+      if (rawProvider) throw primErr;
       console.warn(`⚠️ ${provider} failed, trying fallback...`, primErr.message);
-      const fallbackOrder = provider==="claude" ? ["minimax","openai","groq"] : ["claude","minimax","openai","groq"];
+      const fallbackOrder = provider==="claude" ? ["openai","groq"] : ["claude","openai","groq"];
       for (const fbProvider of fallbackOrder) {
         if (fbProvider === provider) continue;
         try {
