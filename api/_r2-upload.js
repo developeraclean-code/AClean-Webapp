@@ -19,7 +19,7 @@ export function hasR2Config() {
 
 // Hitung pemakaian bucket dengan ListObjectsV2. Dipanggil maksimal sekali sehari
 // oleh alarm infrastruktur; tidak dipakai pada setiap render Monitoring.
-export async function getR2BucketUsage({ maxPages = 100, requestTimeoutMs = 8000, totalTimeoutMs = 20000 } = {}) {
+export async function getR2BucketUsage({ maxPages = 100, requestTimeoutMs = 8000, totalTimeoutMs = 20000, onPage } = {}) {
   const { accessKeyId, secretAccessKey, accountId, bucket } = R2_ENV();
   if (!accessKeyId || !secretAccessKey || !accountId) {
     return { ok: false, err: "R2 env not configured" };
@@ -70,6 +70,11 @@ export async function getR2BucketUsage({ maxPages = 100, requestTimeoutMs = 8000
       requests++;
       if (!response.ok) return { ok: false, err: `R2 LIST ${response.status}`, bytes, objects, requests };
       const xml = await response.text();
+      if (onPage) await onPage([...xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)].map(([, entry]) => ({
+        key: decodeXml(entry.match(/<Key>([\s\S]*?)<\/Key>/)?.[1]),
+        size: Number(entry.match(/<Size>(\d+)<\/Size>/)?.[1]) || 0,
+        lastModified: entry.match(/<LastModified>([^<]+)<\/LastModified>/)?.[1] || null,
+      })));
       const sizes = [...xml.matchAll(/<Size>(\d+)<\/Size>/g)];
       objects += sizes.length;
       sizes.forEach(match => { bytes += Number(match[1]) || 0; });

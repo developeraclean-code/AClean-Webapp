@@ -2,7 +2,7 @@
 // api/cron-reminder.js, pemecahan _tasks/ Jul 2026). Entry & jadwal tetap di cron-reminder.js.
 import { sb, isCronJobEnabled, log, deleteR2Object } from "./_shared.js";
 import { logStructured } from "../_logger.js";
-import { extractR2Key, mapWithConcurrency } from "../_r2-key.js";
+import { extractR2Key, extractOwnedR2Key, ownedR2Prefixes, mapWithConcurrency } from "../_r2-key.js";
 
 const R2_DELETE_BATCH = 50;
 const R2_DELETE_CONCURRENCY = 10;
@@ -15,7 +15,7 @@ const R2_DELETE_CONCURRENCY = 10;
 // snapshot-cleanup, payment-proof-cleanup.
 // ══════════════════════════════════════════════════
 export async function taskCleanup() {
-  const result = { dispatch_logs: 0, payment_suggestions: 0 };
+  const result = { dispatch_logs: 0, payment_suggestions: 0, errors: 0 };
 
   const cutoff30 = new Date(Date.now() - 30 * 86400000).toISOString();
   const cutoff90 = new Date(Date.now() - 90 * 86400000).toISOString();
@@ -23,7 +23,7 @@ export async function taskCleanup() {
   // 1. Cleanup dispatch_logs > 90 hari
   const { error: dispDelErr, count: dispCount } = await sb.from("dispatch_logs")
     .delete({ count: "exact" }).lt("sent_at", cutoff90);
-  if (dispDelErr) console.error("[CLEANUP_DISPATCH_LOGS]", dispDelErr.message);
+  if (dispDelErr) { result.errors++; console.error("[CLEANUP_DISPATCH_LOGS]", dispDelErr.message); }
   else result.dispatch_logs = dispCount || 0;
 
   // 2. Cleanup payment_suggestions yang SUDAH selesai > 30 hari.
@@ -36,11 +36,11 @@ export async function taskCleanup() {
     .delete({ count: "exact" })
     .in("status", ["CONFIRMED", "DISMISSED"])
     .lt("created_at", cutoff30);
-  if (suggDelErr) console.error("[CLEANUP_PAYMENT_SUGGESTIONS]", suggDelErr.message);
+  if (suggDelErr) { result.errors++; console.error("[CLEANUP_PAYMENT_SUGGESTIONS]", suggDelErr.message); }
   else result.payment_suggestions = suggCount || 0;
 
   const summary = `dispatch_logs: ${result.dispatch_logs} | payment_suggestions: ${result.payment_suggestions} | log teknis: dikelola task log-cleanup`;
-  await log("CLEANUP", summary, "SUCCESS");
+  await log("CLEANUP", summary, result.errors ? "ERROR" : "SUCCESS");
   return result;
 }
 
@@ -105,6 +105,7 @@ export async function taskR2Cleanup90d() {
 
   await log("R2_CLEANUP_90D", `swept=${result.swept} purged=${result.purged} errors=${result.errors}`,
     result.errors > 0 ? "WARNING" : "SUCCESS");
+  result.has_more = result.swept === R2_DELETE_BATCH;
   return result;
 }
 
@@ -161,6 +162,7 @@ export async function taskExpenseFotoCleanup30d() {
   }
   await log("EXPENSE_FOTO_CLEANUP", `swept=${result.swept} purged=${result.purged} errors=${result.errors}`,
     result.errors > 0 ? "WARNING" : "SUCCESS");
+  result.has_more = result.swept === R2_DELETE_BATCH;
   return result;
 }
 
@@ -189,7 +191,8 @@ export async function taskPaymentProofCleanup90d() {
   // Hanya bukti real R2 (/api/foto?key=...) yang umurnya >90 hari (pakai paid_at, fallback created_at)
   const { data: rows, error } = await sb.from("invoices")
     .select("id, payment_proof_url, paid_at, created_at")
-    .like("payment_proof_url", "/api/foto?key=%")
+    .eq("status", "PAID")
+    .or(ownedR2Prefixes().map(prefix => `payment_proof_url.like."${prefix.replace(/"/g, '\\"')}%"`).join(','))
     .or(`paid_at.lt.${cutoff},and(paid_at.is.null,created_at.lt.${cutoff})`)
     .order("paid_at", { ascending: true, nullsFirst: true })
     .limit(R2_DELETE_BATCH);
@@ -201,7 +204,7 @@ export async function taskPaymentProofCleanup90d() {
   if (result.swept === 0) { await log("PAYMENT_PROOF_CLEANUP", "Tidak ada bukti bayar >90 hari", "INFO"); return result; }
 
   const outcomes = await mapWithConcurrency(rows || [], R2_DELETE_CONCURRENCY, async row => {
-    const key = extractR2Key(row.payment_proof_url);
+    const key = extractOwnedR2Key(row.payment_proof_url);
     if (!key) return { id: row.id, ok: false, skipped: true };
     return { id: row.id, ok: await deleteR2Object(key) };
   });
@@ -223,6 +226,7 @@ export async function taskPaymentProofCleanup90d() {
   }
   await log("PAYMENT_PROOF_CLEANUP", `swept=${result.swept} purged=${result.purged} errors=${result.errors} skipped=${result.skipped_external}`,
     result.errors > 0 ? "WARNING" : "SUCCESS");
+  result.has_more = result.swept === R2_DELETE_BATCH;
   return result;
 }
 
@@ -282,14 +286,15 @@ export async function taskSnapshotCleanup() {
   }
   await log("SNAPSHOT_CLEANUP", `candidates=${count} deleted=${purged} errors=${errors} (cutoff ${cutoff})`,
     errors > 0 ? "WARNING" : "SUCCESS");
-  return { ok: errors === 0, candidates: count, deleted: purged, purged, errors, cutoff };
+  return { ok: errors === 0, candidates: count, deleted: purged, purged, errors, cutoff, has_more: count === R2_DELETE_BATCH };
 }
 
 // ══════════════════════════════════════════════════
 // TASK 6: Cleanup WA chat lama (>14 hari)
 // ══════════════════════════════════════════════════
 export async function taskWaCleanup() {
-  const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["wa_cleanup_enabled","cron_jobs"]);
+  const { data: togData, error: toggleError } = await sb.from("app_settings").select("key,value").in("key",["wa_cleanup_enabled","cron_jobs"]);
+  if (toggleError) throw new Error('WA cleanup toggle: ' + toggleError.message);
   const togMap = Object.fromEntries((togData||[]).map(s=>[s.key, s.value]));
   if (!isCronJobEnabled(togMap, "wa_cleanup_enabled") || togMap["wa_cleanup_enabled"] !== "true") {
     await log("WA_CLEANUP", "Dilewati — WA Auto-Cleanup dinonaktifkan via Settings", "INFO");
@@ -322,8 +327,9 @@ export async function taskWaCleanup() {
   // PENTING: dulu melindungi SEMUA PENDING (termasuk yang basi >14h = artefak antrian, invoice
   // sebenarnya sudah lunas tapi status tak pernah jadi CONFIRMED). Akibatnya ratusan nomor basi
   // melindungi hampir semua chat lama → cleanup hapus 0 pesan & data numpuk. Batasi ke <14h.
-  const { data: pendingSugg } = await sb.from("payment_suggestions")
+  const { data: pendingSugg, error: pendingError } = await sb.from("payment_suggestions")
     .select("phone").eq("status", "PENDING").gte("created_at", cutoff);
+  if (pendingError) throw new Error('Proteksi bukti bayar gagal dibaca: ' + pendingError.message);
   const protectedPhones = [...new Set((pendingSugg || []).map(p => p.phone).filter(Boolean))];
 
   // Hapus SEMUA wa_messages >14 hari sekaligus (kecuali nomor terlindungi) — DELETE by-condition,
@@ -339,8 +345,9 @@ export async function taskWaCleanup() {
   const { error: convErr, count: convsDeleted } = await convQ;
   if (convErr) console.error("[WA_CLEANUP_CONV]", convErr.message);
 
-  await log("WA_CLEANUP", `${msgsDeleted || 0} pesan & ${convsDeleted || 0} conversations dihapus (>14 hari). ${protectedPhones.length} phone dilindungi. Raw webhook dikelola task log-cleanup.`);
-  return { msgsDeleted: msgsDeleted || 0, convsDeleted: convsDeleted || 0, protectedPhones: protectedPhones.length };
+  const errors = Number(Boolean(msgErr)) + Number(Boolean(convErr));
+  await log("WA_CLEANUP", `${msgsDeleted || 0} pesan & ${convsDeleted || 0} conversations dihapus (>14 hari). ${protectedPhones.length} phone dilindungi. Raw webhook dikelola task log-cleanup.`, errors ? 'ERROR' : 'SUCCESS');
+  return { msgsDeleted: msgsDeleted || 0, convsDeleted: convsDeleted || 0, protectedPhones: protectedPhones.length, errors };
 }
 
 // ══════════════════════════════════════════════════
@@ -388,7 +395,7 @@ export async function taskLogCleanup() {
       detail: summary || "Tidak ada log yang perlu dihapus",
       metadata: data,
     });
-    return { ...data, summary };
+    return { ...data, summary, has_more: Object.values(data?.deleted || {}).some(n => n >= 2000) };
   } catch (err) {
     await logStructured(sb, {
       action: "LOG_CLEANUP",

@@ -1,7 +1,7 @@
 name: Cron Dispatcher
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "17 * * * *"
   workflow_dispatch: {}
 concurrency:
   group: cron-dispatcher
@@ -9,12 +9,31 @@ concurrency:
 jobs:
   tick:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Ping cron dispatcher (task=tick)
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           code=$(curl -sS --max-time 120 -o /tmp/tick.json -w "%{http_code}" \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -H "Authorization: Bearer $CRON_SECRET" \
             "https://a-clean-webapp.vercel.app/api/cron-reminder?task=tick")
           echo "HTTP $code"; cat /tmp/tick.json || true; echo ""
           test "$code" = "200"
+          jq -e '.ok == true' /tmp/tick.json > /dev/null
+      - name: Continue bounded cleanup batches (no WhatsApp sends)
+        if: ${{ !cancelled() }}
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          for pass in $(seq 1 8); do
+            code=$(curl -sS --max-time 35 -o /tmp/cleanup.json -w "%{http_code}" \
+              -H "Authorization: Bearer $CRON_SECRET" \
+              "https://a-clean-webapp.vercel.app/api/cron-reminder?task=cleanup-tick")
+            test "$code" = "200"
+            cat /tmp/cleanup.json
+            jq -e '.ok == true' /tmp/cleanup.json > /dev/null
+            if jq -e '.pending == 0' /tmp/cleanup.json > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          echo "::warning::Cleanup masih memiliki antrean; dilanjutkan jadwal berikutnya."

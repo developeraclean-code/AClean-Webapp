@@ -251,6 +251,7 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
 167       # Applied 13 Sep 2026 — RPC snapshot Dashboard untuk bootstrap ringan Owner/Admin
 168       # Applied 13 Sep 2026 — Monitoring exact/paginasi, approval dan provenance Biaya, budget bulanan serta tautan nota-ke-stok atomik
 193–194   # Applied 5 Okt 2026 — WA workspace/RLS/outbox/pembayaran + planning Team atomik; schema produksi dan transaksi Owner/Admin/Teknisi diverifikasi dengan rollback
+195       # Applied 6 Okt 2026 — retensi log tunggal, lindungi action audit bisnis, ganti cron 30 hari lama dengan RPC bounded harian 03:00 WIB
 ```
 
 > Daftar di atas pernah tertinggal jauh (berhenti di 126 padahal file sudah 132).

@@ -34,6 +34,34 @@ export function encodeR2CanonicalPath(bucket, key) {
   return "/" + parts.join("/");
 }
 
+// Cleanup may only resolve references belonging to this configured app/bucket.
+export function ownedR2Prefixes(env = process.env) {
+  const prefixes = ['/api/foto?key='];
+  for (const app of [env.APP_URL, env.VITE_APP_URL, 'https://a-clean-webapp.vercel.app']) {
+    try { if (app) prefixes.push(new URL(app).origin + '/api/foto?key='); } catch { /* invalid optional origin */ }
+  }
+  for (const base of [env.R2_PUBLIC_URL, env.R2_PUBLIC_BASE_URL, env.VITE_R2_CDN_URL]) {
+    try { if (base && new URL(base).protocol === 'https:') prefixes.push(base.replace(/\/+$/, '') + '/'); } catch { /* invalid optional origin */ }
+  }
+  const account = env.R2_ACCOUNT_ID || env.CLOUDFLARE_ACCOUNT_ID;
+  if (account) prefixes.push(`https://${account}.r2.cloudflarestorage.com/${env.R2_BUCKET_NAME || 'aclean-files'}/`);
+  return [...new Set(prefixes)];
+}
+
+export function extractOwnedR2Key(value, prefixes = ownedR2Prefixes()) {
+  const raw = String(value || '').trim();
+  if (!prefixes.some(prefix => raw.startsWith(prefix))) return null;
+  return extractR2Key(raw);
+}
+
+export function backupFolder(value) {
+  const folder = String(value || '').trim().replace(/^Backup bulanan ke R2:\s*/, '').replace(/^backup\//, '').replace(/\/$/, '');
+  const match = folder.match(/^(\d{4})-(\d{2})(?:-(\d{2}))?$/);
+  if (!match || +match[2] < 1 || +match[2] > 12) return null;
+  if (match[3] && (+match[3] < 1 || +match[3] > new Date(Date.UTC(+match[1], +match[2], 0)).getUTCDate())) return null;
+  return folder;
+}
+
 function normalizeKey(value) {
   const key = safeDecode(String(value || ""))
     .replace(/^\/+/, "")

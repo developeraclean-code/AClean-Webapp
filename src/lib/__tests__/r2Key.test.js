@@ -1,5 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { encodeR2CanonicalPath, extractR2Key, mapWithConcurrency } from "../../../api/_r2-key.js";
+import { backupFolder, encodeR2CanonicalPath, extractOwnedR2Key, extractR2Key, ownedR2Prefixes, mapWithConcurrency } from "../../../api/_r2-key.js";
+
+describe('retention ownership and legacy backups', () => {
+  it('recognizes only configured object origins, not a provider or lookalike host', () => {
+    const prefixes = ownedR2Prefixes({ R2_PUBLIC_URL: 'https://our-bucket.r2.dev', APP_URL: 'https://app.aclean.test' });
+    expect(extractOwnedR2Key('https://our-bucket.r2.dev/wa-images/proof.jpg', prefixes)).toBe('wa-images/proof.jpg');
+    expect(extractOwnedR2Key('https://app.aclean.test/api/foto?key=wa-images%2Fproof.jpg', prefixes)).toBe('wa-images/proof.jpg');
+    for (const url of ['https://foreign.r2.dev/wa-images/proof.jpg', 'https://our-bucket.r2.dev.evil.test/wa-images/proof.jpg', 'https://api.fonnte.com/proof.jpg']) expect(extractOwnedR2Key(url, prefixes)).toBeNull();
+  });
+  it('supports verified monthly and daily backup formats without accepting traversal or invalid dates', () => {
+    expect(backupFolder('Backup bulanan ke R2: backup/2026-06/')).toBe('2026-06');
+    expect(backupFolder('backup/2026-09-01/')).toBe('2026-09-01');
+    for (const input of ['backup/../2026-06/', 'backup/2026-13/', 'backup/2026-02-30/', 'unknown']) expect(backupFolder(input)).toBeNull();
+  });
+});
 
 describe("extractR2Key", () => {
   it("membaca proxy foto relatif yang dipakai database", () => {

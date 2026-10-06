@@ -9,6 +9,8 @@
 // Semua fungsi fail-silent: log gagal tidak boleh blok caller.
 // ============================================================
 
+import { cronResultError, cronItemsProcessed } from './_cron-result.js';
+
 // ── Pricing per 1M tokens (USD). Update kalau provider rilis harga baru ──
 // Sumber: docs.anthropic.com/en/docs/about-claude/pricing (snapshot 29 Agu 2026).
 // CATATAN: model yang TIDAK ada di sini jatuh ke "_default" ($1/$5) dan biayanya
@@ -175,9 +177,15 @@ export async function runWithCronLogging(sb, taskName, fn, opts = {}) {
         ])
       : await taskPromise;
     if (timer) clearTimeout(timer);
+    const resultError = cronResultError(result);
+    if (resultError) {
+      const error = new Error(resultError);
+      error.result = result;
+      throw error;
+    }
     const items = (result && typeof opts.itemsFromResult === "function")
       ? Number(opts.itemsFromResult(result)) || 0
-      : (result && typeof result.items_processed === "number" ? result.items_processed : 0);
+      : cronItemsProcessed(result);
     const wasSkipped = result && result.skipped === true;
     await finishCronRun(sb, runId, {
       status: wasSkipped ? "SKIPPED" : "SUCCESS",
@@ -193,6 +201,8 @@ export async function runWithCronLogging(sb, taskName, fn, opts = {}) {
     await finishCronRun(sb, runId, {
       status: err?.code === "CRON_TIMEOUT" ? "TIMEOUT" : "FAILED",
       error_message: err.message || String(err),
+      metadata: err.result || null,
+      items_processed: cronItemsProcessed(err.result),
       startedAtMs,
     });
     throw err;

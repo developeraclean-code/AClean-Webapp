@@ -3,7 +3,7 @@
 import { sb, sendWA, sendWAWithResult, isCronJobEnabled, fmt, log, deleteR2Object, OWNER_PHONE } from "./_shared.js";
 import * as Sentry from "@sentry/node";
 import { getR2BucketUsage, hasR2Config, uploadBufferToR2 } from "../_r2-upload.js";
-import { mapWithConcurrency } from "../_r2-key.js";
+import { backupFolder, mapWithConcurrency } from "../_r2-key.js";
 import { gzip } from "node:zlib";
 import { promisify } from "node:util";
 
@@ -218,36 +218,42 @@ export async function taskBackupData() {
     console.error("[BACKUP_LOG]", e.message);
   }
 
-  // ── Retensi 60 hari (2 bulan): hapus folder backup lama dari R2 + backup_log ──
-  // Folder ber-tanggal di-track via backup_log.notes ("backup/YYYY-MM-DD/"). Format lama
-  // (yearMonth / notes non-tanggal) di-skip aman — tidak ikut terhapus.
-  let purgedBackups = 0;
-  try {
-    const cutoffISO = new Date(Date.now() - 60 * 86400000).toISOString();
-    const { data: oldLogs, error: retentionQueryError } = await sb.from("backup_log")
-      .select("id, tables, notes").lt("created_at", cutoffISO).limit(5);
-    if (retentionQueryError) throw retentionQueryError;
-    const retentionResults = await mapWithConcurrency(oldLogs || [], 2, async bl => {
-      const folder = String(bl.notes || "").trim().replace(/^backup\//, "").replace(/\/$/, "");
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(folder)) return false; // hanya folder ber-tanggal
-      const tbls = (Array.isArray(bl.tables) && bl.tables.length) ? bl.tables : tables;
-      const objectKeys = tbls.flatMap(t => [
-        `backup/${folder}/${t}.json`,
-        `backup/${folder}/${t}.json.gz`,
-      ]);
-      const deleted = await mapWithConcurrency(objectKeys, 4, deleteR2Object);
-      if (!deleted.every(item => item.status === "fulfilled" && item.value === true)) return false;
-      const { error } = await sb.from("backup_log").delete().eq("id", bl.id);
-      return !error;
-    });
-    purgedBackups = retentionResults.filter(x => x.status === "fulfilled" && x.value === true).length;
-  } catch(e) { console.error("[BACKUP_RETENTION]", e.message); }
+  const retention = await taskBackupRetention();
+  const purgedBackups = retention.purgedBackups;
+  const errors = retention.errors + (backupLogError ? 1 : 0) + tables.length - successTables.length;
 
   const summary = "Backup " + dateStr + ": " + Object.entries(results).map(([t, r]) => t + "=" + r).join(", ")
     + (backupLogError ? ` | backup_log GAGAL: ${backupLogError}` : "")
     + (purgedBackups ? ` | retensi: hapus ${purgedBackups} backup >60h` : "");
-  await log("BACKUP_DATA", summary, successTables.length === tables.length && !backupLogError ? "SUCCESS" : "WARNING");
-  return { dateStr, results, purgedBackups, backupLogError };
+  await log("BACKUP_DATA", summary, errors ? "WARNING" : "SUCCESS");
+  return { dateStr, results, purgedBackups, backupLogError, errors };
+}
+
+// Independent cleanup: does not create a backup or send messages.
+export async function taskBackupRetention() {
+  const { data: settings, error: settingsError } = await sb.from("app_settings").select("key,value").in("key", ["backup_data_enabled", "cron_jobs"]);
+  if (settingsError) throw new Error(settingsError.message);
+  const toggles = Object.fromEntries((settings || []).map(row => [row.key, row.value]));
+  if (!isCronJobEnabled(toggles, "backup_data_enabled") || toggles.backup_data_enabled !== "true") return { skipped: true, purgedBackups: 0, errors: 0 };
+  const { data: oldLogs, error } = await sb.from("backup_log").select("id,tables,notes")
+    .lt("created_at", new Date(Date.now() - 60 * 86400000).toISOString())
+    .or('notes.like."backup/%",notes.like."Backup bulanan ke R2: backup/%"')
+    .order("created_at", { ascending: true }).limit(5);
+  if (error) throw new Error(error.message);
+  const outcomes = await mapWithConcurrency(oldLogs || [], 2, async row => {
+    const folder = backupFolder(row.notes);
+    const tables = row.tables;
+    if (!folder || !Array.isArray(tables) || !tables.length || tables.some(t => !/^[a-z_]+$/.test(t))) return false;
+    const keys = tables.flatMap(t => [`backup/${folder}/${t}.json`, `backup/${folder}/${t}.json.gz`]);
+    const deleted = await mapWithConcurrency(keys, 4, deleteR2Object);
+    if (!deleted.every(item => item.status === "fulfilled" && item.value === true)) return false;
+    const { error: deleteError } = await sb.from("backup_log").delete().eq("id", row.id);
+    return !deleteError;
+  });
+  const purgedBackups = outcomes.filter(r => r.status === "fulfilled" && r.value === true).length;
+  const result = { purgedBackups, items_processed: purgedBackups, errors: outcomes.length - purgedBackups, has_more: outcomes.length === 5 };
+  await log("BACKUP_RETENTION", JSON.stringify(result), result.errors ? "WARNING" : "SUCCESS");
+  return result;
 }
 
 // ══════════════════════════════════════════════════
