@@ -66,3 +66,31 @@ export async function fetchWaHistory(supabase, phone, limit = 100) {
   if (result.error) throw new Error(result.error.message || "Gagal memuat pesan");
   return [...(result.data || [])].reverse();
 }
+
+// Resolve only inbox numbers, independently of the capped/lazy Customer menu.
+// Exact format variants only: never guess a customer from a name or phone suffix.
+export async function fetchWaCustomers(supabase, phones) {
+  const wanted = new Set(phones.map(normalizePhone).filter(p => /^\d{8,15}$/.test(p)));
+  const variants = [...new Set([...wanted].flatMap(p => p.startsWith('628')
+    ? [p, `+${p}`, `0${p.slice(2)}`, p.slice(2)] : [p, `+${p}`]))];
+  const rows = new Map();
+  for (let start = 0; start < variants.length; start += 120) {
+    for (let from = 0; ; from += 200) {
+      const { data, error } = await supabase.from('customers')
+        .select('id,name,phone,address,area,is_vip,last_rating_request')
+        .in('phone', variants.slice(start, start + 120)).order('id').range(from, from + 199);
+      if (error) throw new Error(error.message || 'Daftar Customer gagal dimuat');
+      for (const row of data || []) if (wanted.has(normalizePhone(row.phone))) rows.set(row.id, row);
+      if ((data || []).length < 200) break;
+    }
+  }
+  return [...rows.values()];
+}
+
+export function waCustomerTitle(conv, locations = [], selectedId = '') {
+  const matches = locations.filter(c => samePhone(c.phone, conv?.phone));
+  const selected = matches.find(c => String(c.id) === String(selectedId));
+  if (selected?.name?.trim()) return selected.name.trim();
+  const names = [...new Set(matches.map(c => c.name?.trim()).filter(Boolean))].sort((a,b) => a.localeCompare(b,'id'));
+  return names.join(' / ') || conv?.name?.trim() || conv?.phone || 'Kontak WhatsApp';
+}

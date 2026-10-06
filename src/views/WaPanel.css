@@ -291,7 +291,11 @@
 .wa-conversation-title strong {
   overflow:hidden;
   text-overflow:ellipsis;
-  white-space:nowrap;
+  white-space:normal;
+  overflow-wrap:anywhere;
+  display:-webkit-box;
+  -webkit-line-clamp:2;
+  -webkit-box-orient:vertical;
   font-size:12px;
 }
 
@@ -1226,3 +1230,5 @@
 .wa-ops-notice { color: #a9dfc5; background: #18372d; border-radius: 7px; padding: 10px; margin: 8px 0 !important; font-size: 11px; line-height: 1.6; }
 .wa-proof-preview { display: block; max-width: 100%; max-height: 180px; border-radius: 7px; margin-bottom: 8px; }
 .wa-payment-allocation { border: 1px solid var(--wa-line); border-radius: 7px; padding: 10px; font-size: 11px; }
+
+.wa-conversation-phone{display:block;font-size:10px;color:var(--wa-muted);margin-top:4px;font-variant-numeric:tabular-nums}.wa-whatsapp-alias{display:block;color:var(--wa-muted);font-size:10px;margin-top:4px;overflow-wrap:anywhere}

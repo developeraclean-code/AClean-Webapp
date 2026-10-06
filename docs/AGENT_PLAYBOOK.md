@@ -138,7 +138,7 @@ di satu jalur WAJIB dicerminkan di jalur satunya, lalu tes KEDUA jalur.
 | Toggle cron satu lapis | WA bocor saat OFF → AND-logic (lihat §B) |
 | Edit `jenis servis` order | SOP: hapus & buat ulang |
 | Konflik jadwal ±1 jam flat | Pakai durasi aktual (`hasConflict`/`cekTeknisiAvailableDB`) |
-| Nomor HP format bebas | Selalu `normalizePhone()` → `628xxx` |
+| Nomor HP format bebas / nama WA dianggap identitas Customer | Pakai `normalizePhone()` sekali pada input (pertahankan sinyal `+` internasional). Customer global dimuat lazy dan di-cap 1.000; WA dari Dashboard perlu lookup paginated khusus nomor inbox, bukan menganggap array kosong = kontak baru. Dahulukan nama Customer, tampilkan nomor, pilih lokasi bila jamak; kegagalan lookup harus terlihat (insiden 5 Okt 2026) |
 | Cron entry baru di vercel.json | Dispatcher `task=tick` (lihat §B) |
 | PDF dari state lokal | State basi → refetch baris segar sebelum generate/kirim PDF |
 | Delete user via Supabase client | Tidak ada RLS policy → `/api/manage-user` |

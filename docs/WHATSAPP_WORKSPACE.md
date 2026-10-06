@@ -5,6 +5,7 @@ Buka tombol **WhatsApp** dari dashboard/sidebar (Owner/Admin, pengaturan `wa_mon
 - Desktop: panel maksimal 1280 px, dengan daftar chat, percakapan, dan ringkasan pelanggan. Tombol ↗ memperbesar panel hingga memenuhi layar.
 - Layar lebih kecil: ringkasan dapat dibuka melalui **Aksi pelanggan**. Di HP, tombol kembali menampilkan daftar chat.
 - Cari nama, nomor, atau cuplikan pesan dari percakapan yang dimuat. Filter **Belum dibaca** dan **Baru** membantu memilah kontak.
+- Nama utama inbox/header mengikuti daftar **Customer** berdasarkan kecocokan nomor, meskipun menu Customer belum dibuka. Nomor tujuan tetap terlihat; alias WhatsApp menjadi keterangan tambahan. Nama beberapa lokasi ditampilkan bersama sampai lokasi dipilih. Pencarian Customer hanya mengambil nomor dalam inbox saat panel dibuka atau di-refresh, tanpa polling tambahan. Jika gagal, tampil peringatan dan pembuatan customer/jadwal ditahan sampai verifikasi berhasil.
 - Riwayat dimulai dari 100 pesan terbaru; **Muat pesan sebelumnya** menambah riwayat. Percakapan aktif diperbarui setiap 15 detik saat tab terlihat.
 - Draf terpisah per nomor selama sesi panel. Balasan cepat menambahkan teks ke draf; pesan baru dikirim lewat **Kirim** atau Enter di desktop. Shift+Enter membuat baris baru. Di HP, Enter selalu membuat baris baru.
 - Jika nomor memiliki beberapa lokasi pelanggan, pilih lokasi sebelum membuat jadwal/reorder atau melihat tagihan.
@@ -21,7 +22,7 @@ Buka tombol **WhatsApp** dari dashboard/sidebar (Owner/Admin, pengaturan `wa_mon
 
 Riwayat pengiriman yang masih `SENDING` atau `UNCERTAIN` perlu diperiksa terhadap gateway sebelum tindakan manual berikutnya. Tidak ada klaim bahwa pesan telah diterima perangkat atau dibaca pelanggan. Jika gateway menerima pesan tetapi penyimpanan hasil gagal, catatan tetap tertahan untuk pemeriksaan, tanpa mengirim ulang otomatis.
 
-Data pelanggan, order, invoice, dan bukti bayar berasal dari data yang sudah dimuat aplikasi. Invoice menggunakan koleksi gabungan yang mencakup invoice outstanding. Ini bukan sinkronisasi seluruh riwayat WhatsApp Web. Pengiriman media baru, panggilan, dan tanda pesan dibaca penerima belum tersedia. Status pengiriman sukses berarti gateway menerima permintaan, bukan konfirmasi pesan telah dibaca.
+Identitas pelanggan dibaca langsung dari Customer untuk nomor dalam inbox dengan pagination; tidak bergantung pada batas 1.000 customer di menu. Pencocokan mendukung format nomor tersimpan `628…`, `+628…`, `08…`, dan `8…`, tanpa menebak dari nama atau potongan nomor. Nomor alternatif yang hanya tertulis di catatan belum ditautkan otomatis. Order, invoice, dan bukti bayar berasal dari data yang sudah dimuat aplikasi. Invoice menggunakan koleksi gabungan yang mencakup invoice outstanding. Ini bukan sinkronisasi seluruh riwayat WhatsApp Web. Pengiriman media baru, panggilan, dan tanda pesan dibaca penerima belum tersedia. Status pengiriman sukses berarti gateway menerima permintaan, bukan konfirmasi pesan telah dibaca.
 
 ## Pemeriksaan
 
@@ -61,10 +62,11 @@ WA_PGLITE_MODULE=/private/tmp/aclean-wa-dbcheck/node_modules/@electric-sql/pglit
 
 Script membangun schema pendukung minimal, memuat fungsi asli migrasi 170/171/173 serta migrasi 193, kemudian menguji transaksi, rollback, duplikasi bukti, batas saldo, pembatasan role/RLS, versi tindak lanjut, pencatatan dokumen, dan cooldown manual/cron. Script tidak membaca environment Supabase atau mengakses database produksi. Ini belum menguji race antar-koneksi pada Supabase sebenarnya.
 
-Hasil verifikasi lokal setelah pembaruan Jadwal Team, 5 Oktober 2026:
+Hasil verifikasi lokal setelah perbaikan identitas Customer, 6 Oktober 2026:
 
-- 811 test dalam 87 file Vitest lulus pada salinan commit WA/Jadwal (perubahan Mode Darurat terpisah tidak disertakan).
-- 24 test browser WhatsApp/Planning lulus, termasuk desktop/HP, pop-up, preset yang bertambah, anggota per hari, absensi, reschedule, konflik admin, kegagalan jaringan, grid sampai 19:00, navigasi hari lintas minggu, dan planning malam dari WA yang tetap terlihat di Planning Order.
+- 826 test dalam 90 file Vitest lulus, pada base yang sudah mencakup Mode Darurat.
+- 26 test browser WhatsApp/Planning lulus, termasuk nama Customer tanpa membuka menu Customer, nomor tujuan kirim, beberapa lokasi, kegagalan/retry lookup, format nomor, tanpa polling Customer tambahan, desktop/HP, pop-up, roster, reschedule, konflik admin, grid sampai 19:00, navigasi lintas minggu, dan planning malam yang tetap terlihat di Planning Order.
+- Lookup identitas melalui akun Owner/RLS produksi lulus: pada sampel 100 percakapan terbaru, 54 nomor cocok dengan 77 baris Customer/lokasi. Pemeriksaan read-only; tidak ada pesan dikirim atau data pelanggan diubah.
 - 13 kelompok kontrak SQL WhatsApp dan 13 kelompok kontrak SQL planning lulus dengan PostgreSQL/WASM.
 - Build produksi, lint `src`, typecheck, pemeriksaan sintaks backend, dan `git diff --check` lulus.
 - Smoke test preview localhost lulus: navigasi reorder, kirim berhasil/gagal, slot jadwal, alokasi pembayaran, reset; tanpa error JavaScript atau permintaan jaringan eksternal.

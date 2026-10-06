@@ -15,8 +15,8 @@ test.beforeEach(async ({ page }) => {
   });
   await page.goto("https://wa-workspace.test/");
 });
-const chooseAndi = page => page.getByRole("button", { name: /Andi.*lokasi pelanggan/ }).click();
-const chooseMaya = page => page.getByRole("button", { name: /Maya.*Ibu Maya/ }).click();
+const chooseAndi = page => page.locator('.wa-conversation[data-phone="6281234567890"]').click();
+const chooseMaya = page => page.locator('.wa-conversation[data-phone="6281234567891"]').click();
 
 test("desktop keeps inbox alongside chat and scopes orders, invoices, and reorder to a location", async ({ page }) => {
   const errors = []; page.on("pageerror", error => errors.push(error.message));
@@ -417,4 +417,56 @@ test('day arrows navigate across both week boundaries and retain hourly booking 
   await expect(page.getByRole('button',{name:'Hari berikutnya'})).toBeVisible();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
   await page.screenshot({path:'/tmp/aclean-team-day-navigation-mobile.png'});
+});
+
+test('inbox resolves Customer names without visiting Customer menu and preserves the actual recipient',async({page})=>{
+  await page.goto('https://wa-workspace.test/?empty-customers=1');
+  const maya=page.locator('.wa-conversation[data-phone="6281234567891"]');
+  await expect(maya.locator('strong')).toHaveText('Ibu Maya');
+  await expect(maya).toContainText('Pelanggan terdaftar');
+  await expect(maya).toContainText('+62 812-3456-7891');
+  await page.evaluate(()=>{window.waTest.conversations[1].name='R';});
+  await page.getByRole('button',{name:'Muat ulang percakapan'}).click();
+  await maya.click();
+  await expect(page.locator('.wa-chat-header h3')).toHaveText('Ibu Maya');
+  await expect(page.locator('.wa-whatsapp-alias')).toHaveText('Nama WhatsApp: R');
+  await page.getByLabel('Pesan WhatsApp').fill('Uji identitas pelanggan');
+  await page.getByRole('button',{name:'Kirim ↗',exact:true}).click();
+  expect(await page.evaluate(()=>window.waTest.calls.find(c=>c.type==='send').phone)).toBe('6281234567891');
+  await page.getByLabel('Cari percakapan').fill('Ibu Maya');
+  await expect(page.locator('.wa-conversation')).toHaveCount(1);
+  await page.getByLabel('Hapus pencarian').click();
+  await chooseAndi(page);
+  await expect(page.locator('.wa-chat-header h3')).toContainText('Bapak Andi Kantor / Bapak Andi Rumah');
+  await expect(page.getByRole('button',{name:'+ Jadwalkan',exact:true})).toBeDisabled();
+  await page.getByLabel('Lokasi pelanggan').selectOption('b');
+  await expect(page.locator('.wa-chat-header h3')).toHaveText('Bapak Andi Kantor');
+  await page.screenshot({path:'/tmp/aclean-wa-customer-names.png'});
+  await page.evaluate(()=>{
+    window.waTest.conversations[2].phone='+819012345678';
+    window.waTest.customers.push({id:'jp',name:'Pelanggan Jepang',phone:'+819012345678'});
+  });
+  await page.getByRole('button',{name:'Muat ulang percakapan'}).click();
+  await expect(page.locator('.wa-conversation[data-phone="819012345678"] strong')).toHaveText('Pelanggan Jepang');
+});
+
+test('lookup failure is visible, blocks mistaken customer creation, and manual refresh resolves legacy numbers',async({page})=>{
+  await page.goto('https://wa-workspace.test/?empty-customers=1');
+  await page.evaluate(()=>{window.waTest.customerLookupError=true;window.waTest.customers[2].phone='081234567891';});
+  await page.getByRole('button',{name:'Muat ulang percakapan'}).click();
+  await chooseMaya(page);
+  await expect(page.getByRole('alert')).toContainText('Nama Customer belum dapat diverifikasi');
+  await expect(page.getByRole('button',{name:'+ Jadwalkan',exact:true})).toBeDisabled();
+  await page.getByRole('button',{name:'Baru',exact:true}).click();
+  await expect(page.locator('.wa-conversation')).toHaveCount(0);
+  await page.evaluate(()=>{window.waTest.customerLookupError=false;});
+  await page.getByRole('button',{name:'Coba lagi nama pelanggan'}).click();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'+ Jadwalkan',exact:true})).toBeEnabled();
+  await expect(page.locator('.wa-chat-header h3')).toHaveText('Ibu Maya');
+  await expect(page.locator('.wa-conversation')).toHaveCount(1);
+  await expect(page.locator('.wa-conversation')).toContainText('Kontak baru');
+  const before=await page.evaluate(()=>window.waTest.calls.filter(c=>c.type==='customer-lookup').length);
+  await page.clock.install();await page.clock.fastForward(60000);
+  expect(await page.evaluate(()=>window.waTest.calls.filter(c=>c.type==='customer-lookup').length)).toBe(before);
 });

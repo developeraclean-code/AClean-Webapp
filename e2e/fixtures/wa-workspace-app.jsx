@@ -52,6 +52,8 @@ let demoInvoices = [
 const demoProofs = [{id:"p1",phone:phones[0],status:"PENDING",amount:200000,bank:"BCA"},{id:"p2",phone:phones[0],status:"PENDING",amount:600000,bank:"Mandiri"}];
 const followups = new Map(), outbox = new Map(), receipts = new Map();
 window.waTest = { sendResult: true, sendDelay: 0, delays: {}, calls: [], historyError: false, sendUncertain: false, paymentError: false, scheduleError: false, followupConflict: false };
+window.waTest.customers = customers;
+window.waTest.conversations = conversations;
 window.waTest.presets = presets;
 window.waTest.rosters = rosters;
 window.waTest.absences = absences;
@@ -97,8 +99,9 @@ const db = {
   from(table) {
     const q = { mode: "read", phone: null, payload: null, date: null, from: null, to: null,
       select() { return this; }, eq(key, value) { if (key === "phone") this.phone = value; if(key==="date")this.date=value; return this; },
-      in() { return this; }, gte(key,value) { if(key==="date")this.from=value; return this; }, neq() { return this; }, ilike() { return this; }, or() { return this; },
+      in(key,values) { if(key==="phone")this.phones=values; return this; }, gte(key,value) { if(key==="date")this.from=value; return this; }, neq() { return this; }, ilike() { return this; }, or() { return this; },
       lte(key,value) { if(key==="date")this.to=value; return this; }, order() { return this; }, limit() { return this; }, single() { return this; },
+      range(start,end) { this.pageStart=start;this.pageEnd=end;return this; },
       update(value) { this.mode = "update"; this.payload = value; return this; },
       insert(value) { this.mode = "insert"; this.payload = value; return this; },
       async then(resolve, reject) {
@@ -106,6 +109,10 @@ const db = {
           if (this.mode === "read" && table === "wa_messages") {
             await new Promise(r => setTimeout(r, window.waTest.delays[this.phone] || 0));
             resolve(window.waTest.historyError ? { error: { message: "Riwayat gagal dimuat" } } : { data: [...(messages[this.phone] || [])].reverse(), count: (messages[this.phone] || []).length });
+          } else if (this.mode === "read" && table === "customers") {
+            window.waTest.calls.push({type:"customer-lookup",phones:this.phones});
+            await new Promise(r=>setTimeout(r,window.waTest.customerDelay || 0));
+            resolve(window.waTest.customerLookupError?{error:{message:"Daftar Customer tidak tersedia"}}:{data:customers.filter(c=>!this.phones || this.phones.includes(c.phone)).slice(this.pageStart || 0,(this.pageEnd ?? 199)+1)});
           } else if (this.mode === "insert" && table === "orders") {
             window.waTest.calls.push({ type: "planning-save", row: this.payload });
             if (window.waTest.planningSaveError) resolve({ error: { message: "Database tidak tersedia" } });
@@ -146,7 +153,7 @@ export default function WorkspaceFixture({ onAction, onNotice, planningMode = fa
   const [waMessages, setWaMessages] = useState([]);
   const [waSearch, setWaSearch] = useState("");
   const [waInput, setWaInput] = useState("");
-  const [customersData, setCustomersData] = useState(customers);
+  const [customersData, setCustomersData] = useState(new URLSearchParams(location.search).has("empty-customers") ? [] : customers);
   const notice = text => { window.waTest.calls.push({ type: "notice", text }); onNotice?.(text); };
   const action = event => {
     window.waTest.calls.push(event);
