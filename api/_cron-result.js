@@ -1,4 +1,10 @@
 // Result contract shared by logging and bounded cleanup continuations.
+// Leave room for database logging, the outer result and the HTTP response.
+export function cronTaskBudget(startedAt, requestedMs, now = Date.now()) {
+  const available = 32_000 - (now - startedAt) - 5_000;
+  return available >= 2_500 ? Math.min(requestedMs, available) : 0;
+}
+
 export function cronResultError(result) {
   if (!result || result.skipped === true) return null;
   if (result.error || result.ok === false || Number(result.errors) > 0) {

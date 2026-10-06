@@ -49,7 +49,7 @@
       "memory": 512
     },
     "api/cron-reminder.js": {
-      "maxDuration": 30
+      "maxDuration": 60
     }
   }
 }

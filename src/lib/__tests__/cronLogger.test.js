@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { closeStaleCronRuns, runWithCronLogging } from "../../../api/_logger.js";
-import { pendingCronTasks } from '../../../api/_cron-result.js';
+import { cronTaskBudget, pendingCronTasks } from '../../../api/_cron-result.js';
 
 function fakeCronDb() {
   const updates = [];
@@ -24,6 +24,12 @@ function fakeCronDb() {
 }
 
 describe("cron logger hardening", () => {
+  it('keeps logging/response headroom and defers late work instead of starting a one-second task', () => {
+    expect(cronTaskBudget(0, 18_000, 3_000)).toBe(18_000);
+    expect(cronTaskBudget(0, 6_500, 22_000)).toBe(5_000);
+    expect(cronTaskBudget(0, 6_500, 25_000)).toBe(0);
+    expect(cronTaskBudget(0, 6_500, 45_000)).toBe(0);
+  });
   it('records partial cleanup as failed, preserving successful deletions and retry context', async () => {
     const { db, updates } = fakeCronDb();
     await expect(runWithCronLogging(db, 'cleanup', async () => ({ swept: 50, purged: 48, errors: 2, has_more: true })))

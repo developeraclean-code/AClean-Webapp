@@ -10,7 +10,7 @@ import { timingSafeEqual } from "crypto";
 import { initSentry, setCronContext } from "./sentry-init.js";
 import { closeStaleCronRuns, runWithCronLogging } from "./_logger.js";
 import { verifyAppToken } from "./_auth.js";
-import { pendingCronTasks } from "./_cron-result.js";
+import { cronTaskBudget, pendingCronTasks } from "./_cron-result.js";
 import { taskBackupRetention } from "./_tasks/ops.js";
 import { sb, sendWA, log, OWNER_PHONE } from "./_tasks/_shared.js";
 import { taskCleanup, taskR2Cleanup90d, taskExpenseFotoCleanup30d, taskPaymentProofCleanup90d, taskSnapshotCleanup, taskWaCleanup, taskLogCleanup } from "./_tasks/cleanup.js";
@@ -35,9 +35,8 @@ async function taskTick({ cleanupOnly = false } = {}) {
   const dow  = nowWib.getUTCDay();     // 0=Min..6=Sab (WIB)
   const dom  = nowWib.getUTCDate();    // tanggal WIB
   const CAP  = 3;                       // jaga durasi aman pada Vercel Hobby
-  // Vercel membatasi endpoint ini 30 detik. Sisakan waktu untuk menutup
+  // Vercel membatasi endpoint ini 60 detik. Sisakan waktu untuk menutup
   // cron_runs, menulis log, dan mengirim response sebelum platform mematikan proses.
-  const TIME_BUDGET_MS = 22_000;
   // Tutup semua run basi, bukan hanya task yang kebetulan sedang dimulai lagi.
   // Ini membuat Monitoring jujur setelah function Vercel pernah diputus paksa.
   await closeStaleCronRuns(sb, 20 * 60 * 1000);
@@ -86,7 +85,9 @@ async function taskTick({ cleanupOnly = false } = {}) {
   const failures = [];
   // bukti-bayar: scan tiap tick jam kerja 9-18 WIB
   if (!cleanupOnly && hour >= 9 && hour <= 18) {
-    try { await runWithCronLogging(sb, "payment-media-retry", () => taskRetryPaymentMedia(), { timeoutMs: 11_000 }); ran.push("payment-media-retry"); }
+    const retryBudget = cronTaskBudget(tickStartedAt, 11_000);
+    if (!retryBudget) return { hourWib: hour, ran, pending: 1, items_processed: ran.length };
+    try { await runWithCronLogging(sb, "payment-media-retry", () => taskRetryPaymentMedia(), { timeoutMs: retryBudget }); ran.push("payment-media-retry"); }
     catch (e) {
       console.error("[TICK] payment-media-retry", e.message);
       failures.push({ task: 'payment-media-retry', error: e.message });
@@ -95,7 +96,9 @@ async function taskTick({ cleanupOnly = false } = {}) {
         return { ok: false, error: e.message, hourWib: hour, ran, pending: 1, timedOut: "payment-media-retry", items_processed: ran.length };
       }
     }
-    try { await runWithCronLogging(sb, "bukti-bayar", () => taskScanBuktiBayar(), { timeoutMs: 6_500 }); ran.push("bukti-bayar"); }
+    const scanBudget = cronTaskBudget(tickStartedAt, 6_500);
+    if (!scanBudget) return { ok: failures.length === 0, hourWib: hour, ran, pending: 1, failures, items_processed: ran.length };
+    try { await runWithCronLogging(sb, "bukti-bayar", () => taskScanBuktiBayar(), { timeoutMs: scanBudget }); ran.push("bukti-bayar"); }
     catch (e) {
       console.error("[TICK] bukti-bayar", e.message);
       failures.push({ task: 'bukti-bayar', error: e.message });
@@ -129,11 +132,10 @@ async function taskTick({ cleanupOnly = false } = {}) {
 
   let count = 0, pending = 0;
   for (const s of outstanding) {
-    if (count >= CAP || Date.now() - tickStartedAt >= TIME_BUDGET_MS) { pending++; continue; }
-    const remainingMs = Math.max(1_000, TIME_BUDGET_MS - (Date.now() - tickStartedAt));
-    const taskTimeoutMs = s.t === "backup" ? 18_000 : 6_500;
+    const taskTimeoutMs = cronTaskBudget(tickStartedAt, s.t === "backup" ? 18_000 : 6_500);
+    if (count >= CAP || !taskTimeoutMs) { pending++; continue; }
     try {
-      const result = await runWithCronLogging(sb, s.t, () => s.fn(), { timeoutMs: Math.min(taskTimeoutMs, remainingMs) });
+      const result = await runWithCronLogging(sb, s.t, () => s.fn(), { timeoutMs: taskTimeoutMs });
       ran.push(s.t); count++;
       if (s.cleanup && result?.has_more) pending++;
     }
@@ -262,7 +264,7 @@ export default async function handler(req, res) {
     const taskKey = taskMap[task] ? task : "reminder";
 
     const result = await runWithCronLogging(sb, taskKey, () => handler(), {
-      timeoutMs: ["tick", "cleanup-tick"].includes(taskKey) ? 27_000 : 25_000,
+      timeoutMs: ["tick", "cleanup-tick"].includes(taskKey) ? 45_000 : 25_000,
     });
 
     return res.json({ ok:true, task, timestamp:new Date().toISOString(), ...result });

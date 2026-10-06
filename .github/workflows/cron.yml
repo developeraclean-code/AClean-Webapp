@@ -27,7 +27,7 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           for pass in $(seq 1 8); do
-            code=$(curl -sS --max-time 35 -o /tmp/cleanup.json -w "%{http_code}" \
+            code=$(curl -sS --max-time 55 -o /tmp/cleanup.json -w "%{http_code}" \
               -H "Authorization: Bearer $CRON_SECRET" \
               "https://a-clean-webapp.vercel.app/api/cron-reminder?task=cleanup-tick")
             test "$code" = "200"

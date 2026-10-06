@@ -81,3 +81,22 @@ Validasi: 834 tes unit, lint, typecheck, build, pemeriksaan nomor migrasi, dan t
 Inventaris baca R2 berhasil: **29.237 objek / 4.299.134.598 byte**, sebelum cleanup. Folder terbesar: `laporan/` 1.612.756.384 byte, `wa-group/` 1.192.893.756 byte, `service-reports/` 708.083.910 byte, dan `invoices/` 492.077.877 byte. Manifest detail disimpan privat di luar repo. Script audit ulang: `node scripts/audit-r2.mjs --manifest /private/tmp/aclean-r2-inventory.json`.
 
 Kandidat yang sudah cocok dengan objek nyata: 1.055 foto grup (141.313.962 byte), 19 bukti bayar dari invoice PAID (semuanya berumur objek >90 hari), dan empat objek backup Juni. Seluruh 300 objek yang sebelumnya bertanda purged terverifikasi sudah tidak ada. Foto pekerjaan `laporan/`, PDF invoice/laporan, maintenance, material, quotation, dan tanda tangan tidak termasuk penghapusan batch ini. File lain yang belum cocok dengan metadata tetap memerlukan review referensi sebelum dihapus.
+
+## Hasil eksekusi dan pemeriksaan ulang
+
+Batch manual `cleanup-tick` selesai pukul **08:12 WIB**, 22 pemanggilan semuanya sukses dan antrean kandidat awal habis. Database mencatat 1.055 foto grup, 19 referensi bukti bayar, satu set backup bulanan, dan 1.065 log teknis berhasil diproses. Cleanup tidak memanggil fungsi pengiriman WhatsApp. Pemicu terjadwal kemudian juga berhasil menjalankan cleanup chat dan snapshot.
+
+Inventaris ulang pukul sekitar **16:47 WIB** dibanding manifest sebelum cleanup:
+
+| Objek yang tidak lagi ada | Jumlah file unik | Byte |
+|---|---:|---:|
+| Foto grup WA | 1.055 | 141.313.962 |
+| Bukti bayar | 18 (untuk 19 invoice) | 1.129.425 |
+| Backup Juni | 4 | 6.289.011 |
+| Total | **1.077** | **148.732.398** |
+
+Satu dari 18 bukti bayar secara historis berada di prefix `laporan/`; audit database memastikan objek itu adalah bukti bayar invoice PAID, lalu ditandai `purged-90d`, tanpa mengubah status invoice. Tidak ditemukan referensi objek tersebut pada order atau service_reports aktif. Sisanya berada di `wa-images/`. Tidak ada objek pada prefix PDF invoice/laporan, maintenance, material, quotation, atau tanda tangan yang hilang pada perbandingan manifest.
+
+Selama jeda verifikasi ada 230 objek baru masuk. Bucket menjadi **28.390 objek / 4.184.302.784 byte**; penghematan bruto 148,7 MB berbeda dengan perubahan bersih karena unggahan baru. Pada pemeriksaan sore terdapat 53 referensi foto grup yang baru melewati umur 90 hari setelah batch pagi; ini kandidat siklus berikutnya, bukan sisa 1.055 kandidat awal. File lama yang tidak cocok dengan metadata belum dihapus massal.
+
+CI Quality dan E2E rilis awal lulus. Pemicu GitHub pukul 14:33 WIB mengungkap timeout dispatcher umum (30 detik), sementara langkah cleanup terpisah tetap sukses. Follow-up memberi platform 60 detik, timeout dispatcher 45 detik, anggaran kerja 32 detik dengan cadangan pencatatan 5 detik, dan menunda tugas baru bila sisa waktu terlalu kecil. Jumlah task per batch tetap tiga. Regresi lokal sesudah perubahan ini: **835 tes unit**, lint, typecheck, build, dan pemeriksaan sintaks backend lulus. Tidak ada pemicu WA manual digunakan untuk pengujian dispatcher umum.
