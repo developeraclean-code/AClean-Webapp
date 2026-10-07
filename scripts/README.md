@@ -1,7 +1,15 @@
 # Scripts
 
 Script dev/ops manual. Jalankan dari root repo: `node scripts/<nama>.mjs`.
-Semua baca kredensial dari `.env.local` (path relatif `../.env.local`) — **jangan pindah ke subfolder** tanpa update path.
+Script operasional dapat membaca kredensial dari `.env.local` — periksa script sebelum menjalankan. Evaluasi/preview ARA di bawah menggunakan data sintetis; mode live hanya membaca API key provider.
+
+## ARA (lokal, tanpa pesan ke customer)
+
+- `npm run test:ara`: regresi policy, API internal dan antrean customer.
+- `npm run test:ara-200`: 200 workflow simulasi, tanpa Supabase/Fonnte nyata.
+- `npm run preview:ara`: preview terisolasi pada `http://127.0.0.1:4175`.
+- `node scripts/evaluate-ara.mjs --live --provider=claude` atau `--provider=openai`: panggilan API berbiaya dengan data sintetis; bukan pengiriman WA dan bukan bukti akurasi customer nyata.
+- SOP, signature dan urutan migrasi/deploy: [ARA_READINESS](../docs/ARA_READINESS.md).
 
 ## Smoke tests (verifikasi terhadap DB asli, cleanup otomatis)
 | Script | Cakupan |

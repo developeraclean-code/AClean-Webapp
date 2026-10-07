@@ -1,7 +1,7 @@
+import { ARA_CUSTOMER_DEFAULT } from "../lib/araPolicy.js";
 import { cs } from "../theme/cs.js";
 
-const BRAIN_CUSTOMER_DEFAULT =
-  "# ARA CUSTOMER BRAIN v1.0 — AClean Service\n\n## IDENTITAS\nNama: ARA, asisten virtual AClean Service — Jasa Cuci, Servis & Pasang AC.\nArea: Alam Sutera, BSD, Gading Serpong, Graha Raya, Karawaci, Tangerang Selatan.\nJam operasional: Senin–Sabtu 08:00–17:00 WIB.\n\n## TUGASMU\n1. Jawab pertanyaan layanan, harga, area AClean\n2. Bantu booking order baru\n3. Bantu cek status order customer (by nomor HP)\n4. Terima & catat komplain/feedback\n\n## BATASAN KERAS\n- JANGAN tampilkan data customer lain\n- JANGAN lakukan aksi admin (cancel, approve, update invoice, dll)\n- Jika tidak yakin: arahkan ke admin\n\n## LAYANAN & HARGA\n- Cuci AC: Rp 80.000/unit\n- Freon R22: Rp 150.000/unit | Freon R32: Rp 200.000/unit\n- Perbaikan AC: mulai Rp 100.000 (tergantung kerusakan)\n- Pasang AC Baru: Rp 300.000/unit | Bongkar AC: Rp 150.000/unit\n- Service AC: Rp 120.000/unit | Booking H-0: +Rp 50.000\n\n## FORMAT JAWABAN\n- Bahasa Indonesia ramah, maks 5 kalimat per respons\n- Gunakan emoji: 😊 ✅ 🔧 📱\n- Jika tidak bisa jawab: arahkan ke admin";
+const BRAIN_CUSTOMER_DEFAULT = ARA_CUSTOMER_DEFAULT;
 
 export default function BrainCustomerModal({
   open, onClose,

@@ -2,79 +2,27 @@
 // POST /api/ara-chat { messages, bizContext, provider, model, brainMd }
 // Backend proxy ARA — support Claude, OpenAI, Groq
 
+import { buildAraSystem, ARA_INTERNAL_DEFAULT } from "../src/lib/araPolicy.js";
 import { createClient }                                 from "@supabase/supabase-js";
 import { validateInternalToken, checkRateLimit, setCorsHeaders, fetchWithTimeout } from "./_auth.js";
 import { logAiUsage, extractAnthropicUsage, extractOpenAIUsage, logStructured } from "./_logger.js";
 
 const sb = createClient(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
-const buildSystem = (biz, brain) => {
-  // ── Format hargaLayanan jadi teks yang mudah dibaca ARA ──
-  const hargaSection = biz.hargaLayanan && biz.hargaLayanan.length > 0
-    ? biz.hargaLayanan.map(r => `  - ${r.service} | ${r.type}: ${r.formatted}`).join("\n")
-    : "  (Price list belum dimuat dari Supabase)";
-
-  // Hapus hargaLayanan & priceList dari JSON utama agar tidak redundan & tidak terlalu panjang
-  const { hargaLayanan: _h, priceList: _p, ...bizClean } = biz;
-
-  // Indonesia timezone (UTC+7)
-  const localTime = new Date(Date.now() + 7*60*60*1000).toLocaleString("id-ID");
-
-  return `${brain}
-
-## IDENTITAS
-Kamu adalah ARA (Aclean Robot Assistant). Bantu Owner & Admin kelola bisnis servis AC.
-Jawab Bahasa Indonesia, ringkas, profesional.
-
-## ⚠️ ATURAN HARGA — WAJIB IKUTI
-SELALU gunakan harga dari seksi "PRICE LIST LIVE" di bawah ini.
-JANGAN gunakan harga dari brain.md atau memori lama.
-Harga ini sudah di-update langsung oleh Owner dari tampilan Price List.
-
-## PRICE LIST LIVE (dari Supabase — ${localTime})
-${hargaSection}
-
-## DATA BISNIS LIVE (${localTime})
-${JSON.stringify(bizClean)}
-
-## ACTION TOOLKIT — gunakan tag [ACTION]...[/ACTION] untuk eksekusi data
-
-### ORDER
-- Buat order  : [ACTION]{"type":"CREATE_ORDER","customer":"Nama","phone":"08xxx","address":"Alamat","service":"Cleaning","units":1,"teknisi":"Nama","helper":"Nama","date":"YYYY-MM-DD","time":"HH:MM","notes":""}[/ACTION]
-- Bulk order  : [ACTION]{"type":"BULK_CREATE_ORDER","orders":[{"customer":"...","service":"Cleaning","units":1,"teknisi":"...","date":"YYYY-MM-DD","time":"09:00"},{"customer":"...","service":"Install","units":1,"teknisi":"...","date":"YYYY-MM-DD","time":"13:00"}]}[/ACTION]
-- Update status:[ACTION]{"type":"UPDATE_ORDER_STATUS","id":"ORD-xxx","status":"CONFIRMED"}[/ACTION]
-  Status valid: PENDING | CONFIRMED | IN_PROGRESS | COMPLETED | CANCELLED
-- Reschedule  : [ACTION]{"type":"RESCHEDULE_ORDER","id":"ORD-xxx","date":"YYYY-MM-DD","time":"HH:MM","teknisi":"opsional"}[/ACTION]
-  → otomatis kirim WA ke customer + teknisi
-- Cancel      : [ACTION]{"type":"CANCEL_ORDER","id":"ORD-xxx","reason":"Alasan"}[/ACTION]
-- Dispatch WA : [ACTION]{"type":"DISPATCH_WA","order_id":"ORD-xxx"}[/ACTION]
-
-### INVOICE
-- Buat invoice: [ACTION]{"type":"CREATE_INVOICE","order_id":"ORD-xxx"}[/ACTION]
-- Edit field  : [ACTION]{"type":"UPDATE_INVOICE","id":"INV-xxx","field":"discount","value":50000}[/ACTION]
-  Field valid : labor | material | discount | notes | due
-- Mark lunas  : [ACTION]{"type":"MARK_PAID","id":"INV-xxx"}[/ACTION]
-- Approve     : [ACTION]{"type":"APPROVE_INVOICE","id":"INV-xxx"}[/ACTION]
-- Reminder WA : [ACTION]{"type":"SEND_REMINDER","invoice_id":"INV-xxx"}[/ACTION]
-- Mark overdue: [ACTION]{"type":"MARK_INVOICE_OVERDUE"}[/ACTION]
-
-### BIAYA / PENGELUARAN
-- Catat biaya : [ACTION]{"type":"CREATE_EXPENSE","category":"petty_cash","subcategory":"Bensin Motor","amount":50000,"date":"YYYY-MM-DD","description":"keterangan","teknisi_name":"opsional"}[/ACTION]
-  category valid    : petty_cash | material_purchase
-  subcategory petty : Bensin Motor | Perbaikan Motor | Parkir | Kasbon Karyawan | Lembur | Bonus | Lain-lain
-  subcategory mat   : Pipa AC | Kabel | Freon | Material Lain
-- Beli material:[ACTION]{"type":"CREATE_EXPENSE","category":"material_purchase","subcategory":"Freon","amount":900000,"date":"YYYY-MM-DD","item_name":"R32 2kg","freon_type":"R32"}[/ACTION]
-
-### STOK & KOMUNIKASI
-- Update stok : [ACTION]{"type":"UPDATE_STOCK","code":"KODE","name":"Nama Item","delta":-2,"reason":"Dipakai job ORD-xxx"}[/ACTION]
-- Kirim WA    : [ACTION]{"type":"SEND_WA","phone":"08xxx","message":"Pesan teks"}[/ACTION]
-
-### WORKFLOW CHAIN (berurutan, max 3 action per response)
-- Konfirmasi order baru : CREATE_ORDER → DISPATCH_WA
-- Selesai job           : UPDATE_ORDER_STATUS(COMPLETED) → CREATE_INVOICE
-- Bayar lunas           : MARK_PAID → SEND_WA (konfirmasi ke customer)
-- Reschedule massal     : RESCHEDULE_ORDER (otomatis notif WA) — 1 per response`;
-};
+export const buildSystem = (biz, brain, training, prices, message) => buildAraSystem({
+  audience: "internal", brain, training, prices, message, context: biz,
+}) + `
+\nUSULAN TINDAKAN:
+Gunakan maksimal 3 tag [ACTION]{"type":"...","id":"..."}[/ACTION] hanya saat diminta pengguna.
+Tag hanya membuka usulan review; tidak menjalankan transaksi. Jangan mengklaim berhasil.
+Jenis: CREATE_ORDER, BULK_CREATE_ORDER, RESCHEDULE_ORDER, UPDATE_ORDER_STATUS, CANCEL_ORDER, DISPATCH_WA,
+CREATE_INVOICE (review Laporan Tim), UPDATE_INVOICE, MARK_PAID, APPROVE_INVOICE, SEND_REMINDER,
+MARK_INVOICE_OVERDUE, UPDATE_STOCK, CREATE_EXPENSE, SEND_WA.
+Gunakan order_id untuk CREATE_INVOICE/RESCHEDULE_ORDER, invoice_id untuk SEND_REMINDER, id untuk invoice/order lain.
+Sertakan nilai yang diusulkan untuk membantu review. Jangan membuat ID atau fakta yang tidak tersedia.
+Pembayaran, stok, finalisasi laporan, multi-team, pajak dan DP mengikuti validasi modul resmi.
+Data agregat pada konteks berasal dari data yang dimuat browser; jangan menyebutnya total bisnis lengkap.
+`;
 
 async function callClaude(msgs, sys, model) {
   const ALLOWED_CLAUDE = ["claude-haiku-4-5"];
@@ -149,7 +97,7 @@ export default async function handler(req, res) {
   // ── SEC-02: Validasi internal token ──
   if (!await validateInternalToken(req, res)) return;
 
-  const { messages, bizContext={}, provider: rawProvider, model, brainMd="", imageData, imageType } = req.body||{};
+  const { messages, bizContext={}, provider: rawProvider, model, imageData, imageType } = req.body||{};
   // Pilihan provider eksplisit tidak boleh dialihkan diam-diam ke layanan lain.
   const detectProvider = () => {
     const chosen = rawProvider || "claude";
@@ -163,9 +111,34 @@ export default async function handler(req, res) {
     ? !!(process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY)
     : !!process.env[providerKey];
   if (!hasProviderKey) return res.status(503).json({ error: `${providerKey} belum dikonfigurasi` });
-  if (!messages?.length) return res.status(400).json({error:"messages wajib diisi"});
+  if (!Array.isArray(messages) || !messages.length) return res.status(400).json({error:"messages wajib diisi"});
 
-  const sys = buildSystem(bizContext, brainMd);
+  let role = req.appClaims?.role;
+  if (!role && req.authUser?.id) {
+    const { data, error } = await sb.from("user_profiles").select("role").eq("id", req.authUser.id).single();
+    if (!error) role = data?.role;
+  }
+  if (!["Owner", "Admin"].includes(role)) return res.status(403).json({ error: "ARA internal hanya untuk Owner/Admin" });
+  if (!Array.isArray(messages) || messages.length > 30 || messages.some(m =>
+    !["user", "assistant"].includes(m?.role) || typeof m.content !== "string" || m.content.length > 12000)
+    || messages.at(-1)?.role !== "user") return res.status(400).json({ error: "Format percakapan tidak valid" });
+  if (imageData && (!["image/jpeg", "image/png", "image/webp", "image/gif"].includes(imageType) || typeof imageData !== "string" || imageData.length > 8000000)) {
+    return res.status(400).json({ error: "Gambar tidak valid atau terlalu besar" });
+  }
+  let sys;
+  try {
+    const [brains, rules, prices] = await Promise.all([
+      sb.from("ara_brain").select("key,value").in("key", ["brain_md", "brain_customer"]),
+      sb.from("app_settings").select("value").eq("key", "ara_training_rules").maybeSingle(),
+      sb.from("harga_layanan").select("service,type,harga").order("service").limit(250),
+    ]);
+    if (brains.error || rules.error || prices.error) throw new Error("SOP/training/price list belum dapat dimuat. Coba lagi.");
+    const saved = Object.fromEntries((brains.data || []).map(x => [x.key, x.value]));
+    const brain = saved.brain_md === saved.brain_customer ? ARA_INTERNAL_DEFAULT : saved.brain_md;
+    // Saved server configuration is authoritative, not arbitrary client brain/price overrides.
+    const { hargaLayanan: _h, priceList: _p, ...context } = bizContext;
+    sys = buildSystem(context, brain, rules.data?.value, prices.data || [], messages.at(-1).content);
+  } catch (error) { return res.status(503).json({ error: error.message }); }
   const messagesWithImage = imageData ? messages.map((message, index) => {
     if (index !== messages.length - 1 || message.role !== "user") return message;
     const content = typeof message.content === "string" ? message.content : JSON.stringify(message.content);
@@ -257,7 +230,7 @@ export default async function handler(req, res) {
       detail: err.message.slice(0, 200),
     });
     const friendlyErr = err.message.includes("quota") || err.message.includes("429")
-      ? `Rate limit / quota habis untuk semua provider. Tunggu beberapa menit dan coba lagi.`
+      ? `Rate limit atau kuota provider ${provider} bermasalah. Periksa hasil uji koneksi dan billing provider.`
       : err.message.includes("401") || err.message.includes("403") || err.message.includes("API key")
       ? `API Key ${provider} tidak valid atau belum diset di Vercel env vars.`
       : err.message.includes("ANTHROPIC_API_KEY") || err.message.includes("credit")

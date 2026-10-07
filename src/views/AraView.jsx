@@ -5,7 +5,7 @@ function AraView({
   araMessages, setAraMessages, araInput, setAraInput, araLoading,
   araImageData, setAraImageData, setAraImageType, araImagePreview, setAraImagePreview,
   araBottomRef, priceListSyncedAt, llmStatus,
-  sendToARA, forceReloadPriceList, connectAraBrain,
+  sendToARA, forceReloadPriceList, connectAraBrain, onOpenProposal,
 }) {
   const quickPrompts = [
     "Berapa total revenue bulan ini?",
@@ -22,7 +22,7 @@ function AraView({
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
         <div>
           <div style={{ fontWeight: 800, fontSize: 18, color: cs.text }}>🤖 ARA — AI Agent AClean</div>
-          <div style={{ fontSize: 12, color: cs.muted }}>Chat langsung · Bisa update data invoice, cek stok, analisa bisnis</div>
+          <div style={{ fontSize: 12, color: cs.muted }}>Analisis & usulan · Chat ARA tidak menyimpan transaksi atau mengirim WhatsApp. Konfirmasi dilakukan di modul terkait.</div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 5, background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7, padding: "4px 10px" }}>
@@ -37,8 +37,8 @@ function AraView({
             style={{ background: cs.green + "18", border: "1px solid " + cs.green + "44", color: cs.green, padding: "5px 12px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
             🔄 Sync Harga
           </button>
-          <div style={{ width: 8, height: 8, borderRadius: "50%", background: araLoading ? cs.yellow : cs.green }} />
-          <span style={{ fontSize: 11, color: cs.muted }}>{araLoading ? "Berpikir..." : "Online"}</span>
+          <div style={{ width: 8, height: 8, borderRadius: "50%", background: araLoading ? cs.yellow : llmStatus === "connected" ? cs.green : cs.muted }} />
+          <span style={{ fontSize: 11, color: cs.muted }}>{araLoading ? "Berpikir..." : llmStatus === "connected" ? "Uji koneksi berhasil" : "Belum terverifikasi"}</span>
           <button onClick={() => setAraMessages([{ role: "assistant", content: "Halo! Saya ARA 🤖 — AI Agent AClean. Ada yang bisa saya bantu?" }])}
             style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "5px 12px", borderRadius: 6, cursor: "pointer", fontSize: 11 }}>🗑 Reset</button>
           <button onClick={connectAraBrain} disabled={araLoading}
@@ -75,6 +75,11 @@ function AraView({
             }}>
               {msg.role === "assistant" && <span style={{ fontSize: 11, color: cs.ara, fontWeight: 800, display: "block", marginBottom: 4 }}>🤖 ARA</span>}
               {msg.content}
+              {msg.proposals?.map((proposal, index) => <div key={index} style={{ marginTop: 12, padding: 10, border: "1px solid " + cs.border, borderRadius: 8 }}>
+                <strong>{proposal.type}{proposal.reference ? " · " + proposal.reference : ""}</strong>
+                <details><summary>Detail usulan</summary><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontSize: 11 }}>{proposal.detail}</pre></details>
+                <button onClick={() => onOpenProposal?.(proposal)} style={{ marginTop: 8, padding: "8px 12px", color: cs.accent, background: cs.card, border: "1px solid " + cs.border, borderRadius: 6 }}>Tinjau di {proposal.label} →</button>
+              </div>)}
             </div>
           </div>
         ))}
@@ -133,7 +138,7 @@ function AraView({
           {araLoading ? "⏳" : "→"}
         </button>
       </div>
-      {llmStatus !== "connected" && <div style={{ fontSize: 11, color: cs.yellow, marginTop: 8 }}>⚠️ ARA belum terkoneksi. Buka <b>Pengaturan → ARA Brain</b> → klik <b>Test &amp; Simpan</b> untuk mengaktifkan.</div>}
+      {llmStatus !== "connected" && <div style={{ fontSize: 11, color: cs.yellow, marginTop: 8 }}>⚠️ ARA belum terkoneksi. Buka <b>Pengaturan → AI &amp; Brain</b> → klik <b>Uji koneksi</b>. Status ini mencerminkan uji terakhir.</div>}
     </div>
   );
 }

@@ -14,6 +14,12 @@ Buka tombol **WhatsApp** dari dashboard/sidebar (Owner/Admin, pengaturan `wa_mon
 
 ## Lima peningkatan operasional
 
+### Tambahan ARA — lokal 7 Oktober 2026
+
+Lihat [ARA_READINESS](ARA_READINESS.md). Setelah migrasi 196 dan deployment, **Draf ARA** tersedia per percakapan untuk Owner/Admin. Mode default `review` tidak mengirim otomatis; `auto_safe` hanya sapaan/terima kasih sederhana. Draf model, harga, booking, pembayaran dan komplain selalu diperiksa admin. Draf bukan riwayat pesan terkirim.
+
+Seluruh keluaran customer ARA diberi `- Auto Reply by ARA -` tepat sekali di akhir, termasuk fallback dan draf lama yang disalin ke composer. Admin dapat mengenali balasan ARA, tetapi penanda ini bukan bukti pesan terkirim/dibaca atau pembayaran diverifikasi. Menyalin draf tidak mengirim; gunakan tombol Kirim. Balasan manual murni dan notifikasi cron tidak diberi penanda ARA otomatis.
+
 1. **Tindak lanjut bersama.** Status, pengingat WIB, penanggung jawab, dan catatan internal tersimpan di database. Filter **Belum selesai** dan **Jatuh follow-up** membantu prioritas. Perubahan admin lain menolak penyimpanan versi lama sehingga catatan tidak tertimpa diam-diam. Pesan pelanggan yang masuk membuka kembali tindak lanjut berstatus selesai atau menunggu pelanggan.
 2. **Slot jadwal.** Membaca order dan ketersediaan teknisi pada tanggal pilihan, memperhitungkan durasi, teknisi pendamping, ketidakhadiran, dan benturan waktu. Slot diperiksa ulang sebelum membuat draf penawaran atau membuka pop-up planning dengan Team, tanggal, dan jam terisi. Rekomendasi berbasis Team mengikuti preset dan roster tanggal pilihan. Pekerjaan tanpa tim tetap tercatat; ketersediaan anggota perlu diperiksa saat roster diisi atau diubah.
 3. **Alokasi bukti bayar.** Pilih bukti, periksa nominal/metode, lalu pilih invoice dari nomor yang sama; nama lokasi selalu ditampilkan. Pembayaran parsial dan satu transfer untuk beberapa invoice didukung. Alokasi otomatis mendahulukan jatuh tempo. Konfirmasi mencatat pembayaran, memperbarui saldo/status, dan menyelesaikan suggestion dalam satu transaksi. Koreksi nominal memerlukan catatan. Retry memakai ID transaksi yang sama; perubahan formulir dikunci selama hasil transaksi belum diketahui.

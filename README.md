@@ -1,5 +1,7 @@
 # React + Vite
 
+Dokumentasi aplikasi AClean: [indeks](docs/README.md). Aturan ARA terbaru dan status implementasi lokal: [ARA_READINESS](docs/ARA_READINESS.md). Dokumentasi tidak mengaktifkan chatbot atau mengganti Brain Supabase secara otomatis.
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:

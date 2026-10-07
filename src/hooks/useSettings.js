@@ -16,6 +16,7 @@ export const SETTINGS_DEFAULTS = {
   ara_training_rules: "",
   wa_forward_to_owner: "true",
   wa_chatbot_enabled: "false",
+  wa_ara_mode: "review",
   wa_payment_detect: "true",
   wa_cleanup_enabled: "true",
   wa_monitor_enabled: "false",

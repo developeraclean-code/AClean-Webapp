@@ -68,7 +68,7 @@ Owner (Dedy)
 | **Stok Material** | ✅ Penuh | Tracking freon per tabung, record pemakaian |
 | **Laporan** | ✅ Penuh | Statistik penjualan, performa, expense |
 | **Price List** | ❌ Hanya Owner | Edit harga jasa & material (Owner privilege) |
-| **Pengaturan** | ⚠️ Terbatas | Toggle WA, ARA, cron jobs (Owner approval) |
+| **Pengaturan** | ❌ Owner only | Owner mengelola toggle WA, ARA dan cron |
 | **Tim Teknisi** | ✅ Penuh | Kelola user teknisi, ubah status aktif/nonaktif |
 | **ARA Chat** | ✅ Penuh | Chat dengan AI assistant untuk draft invoice dll |
 | **Log Audit** | ✅ Penuh | Lihat riwayat data yang dihapus, siapa menghapus |
@@ -952,36 +952,16 @@ Admin update status PAID + link bukti
 
 ### 10.3 AI Assistant (ARA)
 
-**Tab: 🤖 AI**
+**Aturan terbaru, 7 Oktober 2026:** lihat [kesiapan dan SOP ARA](ARA_READINESS.md). Migrasi 196 sudah diterapkan dan akses role diuji; chatbot/auto-reply tetap OFF sampai Owner mengaktifkannya setelah pemeriksaan deployment.
 
-**Fungsi:**
-- Chat dengan AI untuk draft invoice, generate laporan
-- Integrasi dengan Claude/OpenAI/Gemini
-
-**Langkah Enable:**
-
-1. **Buka Pengaturan** → Tab **AI (ARA)**
-2. Pilih Provider: **Claude** / **OpenAI** / **Gemini**
-3. Input API Key
-4. Klik **Test** → Coba chat test
-5. Jika OK → Klik **Simpan**
-
-**Contoh Penggunaan:**
-
-```
-Admin ke ARA:
-"Buatkan draft invoice untuk laporan LPR-001 
-(Cleaning 2 unit + freon 2kg)"
-
-ARA generate:
-"Cleaning 2 unit @ Rp 150K = Rp 300K
-Freon R-32 2kg @ Rp 60K = Rp 120K
-Transport @ Rp 20K = Rp 20K
-───────────────────
-Total: Rp 440K"
-
-Admin: "OK, approve" → Invoice dibuat
-```
+- Owner memilih Claude/OpenAI di **Pengaturan → AI & Brain** dan menguji koneksi. API key berada di environment server, bukan di chat/form Brain. Pengaturan AI Vision terpisah.
+- ARA internal membantu membaca data terbatas dan menyiapkan usulan. Perintah “OK, approve” di chat **tidak membuat invoice atau melunaskan pembayaran**. Buka modul tujuan dan konfirmasi melalui alur normal.
+- Invoice mengikuti laporan aktual terverifikasi semua tim, bukan jumlah planning atau harga contoh SOP.
+- Mode **Tinjau Admin** menaruh jawaban customer di **WhatsApp → percakapan → Draf ARA**. Periksa, masukkan ke kolom pesan, lalu klik Kirim. Menyalin draf belum mengirim.
+- Mode `auto_safe` hanya mengirim sapaan/terima kasih sederhana. Harga, booking, pembayaran, garansi dan komplain tetap ditinjau.
+- Semua draf/balasan customer dari ARA diakhiri `- Auto Reply by ARA -`. Pertahankan penanda ketika mengirim draf ARA; balasan manual murni tidak diberi penanda otomatis.
+- Untuk bukti transfer tanyakan nama pengirim; verifikasi DP/lunas melalui modul pembayaran. Untuk komplain minta foto/video dan unit yang bermasalah; jangan menjanjikan garansi gratis.
+- Status gateway diterima bukan berarti customer telah membaca. Jika `UNCERTAIN`, periksa WA sebelum mengirim ulang.
 
 ### 10.4 Cron Jobs & Automated Tasks
 

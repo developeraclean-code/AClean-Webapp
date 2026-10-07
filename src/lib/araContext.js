@@ -1,6 +1,7 @@
 // Pure builder bizContext untuk ARA chat — diekstrak dari sendToARA di App.jsx (behavior-preserving).
 // Hanya SHAPING data (read-only) jadi objek konteks yang dikirim ke /api/ara-chat. TANPA efek samping.
 // Helper component-local (cariSlotKosong, araSchedulingSuggest) & PRICE_LIST dioper sebagai argumen.
+import { ARA_HOURS } from "./araPolicy.js";
 import { samePhone } from "./phone.js";
 import { INVOICE_UNPAID_STATUSES } from "../constants/status.js";
 
@@ -45,7 +46,7 @@ export function buildAraContext({
     today,
     // Info cap supaya ARA sadar ia melihat data terbaru/teratas, bukan histori penuh.
     _meta: {
-      note: "Data DETAIL dibatasi (orders 150 terbaru, invoices: 150 belum-lunas terbaru + 50 lain terbaru, laporan 120 terbaru, customers 400 teratas per VIP+total_order). Statistik agregat (revenue, totalUnpaid, jumlah, lookup WA) dihitung dari data PENUH. Untuk histori lama di luar cap, arahkan user ke modul terkait (Invoice/Order/Laporan).",
+      note: "Data DETAIL dibatasi (orders 150 terbaru, invoices: 150 belum-lunas terbaru + 50 lain terbaru, laporan 120 terbaru, customers 400 teratas per VIP+total_order). Statistik agregat dihitung dari data yang dimuat browser dan dapat parsial; bukan total bisnis lengkap. Gunakan Finance/Statistik untuk angka final. Untuk histori lama di luar cap, arahkan user ke modul terkait (Invoice/Order/Laporan).",
       counts: { ordersTotal: ordersData.length, ordersShown: ordersSel.length, invoicesTotal: invoicesData.length, invoicesShown: invoicesSel.length, laporanTotal: laporanReports.length, laporanShown: laporanSel.length, customersTotal: customersData.length, customersShown: customersSel.length },
     },
     orders: ordersSel.map(o => ({ id: o.id, customer: o.customer, service: o.service, type: o.type, units: o.units, status: o.status, date: o.date, time: o.time, teknisi: o.teknisi, helper: o.helper, dispatch: o.dispatch, invoice_id: o.invoice_id })),
@@ -93,14 +94,14 @@ export function buildAraContext({
             nama: t.name,
             jobsHariIni: ordersData.filter(o => o.teknisi === t.name && o.date === today).length,
             helperFavorit: pref[t.name] || null,
-            slotTersedia: true
+            slotTersedia: null, perluKonfirmasi: true
           })) : [],
           pasanganFavorit: pref,
         };
       } catch (_) { return { teknisiDisarankan: [], pasanganFavorit: {} }; }
     })(),
     logikaDurasi: "Cleaning: 1u=1j,2u=2j,3u=3j,4u=3j,5-6u=4j,7-8u=5j,9-10u=6j,>10=sehari | Install: 1-3u=1hari,4+u=2hari | Repair: 60-120mnt/unit | Complain: 1u=30mnt,setiap tambahan unit +15mnt",
-    jamKerja: "09:00-17:00 WIB",
+    jamKerja: ARA_HOURS,
     recentWa: waConversations.slice(0, 20).map(c => {
       const cust = customersData.find(x => samePhone(x.phone, c.phone));
       return { phone: c.phone, name: c.name, lastMessage: c.last_message || c.last || "", updatedAt: c.updated_at, unread: c.unread || 0, intent: c.intent || "", customerName: cust?.name || null, totalOrders: cust?.total_orders || 0, isKnownCustomer: !!cust };

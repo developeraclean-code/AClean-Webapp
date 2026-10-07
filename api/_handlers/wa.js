@@ -1,3 +1,5 @@
+import { createClient } from "@supabase/supabase-js";
+import { processAraCustomer } from "../_ara-customer.js";
 // api/_handlers/wa.js — Handler grup WhatsApp (Batch 4 pemecahan router, Jul 2026).
 // Isi blok dipindah APA ADANYA (ekstraksi programatik) dari api/[route].js.
 // receive-wa = webhook Fonnte (jalur paling panas) — di-dispatch oleh router,
@@ -2399,132 +2401,27 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
         }
       }
 
-      // ── ARA CUSTOMER CHATBOT ──
-      const ml = message.toLowerCase().trim();
+      // Draft-first ARA: training + live price list + reviewed outbound delivery.
       let reply = null;
-      if (chatbotOn && SU && SK) {
-        const AK = (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY || "").trim();
-        if (AK || process.env.OPENAI_API_KEY) {
-          try {
-            const [brainRes, histRes, providerRes] = await Promise.all([
-              fetch(SU + "/rest/v1/ara_brain?select=key,value&key=eq.brain_customer&limit=1",
-                { headers: { apikey: SK, Authorization: "Bearer " + SK } }),
-              fetch(SU + "/rest/v1/wa_messages?phone=eq." + encodeURIComponent(sender) +
-                "&order=created_at.desc&limit=10&select=role,content",
-                { headers: { apikey: SK, Authorization: "Bearer " + SK } }),
-              fetch(SU + "/rest/v1/app_settings?key=eq.llm_provider&select=value", { headers: { apikey: SK, Authorization: "Bearer " + SK } }),
-            ]);
-            const brainRows = brainRes.ok ? await brainRes.json() : [];
-            const histRows  = histRes.ok  ? await histRes.json()  : [];
-            const customerBrain = brainRows?.[0]?.value ||
-              "Kamu adalah ARA, asisten virtual AClean Service AC. Jawab ramah dalam Bahasa Indonesia. Bantu customer soal layanan cuci/servis/pasang AC, booking, harga, dan status order.";
-            const history = [...histRows].reverse().map(r => ({
-              role: r.role === "customer" ? "user" : "assistant",
-              content: r.content
-            }));
-            history.push({ role: "user", content: message });
-
-            if (!providerRes.ok) throw new Error(`ARA provider setting HTTP ${providerRes.status}`);
-            const providerRows = await providerRes.json();
-            const araProvider = providerRows?.[0]?.value === "openai" ? "openai" : "claude";
-            if (araProvider === "openai" && !process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY tidak tersedia untuk ARA WA");
-            if (araProvider === "claude" && !AK) throw new Error("ANTHROPIC_API_KEY tidak tersedia untuk ARA WA");
-            const araRes = araProvider === "openai"
-              ? await fetch("https://api.openai.com/v1/chat/completions", {
-                method: "POST",
-                headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-                body: JSON.stringify({ model: "gpt-6-luna", reasoning_effort: "none", max_completion_tokens: 500,
-                  messages: [{ role: "system", content: customerBrain }, ...history] }),
-                signal: AbortSignal.timeout(20000),
-              })
-              : await fetch("https://api.anthropic.com/v1/messages", {
-                method: "POST",
-                headers: { "Content-Type": "application/json", "x-api-key": AK, "anthropic-version": "2023-06-01", "anthropic-beta": "prompt-caching-2024-07-31" },
-                body: JSON.stringify({ model: "claude-haiku-4-5", max_tokens: 500,
-                  system: [{ type: "text", text: customerBrain, cache_control: { type: "ephemeral" } }], messages: history }),
-                signal: AbortSignal.timeout(20000),
-              });
-            if (araRes.ok) {
-              const araData = await araRes.json();
-              if (araProvider === "openai") logAiUsageRest({ SU, SK, provider: "openai", model: "gpt-6-luna", feature: "wa-ara-customer",
-                usage: { input_tokens: araData.usage?.prompt_tokens, output_tokens: araData.usage?.completion_tokens }, user_name: sender });
-              else logAi("wa-ara-customer", "claude-haiku-4-5", araData, { user_name: sender });
-              reply = araProvider === "openai"
-                ? (araData.choices?.[0]?.message?.content || "").trim()
-                : (araData.content || []).map(c => c.text || "").join("").trim();
-              reply ||= null;
-              if (reply && FT) {
-                fetch("https://api.fonnte.com/send", {
-                  method: "POST",
-                  headers: { Authorization: FT, "Content-Type": "application/json" },
-                  body: JSON.stringify({ target: sender, message: reply, delay: "1", countryCode: "62" })
-                }).catch(e => console.error("[WA_ARA_REPLY_FAILED]", e.message));
-                if (SU && SK) fetch(SU + "/rest/v1/wa_messages", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
-                  body: JSON.stringify({ phone: sender, name: "ARA", content: reply, role: "ara", created_at: new Date(Date.now() + 7*3600000).toISOString() })
-                }).catch(() => {});
-              }
-            }
-          } catch(araErr) {
-            console.warn("[receive-wa] ARA chatbot failed, falling back to keyword:", araErr.message);
-            reply = null;
-          }
-        }
-      }
-
-      // Auto-reply (keyword fallback — runs only if ARA chatbot did not reply)
-      if (autoOn && !reply) {
-        const SALAM = ["halo","hi","hello","hai","pagi","siang","sore","malam","selamat","assalamu","permisi"];
-        const HARGA_KW = ["harga","tarif","biaya","berapa","rate","pricelist","price","harganya"];
-        const ORDER_KW = ["order","pesan","booking","buat","jadwal","service","cuci","cleaning","install","pasang","perbaikan","repair","complain","garansi","bongkar"];
-        const STATUS_KW = ["status","cek order","cek jadwal","kapan","sudah","selesai","belum","progress"];
-        const BAYAR_KW  = ["bayar","transfer","lunas","pembayaran","invoice","tagihan","dp","uang"];
-        const LOKASI_KW = ["alamat","lokasi","dimana","area","jangkauan","coverage","bisa ke"];
-
-        if (SALAM.some(k => ml.startsWith(k) || ml.includes(k + " ")))
-          reply = "Halo! 👋 Selamat datang di *AClean Service AC*.\n\nKami melayani:\n✅ Cuci/Service AC\n✅ Perbaikan & Isi Freon\n✅ Pasang AC Baru\n✅ Bongkar & Pindah AC\n\nKetik *HARGA* untuk info tarif, atau *ORDER* untuk pesan layanan. Ada yang bisa kami bantu? 😊";
-        else if (HARGA_KW.some(k => ml.includes(k))) {
-          try {
-            const pR = await fetch(SU + "/rest/v1/harga_layanan?select=service,type,harga&order=service.asc,type.asc", {
-              headers: { apikey: SK, Authorization: "Bearer " + SK }
-            });
-            if (pR.ok) {
-              const prices = await pR.json();
-              if (prices && prices.length > 0) {
-                const priceText = prices.map(p => `  • ${p.service} ${p.type}: Rp${(p.harga||0).toLocaleString("id-ID")}`).join("\n");
-                reply = `💰 *Harga AClean Service AC*\n\n${priceText}\n\nKetik *ORDER* untuk pesan! 😊\n\n_Jam operasional: 08.00–17.00 WIB_`;
-              } else {
-                reply = "💰 *Harga AClean Service AC*\n\nUntuk info harga terbaru, hubungi admin kami.\n\nAdmin akan segera membalas! 😊";
-              }
-            } else {
-              reply = "💰 *Harga AClean Service AC*\n\nUntuk info harga terbaru, hubungi admin kami.\n\nAdmin akan segera membalas! 😊";
-            }
-          } catch(_) {
-            reply = "💰 *Harga AClean Service AC*\n\nUntuk info harga terbaru, hubungi admin kami.\n\nAdmin akan segera membalas! 😊";
-          }
-        }
-        else if (LOKASI_KW.some(k => ml.includes(k)))
-          reply = "📍 *Area Layanan AClean*\n\nKami melayani area:\nAlam Sutera • BSD • Gading Serpong • Graha Raya • Karawaci • Tangerang Selatan\n\nArea lain: ada biaya transport tambahan.\n\nKetik *ORDER* untuk pesan layanan! 😊";
-        else if (ORDER_KW.some(k => ml.includes(k)) || ml === "order")
-          reply = "📋 *Pesan Layanan AClean*\n\nSilakan kirim info berikut:\n1️⃣ Nama lengkap\n2️⃣ Alamat lengkap\n3️⃣ Jenis layanan (Cuci AC / Perbaikan / Pasang / dll)\n4️⃣ Jumlah unit AC\n5️⃣ Tanggal & jam yang diinginkan\n\nAdmin akan konfirmasi jadwal & harga segera! ⚡";
-        else if (STATUS_KW.some(k => ml.includes(k)))
-          reply = "🔍 Untuk cek status order, sebutkan *nama* dan *nomor order* atau nomor HP yang didaftarkan.\n\nAdmin akan segera membantu! 😊";
-        else if (BAYAR_KW.some(k => ml.includes(k)))
-          reply = "💳 *Info Pembayaran AClean*\n\nSetelah transfer, kirim bukti pembayaran beserta:\n📌 Nama & nomor order\n💰 Nominal transfer\n\nAdmin konfirmasi dalam 30 menit. Terima kasih! 🙏";
-
-        if (reply && FT) {
-          fetch("https://api.fonnte.com/send", {
-            method: "POST",
-            headers: { Authorization: FT, "Content-Type": "application/json" },
-            body: JSON.stringify({ target: sender, message: reply, delay: "1", countryCode: "62" })
-          }).catch(err => console.error("[WA_AUTO_REPLY_FAILED]", err.message));
-          // Simpan auto-reply ke wa_messages
-          if (SU && SK) fetch(SU + "/rest/v1/wa_messages", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
-            body: JSON.stringify({ phone: sender, name: "ARA", content: reply, role: "ara", created_at: new Date().toISOString() })
-          }).catch(() => {});
+      let araResult = null;
+      if ((chatbotOn || autoOn) && SU && SK && !senderIsInternal) {
+        try {
+          const sourceKey = String(wb.id || wb.message_id || [
+            message, wb.timestamp || wb.time || Math.floor(Date.now() / 300000),
+          ].join("|"));
+          araResult = await processAraCustomer({
+            db: createClient(SU, SK), phone: sender, message, sourceKey,
+            chatbotOn, autoOn, internal: senderIsInternal,
+          });
+          if (araResult.replied) reply = "accepted";
+        } catch (error) {
+          console.error("[ARA_REVIEW_FAILED]", error.message);
+          araResult = { error: error.message, replied: false };
+          // Surface failed queue/generation in Monitoring; never silently auto-send a fallback.
+          await fetch(SU + "/rest/v1/agent_logs", {
+            method: "POST", headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK },
+            body: JSON.stringify({ action: "ARA_REVIEW_FAILED", detail: error.message.slice(0, 300), status: "ERROR" }),
+          }).then(r => { if (!r.ok) console.error("[ARA_LOG_FAILED]", r.status); }).catch(e => console.error("[ARA_LOG_FAILED]", e.message));
         }
       }
 
@@ -2539,7 +2436,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
         }).catch(err => console.error("[WA_FORWARD_FAILED]", err.message));
       }
 
-      return res.status(200).json({ status: "ok", sender, autoreply: autoOn, replied: !!reply, forwarded: !reply && fwdOn });
+      return res.status(200).json({ status: "ok", sender, autoreply: autoOn, replied: !!reply, ara: araResult, forwarded: !reply && fwdOn });
 }
 
     // ── WA-GROUPS: list grup dari Fonnte device (untuk sync whitelist) ──

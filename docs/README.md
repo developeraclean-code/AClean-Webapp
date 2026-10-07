@@ -5,6 +5,11 @@ Index dokumentasi internal. File arsitektur & instruksi utama tetap di root (`CL
 ## Role & Akses
 - [SOP_ADMIN_ROLE.md](SOP_ADMIN_ROLE.md) — SOP lengkap role Admin. **Baca sebelum ubah logika role/access** (`canAccess()` di App.jsx).
 
+## ARA & WhatsApp
+
+- [ARA_READINESS.md](ARA_READINESS.md) — aturan ARA terbaru, penanda balasan, contoh resmi, pengujian dan batas rollout lokal.
+- [WHATSAPP_WORKSPACE.md](WHATSAPP_WORKSPACE.md) — percakapan, draf, pengiriman dan verifikasi pembayaran.
+
 ## Modul Maintenance B2B
 - [MAINTENANCE_MODULE_PLAN.md](MAINTENANCE_MODULE_PLAN.md) — rencana & desain modul maintenance korporat.
 - [Maintenance.md](Maintenance.md) — rekap fitur, marketing copy, cara kerja teknis.

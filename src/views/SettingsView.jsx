@@ -1,3 +1,4 @@
+import { parseAraTraining, resolveAraBrain } from "../lib/araPolicy.js";
 import { memo, useState } from "react";
 import { cs } from "../theme/cs.js";
 import { saveAutomationToggle } from "../lib/settingsPersistence.js";
@@ -879,13 +880,32 @@ function SettingsView({
           <div style={{ color: cs.muted, fontSize: 11, marginTop: 10 }}>OpenAI hanya bisa diaktifkan setelah uji API berhasil. Pilihan ARA di atas tidak ikut berubah. Jika OpenAI gagal saat proses foto, catatan masuk jalur tinjau/retry—tidak otomatis menandai pembayaran lunas.</div>
         </Card>
 
+        <Card>
+          <CardHeader icon="🛡️" title="Cara ARA membalas customer" subtitle="Berlaku saat ARA Chatbot Customer atau Auto-Reply di tab Otomasi aktif." />
+          <p style={{ color: cs.muted, fontSize: 12 }}>Tinjau Admin: semua jawaban menjadi draf di panel WhatsApp. Otomatis terbatas: hanya sapaan dan ucapan terima kasih sederhana yang dikirim; harga, booking, pembayaran dan komplain tetap ditinjau.</p>
+          <select aria-label="Mode balasan ARA" value={appSettings.wa_ara_mode || "review"} style={settingsInputStyle}
+            onChange={async e => {
+              const value = e.target.value;
+              try {
+                const { error } = await supabase.from("app_settings").upsert({ key: "wa_ara_mode", value }, { onConflict: "key" });
+                if (error) throw error;
+                setAppSettings(prev => ({ ...prev, wa_ara_mode: value }));
+                showNotif("✅ Mode ARA tersimpan");
+              } catch (err) { showNotif("❌ Mode ARA gagal disimpan: " + err.message); }
+            }}>
+            <option value="review">Tinjau Admin (disarankan)</option>
+            <option value="auto_safe">Otomatis terbatas: sapaan & terima kasih</option>
+          </select>
+          {(brainMd === brainMdCustomer || resolveAraBrain(brainMd, "internal") !== brainMd) &&
+            <p style={{ color: cs.yellow, fontSize: 12 }}>Brain internal terdeteksi kosong atau berisi SOP customer. ARA memakai SOP internal bawaan sampai Brain internal diperbaiki dan disimpan.</p>}
+        </Card>
         {/* ARA Training Rules */}
         <Card>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
             <span style={{ fontSize: 20 }}>🧠</span>
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 800, color: cs.text, fontSize: 14 }}>ARA Training Rules</div>
-              <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>Upload file JSON training untuk melatih respons ARA — tersimpan di Supabase</div>
+              <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>Upload contoh jawaban/SOP yang dipakai saat membuat respons ARA — tersimpan di Supabase</div>
             </div>
             <a href="#" onClick={async (e) => {
               e.preventDefault();
@@ -925,9 +945,10 @@ function SettingsView({
                 showNotif("⏳ Membaca file training...");
                 try {
                   const text = await file.text();
-                  const parsed = JSON.parse(text);
+                  const parsed = parseAraTraining(text);
                   const val = JSON.stringify(parsed);
-                  await supabase.from("app_settings").upsert({ key: "ara_training_rules", value: val }, { onConflict: "key" });
+                  const { error } = await supabase.from("app_settings").upsert({ key: "ara_training_rules", value: val }, { onConflict: "key" });
+                  if (error) throw error;
                   setAppSettings(prev => ({ ...prev, ara_training_rules: val }));
                   const rules = (parsed.auto_reply_rules || []).length;
                   const sc = (parsed.ara_training_scenarios || []).length;
@@ -944,10 +965,15 @@ function SettingsView({
 
           <div style={{ marginTop: 12, padding: "10px 14px", background: cs.green + "12", border: "1px solid " + cs.green + "33", borderRadius: 8, display: "flex", alignItems: "center", gap: 12 }}>
             <span style={{ fontSize: 16 }}>🔄</span>
-            <div style={{ flex: 1, fontSize: 11, color: cs.muted }}>Rules yang diupload otomatis digunakan ARA saat membalas pesan WA.</div>
+            <div style={{ flex: 1, fontSize: 11, color: cs.muted }}>Training dipakai sebagai contoh untuk ARA internal dan draf WA. Harga memakai price list aktif; aturan SOP tetap berlaku. Tidak melatih ulang model.</div>
             <button onClick={async () => {
-              const { data: d } = await supabase.from("app_settings").select("value").eq("key", "ara_training_rules").single();
-              if (d?.value) { setAppSettings(prev => ({ ...prev, ara_training_rules: d.value })); showNotif("✅ Rules ARA disync dari Supabase"); }
+              try {
+                const { data: d, error } = await supabase.from("app_settings").select("value").eq("key", "ara_training_rules").maybeSingle();
+                if (error) throw error;
+                parseAraTraining(d?.value);
+                setAppSettings(prev => ({ ...prev, ara_training_rules: d?.value || "" }));
+                showNotif("✅ Training ARA dimuat dari Supabase");
+              } catch (e) { showNotif("❌ Training gagal dimuat: " + e.message); }
             }} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 7, cursor: "pointer", fontWeight: 700, fontSize: 12, whiteSpace: "nowrap" }}>
               🔄 Sync
             </button>
@@ -1014,9 +1040,9 @@ function SettingsView({
           <CardHeader icon="💬" title="Pengaturan WA Auto-Reply" subtitle="Kontrol auto-reply & notifikasi masuk tanpa ubah kode" />
           {[
             { key: "wa_monitor_enabled", label: "WA Monitor Panel", desc: "Tampilkan panel monitor chat WhatsApp di sidebar. Matikan jika tidak perlu pantau chat — payment detection tetap jalan.", icon: "📱" },
-            { key: "wa_autoreply_enabled", label: "Auto-Reply Aktif", desc: "Balas pesan customer otomatis berdasarkan keyword (halo, harga, order, dll)", icon: "🤖" },
+            { key: "wa_autoreply_enabled", label: "Auto-Reply Aktif", desc: "Buat respons dasar tanpa panggilan AI. Mengikuti mode Tinjau Admin / otomatis terbatas di AI & Brain.", icon: "🤖" },
             { key: "wa_forward_to_owner", label: "Forward ke Owner", desc: "Teruskan semua pesan WA masuk ke nomor Owner sebagai notifikasi", icon: "📨" },
-            { key: "wa_chatbot_enabled", label: "ARA Chatbot Customer", desc: "ARA balas WA customer secara AI (terima order, info harga, komplain). Keyword auto-reply tetap jadi fallback jika ARA gagal.", icon: "🧠" },
+            { key: "wa_chatbot_enabled", label: "ARA Chatbot Customer", desc: "ARA membuat draf jawaban customer memakai SOP, training dan price list. Pengiriman mengikuti mode review di AI & Brain.", icon: "🧠" },
             { key: "wa_payment_detect", label: "Deteksi Bukti Bayar", desc: "Deteksi otomatis pesan/foto bukti transfer dari customer, beri notif konfirmasi ke admin", icon: "💳" },
             { key: "wa_cleanup_enabled", label: "Auto-Cleanup Chat (14 Hari)", desc: "Hapus otomatis riwayat chat WA yang lebih dari 14 hari. Phone dengan bukti bayar PENDING tetap dilindungi.", icon: "🗑️" },
             { key: "wa_absen_notify_enabled", label: "Notif Absen Tim ke Owner", desc: "Kirim WA ke Owner setiap teknisi/helper lapor Ijin/Sakit, sebagai informasi awal sebelum atur ulang tim. Default: aktif.", icon: "🔔" },

@@ -1,3 +1,4 @@
+import { resolveAraBrain } from "./araPolicy.js";
 // loadAllData — bootstrap: muat SEMUA data awal dari Supabase (orders, invoices,
 // customers, inventory, laporan, settings, users, WA, dll) + hydrate cache & state.
 // Diekstrak dari App.jsx (Fase 3, pola ctx). 49 dependency dioper via ctx. Body
@@ -295,7 +296,7 @@ export async function loadAllData({
             if (brainMap.brain_md && typeof brainMap.brain_md === "string" && brainMap.brain_md.length > 10) {
               const isOldVersion = brainMap.brain_md.includes("v4.0");
               if (!isOldVersion) {
-                setBrainMd(brainMap.brain_md);
+                setBrainMd(resolveAraBrain(brainMap.brain_md, "internal"));
                 _lsSave("brainMd", brainMap.brain_md);
               }
             }

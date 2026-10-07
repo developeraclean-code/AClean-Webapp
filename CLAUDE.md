@@ -188,7 +188,7 @@ docs/                     # Dokumentasi: SOP_ADMIN_ROLE.md (role/access), SENTRY
 migrations/               # SQL migration files (run manually in Supabase SQL Editor)
 ```
 
-## Migrations Status (semua sudah Applied di Supabase)
+## Migrations Status (status per baris; jangan anggap semua sudah diterapkan)
 
 ```
 001–014   # Applied — constraint, audit trail, freon qty actual
@@ -252,6 +252,7 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
 168       # Applied 13 Sep 2026 — Monitoring exact/paginasi, approval dan provenance Biaya, budget bulanan serta tautan nota-ke-stok atomik
 193–194   # Applied 5 Okt 2026 — WA workspace/RLS/outbox/pembayaran + planning Team atomik; schema produksi dan transaksi Owner/Admin/Teknisi diverifikasi dengan rollback
 195       # Applied 6 Okt 2026 — retensi log tunggal, lindungi action audit bisnis, ganti cron 30 hari lama dengan RPC bounded harian 03:00 WIB
+196       # Applied 7 Okt 2026 — antrean review ARA; RLS/RPC Owner/Admin dan penolakan Helper/Teknisi diuji dengan rollback; mode review, toggle tetap OFF
 ```
 
 > Daftar di atas pernah tertinggal jauh (berhenti di 126 padahal file sudah 132).
@@ -269,9 +270,9 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
 
 **Theme/styling:** No CSS framework — all styles are inline JS objects via `cs` object (`src/theme/cs.js`). Dark mode default.
 
-**WhatsApp:** Fonnte API. Inbound → `/api/receive-wa` webhook → auto-reply keywords or forward to owner. Outbound via `sendWA()` in App.jsx. Bulk WA to teknisi/helper available from Planning Order panel.
+**WhatsApp/ARA (perubahan lokal 7 Okt 2026):** Inbound → `/api/receive-wa` → `api/_ara-customer.js`. Default `wa_ara_mode=review`: draf ditinjau Owner/Admin, bukan dikirim. `auto_safe` hanya sapaan/terima kasih sederhana; jawaban model/harga/booking/pembayaran/komplain tetap review. Pengiriman otomatis menggunakan outbox idempoten. Seluruh draf/balasan customer ARA diakhiri `- Auto Reply by ARA -`; bukan penanda chat manual, cron atau internal. Migrasi 196 wajib sebelum aktivasi jalur baru. Lihat [ARA_READINESS](docs/ARA_READINESS.md).
 
-**AI (ARA):** System prompt built from `brain.md` (in `app_settings` table) + live price list. Supports `[ACTION]` tags for DB mutations parsed client-side in `handleAraAction()`.
+**AI (ARA):** Aturan utama `src/lib/araPolicy.js`; server memuat `ara_brain` (`brain_md` internal, `brain_customer` customer), `app_settings.ara_training_rules`, dan `harga_layanan`. Training adalah konteks terpilih, bukan fine-tuning. Brain lama tidak mengungguli aturan wajib. `[ACTION]` hanya usulan navigasi, tidak melakukan mutasi atau kirim WA. Provider ARA dan AI Vision terpisah; API key di environment server. Perubahan lokal tidak otomatis menimpa Brain produksi.
 
 **Image storage:** Cloudflare R2 via AWS Sig V4 in `/api/upload-foto`. Render URL SELALU lewat `fotoUrl()` (`src/lib/fotoUrl.js`): langsung ke CDN kalau `VITE_R2_CDN_URL` di-set (hemat kuota Vercel), kalau tidak jatuh ke proxy `/api/foto`; `.pdf`/`.html` selalu proxy. Simpan bentuk key/proxy di DB, bukan URL CDN.
 
