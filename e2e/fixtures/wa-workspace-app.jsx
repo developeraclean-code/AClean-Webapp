@@ -80,9 +80,11 @@ const db = {
       if(existing && JSON.stringify(planSnapshot(existing))!==JSON.stringify(p.p_expected))return {error:{message:"Planning berubah oleh admin lain",code:"40001"}};
       const conflict=planConflict({...p.p_plan,id:p.p_order_id},demoOrders,rosters);
       if(conflict && p.p_plan.status!=="CANCELLED")return {error:{message:conflict,code:"P0001"}};
-      const row={...existing,...p.p_plan,id:p.p_order_id,team_slot:p.p_plan.team_slot||null,...buildOrderTeamAssignment(rosterMembers(rosters.find(r=>r.date===p.p_plan.date && r.slot===p.p_plan.team_slot))),dispatch:false};
+      const before=existing?{...existing}:null;
+      const notes=existing?`${p.p_plan.notes || ""}\n[Planning demo] ${p.p_reason.trim()}`:p.p_plan.notes;
+      const row={...existing,...p.p_plan,id:p.p_order_id,team_slot:p.p_plan.team_slot||null,notes,...buildOrderTeamAssignment(rosterMembers(rosters.find(r=>r.date===p.p_plan.date && r.slot===p.p_plan.team_slot))),dispatch:false};
       if(existing)Object.assign(existing,row);else demoOrders.push(row);
-      const result={order:row,before:existing};planReceipts.set(p.p_request_id,result);
+      const result={order:row,before};planReceipts.set(p.p_request_id,result);
       if(window.waTest.planningLostResponse)return {error:{message:"Koneksi terputus"}};
       return {data:result};
     }

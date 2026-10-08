@@ -1,5 +1,5 @@
 import { describe,it,expect,vi } from 'vitest';
-import { planningTeams, planningWeek, planningWeekOffset, teamReadiness, teamSlotCrew, suggestedTeamSlots, planConflict, validatePlan, planSnapshot, loadPlanningRange } from '../teamPlanning.js';
+import { planningTeams, planningWeek, planningWeekOffset, teamReadiness, teamSlotCrew, suggestedTeamSlots, planConflict, gridMoveProposal, validatePlan, planSnapshot, loadPlanningRange } from '../teamPlanning.js';
 const presets=Array.from({length:8},(_,i)=>({slot:`Team ${String(i+1).padStart(2,'0')}`}));
 const rosters=[{date:'2099-10-12',slot:'Team 01',member1:'Rian',member1_role:'teknisi',member2:'Danu',member2_role:'helper'},{date:'2099-10-13',slot:'Team 01',member1:'Budi',member1_role:'teknisi',member2:'Sari',member2_role:'helper'}];
 const plan={id:'new',customer:'Andi',phone:'6281234567890',date:'2099-10-12',time:'09:00',time_end:'11:00',service:'Cleaning',units:2,team_slot:'Team 01'};
@@ -37,6 +37,15 @@ describe('team-first weekly planning',()=>{
     expect(planConflict(plan,[{...jobs[0],team_slot:'Team 02',helper:'Danu'}],rosters)).toMatch(/bertabrakan/);
     expect(suggestedTeamSlots({date:plan.date,team:'Team 08',service:'Cleaning',units:3,orders:jobs,rosters})[0]).toMatchObject({time:'09:00',time_end:'12:00'});
     expect(planConflict({...plan,id:'old'},jobs,rosters)).toBeNull();
+  });
+  it('snaps a dragged job to half hours, preserves duration, and rejects invalid or locked moves',()=>{
+    const job={...plan,status:'CONFIRMED'};
+    expect(gridMoveProposal(job,'Team 02',11*60+14).plan).toEqual({date:plan.date,team_slot:'Team 02',time:'11:00',time_end:'13:00'});
+    expect(gridMoveProposal(job,'Team 02',11*60+16).plan).toMatchObject({time:'11:30',time_end:'13:30'});
+    expect(gridMoveProposal(job,'Team 01',9*60).error).toContain('belum berubah');
+    expect(gridMoveProposal(job,'Team 02',17*60).error).toContain('18:00');
+    expect(gridMoveProposal({...job,status:'COMPLETED'},'Team 02',11*60).error).toContain('tidak dapat');
+    expect(gridMoveProposal({...job,time:'18:00',time_end:'20:00'},'Team 02',11*60).error).toContain('di luar jam reguler');
   });
   it('ignores cancelled jobs, handles night shifts, and blocks a full team',()=>{
     expect(planConflict(plan,[{...plan,id:'other',status:'CANCELLED'}],rosters)).toBeNull();

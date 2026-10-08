@@ -66,6 +66,16 @@ export function planConflict(plan,orders,rosters) {
     return !Number.isFinite(start+end) || end<=start || (minutes(plan.time)<end && minutes(plan.time_end)>start);
   }) ? 'Slot tim atau anggota bertabrakan dengan pekerjaan lain. Pilih jam/tim lain.' : null;
 }
+export function gridMoveProposal(order,team,rawStart) {
+  if(!EDITABLE_PLAN.includes(order?.status) || order.project_id)return {error:'Pekerjaan ini tidak dapat dipindah melalui Jadwal.'};
+  const oldStart=minutes(order.time),oldEnd=minutes(order.time_end || estimatedEnd(order.time,order.service,order.units));
+  if(!Number.isFinite(oldStart+oldEnd) || oldStart<540 || oldEnd>1080 || oldEnd<=oldStart)return {error:'Pekerjaan di luar jam reguler perlu diubah melalui Planning Order.'};
+  if(!Number.isFinite(rawStart))return {error:'Posisi jam tidak valid.'};
+  const start=Math.round(rawStart/30)*30,end=start+oldEnd-oldStart;
+  if(start<540 || end>1080)return {error:'Pekerjaan reguler harus berada pada 09:00–18:00 WIB.'};
+  if((team || '')===(order.team_slot || '') && start===oldStart)return {error:'Posisi pekerjaan belum berubah.'};
+  return {plan:{date:order.date,team_slot:team || '',time:clockTime(start),time_end:clockTime(end)}};
+}
 export function suggestedTeamSlots({date,team,service,units,orders,rosters,excludeId,now=new Date()}) {
   const today=now.toLocaleDateString('en-CA',{timeZone:'Asia/Jakarta'});
   if(!team || !date || date<today || !Number.isInteger(Number(units)) || +units<1)return [];

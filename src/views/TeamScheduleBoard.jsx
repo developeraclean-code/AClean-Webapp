@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { usePlanningData } from '../lib/usePlanningData.js';
-import { planningTeams, teamReadiness, minutes, estimatedEnd, ACTIVE_PLAN, planConflict } from '../lib/teamPlanning.js';
+import { planningTeams, teamReadiness, teamSlotCrew, minutes, estimatedEnd, ACTIVE_PLAN, EDITABLE_PLAN, planConflict, gridMoveProposal } from '../lib/teamPlanning.js';
 import { shiftDateStr } from '../lib/dateTime.js';
 import { statusLabel } from '../constants/status.js';
 import { areaMapsUrl, resolveServiceArea } from '../lib/serviceArea.js';
@@ -16,6 +16,7 @@ const label = status => status==='PENDING'?'Tentatif':status==='CONFIRMED'?'Terk
 export default function TeamScheduleBoard({ supabase, days, revision, search='', person='Semua', accepts=()=>true, onPlan, onManageTeams, onShiftWeek, renderActions }) {
   const {data,loading,error,reload}=usePlanningData(supabase,days[0].date,days[6].date,revision);
   const [team,setTeam]=useState('Semua'),[status,setStatus]=useState('active'),[detailDate,setDetailDate]=useState('');
+  const drag=useRef(null),[dragPreview,setDragPreview]=useState(null),[dragError,setDragError]=useState('');
   const daytimeOrders=data.orders.filter(o=>!isNight(o));
   const allTeams=planningTeams(data.presets,data.rosters,daytimeOrders).filter(slot=>!slot.startsWith('Malam '));
   const displayedTeams=team==='Semua'?['',...allTeams]:[team==='unassigned'?'':team];
@@ -34,6 +35,39 @@ export default function TeamScheduleBoard({ supabase, days, revision, search='',
     const target=shiftDateStr(selectedDay,delta);
     setDetailDate(target);
     if(target<days[0].date || target>days[6].date)onShiftWeek?.(delta);
+  };
+  const dragStart=(event,order)=>{
+    const lane=event.currentTarget.closest('.team-time-lanes');
+    if(!lane)return;
+    drag.current={order,grabMinutes:(event.clientX-event.currentTarget.getBoundingClientRect().left)/lane.getBoundingClientRect().width*(DAY_END-DAY_START)};
+    event.dataTransfer.effectAllowed='move';
+    event.dataTransfer.setData('text/plain',order.id);
+    setDragPreview(null);setDragError('');
+  };
+  const moveAt=(event,slot)=>{
+    if(!drag.current)return null;
+    const rect=event.currentTarget.getBoundingClientRect();
+    const rawStart=DAY_START+(event.clientX-rect.left)/rect.width*(DAY_END-DAY_START)-drag.current.grabMinutes;
+    const result=gridMoveProposal(drag.current.order,slot,rawStart);
+    if(result.error)return {...result,slot};
+    const crew=teamSlotCrew(slot,drag.current.order.date,data.rosters,data.absences,data.presets);
+    if(crew.blocked)return {error:`${crew.detail}. Pilih Team lain atau atur pengganti.`,slot};
+    const conflict=planConflict({...drag.current.order,...result.plan},data.orders,data.rosters);
+    return conflict?{error:conflict,slot}:{...result,slot};
+  };
+  const dragOver=(event,slot)=>{
+    if(!drag.current)return;
+    event.preventDefault();event.dataTransfer.dropEffect='move';
+    const next=moveAt(event,slot);
+    setDragPreview(prev=>JSON.stringify(prev)===JSON.stringify(next)?prev:next);
+  };
+  const drop=(event,slot)=>{
+    if(!drag.current)return;
+    event.preventDefault();
+    const next=moveAt(event,slot),order=drag.current.order;
+    drag.current=null;setDragPreview(null);
+    if(next?.error){setDragError(next.error);return;}
+    if(next?.plan){setDragError('');onPlan(order,{...next.plan,__drag:true});}
   };
   const attention=daytimeOrders.filter(o=>ACTIVE_PLAN.includes(o.status) && teamReadiness(o.team_slot,o.date,data.rosters,data.absences,o).tone!=='ready').length;
   const card=(job,compact=false)=>{
@@ -76,9 +110,9 @@ export default function TeamScheduleBoard({ supabase, days, revision, search='',
         </div>)}
       </div>
     </div>
-    <div className="team-day-detail"><div className="team-board-heading"><div><span className="team-eyebrow">JAM PENGERJAAN · WIB</span><div className="team-day-navigation" role="group" aria-label="Navigasi hari jadwal"><button aria-label="Hari sebelumnya" title="Hari sebelumnya" disabled={!onShiftWeek && selectedDay===days[0].date} onClick={()=>moveDay(-1)}>◀</button><h3 aria-live="polite">{selectedDay}</h3><button aria-label="Hari berikutnya" title="Hari berikutnya" disabled={!onShiftWeek && selectedDay===days[6].date} onClick={()=>moveDay(1)}>▶</button></div><p>09:00–19:00 WIB · Pekerjaan malam tersedia di Planning Order.</p></div><span>{dayJobs.length} pekerjaan</span></div>
+    <div className="team-day-detail"><div className="team-board-heading"><div><span className="team-eyebrow">JAM PENGERJAAN · WIB</span><div className="team-day-navigation" role="group" aria-label="Navigasi hari jadwal"><button aria-label="Hari sebelumnya" title="Hari sebelumnya" disabled={!onShiftWeek && selectedDay===days[0].date} onClick={()=>moveDay(-1)}>◀</button><h3 aria-live="polite">{selectedDay}</h3><button aria-label="Hari berikutnya" title="Hari berikutnya" disabled={!onShiftWeek && selectedDay===days[6].date} onClick={()=>moveDay(1)}>▶</button></div><p>Seret blok ke jam/Team lain (langkah 30 menit), lalu konfirmasi di Planning. Slot reguler selesai maksimal 18:00; grid tetap tampil sampai 19:00.</p>{dragError && <p className="team-alert" role="alert">{dragError}</p>}</div><span>{dayJobs.length} pekerjaan</span></div>
       <div className="team-time-scroll" tabIndex={0} aria-label="Timeline harian"><div className="team-time-grid"><div className="team-time-head"><b>Team</b><div>{Array.from({length:11},(_,i)=><span key={i} style={{left:`${i*10}%`}}>{String(i+9).padStart(2,'0')}:00</span>)}</div></div>
-        {displayedTeams.map(slot=><div className="team-time-row" key={slot || 'unassigned'}><b>{slot || 'Belum ada tim'}</b><div className="team-time-lanes">{dayJobs.filter(o=>(o.team_slot||'')===slot).map(o=>{const style=barStyle(o),area=resolveServiceArea(o);return style?<div className="team-time-lane" key={o.id}><button onClick={()=>onPlan(o)} data-area={area.label} aria-label={`${o.time?.slice(0,5)}–${endLabel(o)} · ${o.customer} · Area ${area.label}`} title={`${o.customer} · ${area.label}${area.conflict?' (cek alamat)':''} · ${o.address || 'alamat belum tersedia'}`} style={style}><span className="team-time-primary">{o.time?.slice(0,5)}–{endLabel(o)} · {o.customer}</span><span className="team-time-area">📍 {area.label}{area.conflict?' · cek':''}</span></button></div>:null;})}</div></div>)}
+        {displayedTeams.map(slot=><div className="team-time-row" key={slot || 'unassigned'} data-team={slot || 'unassigned'}><b>{slot || 'Belum ada tim'}</b><div className="team-time-lanes" onDragOver={event=>dragOver(event,slot)} onDrop={event=>drop(event,slot)}>{dayJobs.filter(o=>(o.team_slot||'')===slot).map(o=>{const style=barStyle(o),area=resolveServiceArea(o),movable=!loading && !error && EDITABLE_PLAN.includes(o.status) && !o.project_id && minutes(o.time)>=DAY_START && minutes(o.time_end || estimatedEnd(o.time,o.service,o.units))<=18*60;return style?<div className="team-time-lane" key={o.id}><button draggable={movable} onDragStart={event=>dragStart(event,o)} onDragEnd={()=>{drag.current=null;setDragPreview(null);}} onClick={()=>onPlan(o)} data-area={area.label} aria-label={`${o.time?.slice(0,5)}–${endLabel(o)} · ${o.customer} · Area ${area.label}`} title={`${o.customer} · ${area.label}${area.conflict?' (cek alamat)':''} · ${o.address || 'alamat belum tersedia'}${movable?' · Seret untuk usulkan pindah jam/Team':''}`} style={style}><span className="team-time-primary">{o.time?.slice(0,5)}–{endLabel(o)} · {o.customer}</span><span className="team-time-area">📍 {area.label}{area.conflict?' · cek':''}</span></button></div>:null;})}{dragPreview?.slot===slot && (dragPreview.plan?<div className="team-drag-preview" style={barStyle(dragPreview.plan)}>{dragPreview.plan.time}–{dragPreview.plan.time_end}</div>:<span className="team-drag-invalid">{dragPreview.error}</span>)}</div></div>)}
       </div></div>
     </div>
     <p className="team-footnote">Area diperkirakan dari area tersimpan atau alamat. Buka Maps untuk memeriksa lokasi dan rute; waktu tempuh belum dihitung otomatis. Tentatif mencatat rencana pelanggan. Penugasan anggota dilakukan per tanggal di Planning Order.</p>

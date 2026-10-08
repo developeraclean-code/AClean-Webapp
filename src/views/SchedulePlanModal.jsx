@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { normalizePhone } from '../lib/phone.js';
 import { getLocalDate } from '../lib/dateTime.js';
-import { estimatedEnd, planningTeams, teamReadiness, suggestedTeamSlots, validatePlan, planConflict, planSnapshot, EDITABLE_PLAN } from '../lib/teamPlanning.js';
+import { estimatedEnd, planningTeams, teamReadiness, teamSlotCrew, suggestedTeamSlots, validatePlan, planConflict, planSnapshot, loadPlanningRange, EDITABLE_PLAN } from '../lib/teamPlanning.js';
 import { usePlanningData } from '../lib/usePlanningData.js';
 import { SERVICE_AREAS, resolveServiceArea } from '../lib/serviceArea.js';
 import './TeamSchedule.css';
@@ -9,12 +9,13 @@ import './TeamSchedule.css';
 export default function SchedulePlanModal({ request, supabase, onClose, onSaved, onViewSchedule, onOpenPlanning }) {
   const original=request.order;
   const [form,setForm]=useState(()=>{
-    const d=original || request.form || {};
+    const dragged=!!original && request.form?.__drag===true;
+    const d=dragged?{...original,date:request.form.date,team_slot:request.form.team_slot,time:request.form.time,time_end:request.form.time_end}:original || request.form || {};
     const guessed=resolveServiceArea(d).label;
     return {customer:d.customer || '',customer_id:d.customer_id || null,phone:d.phone || '',address:d.address || '',area:original?(d.area || ''):(guessed==='Area belum jelas'?'':guessed),service:d.service || 'Cleaning',type:d.type || '',units:d.units || 1,date:d.date || '',time:d.time?.slice(0,5) || '09:00',time_end:d.time_end?.slice(0,5) || estimatedEnd(d.time?.slice(0,5) || '09:00',d.service || 'Cleaning',d.units || 1),team_slot:d.team_slot || '',status:d.status==='PENDING' || !original?'PENDING':d.status==='CANCELLED'?'CANCELLED':'CONFIRMED',notes:d.notes || ''};
   });
   const [areaManuallyChosen,setAreaManuallyChosen]=useState(false);
-  const [reason,setReason]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[saved,setSaved]=useState(null),[pending,setPending]=useState(null);
+  const [reason,setReason]=useState(''),[reasonEdited,setReasonEdited]=useState(false),[error,setError]=useState(''),[busy,setBusy]=useState(false),[saved,setSaved]=useState(null),[pending,setPending]=useState(null);
   const lock=useRef(false),dialog=useRef(null),previousFocus=useRef(null);
   const {data,loading,error:loadError,reload}=usePlanningData(supabase,form.date || getLocalDate(),form.date || getLocalDate());
   const readonly=!!original && (!EDITABLE_PLAN.includes(original.status) || !!original.project_id);
@@ -22,17 +23,27 @@ export default function SchedulePlanModal({ request, supabase, onClose, onSaved,
   const ready=teamReadiness(form.team_slot,form.date,data.rosters,data.absences);
   const suggestions=suggestedTeamSlots({...data,date:form.date,team:form.team_slot,service:form.service,units:form.units,excludeId:original?.id});
   const conflict=form.status==='CANCELLED'?null:planConflict({...form,id:original?.id},data.orders,data.rosters);
+  const dragSummary=request.form?.__drag && original?`${original.date} · ${original.team_slot || 'Belum ada tim'} ${original.time?.slice(0,5)}–${(original.time_end || estimatedEnd(original.time,original.service,original.units)).slice(0,5)} → ${form.date} · ${form.team_slot || 'Belum ada tim'} ${form.time}–${form.time_end}`:'';
+  const effectiveReason=reasonEdited?reason:dragSummary?`Geser jadwal ${dragSummary}`:reason;
+  const dragCrew=dragSummary?teamSlotCrew(form.team_slot,form.date,data.rosters,data.absences,data.presets):null;
   const update=(key,value)=>setForm(prev=>{const next={...prev,[key]:value};if(['service','units','time'].includes(key))next.time_end=estimatedEnd(next.time,next.service,next.units);if(key==='address' && !areaManuallyChosen && !original){const guessed=resolveServiceArea({address:value}).label;next.area=guessed==='Area belum jelas'?'':guessed;}return next;});
   useEffect(()=>{previousFocus.current=document.activeElement;dialog.current?.focus();return()=>previousFocus.current?.focus?.();},[]);
   const submit=async()=>{
     if(lock.current || readonly)return;
     const invalid=validatePlan(form);
-    if(!pending && (invalid || conflict || loadError || loading)){setError(invalid || conflict || loadError || 'Tunggu jadwal selesai dimuat.');return;}
-    if(!pending && original && reason.trim().length<5){setError('Isi alasan perubahan minimal 5 karakter.');return;}
+    if(!pending && (invalid || conflict || dragCrew?.blocked || loadError || loading)){setError(invalid || conflict || (dragCrew?.blocked?dragCrew.detail:'') || loadError || 'Tunggu jadwal selesai dimuat.');return;}
+    if(!pending && original && effectiveReason.trim().length<5){setError('Isi alasan perubahan minimal 5 karakter.');return;}
     lock.current=true;setBusy(true);setError('');
-    const args=pending || {p_request_id:crypto.randomUUID(),p_order_id:original?.id || `WA-${request.id}`,p_plan:{...form,phone:normalizePhone(form.phone),units:Number(form.units),source:request.source || 'whatsapp'},p_expected:original?planSnapshot(original):null,p_reason:reason};
-    setPending(args);
     try {
+      if(!pending && dragSummary){
+        const latest=await loadPlanningRange(supabase,form.date,form.date);
+        const crew=teamSlotCrew(form.team_slot,form.date,latest.rosters,latest.absences,latest.presets);
+        if(crew.blocked)throw new Error(crew.detail);
+        const changed=planConflict({...form,id:original.id},latest.orders,latest.rosters);
+        if(changed)throw new Error(changed);
+      }
+      const args=pending || {p_request_id:crypto.randomUUID(),p_order_id:original?.id || `WA-${request.id}`,p_plan:{...form,phone:normalizePhone(form.phone),units:Number(form.units),source:request.source || 'whatsapp'},p_expected:original?planSnapshot(original):null,p_reason:effectiveReason};
+      setPending(args);
       const {data:result,error:saveError}=await supabase.rpc('save_schedule_plan',args);
       if(saveError){if(saveError.code && !['57014','PGRST301'].includes(saveError.code))setPending(null);throw saveError;}
       if(!result?.order)throw new Error('Hasil simpan belum pasti. Periksa dengan ID permintaan yang sama.');
@@ -57,10 +68,12 @@ export default function SchedulePlanModal({ request, supabase, onClose, onSaved,
       <header><div><span className="team-eyebrow">ACLEAN · PLANNING</span><h2 id="plan-title">{original?'Ubah rencana pekerjaan':request.source==='manual'?'Rencanakan pekerjaan':'Rencanakan dari WhatsApp'}</h2><p>Satu job untuk Planning Order dan Jadwal. Tim dapat diisi kemudian.</p></div><button aria-label="Tutup rencana" disabled={busy || !!pending} onClick={close}>×</button></header>
       {saved?<div className="plan-success" role="status"><span>✓</span><h3>Planning tersimpan</h3><p>{saved.customer} · {saved.date}<br/>{saved.time}–{saved.time_end} WIB · {saved.team_slot || 'Belum ada tim'}</p><p>{saved.status==='PENDING'?'Tentatif':saved.status==='CANCELLED'?'Dibatalkan':'Pelanggan terkonfirmasi'}. Tidak ada pesan otomatis yang dikirim.</p><div className="team-actions"><button className="team-primary" onClick={()=>onViewSchedule(saved)}>Lihat di Jadwal</button><button onClick={onClose}>Tutup</button></div></div>:<>
         <div className="plan-content">
+          {dragSummary && <p className="team-warning">Usulan: {dragSummary}. Perubahan baru berlaku setelah disimpan.</p>}
           {readonly && <p className="team-alert">Job ini sudah berjalan/ditutup atau merupakan project. Perubahan melalui alur operasional terkait.</p>}
           {error && <p className="team-alert" role="alert">{error}</p>}
           {loadError && <p className="team-alert" role="alert">Jadwal gagal dimuat: {loadError} <button onClick={reload}>Muat ulang</button></p>}
           {pending && !busy && <p className="team-warning">Hasil belum pasti. Form dikunci; periksa penyimpanan menggunakan permintaan yang sama.</p>}
+          {dragCrew?.blocked && <p className="team-alert">{dragCrew.detail}. Pilih Team lain atau atur pengganti sebelum menyimpan.</p>}
           <fieldset disabled={busy || !!pending || readonly} className="plan-fields">
             <label>Pelanggan<input value={form.customer} readOnly={!!original} onChange={e=>{update('customer',e.target.value);update('customer_id',null);}}/></label>
             <label>WhatsApp<input value={form.phone} readOnly={!!original} onChange={e=>{update('phone',e.target.value);update('customer_id',null);}}/></label>
@@ -78,11 +91,11 @@ export default function SchedulePlanModal({ request, supabase, onClose, onSaved,
             {conflict && <p className="plan-wide team-alert">{conflict}</p>}
             <label className="plan-wide">Konfirmasi pelanggan<select value={form.status} onChange={e=>update('status',e.target.value)}><option value="PENDING">Tentatif · menunggu pelanggan</option><option value="CONFIRMED">Pelanggan terkonfirmasi</option>{original && <option value="CANCELLED">Batalkan pekerjaan</option>}</select></label>
             <label className="plan-wide">Catatan<textarea rows={2} value={form.notes} onChange={e=>update('notes',e.target.value)}/></label>
-            {original && <label className="plan-wide">Alasan perubahan<textarea rows={2} value={reason} onChange={e=>setReason(e.target.value)} placeholder="Contoh: pelanggan meminta pindah hari / teknisi berhalangan"/></label>}
+            {original && <label className="plan-wide">Alasan perubahan<textarea rows={2} value={effectiveReason} onChange={e=>{setReasonEdited(true);setReason(e.target.value);}} placeholder="Contoh: pelanggan meminta pindah hari / teknisi berhalangan"/></label>}
           </fieldset>
           {original?.status==='DISPATCHED' && <p className="team-warning">Perubahan ini mengembalikan job ke konfirmasi pelanggan; dispatch lama dilepas. Kirim ulang informasi setelah tim/jadwal siap.</p>}
         </div>
-        <footer><button disabled={busy || !!pending} onClick={close}>Batal</button>{onOpenPlanning && <button disabled={busy || !!pending} onClick={()=>onOpenPlanning(form)}>Buka Planning Order</button>}<button className="team-primary" disabled={busy || readonly || (!pending && (loading || !!loadError || !!conflict))} onClick={submit}>{busy?'Menyimpan…':pending?'Periksa penyimpanan':original?'Simpan perubahan':'Simpan planning'}</button></footer>
+        <footer><button disabled={busy || !!pending} onClick={close}>Batal</button>{onOpenPlanning && !dragSummary && <button disabled={busy || !!pending} onClick={()=>onOpenPlanning(form)}>Buka Planning Order</button>}<button className="team-primary" disabled={busy || readonly || (!pending && (loading || !!loadError || !!conflict || dragCrew?.blocked))} onClick={submit}>{busy?'Menyimpan…':pending?'Periksa penyimpanan':original?'Simpan perubahan':'Simpan planning'}</button></footer>
       </>}
     </section>
   </div>;

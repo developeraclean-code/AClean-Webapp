@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import WorkspaceFixture from "../../e2e/fixtures/wa-workspace-app.jsx";
+import { getLocalDate, shiftDateStr } from "../../src/lib/dateTime.js";
 import "./preview.css";
 
 function Preview() {
@@ -26,7 +27,7 @@ function Preview() {
       <h1>{schedulePreview ? "Jadwal Team AClean" : "Coba alur WhatsApp Workspace"}</h1>
       {!schedulePreview && <p>Klik Andi, pilih lokasi Rumah atau Kantor, lalu Jadwalkan/Reorder untuk membuka pop-up rencana. Pilih tanggal, Team opsional, dan jam; setelah disimpan klik Lihat di Jadwal.</p>}
       <p>Tombol Jadwal Tim menampilkan Team 01–08 dari preset, anggota yang berbeda setiap hari, dan contoh teknisi absen. Klik kartu untuk reschedule; klik hari untuk timeline per jam. Semua data simulasi dan kembali ke awal saat halaman dimuat ulang.</p>
-      {schedulePreview && <p>Contoh area BSD dan Graha Raya tampil di kartu dan grid jam. Klik tanggal 6 atau 7 Oktober 2026 untuk melihatnya; buka “+ Rencanakan” untuk mencoba pemilihan area layanan.</p>}
+      {schedulePreview && <p>Contoh area BSD dan Graha Raya tampil di kartu dan grid jam. Klik tanggal {shiftDateStr(getLocalDate(),1)} atau {shiftDateStr(getLocalDate(),2)}, lalu seret blok pekerjaan ke jam atau Team lain. Perubahan baru tersimpan setelah konfirmasi di pop-up Planning; tombol Planning Order menampilkan job yang sama.</p>}
       {!schedulePreview && <label className="demo-switch"><input type="checkbox" checked={failSend} onChange={e => { setFailSend(e.target.checked); window.waTest.sendResult = !e.target.checked; }} /> Simulasikan pengiriman gagal</label>}
       <WorkspaceFixture planningMode initialView={schedulePreview ? "schedule" : "whatsapp"} onNotice={setNotice} onAction={(event, returnToChat) => setAction({ ...event, returnToChat })} />
     </main>

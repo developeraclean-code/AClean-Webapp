@@ -319,6 +319,68 @@ test('rescheduling keeps the same job, confirmation and clears old-day crew',asy
   expect(rows).toHaveLength(1);expect(rows[0]).toMatchObject({status:'CONFIRMED',teknisi:null,helper:null,dispatch:false});
 });
 
+test('dragging an hourly job opens the shared planning popup and updates the same job after confirmation',async({page})=>{
+  await openTeamCalendar(page);
+  await page.locator('.team-day').filter({hasText:'06/10'}).click();
+  const source=page.locator('.team-time-row[data-team="Team 01"] .team-time-lane button').filter({hasText:'Ibu Ratna'});
+  const target=page.locator('.team-time-row[data-team="Team 02"] .team-time-lanes');
+  const width=(await target.boundingBox()).width;
+  await source.dragTo(target,{sourcePosition:{x:4,y:20},targetPosition:{x:Math.round(width*.2),y:24}});
+  const popup=page.getByRole('dialog',{name:'Ubah rencana pekerjaan'});
+  await expect(popup.getByLabel('Team',{exact:true})).toHaveValue('Team 02');
+  await expect(popup.getByLabel('Jam mulai',{exact:true})).toHaveValue('11:00');
+  await expect(popup.getByLabel('Jam selesai',{exact:true})).toHaveValue('13:00');
+  await expect(popup.getByLabel('Alasan perubahan')).toHaveValue(/Geser jadwal 2026-10-06 · Team 01 09:00–11:00 → 2026-10-06 · Team 02 11:00–13:00/);
+  await popup.getByLabel('Jam mulai',{exact:true}).fill('11:30');
+  await expect(popup.getByLabel('Alasan perubahan')).toHaveValue(/Team 02 11:30–13:30/);
+  await popup.getByLabel('Jam mulai',{exact:true}).fill('11:00');
+  expect(await page.evaluate(()=>window.waTest.orders.find(o=>o.id==='JOB-TEAM-A').team_slot)).toBe('Team 01');
+  await popup.getByRole('button',{name:'Simpan perubahan',exact:true}).click();
+  await expect(popup.getByRole('heading',{name:'Planning tersimpan'})).toBeVisible();
+  await popup.getByRole('button',{name:'Lihat di Jadwal'}).click();
+  await expect(page.locator('.team-time-row[data-team="Team 02"] .team-time-lane button').filter({hasText:'Ibu Ratna'})).toContainText('11:00–13:00');
+  const rows=await page.evaluate(()=>window.waTest.orders.filter(o=>o.id==='JOB-TEAM-A'));
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({date:'2026-10-06',time:'11:00',time_end:'13:00',team_slot:'Team 02',status:'CONFIRMED',teknisi:null,helper:null});
+  expect(rows[0].notes).toContain('Geser jadwal 2026-10-06 · Team 01 09:00–11:00 → 2026-10-06 · Team 02 11:00–13:00');
+  await page.getByRole('button',{name:'Planning Order',exact:true}).click();
+  await expect(page.getByRole('region',{name:'Planning Order lokal'})).toContainText('Ibu Ratna');
+});
+
+test('cancelled drag leaves the job intact and a conflicting target is rejected before planning opens',async({page})=>{
+  await openTeamCalendar(page);
+  await page.locator('.team-day').filter({hasText:'06/10'}).click();
+  const source=page.locator('.team-time-row[data-team="Team 01"] .team-time-lane button').filter({hasText:'Ibu Ratna'});
+  const target=page.locator('.team-time-row[data-team="Team 02"] .team-time-lanes');
+  const width=(await target.boundingBox()).width;
+  await source.dragTo(target,{sourcePosition:{x:4,y:20},targetPosition:{x:Math.round(width*.2),y:24}});
+  await page.getByRole('dialog',{name:'Ubah rencana pekerjaan'}).getByRole('button',{name:'Batal',exact:true}).click();
+  expect(await page.evaluate(()=>window.waTest.orders.find(o=>o.id==='JOB-TEAM-A'))).toMatchObject({time:'09:00',time_end:'11:00',team_slot:'Team 01'});
+  await page.evaluate(()=>window.waTest.orders.push({id:'JOB-BLOCK',customer:'Pemesan lain',phone:'6281234567000',service:'Cleaning',units:2,status:'CONFIRMED',date:'2026-10-06',time:'11:00',time_end:'13:00',team_slot:'Team 02'}));
+  await page.getByRole('button',{name:'↻ Muat ulang',exact:true}).click();
+  await source.dragTo(target,{sourcePosition:{x:4,y:20},targetPosition:{x:Math.round(width*.2),y:24}});
+  await expect(page.getByRole('alert')).toContainText('bertabrakan');
+  await expect(page.getByRole('dialog',{name:'Ubah rencana pekerjaan'})).toHaveCount(0);
+});
+
+test('drag confirmation rechecks current roster and blocks saves when schedule reads fail',async({page})=>{
+  await openTeamCalendar(page);
+  await page.locator('.team-day').filter({hasText:'06/10'}).click();
+  const source=page.locator('.team-time-row[data-team="Team 01"] .team-time-lane button').filter({hasText:'Ibu Ratna'});
+  const target=page.locator('.team-time-row[data-team="Team 02"] .team-time-lanes');
+  const width=(await target.boundingBox()).width;
+  await source.dragTo(target,{sourcePosition:{x:4,y:20},targetPosition:{x:Math.round(width*.2),y:24}});
+  const popup=page.getByRole('dialog',{name:'Ubah rencana pekerjaan'});
+  await page.evaluate(()=>{window.waTest.scheduleError=true;});
+  await popup.getByRole('button',{name:'Simpan perubahan',exact:true}).click();
+  await expect(popup.getByRole('alert')).toContainText('Jadwal gagal dimuat');
+  await page.evaluate(()=>{window.waTest.scheduleError=false;window.waTest.absences.push({date:'2026-10-06',teknisi:'Rey',status:'OFF',is_available:false});});
+  await popup.getByRole('button',{name:'Simpan perubahan',exact:true}).click();
+  await expect(popup.getByRole('alert')).toContainText('Rey tidak tersedia');
+  expect(await page.evaluate(()=>window.waTest.calls.filter(c=>c.name==='save_schedule_plan'))).toHaveLength(0);
+  expect(await page.evaluate(()=>window.waTest.orders.find(o=>o.id==='JOB-TEAM-A').team_slot)).toBe('Team 01');
+});
+
 test('uncertain save retries the same request instead of duplicating a job',async({page})=>{
   await page.goto('https://wa-workspace.test/?planning=1');await chooseMaya(page);
   await page.getByRole('button',{name:'+ Jadwalkan',exact:true}).click();
