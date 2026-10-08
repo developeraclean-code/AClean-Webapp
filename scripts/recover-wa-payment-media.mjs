@@ -30,19 +30,18 @@ const summary={apply,examined:jobs.length,eligible:0,restored:0,existing:0,alrea
 for(const job of jobs){
   const existing=await get(`payment_suggestions?select=id,status&or=(media_job_id.eq.${job.id},image_url.eq.${encodeURIComponent(job.r2_url)})&limit=1`);
   if(existing.length){summary.existing++;continue;}
-  const invoiceMatch=await findPaymentInvoiceMatch({supabaseUrl,serviceKey,phone:job.phone,amount:job.transfer_amount});
-  // Historical receipts whose invoices are already settled are not reopened.
-  if(!invoiceMatch.candidates.length){
-    const settled=await findSettledPaymentMedia({supabaseUrl,serviceKey,job});
-    if(settled){
-      summary.alreadySettled++;
-      if(apply){
-        const saved=await updatePaymentMediaJob({supabaseUrl,serviceKey,id:job.id,patch:{status:'DONE',invoice_id:settled.id,last_error:null,next_retry_at:null}});
-        if(saved.ok)summary.settledClosed++;else summary.failed++;
-      }
-    } else summary.noOpenInvoice++;
+  const settled=await findSettledPaymentMedia({supabaseUrl,serviceKey,job});
+  if(settled){
+    summary.alreadySettled++;
+    if(apply){
+      const saved=await updatePaymentMediaJob({supabaseUrl,serviceKey,id:job.id,patch:{status:'DONE',invoice_id:settled.id,last_error:null,next_retry_at:null}});
+      if(saved.ok)summary.settledClosed++;else summary.failed++;
+    }
     continue;
   }
+  const invoiceMatch=await findPaymentInvoiceMatch({supabaseUrl,serviceKey,phone:job.phone,amount:job.transfer_amount});
+  // Historical receipts without an open invoice need manual reconciliation.
+  if(!invoiceMatch.candidates.length){summary.noOpenInvoice++;continue;}
   summary.eligible++;
   if(!apply)continue;
   const result=await ensurePaymentSuggestion({supabaseUrl,serviceKey,job,classification:normalizePaymentClassification(job),invoiceMatch});

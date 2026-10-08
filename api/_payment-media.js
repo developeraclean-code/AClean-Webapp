@@ -187,7 +187,7 @@ export async function ensurePaymentSuggestion({ supabaseUrl, serviceKey, job, cl
   let match;
   try { match = invoiceMatch || await findPaymentInvoiceMatch({ supabaseUrl, serviceKey, phone: job.phone, amount: classification?.amount }); }
   catch (error) { return { ok: false, error: error.message }; }
-  if (!match.candidates.length) {
+  if (classification || !match.candidates.length) {
     try {
       const settled = await findSettledPaymentMedia({ supabaseUrl, serviceKey, job });
       if (settled) return { ok: true, alreadySettled: true, invoice: settled, inserted: false };
