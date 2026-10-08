@@ -1,5 +1,5 @@
 import { describe,it,expect,vi } from 'vitest';
-import { planningTeams, planningWeek, planningWeekOffset, teamReadiness, suggestedTeamSlots, planConflict, validatePlan, planSnapshot, loadPlanningRange } from '../teamPlanning.js';
+import { planningTeams, planningWeek, planningWeekOffset, teamReadiness, teamSlotCrew, suggestedTeamSlots, planConflict, validatePlan, planSnapshot, loadPlanningRange } from '../teamPlanning.js';
 const presets=Array.from({length:8},(_,i)=>({slot:`Team ${String(i+1).padStart(2,'0')}`}));
 const rosters=[{date:'2099-10-12',slot:'Team 01',member1:'Rian',member1_role:'teknisi',member2:'Danu',member2_role:'helper'},{date:'2099-10-13',slot:'Team 01',member1:'Budi',member1_role:'teknisi',member2:'Sari',member2_role:'helper'}];
 const plan={id:'new',customer:'Andi',phone:'6281234567890',date:'2099-10-12',time:'09:00',time_end:'11:00',service:'Cleaning',units:2,team_slot:'Team 01'};
@@ -21,6 +21,14 @@ describe('team-first weekly planning',()=>{
     const readiness=teamReadiness('Team 01','2099-10-13',rosters,[{date:'2099-10-13',teknisi:'Budi',status:'SAKIT'}]);
     expect(readiness.label).toBe('Perlu pengganti');expect(readiness.members.map(m=>m.name)).toEqual(['Budi','Sari']);
     expect(teamReadiness('Team 02','2099-10-12',rosters,[]).label).toBe('Anggota belum diisi');
+  });
+  it('shows the dated roster first, then a clearly tentative preset, and blocks absent crew',()=>{
+    const teamPresets=[{slot:'Team 01',teknisi:'Rey'},{slot:'Team 02',teknisi:'Agung'}];
+    expect(teamSlotCrew('Team 01','2099-10-12',rosters,[],teamPresets)).toMatchObject({names:['Rian'],source:'roster',blocked:false});
+    expect(teamSlotCrew('Team 01','2099-10-13',rosters,[{date:'2099-10-13',teknisi:'Budi',status:'SAKIT'}],teamPresets)).toMatchObject({names:['Budi'],blocked:true});
+    expect(teamSlotCrew('Team 02','2099-10-12',rosters,[],teamPresets)).toMatchObject({names:['Agung'],source:'preset',blocked:false,detail:expect.stringContaining('belum diisi')});
+    expect(teamSlotCrew('Team 02','2099-10-12',rosters,[{date:'2099-10-12',teknisi:'Agung',status:'OFF'}],teamPresets).blocked).toBe(true);
+    expect(teamSlotCrew('Team 03','2099-10-12',rosters,[],teamPresets)).toMatchObject({names:[],source:'empty',blocked:false});
   });
   it('suggests exact duration, permits teams without members, rejects same-team and helper overlaps',()=>{
     const jobs=[{...plan,id:'old',status:'PENDING'}];

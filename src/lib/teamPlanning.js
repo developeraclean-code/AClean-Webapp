@@ -36,6 +36,23 @@ export function teamReadiness(team,date,rosters,absences,order) {
   const missing=members.filter(m=>absences.some(a=>a.date===date && a.teknisi===m.name && isAbsent(a)));
   return {members,missing,label:missing.length?'Perlu pengganti':!team?'Belum ada tim':!members.length?'Anggota belum diisi':'Tim terisi',tone:missing.length?'danger':!members.length?'warning':'ready'};
 }
+export function teamSlotCrew(team,date,rosters=[],absences=[],presets=[]) {
+  const roster=rosters.find(r=>r.slot===team && r.date===date);
+  const members=roster ? rosterMembers(roster) : [];
+  const technicians=members.filter(m=>m.role==='teknisi').map(m=>m.name);
+  const preset=presets.find(p=>p.slot===team)?.teknisi?.trim();
+  const names=roster ? technicians : preset ? [preset] : [];
+  const missing=members.filter(m=>absences.some(a=>a.date===date && a.teknisi===m.name && isAbsent(a)));
+  if(!roster && preset && absences.some(a=>a.date===date && a.teknisi===preset && isAbsent(a)))missing.push({name:preset,role:'teknisi'});
+  return {
+    names,
+    source:roster ? 'roster' : preset ? 'preset' : 'empty',
+    blocked:missing.length>0,
+    detail:missing.length ? `${missing.map(m=>m.name).join(', ')} tidak tersedia · perlu pengganti` :
+      roster ? technicians.length ? `Teknisi roster: ${technicians.join(', ')}` : 'Roster belum memiliki teknisi · tentatif' :
+      preset ? `Teknisi preset: ${preset} · roster harian belum diisi` : 'Teknisi belum diisi · tentatif',
+  };
+}
 export function planConflict(plan,orders,rosters) {
   if(!plan.team_slot)return null;
   const people=rosterMembers(rosters.find(r=>r.slot===plan.team_slot && r.date===plan.date)).map(m=>m.name);

@@ -134,6 +134,24 @@ test("scheduling proposes a live slot, prepares an order, and refuses failed rec
   expect(await page.evaluate(() => window.waTest.calls.filter(c => c.type === "order"))).toHaveLength(1);
 });
 
+test("slot cards show dated technicians, mark preset-only teams tentative, and reject stale or absent crew", async ({ page }) => {
+  await chooseAndi(page); await page.getByLabel("Lokasi pelanggan").selectOption("a");
+  await page.getByRole("button", { name: "Slot jadwal", exact: true }).click();
+  const firstDate=await page.evaluate(()=>window.waTest.rosters[0].date);
+  await page.getByLabel("Tanggal servis").fill(firstDate);
+  await page.getByRole("button", { name: "Cari slot tim", exact: true }).click();
+  await expect(page.locator(".wa-info-card").filter({hasText:"Team 01 (Rian)"}).first()).toContainText("Teknisi roster: Rian");
+  await expect(page.locator(".wa-info-card").filter({hasText:"Team 02 (Rey)"}).first()).toContainText("roster harian belum diisi");
+  await page.evaluate(()=>{window.waTest.rosters[0].member1="Ari";});
+  await page.locator(".wa-info-card").filter({hasText:"Team 01 (Rian)"}).first().getByRole("button",{name:"Pilih slot"}).click();
+  await expect(page.getByRole("alert")).toContainText("Anggota tim berubah");
+  expect(await page.evaluate(()=>window.waTest.calls.filter(c=>c.type==="order"))).toHaveLength(0);
+  const absentDate=await page.evaluate(()=>window.waTest.rosters[1].date);
+  await page.getByLabel("Tanggal servis").fill(absentDate);
+  await page.getByRole("button", { name: "Cari slot tim", exact: true }).click();
+  await expect(page.locator(".wa-info-card").filter({hasText:"Team 01"})).toHaveCount(0);
+});
+
 test("payment review allocates across locations and retries the same transaction ID", async ({ page }) => {
   await chooseAndi(page);
   await page.getByRole("button", { name: "Verifikasi bayar", exact: true }).click();

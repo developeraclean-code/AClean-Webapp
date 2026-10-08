@@ -36,7 +36,7 @@ const demoOrders = [
     ];
 demoOrders.push({id:"JOB-MAYA",customer_id:"c",customer:customers[2].name,phone:phones[1],service:"Cleaning",units:2,status:"PAID",date:"2026-01-01"});
 const demoToday = getLocalDate();
-const presets = Array.from({length:8},(_,i)=>({slot:`Team ${String(i+1).padStart(2,'0')}`,sort_order:i}));
+const presets = Array.from({length:8},(_,i)=>({slot:`Team ${String(i+1).padStart(2,'0')}`,teknisi:i===1?"Rey":"",sort_order:i}));
 const rosters = [
   {date:shiftDateStr(demoToday,1),slot:"Team 01",member1:"Rian",member1_role:"teknisi",member2:"Danu",member2_role:"helper"},
   {date:shiftDateStr(demoToday,2),slot:"Team 01",member1:"Budi",member1_role:"teknisi",member2:"Sari",member2_role:"helper"},

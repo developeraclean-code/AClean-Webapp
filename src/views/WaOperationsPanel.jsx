@@ -1,6 +1,6 @@
 import { waMediaUrl } from "../lib/waPaymentContext.js";
 import { matchPaymentInvoices } from "../lib/waPaymentMatch.js";
-import { loadPlanningRange, planningTeams, suggestedTeamSlots } from "../lib/teamPlanning.js";
+import { loadPlanningRange, planningTeams, suggestedTeamSlots, teamSlotCrew } from "../lib/teamPlanning.js";
 import { useEffect, useRef, useState } from "react";
 import { WA_STATES, SEND_STATES, jakartaToday, toJakartaInput, fromJakartaInput, allocatePayment, paymentCandidates, serviceFollowup } from "../lib/waOperations.js";
 import { createWaOrderDraft, invoiceBalance, waMoney } from "../lib/waWorkspace.js";
@@ -59,12 +59,17 @@ export default function WaOperationsPanel({ phone, conv, customer, needsLocation
     setSlots([]);
     const day=await loadPlanningRange(supabase,date,date);
     if(!mounted.current)return;
-    const result=planningTeams(day.presets,day.rosters,day.orders).flatMap(team=>suggestedTeamSlots({date,team,service,units,...day}).slice(0,2)).slice(0,16);
-    setSlots(result);setNotice(result.length?"Opsi sementara; ketersediaan diperiksa lagi saat dipilih dan disimpan.":"Tidak ada slot reguler yang tersedia untuk pilihan ini.");
+    const result=planningTeams(day.presets,day.rosters,day.orders).flatMap(team=>{
+      const crew=teamSlotCrew(team,date,day.rosters,day.absences,day.presets);
+      return crew.blocked ? [] : suggestedTeamSlots({date,team,service,units,...day}).slice(0,2).map(slot=>({...slot,crew}));
+    }).slice(0,16);
+    setSlots(result);setNotice(result.length?"Opsi sementara; nama preset tanpa roster masih tentatif. Ketersediaan diperiksa lagi saat dipilih dan disimpan.":"Tidak ada slot reguler dengan tim tersedia untuk pilihan ini.");
   });
   const chooseSlot = (slot, asDraft) => run(async()=>{
     const day=await loadPlanningRange(supabase,slot.date,slot.date);
     if(!mounted.current)return;
+    const crew=teamSlotCrew(slot.team_slot,slot.date,day.rosters,day.absences,day.presets);
+    if(crew.blocked || JSON.stringify(crew)!==JSON.stringify(slot.crew))throw new Error("Anggota tim berubah atau tidak tersedia. Cari jadwal kembali.");
     const latest=suggestedTeamSlots({date:slot.date,team:slot.team_slot,service,units,...day});
     if(!latest.some(s=>s.team_slot===slot.team_slot && s.time===slot.time))throw new Error("Slot sudah berubah. Cari jadwal kembali.");
     if(asDraft)insertDraft(`Halo ${customer?.name || conv.name}, opsi servis ${service} ${units} unit adalah ${slot.date} pukul ${slot.time}–${slot.time_end} WIB pada ${slot.team_slot}. Apakah berkenan? Jadwal akan dikonfirmasi setelah pemesanan.`);
@@ -110,7 +115,7 @@ export default function WaOperationsPanel({ phone, conv, customer, needsLocation
       <label>Layanan<select value={service} onChange={e=>{setService(e.target.value);setSlots([]);}}>{["Cleaning","Repair","Install","Complain"].map(s=><option key={s}>{s}</option>)}</select></label>
       <label>Jumlah unit<input type="number" min="1" max="100" value={units} onChange={e=>{setUnits(e.target.value);setSlots([]);}}/></label>
       <button className="wa-primary" disabled={busy || needsLocation || !duration} onClick={searchSlots}>Cari slot tim</button>
-      {slots.map(s=><div className="wa-info-card" key={s.team_slot+s.time}><strong>{s.team_slot} · {s.time}–{s.time_end}</strong><p>{s.date} · Anggota mengikuti roster harian</p><div className="wa-button-pair"><button disabled={busy} className="wa-text-button" onClick={()=>chooseSlot(s,true)}>Draf tawaran</button><button disabled={busy} className="wa-text-button" onClick={()=>chooseSlot(s,false)}>Pilih slot</button></div></div>)}
+      {slots.map(s=><div className="wa-info-card" key={s.date+s.team_slot+s.time}><strong>{s.team_slot}{s.crew.names.length?` (${s.crew.names.join(', ')})`:''} · {s.time}–{s.time_end}</strong><p>{s.date} · {s.crew.detail}</p><div className="wa-button-pair"><button disabled={busy} className="wa-text-button" onClick={()=>chooseSlot(s,true)}>Draf tawaran</button><button disabled={busy} className="wa-text-button" onClick={()=>chooseSlot(s,false)}>Pilih slot</button></div></div>)}
     </div>}
     {section==="payment" && <div className="wa-ops-form"><h4>Cocokkan bukti & invoice</h4>
       <button className="wa-text-button" disabled={paymentLoading || busy || !!paymentPending} onClick={onRefreshPayments}>Muat ulang bukti & invoice</button>
