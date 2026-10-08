@@ -509,3 +509,33 @@ test("late payment response cannot populate a different customer's review panel"
   await expect(page.getByText('Tidak ada bukti yang menunggu pemeriksaan pada nomor ini.')).toBeVisible();
   await expect(page.getByLabel('Bukti pembayaran',{exact:true})).toHaveCount(0);
 });
+
+test('hourly grid shows the approximate area and planning lets admin correct it',async({page})=>{
+  await openTeamCalendar(page);
+  await page.locator('.team-day').filter({hasText:'06/10'}).click();
+  const bsd=page.getByLabel('Timeline harian').locator('.team-time-lane button[data-area="BSD"]');
+  await expect(bsd).toContainText('Ibu Ratna');
+  await expect(bsd).toContainText('📍 BSD');
+  await expect(page.locator('.team-day-cell[data-date="2026-10-06"] .team-job').filter({hasText:'Ibu Ratna'})).toContainText('BSD');
+  await expect(page.getByRole('link',{name:'Periksa alamat Ibu Ratna di Maps'})).toHaveAttribute('href',/De%20Park%20BSD%20City/);
+  await page.locator('.team-day').filter({hasText:'07/10'}).click();
+  const graha=page.locator('.team-time-lane button[data-area="Graha Raya"]');
+  await expect(graha).toContainText('📍 Graha Raya');
+  await page.locator('.team-day-cell[data-team="unassigned"][data-date="2026-10-06"] .team-add').click();
+  await page.getByLabel('Pelanggan',{exact:true}).fill('Ibu Rini');
+  await page.getByLabel('WhatsApp',{exact:true}).fill('6281234567888');
+  await page.getByLabel('Alamat lokasi').fill('De Park BSD City, Tangerang Selatan');
+  await expect(page.getByLabel('Area layanan')).toHaveValue('BSD');
+  await page.getByLabel('Area layanan').selectOption('Bintaro');
+  await page.getByLabel('Alamat lokasi').fill('De Park BSD City, Tangerang Selatan Blok B');
+  await expect(page.getByLabel('Area layanan')).toHaveValue('Bintaro');
+  await page.getByRole('button',{name:'Simpan planning'}).click();
+  await expect(page.getByText('Planning tersimpan')).toBeVisible();
+  const saved=await page.evaluate(()=>window.waTest.calls.findLast(c=>c.name==='save_schedule_plan'));
+  expect(saved.p.p_plan.area).toBe('Bintaro');
+  await page.setViewportSize({width:390,height:844});
+  await page.getByRole('button',{name:'Tutup rencana'}).click();
+  await page.locator('.team-day').filter({hasText:'06/10'}).click();
+  await expect(page.getByLabel('Timeline harian').locator('.team-time-lane button[data-area="BSD"]')).toContainText('📍 BSD');
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+});

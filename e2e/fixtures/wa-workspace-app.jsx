@@ -42,8 +42,8 @@ const rosters = [
   {date:shiftDateStr(demoToday,2),slot:"Team 01",member1:"Budi",member1_role:"teknisi",member2:"Sari",member2_role:"helper"},
 ];
 const absences=[{date:shiftDateStr(demoToday,2),teknisi:"Budi",status:"SAKIT",is_available:false}];
-demoOrders.push({id:"JOB-TEAM-A",customer_id:"extra-a",customer:"Ibu Ratna",phone:phones[1],date:shiftDateStr(demoToday,1),time:"09:00",time_end:"11:00",service:"Cleaning",units:2,status:"CONFIRMED",team_slot:"Team 01",teknisi:"Rian",helper:"Danu"},
-  {id:"JOB-TEAM-B",customer_id:"extra-b",customer:"Bapak Hendra",phone:phones[0],date:shiftDateStr(demoToday,2),time:"10:00",time_end:"12:00",service:"Cleaning",units:2,status:"CONFIRMED",team_slot:"Team 01",teknisi:"Budi",helper:"Sari"});
+demoOrders.push({id:"JOB-TEAM-A",customer_id:"extra-a",customer:"Ibu Ratna",phone:phones[1],address:"De Park BSD City, Tangerang Selatan",date:shiftDateStr(demoToday,1),time:"09:00",time_end:"11:00",service:"Cleaning",units:2,status:"CONFIRMED",team_slot:"Team 01",teknisi:"Rian",helper:"Danu"},
+  {id:"JOB-TEAM-B",customer_id:"extra-b",customer:"Bapak Hendra",phone:phones[0],area:"Graha Raya",address:"Graha Raya Bintaro",date:shiftDateStr(demoToday,2),time:"10:00",time_end:"12:00",service:"Cleaning",units:2,status:"CONFIRMED",team_slot:"Team 01",teknisi:"Budi",helper:"Sari"});
 const planReceipts = new Map();
 let demoInvoices = [
       { id: "INV-RUMAH", customer: customers[0].name, phone: phones[0], status: "PARTIAL_PAID", total: 500000, paid_amount: 200000, due: "2026-10-08", service: "Cleaning" },

@@ -3,14 +3,17 @@ import { normalizePhone } from '../lib/phone.js';
 import { getLocalDate } from '../lib/dateTime.js';
 import { estimatedEnd, planningTeams, teamReadiness, suggestedTeamSlots, validatePlan, planConflict, planSnapshot, EDITABLE_PLAN } from '../lib/teamPlanning.js';
 import { usePlanningData } from '../lib/usePlanningData.js';
+import { SERVICE_AREAS, resolveServiceArea } from '../lib/serviceArea.js';
 import './TeamSchedule.css';
 
 export default function SchedulePlanModal({ request, supabase, onClose, onSaved, onViewSchedule, onOpenPlanning }) {
   const original=request.order;
   const [form,setForm]=useState(()=>{
     const d=original || request.form || {};
-    return {customer:d.customer || '',customer_id:d.customer_id || null,phone:d.phone || '',address:d.address || '',area:d.area || '',service:d.service || 'Cleaning',type:d.type || '',units:d.units || 1,date:d.date || '',time:d.time?.slice(0,5) || '09:00',time_end:d.time_end?.slice(0,5) || estimatedEnd(d.time?.slice(0,5) || '09:00',d.service || 'Cleaning',d.units || 1),team_slot:d.team_slot || '',status:d.status==='PENDING' || !original?'PENDING':d.status==='CANCELLED'?'CANCELLED':'CONFIRMED',notes:d.notes || ''};
+    const guessed=resolveServiceArea(d).label;
+    return {customer:d.customer || '',customer_id:d.customer_id || null,phone:d.phone || '',address:d.address || '',area:original?(d.area || ''):(guessed==='Area belum jelas'?'':guessed),service:d.service || 'Cleaning',type:d.type || '',units:d.units || 1,date:d.date || '',time:d.time?.slice(0,5) || '09:00',time_end:d.time_end?.slice(0,5) || estimatedEnd(d.time?.slice(0,5) || '09:00',d.service || 'Cleaning',d.units || 1),team_slot:d.team_slot || '',status:d.status==='PENDING' || !original?'PENDING':d.status==='CANCELLED'?'CANCELLED':'CONFIRMED',notes:d.notes || ''};
   });
+  const [areaManuallyChosen,setAreaManuallyChosen]=useState(false);
   const [reason,setReason]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[saved,setSaved]=useState(null),[pending,setPending]=useState(null);
   const lock=useRef(false),dialog=useRef(null),previousFocus=useRef(null);
   const {data,loading,error:loadError,reload}=usePlanningData(supabase,form.date || getLocalDate(),form.date || getLocalDate());
@@ -19,7 +22,7 @@ export default function SchedulePlanModal({ request, supabase, onClose, onSaved,
   const ready=teamReadiness(form.team_slot,form.date,data.rosters,data.absences);
   const suggestions=suggestedTeamSlots({...data,date:form.date,team:form.team_slot,service:form.service,units:form.units,excludeId:original?.id});
   const conflict=form.status==='CANCELLED'?null:planConflict({...form,id:original?.id},data.orders,data.rosters);
-  const update=(key,value)=>setForm(prev=>{const next={...prev,[key]:value};if(['service','units','time'].includes(key))next.time_end=estimatedEnd(next.time,next.service,next.units);return next;});
+  const update=(key,value)=>setForm(prev=>{const next={...prev,[key]:value};if(['service','units','time'].includes(key))next.time_end=estimatedEnd(next.time,next.service,next.units);if(key==='address' && !areaManuallyChosen && !original){const guessed=resolveServiceArea({address:value}).label;next.area=guessed==='Area belum jelas'?'':guessed;}return next;});
   useEffect(()=>{previousFocus.current=document.activeElement;dialog.current?.focus();return()=>previousFocus.current?.focus?.();},[]);
   const submit=async()=>{
     if(lock.current || readonly)return;
@@ -62,6 +65,8 @@ export default function SchedulePlanModal({ request, supabase, onClose, onSaved,
             <label>Pelanggan<input value={form.customer} readOnly={!!original} onChange={e=>{update('customer',e.target.value);update('customer_id',null);}}/></label>
             <label>WhatsApp<input value={form.phone} readOnly={!!original} onChange={e=>{update('phone',e.target.value);update('customer_id',null);}}/></label>
             <label className="plan-wide">Alamat lokasi<textarea rows={2} value={form.address} readOnly={!!original} onChange={e=>update('address',e.target.value)}/></label>
+            {original ? <div className="plan-wide"><small>Area quick view: {resolveServiceArea(form).label}. Periksa alamat di Maps bila rute tampak tidak searah.</small></div>
+              : <label className="plan-wide">Area layanan untuk Jadwal<select aria-label="Area layanan" value={form.area} onChange={e=>{setAreaManuallyChosen(true);update('area',e.target.value);}}><option value="">Pilih bila alamat belum jelas</option>{SERVICE_AREAS.map(area=><option key={area} value={area}>{area}</option>)}</select><small>Perkiraan dari alamat; pilih ulang jika kawasan yang terdeteksi tidak tepat.</small></label>}
             <label>Layanan<select disabled={!!original} value={form.service} onChange={e=>update('service',e.target.value)}>{[...new Set(['Cleaning','Repair','Install','Complain','Maintenance',form.service])].map(s=><option key={s}>{s}</option>)}</select></label>
             <label>Jumlah unit<input type="number" min="1" max="100" value={form.units} onChange={e=>update('units',e.target.value)}/></label>
             <label>Tanggal pengerjaan<input type="date" min={!original?getLocalDate():undefined} value={form.date} onChange={e=>update('date',e.target.value)}/></label>
