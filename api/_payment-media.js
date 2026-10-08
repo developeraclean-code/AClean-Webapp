@@ -1,3 +1,4 @@
+import { matchPaymentInvoices, paymentPhoneVariants } from "../src/lib/waPaymentMatch.js";
 import { createHash } from "node:crypto";
 import { downloadBufferFromR2, downloadToBuffer, uploadBufferToR2 } from "./_r2-upload.js";
 import { callVision, getVisionProvider } from "./_vision-provider.js";
@@ -153,38 +154,60 @@ export async function updatePaymentMediaJob({ supabaseUrl, serviceKey, id, patch
   }
 }
 
-async function exactInvoiceForPhone({ supabaseUrl, serviceKey, phone }) {
-  const digits = String(phone || "").replace(/\D/g, "");
-  const local = digits.startsWith("62") ? `0${digits.slice(2)}` : digits;
-  const variants = [...new Set([digits, local, `+${digits}`].filter(Boolean))];
+export async function findPaymentInvoiceMatch({ supabaseUrl, serviceKey, phone, amount }) {
+  const variants = paymentPhoneVariants(phone);
+  if (!variants.length) return matchPaymentInvoices([], phone, amount);
   const filter = variants.map(value => `phone.eq.${encodeURIComponent(value)}`).join(",");
-  try {
-    const response = await fetch(`${supabaseUrl}/rest/v1/invoices?select=id,job_id,total,status,phone&or=(${filter})&status=in.(UNPAID,OVERDUE,PARTIAL_PAID)&order=created_at.desc&limit=1`, {
-      headers: restHeaders(serviceKey),
-      signal: AbortSignal.timeout(5000),
+  const invoices = [];
+  for (let offset = 0; ; offset += 200) {
+    const response = await fetch(`${supabaseUrl}/rest/v1/invoices?select=id,job_id,total,paid_amount,remaining_amount,status,phone&or=(${filter})&status=in.(UNPAID,OVERDUE,PARTIAL_PAID)&order=created_at.desc,id&limit=200&offset=${offset}`, {
+      headers: restHeaders(serviceKey), signal: AbortSignal.timeout(5000),
     });
-    if (!response.ok) return null;
-    return (await response.json())?.[0] || null;
-  } catch { return null; }
+    if (!response.ok) throw new Error(`invoice lookup ${response.status}`);
+    const rows = await response.json();
+    invoices.push(...rows);
+    if (rows.length < 200) break;
+  }
+  return matchPaymentInvoices(invoices, phone, amount);
 }
 
-export async function ensurePaymentSuggestion({ supabaseUrl, serviceKey, job, classification = null, pendingReason = null }) {
+export async function findSettledPaymentMedia({ supabaseUrl, serviceKey, job }) {
+  const variants = paymentPhoneVariants(job.phone);
+  if (!variants.length || !job.r2_url) return null;
+  const filter = variants.map(value => `phone.eq.${encodeURIComponent(value)}`).join(",");
+  const response = await fetch(`${supabaseUrl}/rest/v1/invoices?select=id&or=(${filter})&status=eq.PAID&payment_proof_url=eq.${encodeURIComponent(job.r2_url)}&limit=1`, {
+    headers: restHeaders(serviceKey), signal: AbortSignal.timeout(5000),
+  });
+  if (!response.ok) throw new Error(`settled proof lookup ${response.status}`);
+  return (await response.json())?.[0] || null;
+}
+
+export async function ensurePaymentSuggestion({ supabaseUrl, serviceKey, job, classification = null, pendingReason = null, invoiceMatch = null }) {
   if (!job?.id || !job?.phone || !job?.r2_url) return { ok: false, error: "job media belum lengkap" };
-  const invoice = await exactInvoiceForPhone({ supabaseUrl, serviceKey, phone: job.phone });
-  // Fallback tanpa hasil AI hanya ditampilkan bila ada invoice exact-phone aktif,
-  // sehingga foto AC biasa tidak membanjiri Pending AI.
-  if (!classification && !invoice) return { ok: true, skipped: true };
+  let match;
+  try { match = invoiceMatch || await findPaymentInvoiceMatch({ supabaseUrl, serviceKey, phone: job.phone, amount: classification?.amount }); }
+  catch (error) { return { ok: false, error: error.message }; }
+  if (!match.candidates.length) {
+    try {
+      const settled = await findSettledPaymentMedia({ supabaseUrl, serviceKey, job });
+      if (settled) return { ok: true, alreadySettled: true, invoice: settled, inserted: false };
+    } catch (error) { return { ok: false, error: error.message }; }
+  }
+  const invoice = match.kind === "single" ? match.invoices[0] : null;
+  if (!classification && !match.candidates.length) return { ok: true, skipped: true };
   const payload = {
     media_job_id: job.id,
     phone: job.phone,
     sender_name: job.sender_name || null,
-    raw_message: pendingReason ? `Media WA perlu review manual: ${pendingReason}` : "Bukti transfer terdeteksi AI",
+    raw_message: pendingReason ? `Media WA perlu review manual: ${pendingReason}`
+      : match.kind === "multi" ? `Saran alokasi ${match.invoices.length} invoice: ${match.invoices.map(i => i.id).join(", ")}. Periksa sebelum konfirmasi.`
+      : "Bukti transfer terdeteksi AI. Periksa invoice dan nominal sebelum konfirmasi.",
     amount: classification?.amount ?? null,
     bank: classification?.bank || null,
     transfer_date: classification?.transfer_date || null,
     invoice_id: invoice?.id || null,
     order_id: invoice?.job_id || null,
-    match_source: classification ? "wa_image_ai" : "wa_image_ai_pending",
+    match_source: classification ? (match.kind === "multi" ? "wa_image_ai_multi" : "wa_image_ai") : "wa_image_ai_pending",
     status: "PENDING",
     validation_status: "PENDING",
     source: "image",
@@ -192,11 +215,31 @@ export async function ensurePaymentSuggestion({ supabaseUrl, serviceKey, job, cl
   };
   try {
     const response = await fetch(`${supabaseUrl}/rest/v1/payment_suggestions?on_conflict=media_job_id`, {
-      method: "POST", headers: restHeaders(serviceKey, "resolution=merge-duplicates,return=representation"), body: JSON.stringify(payload),
+      method: "POST", headers: restHeaders(serviceKey, "resolution=ignore-duplicates,return=representation"), body: JSON.stringify(payload),
       signal: AbortSignal.timeout(5000),
     });
     if (!response.ok) return { ok: false, error: `suggestion upsert ${response.status}: ${(await response.text().catch(() => "")).slice(0, 200)}` };
-    return { ok: true, suggestion: (await response.json())?.[0], invoice };
+    let suggestion = (await response.json())?.[0];
+    const inserted = !!suggestion;
+    if (!suggestion) {
+      // A duplicate must never reopen a CONFIRMED/DISMISSED payment.
+      const lookup = await fetch(`${supabaseUrl}/rest/v1/payment_suggestions?select=*&media_job_id=eq.${job.id}&limit=1`, {
+        headers: restHeaders(serviceKey), signal: AbortSignal.timeout(5000),
+      });
+      if (!lookup.ok) return { ok: false, error: `suggestion lookup ${lookup.status}` };
+      suggestion = (await lookup.json())?.[0];
+      // Enrich an AI-timeout fallback only while still pending; conditional PATCH
+      // also protects a concurrent admin confirmation.
+      if (classification && suggestion?.status === "PENDING" && suggestion.match_source === "wa_image_ai_pending") {
+        const enrich = await fetch(`${supabaseUrl}/rest/v1/payment_suggestions?id=eq.${suggestion.id}&status=eq.PENDING&match_source=eq.wa_image_ai_pending`, {
+          method: "PATCH", headers: restHeaders(serviceKey), body: JSON.stringify(payload), signal: AbortSignal.timeout(5000),
+        });
+        if (!enrich.ok) return { ok: false, error: `suggestion enrich ${enrich.status}` };
+        suggestion = (await enrich.json())?.[0] || suggestion;
+      }
+    }
+    if (!suggestion) return { ok: false, error: "suggestion tidak ditemukan setelah penyimpanan" };
+    return { ok: true, suggestion, invoice, match, inserted };
   } catch (error) {
     return { ok: false, error: `suggestion upsert gagal: ${error?.message || error}` };
   }
@@ -219,34 +262,41 @@ export async function retryOnePaymentMediaJob({ supabaseUrl, serviceKey, apiKey 
   const attempt = Number(job.attempts || 0) + 1;
   // Tetap berstatus retryable saat proses berjalan. Jika serverless diputus paksa,
   // invocation berikutnya masih dapat mengambil job ini (upsert suggestion tetap idempoten).
-  await updatePaymentMediaJob({ supabaseUrl, serviceKey, id: job.id, patch: { attempts: attempt, last_error: null } });
+  const started = await updatePaymentMediaJob({ supabaseUrl, serviceKey, id: job.id, patch: { attempts: attempt, last_error: null } });
+  if (!started.ok) return { ok: false, error: started.error };
   let activeJob = job;
-  let media = job.r2_key
-    ? await downloadBufferFromR2(job.r2_key, { timeoutMs: 7000 })
-    : await downloadToBuffer(job.source_url, { timeoutMs: 7000 });
-  if (media.ok && !job.r2_key) {
-    const staged = await stagePaymentMedia({
-      supabaseUrl, serviceKey, sourceUrl: job.source_url, phone: job.phone,
-      senderName: job.sender_name, buffer: media.buffer,
-      mimeType: media.mimeType || job.mime_type, createdAt: job.created_at,
-    });
-    if (!staged.ok) media = { ok: false, err: staged.error };
-    else activeJob = staged.job;
+  const cached = job.category === "bukti_transfer" && job.r2_url && Number(job.transfer_amount) > 0
+    ? normalizePaymentClassification(job) : null;
+  let ai;
+  if (cached) ai = { ok: true, classification: cached };
+  else {
+    let media = job.r2_key
+      ? await downloadBufferFromR2(job.r2_key, { timeoutMs: 7000 })
+      : await downloadToBuffer(job.source_url, { timeoutMs: 7000 });
+    if (media.ok && !job.r2_key) {
+      const staged = await stagePaymentMedia({
+        supabaseUrl, serviceKey, sourceUrl: job.source_url, phone: job.phone,
+        senderName: job.sender_name, buffer: media.buffer,
+        mimeType: media.mimeType || job.mime_type, createdAt: job.created_at,
+      });
+      if (!staged.ok) media = { ok: false, err: staged.error };
+      else activeJob = staged.job;
+    }
+    if (!media.ok) {
+      await updatePaymentMediaJob({ supabaseUrl, serviceKey, id: job.id, patch: { status: attempt >= 3 ? "FAILED_PERMANENT" : "FAILED_RETRYABLE", last_error: media.err, next_retry_at: new Date(Date.now() + attempt * 3600000).toISOString() } });
+      return { checked: 1, retried: 0, failed: 1, error: media.err };
+    }
+    ai = await classifyPaymentMedia({ buffer: media.buffer, mimeType: activeJob.mime_type || media.mimeType, apiKey, timeoutMs: 9000 });
   }
-  if (!media.ok) {
-    await updatePaymentMediaJob({ supabaseUrl, serviceKey, id: job.id, patch: { status: attempt >= 3 ? "FAILED_PERMANENT" : "FAILED_RETRYABLE", last_error: media.err, next_retry_at: new Date(Date.now() + attempt * 3600000).toISOString() } });
-    return { checked: 1, retried: 0, failed: 1, error: media.err };
-  }
-  const ai = await classifyPaymentMedia({ buffer: media.buffer, mimeType: activeJob.mime_type || media.mimeType, apiKey, timeoutMs: 9000 });
   if (!ai.ok) {
     const fallback = await ensurePaymentSuggestion({ supabaseUrl, serviceKey, job: activeJob, pendingReason: ai.error });
     const exhaustedStatus = fallback?.suggestion ? "PENDING_REVIEW" : "FAILED_PERMANENT";
     await updatePaymentMediaJob({ supabaseUrl, serviceKey, id: job.id, patch: {
       status: attempt >= 3 ? exhaustedStatus : "FAILED_RETRYABLE",
-      last_error: ai.error,
+      last_error: fallback.error || ai.error,
       next_retry_at: attempt >= 3 ? null : new Date(Date.now() + attempt * 3600000).toISOString(),
     } });
-    return { checked: 1, retried: 1, pendingReview: fallback?.suggestion ? 1 : 0, error: ai.error };
+    return { checked: 1, retried: 1, pendingReview: fallback?.suggestion ? 1 : 0, error: fallback.error || ai.error };
   }
   const c = ai.classification;
   if (c.category !== "bukti_transfer") {
@@ -254,12 +304,12 @@ export async function retryOnePaymentMediaJob({ supabaseUrl, serviceKey, apiKey 
     return { checked: 1, retried: 1, ignored: 1 };
   }
   const suggestion = await ensurePaymentSuggestion({ supabaseUrl, serviceKey, job: activeJob, classification: c });
-  await updatePaymentMediaJob({ supabaseUrl, serviceKey, id: job.id, patch: {
-    status: suggestion.ok ? "DONE" : "FAILED_RETRYABLE", category: c.category,
+  const saved = await updatePaymentMediaJob({ supabaseUrl, serviceKey, id: job.id, patch: {
+    status: suggestion.ok ? "DONE" : attempt >= 3 ? "FAILED_PERMANENT" : "FAILED_RETRYABLE", category: c.category,
     transfer_amount: c.amount, fee_amount: c.fee_amount, total_debit: c.total_debit,
     bank: c.bank, transfer_date: c.transfer_date, invoice_id: suggestion.invoice?.id || null,
     last_error: suggestion.ok ? null : suggestion.error,
-    next_retry_at: suggestion.ok ? null : new Date(Date.now() + attempt * 3600000).toISOString(),
+    next_retry_at: suggestion.ok || attempt >= 3 ? null : new Date(Date.now() + attempt * 3600000).toISOString(),
   } });
-  return { checked: 1, retried: 1, suggestion: suggestion.ok ? 1 : 0, invoiceId: suggestion.invoice?.id || null };
+  return { ok: suggestion.ok && saved.ok, checked: 1, retried: 1, suggestion: suggestion.suggestion ? 1 : 0, alreadySettled: suggestion.alreadySettled === true, invoiceId: suggestion.invoice?.id || null, error: suggestion.error || saved.error || null };
 }

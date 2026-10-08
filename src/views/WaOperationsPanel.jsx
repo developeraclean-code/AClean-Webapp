@@ -1,10 +1,12 @@
+import { waMediaUrl } from "../lib/waPaymentContext.js";
+import { matchPaymentInvoices } from "../lib/waPaymentMatch.js";
 import { loadPlanningRange, planningTeams, suggestedTeamSlots } from "../lib/teamPlanning.js";
 import { useEffect, useRef, useState } from "react";
 import { WA_STATES, SEND_STATES, jakartaToday, toJakartaInput, fromJakartaInput, allocatePayment, paymentCandidates, serviceFollowup } from "../lib/waOperations.js";
 import { createWaOrderDraft, invoiceBalance, waMoney } from "../lib/waWorkspace.js";
 
 export default function WaOperationsPanel({ phone, conv, customer, needsLocation, orders, invoices, allInvoices,
-  suggestions, reports = [], technicians = [], duration, supabase, currentUser, followup, onFollowupSaved,
+  suggestions, paymentLoading = false, paymentError = "", onRefreshPayments, reports = [], technicians = [], duration, supabase, currentUser, followup, onFollowupSaved,
   insertDraft, onCreateOrder, onAppliedPayments, onSendDocument, onSendReminder, refreshKey,
 }) {
   const [section, setSection] = useState("followup");
@@ -68,7 +70,7 @@ export default function WaOperationsPanel({ phone, conv, customer, needsLocation
     if(asDraft)insertDraft(`Halo ${customer?.name || conv.name}, opsi servis ${service} ${units} unit adalah ${slot.date} pukul ${slot.time}–${slot.time_end} WIB pada ${slot.team_slot}. Apakah berkenan? Jadwal akan dikonfirmasi setelah pemesanan.`);
     else onCreateOrder({...createWaOrderDraft(conv,customer),service,units:Number(units),date:slot.date,time:slot.time,time_end:slot.time_end,team_slot:slot.team_slot});
   });
-  const chooseProof = id => {const p=suggestions.find(s=>s.id===id);setProofId(id);setAmount(p?.amount || "");setSelected([]);setReviewed(false);setNote("");setPaymentPending(null);};
+  const chooseProof = id => {const p=suggestions.find(s=>s.id===id);setProofId(id);setAmount(p?.amount || "");setSelected(p ? matchPaymentInvoices(allInvoices,p.phone,p.amount).invoices.map(i=>i.id) : []);setReviewed(false);setNote("");setPaymentPending(null);};
   const pay = () => run(async()=>{
     if(!proof || !reviewed || !allocation.length || allocated!==Number(amount))throw new Error("Periksa bukti dan alokasi; seluruh nominal harus dialokasikan.");
     if(Number(proof.amount)!==Number(amount) && note.trim().length<10)throw new Error("Jelaskan koreksi nominal (minimal 10 karakter).");
@@ -111,14 +113,15 @@ export default function WaOperationsPanel({ phone, conv, customer, needsLocation
       {slots.map(s=><div className="wa-info-card" key={s.team_slot+s.time}><strong>{s.team_slot} · {s.time}–{s.time_end}</strong><p>{s.date} · Anggota mengikuti roster harian</p><div className="wa-button-pair"><button disabled={busy} className="wa-text-button" onClick={()=>chooseSlot(s,true)}>Draf tawaran</button><button disabled={busy} className="wa-text-button" onClick={()=>chooseSlot(s,false)}>Pilih slot</button></div></div>)}
     </div>}
     {section==="payment" && <div className="wa-ops-form"><h4>Cocokkan bukti & invoice</h4>
-      {!suggestions.length?<p className="wa-muted">Tidak ada bukti yang menunggu pemeriksaan pada nomor ini.</p>:<>
+      <button className="wa-text-button" disabled={paymentLoading || busy || !!paymentPending} onClick={onRefreshPayments}>Muat ulang bukti & invoice</button>
+      {paymentLoading ? <p className="wa-muted">Memuat bukti & invoice…</p> : paymentError ? <p className="wa-ops-error" role="alert">Bukti belum dapat dimuat: {paymentError}. Klik muat ulang.</p> : !suggestions.length?<p className="wa-muted">Tidak ada bukti yang menunggu pemeriksaan pada nomor ini.</p>:<>
         <label>Bukti pembayaran<select aria-label="Bukti pembayaran" value={proofId} disabled={busy || !!paymentPending} onChange={e=>chooseProof(e.target.value)}><option value="">Pilih bukti…</option>{suggestions.map(s=><option key={s.id} value={s.id}>{s.bank || s.sender_name || "Transfer"} · {s.amount?waMoney(s.amount):"Nominal belum terbaca"}</option>)}</select></label>
         {proof && <>
-          {/^https?:\/\//i.test(proof.image_url || "") && <a href={proof.image_url} target="_blank" rel="noopener noreferrer"><img className="wa-proof-preview" src={proof.image_url} alt="Bukti transfer yang akan diverifikasi"/>Buka bukti ↗</a>}
+          {waMediaUrl(proof.image_url) && <a href={waMediaUrl(proof.image_url)} target="_blank" rel="noopener noreferrer"><img className="wa-proof-preview" src={waMediaUrl(proof.image_url)} alt="Bukti transfer yang akan diverifikasi"/>Buka bukti ↗</a>}
           {proof.raw_message && <p className="wa-muted">{proof.raw_message}</p>}
           <fieldset disabled={busy || !!paymentPending}><label>Nominal diterima<input type="number" min="1" value={amount} onChange={e=>{setAmount(e.target.value);setReviewed(false);}}/></label>
           <label>Metode<select value={method} onChange={e=>setMethod(e.target.value)}>{["transfer","cash","qris","card","other"].map(m=><option key={m}>{m}</option>)}</select></label>
-          <p className="wa-muted">Pilih invoice. Nama lokasi ditampilkan agar satu transfer dapat dialokasikan dengan benar.</p>
+          <p className="wa-muted">Pilihan awal hanya saran kecocokan nominal; periksa lokasi dan bukti. Pilih invoice. Nama lokasi ditampilkan agar satu transfer dapat dialokasikan dengan benar.</p>
           {candidates.map(inv=><label className="wa-check" key={inv.id}><input type="checkbox" checked={selected.includes(inv.id)} onChange={e=>{setSelected(ids=>e.target.checked?[...ids,inv.id]:ids.filter(id=>id!==inv.id));setReviewed(false);}}/><span>{inv.id} · {inv.customer}<small>Sisa {waMoney(invoiceBalance(inv))}</small></span></label>)}
           {!candidates.length && <p className="wa-muted">Tidak ada invoice terbuka dengan nomor yang cocok.</p>}
           <label>Catatan verifikasi / koreksi<textarea value={note} onChange={e=>setNote(e.target.value)} rows={2}/></label></fieldset>

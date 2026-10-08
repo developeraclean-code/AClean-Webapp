@@ -253,6 +253,7 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
 193–194   # Applied 5 Okt 2026 — WA workspace/RLS/outbox/pembayaran + planning Team atomik; schema produksi dan transaksi Owner/Admin/Teknisi diverifikasi dengan rollback
 195       # Applied 6 Okt 2026 — retensi log tunggal, lindungi action audit bisnis, ganti cron 30 hari lama dengan RPC bounded harian 03:00 WIB
 196       # Applied 7 Okt 2026 — antrean review ARA; RLS/RPC Owner/Admin dan penolakan Helper/Teknisi diuji dengan rollback; mode review, toggle tetap OFF
+197       # Applied 8 Okt 2026 — unique media_job_id kompatibel PostgREST; perbaiki 42P10 bukti bayar, tanpa mengubah invoice/ledger
 ```
 
 > Daftar di atas pernah tertinggal jauh (berhenti di 126 padahal file sudah 132).

@@ -52,6 +52,8 @@ let demoInvoices = [
 const demoProofs = [{id:"p1",phone:phones[0],status:"PENDING",amount:200000,bank:"BCA"},{id:"p2",phone:phones[0],status:"PENDING",amount:600000,bank:"Mandiri"}];
 const followups = new Map(), outbox = new Map(), receipts = new Map();
 window.waTest = { sendResult: true, sendDelay: 0, delays: {}, calls: [], historyError: false, sendUncertain: false, paymentError: false, scheduleError: false, followupConflict: false };
+window.waTest.proofs = demoProofs;
+window.waTest.invoices = demoInvoices;
 window.waTest.customers = customers;
 window.waTest.conversations = conversations;
 window.waTest.presets = presets;
@@ -109,6 +111,11 @@ const db = {
           if (this.mode === "read" && table === "wa_messages") {
             await new Promise(r => setTimeout(r, window.waTest.delays[this.phone] || 0));
             resolve(window.waTest.historyError ? { error: { message: "Riwayat gagal dimuat" } } : { data: [...(messages[this.phone] || [])].reverse(), count: (messages[this.phone] || []).length });
+          } else if (this.mode === "read" && ["payment_suggestions", "invoices"].includes(table)) {
+            window.waTest.calls.push({type:"payment-lookup",table,phones:this.phones});
+            await new Promise(r=>setTimeout(r,window.waTest.paymentLoadDelay || 0));
+            const rows=table === "payment_suggestions" ? demoProofs.filter(p=>p.status==="PENDING") : demoInvoices.filter(i=>["UNPAID","PARTIAL_PAID","OVERDUE"].includes(i.status));
+            resolve(window.waTest.paymentLoadError ? {error:{message:"Bukti gagal dimuat"}} : {data:rows.filter(r=>!this.phones || this.phones.includes(r.phone)).slice(this.pageStart || 0,(this.pageEnd ?? 199)+1)});
           } else if (this.mode === "read" && table === "customers") {
             window.waTest.calls.push({type:"customer-lookup",phones:this.phones});
             await new Promise(r=>setTimeout(r,window.waTest.customerDelay || 0));

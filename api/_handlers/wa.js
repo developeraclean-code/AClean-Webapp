@@ -12,7 +12,7 @@ import { logAiUsageRest } from "../_logger.js";
 import { analyzeToolBagPhoto } from "../_tool-bag-vision.js";
 import { classifyText, matchSelesaiToOrder, persistTextClassification, extractMaterialUsage, resolveUsageJobs, looksLikeMaterialUsage } from "../_ai-text.js";
 import { uploadBufferToR2, downloadToBuffer, hasR2Config } from "../_r2-upload.js";
-import { classifyPaymentMedia, ensurePaymentSuggestion, registerPaymentMediaReference, stagePaymentMedia, updatePaymentMediaJob } from "../_payment-media.js";
+import { classifyPaymentMedia, findPaymentInvoiceMatch, ensurePaymentSuggestion, registerPaymentMediaReference, stagePaymentMedia, updatePaymentMediaJob } from "../_payment-media.js";
 import { callVision } from "../_vision-provider.js";
 import { md5Buffer, checkImageDuplicate } from "../_image-dedup.js";
 import { parseKasbonText, matchKasbonName, isKasbonApprovalMessage, isKasbonRevisionMessage, resolveKasbonEntry, KASBON_APPROVER_PHONES } from "../_kasbon-parser.js";
@@ -2144,96 +2144,18 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                     }).catch(e => console.warn("[WA_IMG_PATCH]", e.message));
                   }
 
-                  // Step 4: Payment suggestion + auto-patch invoice jika bukti_transfer
+                  // Step 4: Durable review suggestion; invoice proof is linked on manual confirmation.
                   console.log("[WA_IMG_PAY_GATE]", { sender, payDetectOn, classifiedCat: classified?.category });
                   if (payDetectOn && classified && classified.category === "bukti_transfer") {
-                    let matchedInvoice = null;
-                    let matchedOrderId = null;
-                    let matchedFuzzy = false; // true = ketemu lewat toleransi 1 digit, WAJIB diverifikasi Owner
+                    let invoiceMatch = null;
                     try {
-                      // Fix Bug 1: cari semua format phone yang mungkin (628xxx, 08xxx, +628xxx)
-                      const phoneVariants = buildPhoneVariants(sender);
-                      const phoneFilter = phoneVariants.map(p => "phone.eq." + encodeURIComponent(p)).join(",");
-
-                      // Fix Bug 2: tambah PARTIAL_PAID ke status filter
-                      const [invRes2, ordRes] = await Promise.all([
-                        fetch(SU + "/rest/v1/invoices?select=id,job_id,total,status&or=(" + phoneFilter + ")" +
-                          "&status=in.(UNPAID,OVERDUE,PARTIAL_PAID)&order=created_at.desc&limit=1",
-                          { headers: { apikey: SK, Authorization: "Bearer " + SK } }),
-                        fetch(SU + "/rest/v1/orders?select=id,status&or=(" + phoneFilter + ")" +
-                          "&order=created_at.desc&limit=1",
-                          { headers: { apikey: SK, Authorization: "Bearer " + SK } })
-                      ]);
-                      if (invRes2.ok) {
-                        const invs2 = await invRes2.json();
-                        if (invs2?.length > 0) {
-                          matchedInvoice = invs2[0];
-                          matchedOrderId = invs2[0].job_id || null;
-                        }
-                      }
-                      // Fallback: cari invoice PAID tanpa bukti bayar dari HP yang sama
-                      // Fix Bug 4: fallback ini sekarang juga bisa di-patch karena savedImageUrl
-                      // sudah tersedia di titik ini (setelah R2 upload selesai)
-                      if (!matchedInvoice) {
-                        const invPaidRes = await fetch(
-                          SU + "/rest/v1/invoices?select=id,job_id,total,status&or=(" + phoneFilter + ")" +
-                          "&status=eq.PAID&payment_proof_url=is.null&order=created_at.desc&limit=1",
-                          { headers: { apikey: SK, Authorization: "Bearer " + SK } }
-                        );
-                        if (invPaidRes.ok) {
-                          const invsPaid = await invPaidRes.json();
-                          if (invsPaid?.length > 0) {
-                            matchedInvoice = invsPaid[0];
-                            matchedOrderId = invsPaid[0].job_id || null;
-                          }
-                        }
-                      }
-                      // Jaring ke-3: nomor customer di DB salah SATU digit (kasus Bapak
-                      // Ricky, 22 Agu 2026 — 628121047006 tersimpan 62812047006). Exact
-                      // match mustahil ketemu, jadi cari lewat nominal dulu baru saring
-                      // dgn toleransi 1 digit. Hanya dipakai kalau kandidatnya TEPAT SATU,
-                      // dan hasilnya ditandai matchedFuzzy supaya Owner tetap verifikasi.
-                      if (!matchedInvoice && classified.amount) {
-                        const sejak = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
-                        const nearRes = await fetch(
-                          SU + "/rest/v1/invoices?select=id,job_id,total,status,phone" +
-                          "&total=eq." + encodeURIComponent(Number(classified.amount)) +
-                          "&status=in.(UNPAID,OVERDUE,PARTIAL_PAID)" +
-                          "&created_at=gte." + encodeURIComponent(sejak) +
-                          "&order=created_at.desc&limit=20",
-                          { headers: { apikey: SK, Authorization: "Bearer " + SK } }
-                        );
-                        if (nearRes.ok) {
-                          const near = findNearPhoneInvoice(sender, await nearRes.json(), classified.amount);
-                          if (near) {
-                            matchedInvoice = near;
-                            matchedOrderId = near.job_id || null;
-                            matchedFuzzy = true;
-                            console.warn("[PAY_NEAR_PHONE] cocok toleransi 1 digit:", sender, "->", near.phone, near.id);
-                          }
-                        }
-                      }
-                      if (!matchedOrderId && ordRes.ok) {
-                        const ords = await ordRes.json();
-                        if (ords?.length > 0) matchedOrderId = ords[0].id;
-                      }
-                    } catch(_) {}
-
+                      invoiceMatch = await findPaymentInvoiceMatch({ supabaseUrl: SU, serviceKey: SK, phone: sender, amount: classified.amount });
+                    } catch (error) { console.warn("[PAY_INVOICE_LOOKUP]", error.message); }
+                    const matchedInvoice = invoiceMatch?.kind === "single" ? invoiceMatch.invoices[0] : null;
                     const matchedInvoiceId = matchedInvoice?.id || null;
-
-                    // ── Auto-patch payment_proof_url ke invoice (tanpa auto-PAID) ──
-                    // Owner tetap konfirmasi manual setelah cek bukti
-                    if (matchedInvoiceId && savedImageUrl) {
-                      fetch(SU + "/rest/v1/invoices?id=eq." + encodeURIComponent(matchedInvoiceId), {
-                        method: "PATCH",
-                        headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
-                        body: JSON.stringify({ payment_proof_url: savedImageUrl, updated_at: new Date().toISOString() })
-                      }).catch(e => console.warn("[PAY_AUTO_PATCH]", e.message));
-                    }
-                    // Fix Bug 3: jika invoice tidak ditemukan tapi bukti ada, log warning ke owner
-                    if (!matchedInvoiceId && savedImageUrl) {
-                      console.warn("[PAY_AUTO_PATCH] Bukti transfer tersimpan di R2 tapi invoice tidak ditemukan untuk", sender, savedImageUrl);
-                    }
+                    const matchedOrderId = matchedInvoice?.job_id || null;
+                    let paymentSaved = false;
+                    let paymentInserted = false;
 
                     // Nomor internal: jangan buat saran pembayaran, tapi JANGAN pula dibuang
                     // diam-diam — kalau ternyata staf meneruskan bukti bayar customer, harus
@@ -2256,26 +2178,34 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                     } else {
                     // Simpan ke payment_suggestions — await + log error supaya tidak silent fail
                     try {
-                      const psEndpoint = stagedMedia?.job?.id
-                        ? SU + "/rest/v1/payment_suggestions?on_conflict=media_job_id"
-                        : SU + "/rest/v1/payment_suggestions";
-                      const psRes = await fetch(psEndpoint, {
+                      let psRes;
+                      if (stagedMedia?.job?.id) {
+                        const result = await ensurePaymentSuggestion({ supabaseUrl: SU, serviceKey: SK,
+                          job: stagedMedia.job, classification: classified, invoiceMatch });
+                        paymentInserted = result.inserted === true;
+                        psRes = { ok: result.ok, status: result.ok ? 200 : 500, text: async () => result.error || "" };
+                      } else {
+                      psRes = await fetch(SU + "/rest/v1/payment_suggestions", {
                         method: "POST",
                         headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK,
-                          Prefer: stagedMedia?.job?.id ? "resolution=merge-duplicates,return=minimal" : "return=minimal" },
+                          Prefer: "return=minimal" },
                         body: JSON.stringify({
-                          media_job_id: stagedMedia?.job?.id || undefined,
                           phone: sender, sender_name: senderName, raw_message: "(gambar bukti transfer)",
                           amount: classified.amount || null, bank: classified.bank || null,
                           transfer_date: safeDateStr(classified.transfer_date),
                           invoice_id: matchedInvoiceId, order_id: matchedOrderId,
-                          match_source: matchedFuzzy ? "fuzzy_1digit" : null,
+                          match_source: invoiceMatch?.kind === "multi" ? "wa_image_ai_multi" : "wa_image_ai",
                           status: "PENDING", source: "image",
                           image_url: savedImageUrl || mediaUrl, created_at: nowIso
                         })
                       });
+                        paymentInserted = psRes.ok;
+                      }
+                      paymentSaved = psRes.ok;
                       if (!psRes.ok) {
                         const errBody = await psRes.text().catch(() => "(no body)");
+                        if (stagedMedia?.job) await updatePaymentMediaJob({ supabaseUrl: SU, serviceKey: SK, id: stagedMedia.job.id,
+                          patch: { status: "FAILED_RETRYABLE", last_error: errBody.slice(0, 500), next_retry_at: new Date().toISOString() } });
                         console.error("[PAY_SUGGEST_IMG_SAVE]", psRes.status, errBody);
                         try {
                           Sentry.captureMessage(`[PAY_SUGGEST_IMG_SAVE] HTTP ${psRes.status}: ${errBody.slice(0, 300)}`, {
@@ -2305,7 +2235,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                               target: OP,
                               message: "⚠️ *Bukti Bayar GAGAL Tersimpan*\nDari: " + senderName + " (" + sender + ")\n"
                                 + (classified.amount ? "Nominal: Rp" + Number(classified.amount).toLocaleString("id-ID") + "\n" : "")
-                                + "Bukti tetap aman di R2 tapi tidak ke-link ke invoice otomatis. Cek manual di menu Invoice.",
+                                + "Foto tersedia tetapi daftar verifikasi gagal disimpan. Sistem akan mencoba lagi; periksa panel WA / Invoice.",
                               delay: "1", countryCode: "62"
                             })
                           }).catch(() => {});
@@ -2318,20 +2248,19 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                       }
                     } catch (psErr) {
                       console.error("[PAY_SUGGEST_IMG_SAVE_EXC]", psErr?.message || psErr);
+                      if (stagedMedia?.job) await updatePaymentMediaJob({ supabaseUrl: SU, serviceKey: SK, id: stagedMedia.job.id,
+                        patch: { status: "FAILED_RETRYABLE", last_error: String(psErr?.message || psErr), next_retry_at: new Date().toISOString() } });
                     }
 
                     // Notif WA ke owner — selalu konfirmasi manual
-                    if (FT && OP) {
+                    if (FT && OP && paymentSaved && paymentInserted) {
                       const ownerNotifImg = "💰 *Bukti Bayar Masuk (Foto)*\n"
                         + "Dari: " + senderName + " (" + sender + ")\n"
                         + (classified.amount ? "Nominal: Rp" + Number(classified.amount).toLocaleString("id-ID") + "\n" : "Nominal: tidak terbaca\n")
                         + (classified.bank ? "Bank: " + classified.bank + "\n" : "")
-                        + (matchedInvoiceId ? "Invoice: " + matchedInvoiceId + " (" + (matchedInvoice?.status || "UNPAID") + ")\n" : "⚠️ Invoice tidak ditemukan\n")
-                        + (matchedFuzzy
-                            ? "\n⚠️ *Dicocokkan lewat toleransi 1 digit.*\nNomor WA " + sender + " vs nomor invoice " + (matchedInvoice?.phone || "?")
-                              + " — beda 1 digit. Nominal sama persis.\nMohon cek benar ini invoice yang tepat, lalu betulkan nomor customer-nya.\n"
-                            : "")
-                        + "\n📷 Foto bukti tersimpan otomatis.\n✅ Cek & klik *Paid* manual di menu Invoice.";
+                        + (invoiceMatch?.kind === "multi" ? "Saran alokasi: " + invoiceMatch.invoices.map(i => i.id).join(" + ") + "\n"
+                            : matchedInvoiceId ? "Invoice: " + matchedInvoiceId + " (" + (matchedInvoice?.status || "UNPAID") + ")\n" : "⚠️ Pilih invoice secara manual; belum ada kecocokan nominal yang unik\n")
+                        + "\n📷 Foto bukti tersimpan otomatis.\n✅ Periksa bukti & alokasi di *WhatsApp → Verifikasi bayar* sebelum konfirmasi.";
                       fetch("https://api.fonnte.com/send", {
                         method: "POST",
                         headers: { Authorization: FT, "Content-Type": "application/json" },
@@ -2343,10 +2272,10 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                     // ── REVERSE FLOW: auto-forward bukti TF ke grup yang ditandai ai_forward_target ──
                     // Confidence: HIGH = amount + bank + match invoice, MEDIUM = amount only
                     try {
-                      const conf = (classified.amount && classified.bank && matchedInvoiceId) ? "HIGH"
+                      const conf = (classified.amount && classified.bank && invoiceMatch?.invoices.length) ? "HIGH"
                                  : (classified.amount && (classified.bank || matchedInvoiceId)) ? "MEDIUM"
                                  : "LOW";
-                      if (FT && conf !== "LOW") {
+                      if (FT && conf !== "LOW" && paymentSaved && paymentInserted) {
                         const tgtRes = await fetch(
                           SU + "/rest/v1/wa_monitored_groups?select=group_id,group_name,ai_forward_min_conf&ai_forward_target=eq.true&enabled=eq.true",
                           { headers: { apikey: SK, Authorization: "Bearer " + SK } }
@@ -2364,7 +2293,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                               + (classified.bank ? " · " + classified.bank : "")
                               + (classified.transfer_date ? " · " + classified.transfer_date : "")
                               + "\n"
-                              + (matchedInvoiceId ? "Diduga: " + matchedInvoiceId + " (" + (matchedInvoice?.status || "UNPAID") + ")\n" : "⚠️ Invoice belum match\n")
+                              + (invoiceMatch?.invoices.length ? "Saran: " + invoiceMatch.invoices.map(i => i.id).join(" + ") + "\n" : "⚠️ Pilih invoice secara manual\n")
                               + "Confidence: " + conf + "\n"
                               + "\n✅ Verify di app menu Invoice → Pending AI";
                             fetch("https://api.fonnte.com/send", {
@@ -2373,12 +2302,12 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                               body: JSON.stringify({
                                 target: tgt.group_id,
                                 message: fwdCaption,
-                                url: savedImageUrl || mediaUrl,
+                                url: savedImageUrl?.startsWith("/") ? "https://a-clean-webapp.vercel.app" + savedImageUrl : savedImageUrl || mediaUrl,
                                 delay: "2", countryCode: "62"
                               })
                             }).catch(() => {});
                             // Tandai sudah di-forward (best-effort PATCH via phone+nowIso filter)
-                            fetch(SU + "/rest/v1/payment_suggestions?phone=eq." + encodeURIComponent(sender) + "&created_at=eq." + encodeURIComponent(nowIso), {
+                            fetch(SU + "/rest/v1/payment_suggestions?" + (stagedMedia?.job?.id ? "media_job_id=eq." + stagedMedia.job.id : "phone=eq." + encodeURIComponent(sender) + "&created_at=eq." + encodeURIComponent(nowIso)), {
                               method: "PATCH",
                               headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK },
                               body: JSON.stringify({ forwarded_to_group: tgt.group_id, forwarded_at: new Date().toISOString() })

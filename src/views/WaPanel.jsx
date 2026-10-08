@@ -1,3 +1,4 @@
+import { fetchWaPaymentContext, waMediaUrl } from "../lib/waPaymentContext.js";
 import AraReviewPanel from "./AraReviewPanel.jsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { normalizePhone, samePhone, formatPhone } from "../lib/phone.js";
@@ -11,18 +12,19 @@ const timeLabel = value => value ? new Date(value).toLocaleTimeString("id-ID", {
 const dateLabel = value => value ? new Date(value.length === 10 ? `${value}T12:00:00+07:00` : value).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Jakarta" }) : "Belum dijadwalkan";
 const dayKey = value => value ? new Date(value).toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" }) : "";
 const initials = name => (name || "WA").split(/\s+/).slice(0, 2).map(n => n[0]).join("").toUpperCase();
-const safeUrl = value => /^https?:\/\//i.test(value || "") ? value : null;
+const safeUrl = waMediaUrl;
 
 export default function WaPanel({
   open, onClose, waSearch, setWaSearch, waConversations, setWaConversations,
   selectedConv, setSelectedConv, waMessages, setWaMessages, waInput, setWaInput,
-  customersData, setCustomersData, ordersData, invoicesData = [], paymentSuggestions = [],
+  customersData, setCustomersData, ordersData, invoicesData = [],
   waProvider, isMobile, currentUser, supabase, showNotif, sendWA, addAgentLog,
   onCreateOrder, onOpenInvoice, onOpenSchedule,
   technicians = [], duration, reports = [], onAppliedPayments, onSendDocument, sendWorkspaceMessage,
 }) {
   const [customerLookup, setCustomerLookup] = useState({ rows: [], verified: [], error: '' });
   const [customerRefresh, setCustomerRefresh] = useState(0);
+  const [paymentContext, setPaymentContext] = useState({ phone: null, suggestions: [], invoices: [], loading: true, error: "" });
   const [followups, setFollowups] = useState({});
   const [opsError, setOpsError] = useState("");
   const [sendStatus, setSendStatus] = useState(null);
@@ -85,10 +87,29 @@ export default function WaPanel({
   const needsLocation = locations.length > 1 && !customer;
   const orders = customerRecords(ordersData, customer, phone, contextCustomers)
     .sort((a, b) => String(b.date || b.created_at || "").localeCompare(String(a.date || a.created_at || "")));
-  const customerInvoices = customerRecords(invoicesData, customer, phone, contextCustomers);
+  const paymentReady = paymentContext.phone === phone && !paymentContext.loading && !paymentContext.error;
+  const paymentInvoices = useMemo(() => {
+    if (!paymentReady) return invoicesData;
+    const rows = new Map(invoicesData.filter(i => !samePhone(i.phone, phone) || invoiceBalance(i) <= 0).map(i => [i.id, i]));
+    const previous = new Map(invoicesData.map(i => [i.id, i]));
+    paymentContext.invoices.forEach(i => rows.set(i.id, { ...previous.get(i.id), ...i }));
+    return [...rows.values()];
+  }, [paymentReady, invoicesData, paymentContext.invoices, phone]);
+  const customerInvoices = customerRecords(paymentInvoices, customer, phone, contextCustomers);
   const invoices = customerInvoices.filter(i => invoiceBalance(i) > 0)
     .sort((a, b) => String(a.due || a.created_at || "").localeCompare(String(b.due || b.created_at || "")));
-  const suggestions = paymentSuggestions.filter(s => s.status === "PENDING" && samePhone(s.phone, phone));
+  const suggestions = paymentReady ? paymentContext.suggestions.filter(s => s.status === "PENDING") : [];
+  useEffect(() => {
+    if (!open || !isOwnerAdmin || !phone) return;
+    let cancelled = false;
+    setPaymentContext({ phone, suggestions: [], invoices: [], loading: true, error: "" });
+    fetchWaPaymentContext(supabase, phone).then(data => {
+      if (!cancelled) setPaymentContext({ ...data, phone, loading: false, error: "" });
+    }).catch(error => {
+      if (!cancelled) setPaymentContext({ phone, suggestions: [], invoices: [], loading: false, error: error.message });
+    });
+    return () => { cancelled = true; };
+  }, [open, isOwnerAdmin, phone, supabase, refreshKey]);
   const nextOrder = [...orders].reverse().find(o => ["PENDING", "CONFIRMED", "DISPATCHED", "ON_SITE", "IN_PROGRESS"].includes(o.status));
   const previousOrder = orders.find(o => o.status !== "CANCELLED");
   const totalDue = invoices.reduce((sum, inv) => sum + invoiceBalance(inv), 0);
@@ -352,10 +373,14 @@ export default function WaPanel({
               <div className="wa-stats"><div><strong>{orders.length}</strong><small>Order dimuat</small></div><div><strong className="wa-amount">{waMoney(totalDue)}</strong><small>Sisa tagihan</small></div></div>
             </section>
             {customerVerified && <WaOperationsPanel key={`${phone}:${customer?.id || "none"}`} phone={phone} conv={selectedConv} customer={customer} needsLocation={needsLocation}
-              orders={orders} invoices={customerInvoices} allInvoices={invoicesData} suggestions={suggestions} reports={reports}
+              orders={orders} invoices={customerInvoices} allInvoices={paymentInvoices} suggestions={suggestions}
+              paymentLoading={paymentContext.phone !== phone || paymentContext.loading} paymentError={paymentContext.error} onRefreshPayments={()=>setRefreshKey(k=>k+1)} reports={reports}
               technicians={technicians} duration={duration} supabase={supabase} currentUser={currentUser}
               followup={followups[phone]} onFollowupSaved={row=>setFollowups(prev=>({...prev,[row.phone]:row}))}
-              insertDraft={insertDraft} onCreateOrder={onCreateOrder} onAppliedPayments={onAppliedPayments}
+              insertDraft={insertDraft} onCreateOrder={onCreateOrder} onAppliedPayments={(rows,id)=>{
+                setPaymentContext(prev=>({...prev,suggestions:prev.suggestions.filter(s=>s.id!==id),invoices:prev.invoices.map(i=>rows.find(r=>r.id===i.id)||i)}));
+                onAppliedPayments?.(rows,id);
+              }}
               onSendDocument={onSendDocument ? (kind,item,id)=>onSendDocument(kind,item,id,selectedConv.phone) : null}
               onSendReminder={sendWorkspaceMessage ? (cust,message,id)=>sendWorkspaceMessage({id,phone:selectedConv.phone,kind:"SERVICE_REMINDER",customer_id:String(cust.id),message}) : null}
               refreshKey={refreshKey}/>}

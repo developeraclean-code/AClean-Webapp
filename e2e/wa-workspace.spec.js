@@ -470,3 +470,42 @@ test('lookup failure is visible, blocks mistaken customer creation, and manual r
   await page.clock.install();await page.clock.fastForward(60000);
   expect(await page.evaluate(()=>window.waTest.calls.filter(c=>c.type==='customer-lookup').length)).toBe(before);
 });
+
+test("server-only proof loads without global cache and suggests a reviewed multi-invoice allocation with R2 preview", async ({page})=>{
+  await page.route('https://wa-workspace.test/api/foto?**',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="300" height="150"><text x="5" y="40">Transfer Rp1.200.000</text></svg>'}));
+  await page.evaluate(()=>window.waTest.proofs.push({id:'server-only',phone:'6281234567890',status:'PENDING',amount:1200000,bank:'BCA',image_url:'/api/foto?key=wa-inbox%2Fproof.jpg'}));
+  await chooseAndi(page);
+  await page.getByRole('button',{name:'Verifikasi bayar',exact:true}).click();
+  await page.getByLabel('Bukti pembayaran',{exact:true}).selectOption('server-only');
+  await expect(page.getByLabel(/INV-RUMAH.*Bapak Andi Rumah/)).toBeChecked();
+  await expect(page.getByLabel(/INV-KANTOR.*Bapak Andi Kantor/)).toBeChecked();
+  const image=page.getByRole('img',{name:'Bukti transfer yang akan diverifikasi'});
+  await expect(image).toBeVisible();
+  await expect.poll(()=>image.evaluate(img=>img.naturalWidth)).toBeGreaterThan(0);
+  await expect(page.getByRole('button',{name:'Konfirmasi pembayaran',exact:true})).toBeDisabled();
+  await page.getByLabel(/Saya sudah memeriksa/).check();
+  await page.getByRole('button',{name:'Konfirmasi pembayaran',exact:true}).click();
+  await expect(page.getByText('Pembayaran dan alokasi invoice tersimpan.')).toBeVisible();
+  const calls=await page.evaluate(()=>window.waTest.calls.filter(c=>c.name==='apply_wa_payment'));
+  expect(calls[0].p.p_allocations).toEqual([{invoice_id:'INV-RUMAH',amount:300000},{invoice_id:'INV-KANTOR',amount:900000}]);
+});
+
+test("proof query errors are visible and manual refresh recovers without polling",async({page})=>{
+  await page.evaluate(()=>{window.waTest.paymentLoadError=true;});
+  await chooseAndi(page);
+  await page.getByRole('button',{name:'Verifikasi bayar',exact:true}).click();
+  await expect(page.getByRole('alert')).toContainText('Bukti belum dapat dimuat');
+  await expect(page.getByText('Tidak ada bukti yang menunggu pemeriksaan pada nomor ini.')).toHaveCount(0);
+  await page.evaluate(()=>{window.waTest.paymentLoadError=false;});
+  await page.getByRole('button',{name:'Muat ulang bukti & invoice',exact:true}).click();
+  await expect(page.getByLabel('Bukti pembayaran',{exact:true})).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+});
+
+test("late payment response cannot populate a different customer's review panel",async({page})=>{
+  await page.evaluate(()=>{window.waTest.paymentLoadDelay=500;});
+  await chooseAndi(page);await chooseMaya(page);
+  await page.getByRole('button',{name:'Verifikasi bayar',exact:true}).click();
+  await expect(page.getByText('Tidak ada bukti yang menunggu pemeriksaan pada nomor ini.')).toBeVisible();
+  await expect(page.getByLabel('Bukti pembayaran',{exact:true})).toHaveCount(0);
+});

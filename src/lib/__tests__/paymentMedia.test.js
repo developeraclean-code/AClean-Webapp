@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   classifyPaymentMedia, ensurePaymentSuggestion, normalizePaymentClassification,
-  parsePaymentClassification, registerPaymentMediaReference, stagePaymentMedia,
+  parsePaymentClassification, registerPaymentMediaReference, stagePaymentMedia, retryOnePaymentMediaJob,
 } from "../../../api/_payment-media.js";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -83,7 +83,7 @@ describe("WA payment media classification", () => {
 
   it("membuat review manual tanpa nominal hanya untuk invoice exact-phone", async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => [{ id: "INV-1", job_id: "JOB-1", total: 200000 }] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ id: "INV-1", job_id: "JOB-1", total: 200000, phone: "628179527958", status: "UNPAID" }] })
       .mockResolvedValueOnce({ ok: true, json: async () => [{ id: "SUG-1", amount: null }] });
     vi.stubGlobal("fetch", fetchMock);
     const result = await ensurePaymentSuggestion({
@@ -91,8 +91,59 @@ describe("WA payment media classification", () => {
       job: { id: "job-1", phone: "628179527958", sender_name: "Ibu Dian", r2_url: "/api/foto?key=a" },
       pendingReason: "AI timeout",
     });
-    expect(result).toMatchObject({ ok: true, invoice: { id: "INV-1" }, suggestion: { id: "SUG-1" } });
+    expect(result).toMatchObject({ ok: true, invoice: null, suggestion: { id: "SUG-1" } });
     const payload = JSON.parse(fetchMock.mock.calls[1][1].body);
-    expect(payload).toMatchObject({ amount: null, invoice_id: "INV-1", media_job_id: "job-1", validation_status: "PENDING" });
+    expect(payload).toMatchObject({ amount: null, invoice_id: null, media_job_id: "job-1", validation_status: "PENDING" });
   });
+});
+
+
+describe("durable payment retry", () => {
+  const job = { id: "j1", phone: "6281234567890", r2_url: "/api/foto?key=proof.jpg", category: "bukti_transfer", transfer_amount: 950000, attempts: 2 };
+  const invoices = [500000,450000].map((total,n)=>({id:`I${n}`,phone:job.phone,status:"UNPAID",total}));
+  const response = data => ({ok:true,json:async()=>data});
+  it("reuses OCR without AI/download and propagates database errors to cron", async () => {
+    const mock = vi.fn(async (url, options) => {
+      if (url.includes("wa_payment_media_jobs?select")) return response([job]);
+      if (options?.method === "PATCH") return response([]);
+      if (url.includes("/invoices?")) return response(invoices);
+      if (url.includes("payment_suggestions?on_conflict")) return {ok:false,status:400,text:async()=>"42P10"};
+      throw new Error("Unexpected network call: " + url);
+    });
+    vi.stubGlobal("fetch",mock);
+    const result=await retryOnePaymentMediaJob({supabaseUrl:"https://db.test",serviceKey:"key"});
+    expect(result).toMatchObject({ok:false,suggestion:0,error:expect.stringContaining("42P10")});
+    const last=JSON.parse(mock.mock.calls.at(-1)[1].body);
+    expect(last).toMatchObject({status:"FAILED_PERMANENT",next_retry_at:null});
+  });
+  it("records the unique multi-invoice match without assigning the newest invoice", async () => {
+    const mock=vi.fn().mockResolvedValueOnce(response(invoices)).mockImplementationOnce(async(_url,opts)=>response([{id:"s1",...JSON.parse(opts.body)}]));
+    vi.stubGlobal("fetch",mock);
+    const result=await ensurePaymentSuggestion({supabaseUrl:"https://db.test",serviceKey:"key",job,classification:{amount:950000}});
+    expect(result).toMatchObject({ok:true,inserted:true,invoice:null,suggestion:{invoice_id:null,match_source:"wa_image_ai_multi",amount:950000}});
+    expect(result.suggestion.raw_message).toContain("I0, I1");
+  });
+  it.each(["CONFIRMED","DISMISSED"])("does not reopen a %s suggestion on webhook replay", async status => {
+    const mock=vi.fn().mockResolvedValueOnce(response(invoices)).mockResolvedValueOnce(response([])).mockResolvedValueOnce(response([{id:"s1",status,amount:950000}]));
+    vi.stubGlobal("fetch",mock);
+    const result=await ensurePaymentSuggestion({supabaseUrl:"https://db.test",serviceKey:"key",job,classification:{amount:950000}});
+    expect(result).toMatchObject({ok:true,inserted:false,suggestion:{status}});
+    expect(mock).toHaveBeenCalledTimes(3);
+    expect(mock.mock.calls[1][1].headers.Prefer).toContain("ignore-duplicates");
+  });
+  it("only enriches a still-pending AI-timeout fallback",async()=>{
+    const mock=vi.fn().mockResolvedValueOnce(response(invoices)).mockResolvedValueOnce(response([])).mockResolvedValueOnce(response([{id:"s1",status:"PENDING",match_source:"wa_image_ai_pending"}])).mockResolvedValueOnce(response([{id:"s1",amount:950000}]));
+    vi.stubGlobal("fetch",mock);
+    const result=await ensurePaymentSuggestion({supabaseUrl:"https://db.test",serviceKey:"key",job,classification:{amount:950000}});
+    expect(result.suggestion.amount).toBe(950000);
+    expect(mock.mock.calls[3][0]).toContain("status=eq.PENDING&match_source=eq.wa_image_ai_pending");
+  });
+});
+
+it('does not reopen a manually settled invoice when replaying its exact stored proof',async()=>{
+  const mock=vi.fn().mockResolvedValueOnce({ok:true,json:async()=>[]}).mockResolvedValueOnce({ok:true,json:async()=>[{id:'PAID-1'}]});
+  vi.stubGlobal('fetch',mock);
+  const result=await ensurePaymentSuggestion({supabaseUrl:'https://db.test',serviceKey:'key',job:{id:'j1',phone:'6281234567890',r2_url:'/api/foto?key=proof.jpg'},classification:{amount:950000}});
+  expect(result).toMatchObject({ok:true,alreadySettled:true,inserted:false,invoice:{id:'PAID-1'}});
+  expect(mock.mock.calls.every(([,options])=>!options.method)).toBe(true);
 });
