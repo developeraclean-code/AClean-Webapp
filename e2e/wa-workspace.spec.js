@@ -303,6 +303,19 @@ test('weekly Team calendar follows presets, daily crews, absences and hourly det
   expect(errors).toEqual([]);
 });
 
+test('hourly WIB grid is above weekly planning and week date selection returns to the grid',async({page})=>{
+  await openTeamCalendar(page);
+  const positions=await page.evaluate(()=>{
+    const grid=document.querySelector('.team-day-detail'),weekly=document.querySelector('.team-week-heading');
+    return {grid:grid.getBoundingClientRect().top,weekly:weekly.getBoundingClientRect().top};
+  });
+  expect(positions.grid).toBeLessThan(positions.weekly);
+  await page.locator('.team-day').filter({hasText:'06/10'}).click();
+  await expect(page.locator('.team-day-navigation h3')).toHaveText('2026-10-06');
+  await expect(page.locator('.team-day-detail')).toBeInViewport();
+  await expect(page.locator('.team-time-row[data-team="Team 01"]')).toContainText('Ibu Ratna');
+});
+
 test('rescheduling keeps the same job, confirmation and clears old-day crew',async({page})=>{
   await openTeamCalendar(page);
   await page.locator('.team-week-grid [data-job-id="JOB-TEAM-A"] .team-job-main').click();

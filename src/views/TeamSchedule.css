@@ -20,6 +20,7 @@
 @media(max-width:600px){.team-board{padding:12px}.team-board h2{font-size:17px}.plan-overlay{padding:8px}.plan-dialog{max-height:97dvh}.plan-dialog header,.plan-content,.plan-dialog footer{padding:14px}.plan-dialog h2{font-size:18px}.plan-fields{gap:10px}.team-board-heading{align-items:flex-start}.team-board-filters{gap:8px}.team-board-filters label{flex:1}.plan-dialog footer button{flex:1;padding:10px 7px;font-size:11px}}
 
 .team-day-navigation{display:flex;align-items:center;gap:12px;margin:7px 0}.team-day-navigation h3{min-width:110px;text-align:center;font-variant-numeric:tabular-nums}.team-board .team-day-navigation button{min-width:36px;min-height:36px;padding:6px;font-size:14px}.team-time-lane button{box-sizing:border-box}
+.team-week-heading{margin:26px 0 14px;padding-top:18px;border-top:1px solid var(--ts-border)}
 
 .team-job-area{color:#98e5d0!important;font-weight:700}.team-job-map{display:inline-block;margin:0 7px 6px;font-size:10px;color:#a6e4d1;text-decoration:underline;text-underline-offset:2px}.team-job-map:focus-visible{outline:2px solid var(--ts-accent);outline-offset:2px}
 .team-time-lane{height:46px}.team-time-lanes{min-height:52px}.team-board .team-time-lane button{height:42px;display:flex;flex-direction:column;justify-content:center;gap:2px;line-height:1.15;min-width:0}
