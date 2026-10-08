@@ -494,6 +494,7 @@ return (
     {/* ── TAB: PENGELOLAAN GAJI ── */}
     {activeTab === "gaji" && <GajiTab
       teknisiData={teknisiData}
+      setTeknisiData={setTeknisiData}
       ordersData={ordersData}
       invoicesData={invoicesData}
       currentUser={currentUser}
@@ -515,7 +516,7 @@ return (
 // ═══════════════════════════════════════════════════════════════
 // GAJI TAB — Payroll + Komisi Order
 // ═══════════════════════════════════════════════════════════════
-function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase, showNotif, showConfirm, addAgentLog, openWA, TODAY, bonusCategories = [], setBonusCategories, BONUS_LABELS = {}, BONUS_DEFAULTS = {} }) {
+function GajiTab({ teknisiData, setTeknisiData, ordersData, invoicesData, currentUser, supabase, showNotif, showConfirm, addAgentLog, openWA, TODAY, bonusCategories = [], setBonusCategories, BONUS_LABELS = {}, BONUS_DEFAULTS = {} }) {
   const [subTab, setSubTab]         = useState("payroll"); // "payroll" | "komisi" | "rekap" | "setting"
   const [periodStart, setPeriodStart] = useState(() => getMondayOf(TODAY));
   const periodEnd = getSaturdayOf(periodStart);
@@ -526,6 +527,8 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
   const [liveKasbonMap, setLiveKasbonMap] = useState({}); // { namaLowercase: totalKasbonLive }
   const [editingRate, setEditingRate] = useState({}); // { userId: draftValue }
   const [localRates, setLocalRates]   = useState({}); // { userId: savedRate }
+  const [rateErrors, setRateErrors]   = useState({}); // { userId: pesan gagal yang tetap terlihat }
+  const [savingRateId, setSavingRateId] = useState(null);
   const [slipPreview, setSlipPreview] = useState(null);
   // localBonus: { rowId: [{label, amount}] } — local buffer, no DB call on each keystroke
   const [localBonus, setLocalBonus]   = useState({});
@@ -560,6 +563,7 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
   const [bonusFilter, setBonusFilter]   = useState("ALL"); // ALL|PENDING|ELIGIBLE|PAID|VOID
 
   const isOwner = currentUser?.role === "Owner";
+  const canConfigureRate = isOwner || currentUser?.role === "Admin";
   const bolehEditBonus = currentUser?.role === "Owner" || currentUser?.role === "Admin";
   // Uang keluar (mark gaji/komisi dibayar) & pembatalan (void) = Admin DIBLOK (anti-fraud).
   // Owner & Finance tetap boleh (peran keuangan sah). Admin lihat penanda 🔒.
@@ -885,29 +889,40 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
   };
 
   // ── Update daily_rate dari UI ──
-  const handleSaveRate = async (t) => {
-    const newRate = Number(editingRate[t.id] ?? localRates[t.id] ?? t.daily_rate ?? 0);
-    const { error } = await updateUserDailyRate(supabase, t.id, newRate);
-    if (error) { showNotif?.("❌ Gagal simpan: " + error.message); return; }
-    setLocalRates(prev => ({ ...prev, [t.id]: newRate }));
-    setEditingRate(prev => { const p = { ...prev }; delete p[t.id]; return p; });
-    // Sync ke baris payroll minggu berjalan yang BELUM dibayar (snapshot slip terbayar tak disentuh)
-    const openRow = payrollRows.find(r => r.user_id === t.id && !r.is_paid);
-    if (openRow && Number(openRow.daily_rate) !== newRate) {
-      const { error: pErr } = await updateWeeklyPayroll(supabase, openRow.id, { daily_rate: newRate });
-      if (pErr) { showNotif?.("⚠️ Rate tersimpan, slip minggu ini gagal sync: " + pErr.message); return; }
-      setPayrollRows(prev => prev.map(r => r.id === openRow.id ? { ...r, daily_rate: newRate } : r));
-      showNotif?.("✅ Gaji harian " + t.name + " disimpan: " + fmtRp(newRate) + " (slip minggu ini ikut ter-update)");
+  const handleSaveRate = async (t, forcedRate) => {
+    if (!canConfigureRate || savingRateId) return;
+    const rawRate = forcedRate ?? editingRate[t.id];
+    const newRate = Number(rawRate);
+    if (rawRate === undefined || rawRate === "" || !Number.isSafeInteger(newRate) || newRate < 0) {
+      setRateErrors(prev => ({ ...prev, [t.id]: "Masukkan nominal rupiah bulat, minimal 0." }));
       return;
     }
-    showNotif?.("✅ Gaji harian " + t.name + " disimpan: " + fmtRp(newRate));
-  };
-
-  const handleDeleteRate = async (t) => {
-    await updateUserDailyRate(supabase, t.id, 0);
-    setLocalRates(prev => ({ ...prev, [t.id]: 0 }));
-    setEditingRate(prev => { const p = { ...prev }; delete p[t.id]; return p; });
-    showNotif?.("🗑 Gaji harian " + t.name + " direset ke 0");
+    setSavingRateId(t.id);
+    setRateErrors(prev => ({ ...prev, [t.id]: "" }));
+    try {
+      const { data, error } = await updateUserDailyRate(supabase, t.id, newRate);
+      if (error || !data || Number(data.daily_rate) !== newRate) {
+        throw new Error(error?.code === "PGRST116" ? "Data karyawan tidak ditemukan atau akses simpan ditolak. Muat ulang data lalu coba lagi." : error?.message || "Database belum mengonfirmasi perubahan gaji. Muat ulang data lalu coba lagi.");
+      }
+      setLocalRates(prev => ({ ...prev, [t.id]: newRate }));
+      setTeknisiData?.(prev => prev.map(employee => employee.id === t.id ? { ...employee, daily_rate: newRate } : employee));
+      setEditingRate(prev => { const next = { ...prev }; delete next[t.id]; return next; });
+      // Slip yang sudah dibayar tetap memakai snapshot lama.
+      const openRow = payrollRows.find(row => row.user_id === t.id && !row.is_paid);
+      if (openRow && Number(openRow.daily_rate) !== newRate) {
+        const { data: updatedPayroll, error: payrollError } = await updateWeeklyPayroll(supabase, openRow.id, { daily_rate: newRate });
+        if (payrollError || !updatedPayroll || Number(updatedPayroll.daily_rate) !== newRate) {
+          throw new Error("Gaji harian tersimpan, tetapi slip minggu ini belum tersinkron. Periksa slip sebelum pembayaran. " + (payrollError?.message || "Database tidak mengonfirmasi perubahan slip."));
+        }
+        setPayrollRows(prev => prev.map(row => row.id === openRow.id ? { ...row, daily_rate: newRate } : row));
+      }
+      showNotif?.(`✅ Gaji harian ${t.name} tersimpan: ${fmtRp(newRate)}`);
+    } catch (error) {
+      setRateErrors(prev => ({ ...prev, [t.id]: error.message || "Gagal menyimpan gaji. Coba lagi." }));
+      showNotif?.("❌ " + (error.message || "Gagal menyimpan gaji."));
+    } finally {
+      setSavingRateId(null);
+    }
   };
 
   // Buka/tutup panel input bonus inline per kartu (boleh beberapa terbuka sekaligus)
@@ -1217,7 +1232,7 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
             {/* Konfigurasi gaji harian */}
             <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 10, padding: 14 }}>
               <div style={{ fontWeight: 700, fontSize: 13, color: cs.muted, marginBottom: 4 }}>⚙️ Konfigurasi Gaji Harian</div>
-              <div style={{ fontSize: 11, color: cs.muted, marginBottom: 10 }}>Ketik nominal → klik ✓ Simpan untuk menyimpan. Klik nilai tersimpan untuk edit.</div>
+              <div style={{ fontSize: 11, color: cs.muted, marginBottom: 10 }}>{canConfigureRate ? "Ketik nominal → klik ✓ Simpan. Nominal tersimpan dikonfirmasi oleh database." : "Hanya Owner/Admin yang dapat mengubah gaji harian."}</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px,1fr))", gap: 10 }}>
                 {aktif.map(t => {
                   const savedRate = localRates[t.id] ?? t.daily_rate ?? 0;
@@ -1236,24 +1251,29 @@ function GajiTab({ teknisiData, ordersData, invoicesData, currentUser, supabase,
                         <span style={{ fontSize: 11, color: cs.muted }}>Rp</span>
                         <input
                           type="number"
+                          aria-label={`Gaji harian ${t.name}`}
+                          min="0"
+                          step="1"
+                          disabled={!canConfigureRate || !!savingRateId}
                           value={isDirty ? editingRate[t.id] : savedRate}
-                          onChange={e => setEditingRate(prev => ({ ...prev, [t.id]: e.target.value }))}
+                          onChange={e => { setEditingRate(prev => ({ ...prev, [t.id]: e.target.value })); setRateErrors(prev => ({ ...prev, [t.id]: "" })); }}
                           placeholder="0"
                           style={{ flex: 1, padding: "5px 8px", borderRadius: 6, border: "1px solid " + (isEditing ? cs.accent : cs.border), background: cs.surface, color: cs.text, fontSize: 13, textAlign: "right" }}
                         />
-                        {isDirty ? (
+                        {canConfigureRate && isDirty ? (
                           <>
-                            <button onClick={() => handleSaveRate(t)} title="Simpan" style={{ padding: "4px 10px", borderRadius: 5, background: cs.accent, border: "none", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>✓ Simpan</button>
+                            <button onClick={() => handleSaveRate(t)} disabled={!!savingRateId} title="Simpan" style={{ padding: "4px 10px", borderRadius: 5, background: cs.accent, border: "none", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>{savingRateId === t.id ? "Menyimpan…" : "✓ Simpan"}</button>
                             <button onClick={() => setEditingRate(prev => { const p={...prev}; delete p[t.id]; return p; })} title="Batal" style={{ padding: "4px 8px", borderRadius: 5, background: cs.surface, border: "1px solid " + cs.border, color: cs.muted, cursor: "pointer", fontSize: 11 }}>✕</button>
                           </>
-                        ) : savedRate > 0 ? (
-                          <button onClick={() => handleDeleteRate(t)} title="Reset ke 0" style={{ padding: "4px 8px", borderRadius: 5, background: "transparent", border: "1px solid " + cs.border, color: cs.muted, cursor: "pointer", fontSize: 10 }}>🗑</button>
+                        ) : canConfigureRate && savedRate > 0 ? (
+                          <button onClick={() => handleSaveRate(t, 0)} disabled={!!savingRateId} title="Reset ke 0" style={{ padding: "4px 8px", borderRadius: 5, background: "transparent", border: "1px solid " + cs.border, color: cs.muted, cursor: "pointer", fontSize: 10 }}>🗑</button>
                         ) : null}
                       </div>
                       {/* Saved indicator */}
                       {savedRate > 0 && !isDirty && (
                         <div style={{ fontSize: 10, color: cs.green, marginTop: 4 }}>✅ Tersimpan: Rp {Number(savedRate).toLocaleString("id-ID")}/hari</div>
                       )}
+                      {rateErrors[t.id] && <div role="alert" style={{ fontSize: 11, color: cs.red, marginTop: 6 }}>{rateErrors[t.id]}</div>}
                     </div>
                   );
                 })}

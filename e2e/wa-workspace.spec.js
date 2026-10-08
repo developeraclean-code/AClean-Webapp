@@ -285,6 +285,27 @@ const openTeamCalendar=async page=>{
   await expect(page.locator('.team-row-label')).toHaveCount(9);
 };
 
+test('grid satu jam menampilkan nama dan area lengkap tanpa mengubah panjang blok waktu',async({page})=>{
+  await openTeamCalendar(page);
+  await page.evaluate(()=>{
+    window.waTest.orders.push({id:'SHORT-LONG-NAME',customer:'IBU JULIANA MELATI MAS',address:'Villa Melati Mas Blok I 10, BSD',area:'BSD',service:'Cleaning',units:1,status:'CONFIRMED',date:'2026-10-05',time:'09:00',time_end:'10:00',team_slot:'Team 05'});
+    window.waTest.orders.push({id:'HALF-HOUR-LATE',customer:'BAPAK ROBERT INTAN',address:'Alam Sutera',area:'Alam Sutera',service:'Repair',units:1,status:'CONFIRMED',date:'2026-10-05',time:'17:30',time_end:'18:00',team_slot:'Team 06'});
+  });
+  await page.getByRole('button',{name:'↻ Muat ulang',exact:true}).click();
+  const lane=page.locator('.team-time-row[data-team="Team 05"] .team-time-lane').filter({hasText:'IBU JULIANA MELATI MAS'});
+  await expect(lane.locator('.team-time-detail')).toContainText('09:00–10:00 · IBU JULIANA MELATI MAS');
+  await expect(lane.locator('.team-time-detail')).toContainText('📍 BSD');
+  expect(await lane.locator('button').evaluate(el=>el.style.width)).toBe('10%');
+  const layout=await lane.locator('.team-time-detail').evaluate(el=>({content:el.scrollHeight,visible:el.clientHeight,clipped:el.scrollWidth>el.clientWidth}));
+  expect(layout.content).toBeLessThanOrEqual(layout.visible);
+  expect(layout.clipped).toBe(false);
+  const halfHour=page.locator('.team-time-row[data-team="Team 06"] .team-time-lane').filter({hasText:'BAPAK ROBERT INTAN'});
+  await expect(halfHour.locator('.team-time-detail')).toContainText('17:30–18:00 · BAPAK ROBERT INTAN');
+  await expect(halfHour.locator('.team-time-detail')).toContainText('📍 Alam Sutera');
+  await expect(halfHour.locator('button')).toBeEmpty();
+  await page.locator('.team-time-row[data-team="Team 05"]').screenshot({path:'/tmp/aclean-grid-readability.png'});
+});
+
 test('weekly Team calendar follows presets, daily crews, absences and hourly detail',async({page})=>{
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await openTeamCalendar(page);
@@ -335,7 +356,7 @@ test('rescheduling keeps the same job, confirmation and clears old-day crew',asy
 test('dragging an hourly job opens the shared planning popup and updates the same job after confirmation',async({page})=>{
   await openTeamCalendar(page);
   await page.locator('.team-day').filter({hasText:'06/10'}).click();
-  const source=page.locator('.team-time-row[data-team="Team 01"] .team-time-lane button').filter({hasText:'Ibu Ratna'});
+  const source=page.locator('.team-time-row[data-team="Team 01"] .team-time-lane button[aria-label*="Ibu Ratna"]');
   const target=page.locator('.team-time-row[data-team="Team 02"] .team-time-lanes');
   const width=(await target.boundingBox()).width;
   await source.dragTo(target,{sourcePosition:{x:4,y:20},targetPosition:{x:Math.round(width*.2),y:24}});
@@ -351,7 +372,7 @@ test('dragging an hourly job opens the shared planning popup and updates the sam
   await popup.getByRole('button',{name:'Simpan perubahan',exact:true}).click();
   await expect(popup.getByRole('heading',{name:'Planning tersimpan'})).toBeVisible();
   await popup.getByRole('button',{name:'Lihat di Jadwal'}).click();
-  await expect(page.locator('.team-time-row[data-team="Team 02"] .team-time-lane button').filter({hasText:'Ibu Ratna'})).toContainText('11:00–13:00');
+  await expect(page.locator('.team-time-row[data-team="Team 02"] .team-time-lane').filter({hasText:'Ibu Ratna'})).toContainText('11:00–13:00');
   const rows=await page.evaluate(()=>window.waTest.orders.filter(o=>o.id==='JOB-TEAM-A'));
   expect(rows).toHaveLength(1);
   expect(rows[0]).toMatchObject({date:'2026-10-06',time:'11:00',time_end:'13:00',team_slot:'Team 02',status:'CONFIRMED',teknisi:null,helper:null});
@@ -363,7 +384,7 @@ test('dragging an hourly job opens the shared planning popup and updates the sam
 test('cancelled drag leaves the job intact and a conflicting target is rejected before planning opens',async({page})=>{
   await openTeamCalendar(page);
   await page.locator('.team-day').filter({hasText:'06/10'}).click();
-  const source=page.locator('.team-time-row[data-team="Team 01"] .team-time-lane button').filter({hasText:'Ibu Ratna'});
+  const source=page.locator('.team-time-row[data-team="Team 01"] .team-time-lane button[aria-label*="Ibu Ratna"]');
   const target=page.locator('.team-time-row[data-team="Team 02"] .team-time-lanes');
   const width=(await target.boundingBox()).width;
   await source.dragTo(target,{sourcePosition:{x:4,y:20},targetPosition:{x:Math.round(width*.2),y:24}});
@@ -379,7 +400,7 @@ test('cancelled drag leaves the job intact and a conflicting target is rejected 
 test('drag confirmation rechecks current roster and blocks saves when schedule reads fail',async({page})=>{
   await openTeamCalendar(page);
   await page.locator('.team-day').filter({hasText:'06/10'}).click();
-  const source=page.locator('.team-time-row[data-team="Team 01"] .team-time-lane button').filter({hasText:'Ibu Ratna'});
+  const source=page.locator('.team-time-row[data-team="Team 01"] .team-time-lane button[aria-label*="Ibu Ratna"]');
   const target=page.locator('.team-time-row[data-team="Team 02"] .team-time-lanes');
   const width=(await target.boundingBox()).width;
   await source.dragTo(target,{sourcePosition:{x:4,y:20},targetPosition:{x:Math.round(width*.2),y:24}});
@@ -606,14 +627,14 @@ test("late payment response cannot populate a different customer's review panel"
 test('hourly grid shows the approximate area and planning lets admin correct it',async({page})=>{
   await openTeamCalendar(page);
   await page.locator('.team-day').filter({hasText:'06/10'}).click();
-  const bsd=page.getByLabel('Timeline harian').locator('.team-time-lane button[data-area="BSD"]');
-  await expect(bsd).toContainText('Ibu Ratna');
-  await expect(bsd).toContainText('📍 BSD');
+  const bsd=page.getByLabel('Timeline harian').locator('.team-time-lane').filter({has:page.locator('button[data-area="BSD"]')});
+  await expect(bsd.locator('.team-time-detail')).toContainText('Ibu Ratna');
+  await expect(bsd.locator('.team-time-detail')).toContainText('📍 BSD');
   await expect(page.locator('.team-day-cell[data-date="2026-10-06"] .team-job').filter({hasText:'Ibu Ratna'})).toContainText('BSD');
   await expect(page.getByRole('link',{name:'Periksa alamat Ibu Ratna di Maps'})).toHaveAttribute('href',/De%20Park%20BSD%20City/);
   await page.locator('.team-day').filter({hasText:'07/10'}).click();
-  const graha=page.locator('.team-time-lane button[data-area="Graha Raya"]');
-  await expect(graha).toContainText('📍 Graha Raya');
+  const graha=page.locator('.team-time-lane').filter({has:page.locator('button[data-area="Graha Raya"]')});
+  await expect(graha.locator('.team-time-detail')).toContainText('📍 Graha Raya');
   await page.locator('.team-day-cell[data-team="unassigned"][data-date="2026-10-06"] .team-add').click();
   await page.getByLabel('Pelanggan',{exact:true}).fill('Ibu Rini');
   await page.getByLabel('WhatsApp',{exact:true}).fill('6281234567888');
@@ -629,6 +650,6 @@ test('hourly grid shows the approximate area and planning lets admin correct it'
   await page.setViewportSize({width:390,height:844});
   await page.getByRole('button',{name:'Tutup rencana'}).click();
   await page.locator('.team-day').filter({hasText:'06/10'}).click();
-  await expect(page.getByLabel('Timeline harian').locator('.team-time-lane button[data-area="BSD"]')).toContainText('📍 BSD');
+  await expect(page.getByLabel('Timeline harian').locator('.team-time-lane').filter({has:page.locator('button[data-area="BSD"]')}).locator('.team-time-detail')).toContainText('📍 BSD');
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });

@@ -249,7 +249,8 @@ export const resolvePaymentSuggestion = (supabase, id, status, resolvedBy) =>
 
 // ───── PAYROLL ─────
 export const updateUserDailyRate = (supabase, userId, dailyRate) =>
-  supabase.from("user_profiles").update({ daily_rate: dailyRate }).eq("id", userId);
+  supabase.from("user_profiles").update({ daily_rate: dailyRate }).eq("id", userId)
+    .select("id,daily_rate").single();
 
 export const upsertWeeklyPayroll = (supabase, payload) =>
   supabase.from("weekly_payroll")
@@ -259,7 +260,7 @@ export const upsertWeeklyPayroll = (supabase, payload) =>
 export const updateWeeklyPayroll = (supabase, id, fields) =>
   supabase.from("weekly_payroll")
     .update({ ...fields, updated_at: new Date().toISOString() })
-    .eq("id", id);
+    .eq("id", id).select("id,daily_rate").single();
 
 export const markPayrollPaid = (supabase, id, paidBy) =>
   supabase.from("weekly_payroll").update({
