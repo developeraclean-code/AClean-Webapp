@@ -316,6 +316,7 @@ test('grid menjaga nama dan area di dalam box slot tanpa mengubah panjang blok w
   await openTeamCalendar(page);
   await page.evaluate(()=>{
     window.waTest.orders.push({id:'SHORT-LONG-NAME',customer:'IBU JULIANA MELATI MAS',address:'Villa Melati Mas Blok I 10, BSD',area:'BSD',service:'Cleaning',units:1,status:'CONFIRMED',date:'2026-10-05',time:'09:00',time_end:'10:00',team_slot:'Team 05'});
+    window.waTest.orders.push({id:'SAME-HOUR-OTHER-TEAM',customer:'BAPAK JOSHUA PHN0703',address:'BSD',area:'BSD',service:'Cleaning',units:1,status:'CONFIRMED',date:'2026-10-05',time:'10:00',time_end:'11:00',team_slot:'Team 03'});
     window.waTest.orders.push({id:'HALF-HOUR-LATE',customer:'BAPAK ROBERT INTAN',address:'Alam Sutera',area:'Alam Sutera',service:'Repair',units:1,status:'CONFIRMED',date:'2026-10-05',time:'17:30',time_end:'18:00',team_slot:'Team 06'});
   });
   await page.getByRole('button',{name:'↻ Muat ulang',exact:true}).click();
@@ -332,8 +333,12 @@ test('grid menjaga nama dan area di dalam box slot tanpa mengubah panjang blok w
     return {withinLane:outer.left>=lane.left-1&&outer.right<=lane.right+1,childrenInside:children.every(rect=>rect.left>=outer.left-1&&rect.right<=outer.right+1)};
   });
   expect(layout).toEqual({withinLane:true,childrenInside:true});
+  const otherHour=page.locator('.team-time-row[data-team="Team 03"] .team-time-slot').filter({hasText:'BAPAK JOSHUA PHN0703'});
+  await expect(otherHour.locator('.team-time-slot-time')).toHaveText('10:00–11:00');
+  const widths=await Promise.all([box,otherHour].map(item=>item.evaluate(el=>el.getBoundingClientRect().width)));
+  expect(Math.abs(widths[0]-widths[1])).toBeLessThan(1);
   const halfHour=page.locator('.team-time-row[data-team="Team 06"] .team-time-lane').filter({hasText:'BAPAK ROBERT INTAN'});
-  await expect(halfHour.locator('.team-time-slot-time')).toHaveText('17:30');
+  await expect(halfHour.locator('.team-time-slot-time')).toHaveText('17:30–18:00');
   await expect(halfHour.locator('.team-time-slot-name')).toHaveText('BAPAK ROBERT INTAN');
   await expect(halfHour.locator('.team-time-slot-area')).toHaveText('📍 Alam Sutera');
   await expect(halfHour.locator('button')).toHaveAttribute('aria-label',/17:30–18:00 · BAPAK ROBERT INTAN · Area Alam Sutera/);

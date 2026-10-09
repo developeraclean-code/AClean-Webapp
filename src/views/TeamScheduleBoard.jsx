@@ -100,7 +100,7 @@ export default function TeamScheduleBoard({ supabase, days, revision, search='',
           const movable=!loading && !error && EDITABLE_PLAN.includes(o.status) && !o.project_id && minutes(o.time)>=DAY_START && minutes(o.time_end || estimatedEnd(o.time,o.service,o.units))<=18*60;
           return style?<div className="team-time-lane" key={o.id}>
             <button className={`team-time-slot${duration<60?' compact':''}`} draggable={movable} onDragStart={event=>dragStart(event,o)} onDragEnd={()=>{drag.current=null;setDragPreview(null);}} onClick={()=>onPlan(o)} data-area={area.label} aria-label={`${o.time?.slice(0,5)}–${end} · ${o.customer} · Area ${area.label}`} title={`${o.time?.slice(0,5)}–${end} · ${o.customer} · ${area.label}${area.conflict?' (cek alamat)':''} · ${o.address || 'alamat belum tersedia'}${movable?' · Seret untuk usulkan pindah jam/Team':''}`} style={style}>
-              <span className="team-time-slot-time" aria-hidden="true">{duration<60?o.time?.slice(0,5):`${o.time?.slice(0,5)}–${end}`}</span>
+              <span className="team-time-slot-time" aria-hidden="true">{o.time?.slice(0,5)}–{end}</span>
               <strong className="team-time-slot-name">{o.customer || 'Customer belum diisi'}</strong>
               <span className="team-time-slot-area">📍 {area.label}{area.conflict?' · cek alamat':''}</span>
             </button>
