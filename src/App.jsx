@@ -109,6 +109,7 @@ const CustomersView = lazy(() => import("./views/CustomersView.jsx"));
 const OrdersView = lazy(() => import("./views/OrdersView.jsx"));
 const InvoiceView = lazy(() => import("./views/InvoiceView.jsx"));
 const PriceListView = lazy(() => import("./views/PriceListView.jsx"));
+const WaCatalogView = lazy(() => import("./views/WaCatalogView.jsx"));
 const ScheduleView = lazy(() => import("./views/ScheduleView.jsx"));
 const TeknisiAdminView = lazy(() => import("./views/TeknisiAdminView.jsx"));
 const ReportsView = lazy(() => import("./views/ReportsView.jsx"));
@@ -3608,6 +3609,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
     { id: "customers", icon: "👥", label: "Customer" },
     { id: "inventory", icon: "📦", label: "Inventori" },
     { id: "pricelist", icon: "💰", label: "Price List" },
+    { id: "wa-catalog", icon: "🖼️", label: "Katalog WA" },
     { id: "teknisi", icon: "👷", label: "Tim Teknisi" },
     { id: "laporantim", icon: "📝", label: "Laporan Tim" },
     { id: "maintenance", icon: "🏢", label: "Maintenance" },
@@ -4295,6 +4297,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
       case "customers": return renderCustomers();
       case "inventory": return renderInventory();
       case "pricelist": return renderPriceList();
+      case "wa-catalog": return <WaCatalogView supabase={supabase} apiFetch={_apiFetch} priceListData={priceListData} currentUser={currentUser} showNotif={showNotif} />;
       case "teknisi": return renderTeknisiAdmin();
       case "laporantim": return renderLaporanTim();
       case "maintenance": return (
@@ -4969,6 +4972,8 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
           customersData={customersData} setCustomersData={setCustomersData}
           ordersData={ordersData}
           invoicesData={invoicesDataMerged} paymentSuggestions={paymentSuggestions}
+          priceListData={priceListData}
+          onOpenCatalog={() => { setWaPanel(false); setActiveMenu("wa-catalog"); }}
           technicians={teknisiData} duration={hitungDurasi} reports={laporanReports}
           sendWorkspaceMessage={async payload => {
             const response = await _apiFetch("/api/wa-workspace-send", {

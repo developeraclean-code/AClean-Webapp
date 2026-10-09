@@ -7,6 +7,8 @@ import { createWaOrderDraft, customerRecords, fetchWaCustomers, waCustomerTitle,
 import "./WaPanel.css";
 import WaOperationsPanel from "./WaOperationsPanel.jsx";
 import { WA_STATES, SEND_STATES, isDue } from "../lib/waOperations.js";
+import { catalogCaption, catalogPrice } from "../lib/waCatalog.js";
+import { fotoUrl } from "../lib/fotoUrl.js";
 
 const timeLabel = value => value ? new Date(value).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" }) : "";
 const dateLabel = value => value ? new Date(value.length === 10 ? `${value}T12:00:00+07:00` : value).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Jakarta" }) : "Belum dijadwalkan";
@@ -20,7 +22,7 @@ export default function WaPanel({
   customersData, setCustomersData, ordersData, invoicesData = [],
   waProvider, isMobile, currentUser, supabase, showNotif, sendWA, addAgentLog,
   onCreateOrder, onOpenInvoice, onOpenSchedule,
-  technicians = [], duration, reports = [], onAppliedPayments, onSendDocument, sendWorkspaceMessage,
+  technicians = [], duration, reports = [], onAppliedPayments, onSendDocument, sendWorkspaceMessage, onOpenCatalog, priceListData = [],
 }) {
   const [customerLookup, setCustomerLookup] = useState({ rows: [], verified: [], error: '' });
   const [customerRefresh, setCustomerRefresh] = useState(0);
@@ -28,6 +30,10 @@ export default function WaPanel({
   const [followups, setFollowups] = useState({});
   const [opsError, setOpsError] = useState("");
   const [sendStatus, setSendStatus] = useState(null);
+  const [catalogPickerOpen, setCatalogPickerOpen] = useState(false);
+  const [catalogItems, setCatalogItems] = useState([]);
+  const [catalogAcPrices, setCatalogAcPrices] = useState([]);
+  const [catalogError, setCatalogError] = useState("");
   const sendRequests = useRef(new Map());
   const [filter, setFilter] = useState("all");
   const [expanded, setExpanded] = useState(false);
@@ -53,6 +59,19 @@ export default function WaPanel({
   const messageScroll = useRef(null);
   const stickToBottom = useRef(true);
   const isOwnerAdmin = ["Owner", "Admin"].includes(currentUser?.role);
+  useEffect(() => {
+    if (!open || !isOwnerAdmin || !catalogPickerOpen) return;
+    let cancelled = false;
+    Promise.all([
+      supabase.from("wa_catalog_items").select("id,title,description,image_key,price_source,source_id,fixed_price,is_active").eq("is_active", true).order("sort_order").order("title"),
+      supabase.from("ac_price_list").select("id,harga_unit,harga_inc_pasang,is_active").eq("is_active", true),
+    ]).then(([catalog, ac]) => {
+      if (cancelled) return;
+      if (catalog.error) { setCatalogError(catalog.error.message); return; }
+      setCatalogItems(catalog.data || []); setCatalogAcPrices(ac.data || []); setCatalogError("");
+    }).catch(error => { if (!cancelled) setCatalogError(error.message); });
+    return () => { cancelled = true; };
+  }, [open, isOwnerAdmin, catalogPickerOpen, supabase]);
   const phone = selectedConv?.phone;
   activePhone.current = phone;
   inputValue.current = waInput;
@@ -201,7 +220,7 @@ export default function WaPanel({
     setWaMessages([]);
     setWaInput(drafts.current.get(conv?.phone) || "");
     setDraftContext(draftContexts.current.get(conv?.phone) || null);
-    setSendStatus(null); setCustomerId(""); setMessageLimit(100); setHistoryError(""); setContextOpen(false);
+    setSendStatus(null); setCustomerId(""); setMessageLimit(100); setHistoryError(""); setContextOpen(false); setCatalogPickerOpen(false);
     stickToBottom.current = true;
   };
   const refresh = async () => {
@@ -219,12 +238,21 @@ export default function WaPanel({
   const insertDraft = (text, context) => {
     if (activePhone.current !== phone) return;
     if (context) { draftContexts.current.set(phone, context); setDraftContext(context); }
+    else if (draftContext?.kind === "CATALOG") { draftContexts.current.delete(phone); setDraftContext(null); }
     setWaInput(prev => prev.trim() ? `${prev}\n\n${text}` : text);
+    composer.current?.focus();
+  };
+  const selectCatalog = item => {
+    const context = { kind: "CATALOG", catalog_id: item.id, catalog_title: item.title };
+    draftContexts.current.set(phone, context); setDraftContext(context);
+    setWaInput(previous => previous.trim() || "Halo, berikut informasi dari AClean:");
+    setCatalogPickerOpen(false);
     composer.current?.focus();
   };
   const handleSend = async () => {
     if (sendingNow.current || !waInput.trim() || !selectedConv || !isOwnerAdmin) return;
-    const txt = waInput.trim(), conv = selectedConv, key = `${conv.phone}:${draftContext?.kind || "TEXT"}:${draftContext?.customer_id || ""}:${txt}`;
+    const txt = waInput.trim(), conv = selectedConv, key = `${conv.phone}:${draftContext?.kind || "TEXT"}:${draftContext?.customer_id || ""}:${draftContext?.catalog_id || ""}:${txt}`;
+    if (draftContext?.kind === "CATALOG" && !sendWorkspaceMessage) { showNotif("⚠️ Pengiriman katalog memerlukan WhatsApp Workspace."); return; }
     if (lastSent.current.key === key && Date.now() - lastSent.current.at < 5000) {
       showNotif("⚠️ Pesan yang sama baru saja terkirim. Tunggu sebentar sebelum mengirim ulang."); return;
     }
@@ -236,7 +264,7 @@ export default function WaPanel({
         const id = previousRequest?.id || crypto.randomUUID();
         sendRequests.current.set(key, { id });
         if (activePhone.current === conv.phone) setSendStatus({ status: "SENDING" });
-        const row = await sendWorkspaceMessage({ id, phone: conv.phone, message: txt, kind: draftContext?.kind || "TEXT", ...(draftContext?.customer_id ? {customer_id:draftContext.customer_id} : {}) });
+        const row = await sendWorkspaceMessage({ id, phone: conv.phone, message: txt, kind: draftContext?.kind || "TEXT", ...(draftContext?.customer_id ? {customer_id:draftContext.customer_id} : {}), ...(draftContext?.catalog_id ? {catalog_id:draftContext.catalog_id} : {}) });
         if (row.status === "FAILED") sendRequests.current.delete(key);
         if (activePhone.current === conv.phone) setSendStatus(row);
         accepted = row.status === "ACCEPTED";
@@ -248,7 +276,7 @@ export default function WaPanel({
           if (activePhone.current === conv.phone) {
             setDraftContext(null);
             setWaInput(prev=>prev.trim()===txt?"":prev);
-            setWaMessages(prev=>prev.some(m=>m.id===(row.message_id ?? row.id))?prev:[...prev,{id:row.message_id ?? row.id,phone:conv.phone,name:currentUser?.name || "Admin",content:txt,role:"admin",created_at:row.created_at}]);
+            setWaMessages(prev=>prev.some(m=>m.id===(row.message_id ?? row.id))?prev:[...prev,{id:row.message_id ?? row.id,phone:conv.phone,name:currentUser?.name || "Admin",content:row.message || txt,image_url:row.kind === "CATALOG" ? row.attachment_url : null,role:"admin",created_at:row.created_at}]);
           }
           setRefreshKey(k=>k+1);
         }
@@ -299,6 +327,8 @@ export default function WaPanel({
   if (!open || !isOwnerAdmin) return null;
   const visibleMessages = waMessages.filter(m => samePhone(m.phone, phone));
   const person = waCustomerTitle(selectedConv,locations,customerId);
+  const selectedCatalog = draftContext?.kind === "CATALOG" ? catalogItems.find(item => item.id === draftContext.catalog_id) : null;
+  const selectedCatalogPrice = selectedCatalog ? catalogPrice(selectedCatalog, priceListData, catalogAcPrices) : undefined;
 
   return (
     <div className="wa-overlay" onClick={onClose}>
@@ -361,7 +391,16 @@ export default function WaPanel({
                   </div>;
                 })}<div ref={messagesEnd} />
               </div>
-              <div className="wa-composer">{draftContext && <p className="wa-ops-notice">Pengingat servis: {draftContext.customer_name} <button className="wa-text-button" onClick={()=>{draftContexts.current.delete(phone);setDraftContext(null);}}>Batalkan penanda</button></p>}{sendStatus && <p className="wa-ops-notice" role="status">{SEND_STATES[sendStatus.status]}{sendStatus.error?` · ${sendStatus.error}`:""}</p>}<div className="wa-quick-replies"><span>Balasan cepat</span><button onClick={() => insertDraft(`Halo ${person}, terima kasih sudah menghubungi AClean. Ada yang bisa kami bantu?`)}>Sapaan</button><button onClick={() => insertDraft(`Halo ${person}, boleh informasikan layanan, jumlah unit AC, alamat, serta tanggal dan jam yang diinginkan? Kami akan memeriksa ketersediaan jadwal tim.`)}>Tanya jadwal</button><button disabled={!invoices.length} onClick={() => insertDraft(paymentReminder(person, invoices[0]))}>Ingatkan pembayaran</button></div>
+              <div className="wa-composer">
+                {draftContext?.kind === "SERVICE_REMINDER" && <p className="wa-ops-notice">Pengingat servis: {draftContext.customer_name} <button className="wa-text-button" onClick={()=>{draftContexts.current.delete(phone);setDraftContext(null);}}>Batalkan penanda</button></p>}
+                {draftContext?.kind === "CATALOG" && <div className="wa-catalog-draft" role="status">
+                  {selectedCatalog && <img src={fotoUrl(selectedCatalog.image_key)} alt="Foto katalog dipilih" />}
+                  <div><strong>Gambar katalog: {draftContext.catalog_title}</strong><p>{selectedCatalog ? (selectedCatalogPrice === null ? "Harga belum tersedia di pratinjau; server akan memeriksa saat Kirim." : catalogCaption(selectedCatalog, selectedCatalogPrice)) : "Item akan diverifikasi saat dikirim."}</p><small>Harga diperiksa ulang saat Kirim. Teks di bawah adalah pengantar.</small></div>
+                  <button className="wa-text-button" onClick={() => { draftContexts.current.delete(phone); setDraftContext(null); }}>Batalkan</button>
+                </div>}
+                {sendStatus && <p className="wa-ops-notice" role="status">{SEND_STATES[sendStatus.status]}{sendStatus.error?` · ${sendStatus.error}`:""}</p>}
+                <div className="wa-quick-replies"><span>Balasan cepat</span><button onClick={() => insertDraft(`Halo ${person}, terima kasih sudah menghubungi AClean. Ada yang bisa kami bantu?`)}>Sapaan</button><button onClick={() => insertDraft(`Halo ${person}, boleh informasikan layanan, jumlah unit AC, alamat, serta tanggal dan jam yang diinginkan? Kami akan memeriksa ketersediaan jadwal tim.`)}>Tanya jadwal</button><button disabled={!invoices.length} onClick={() => insertDraft(paymentReminder(person, invoices[0]))}>Ingatkan pembayaran</button><button aria-expanded={catalogPickerOpen} onClick={() => setCatalogPickerOpen(value => !value)}>🖼️ Katalog</button></div>
+                {catalogPickerOpen && <div className="wa-catalog-picker"><div><strong>Pilih gambar katalog</strong><button onClick={onOpenCatalog}>Kelola katalog ↗</button></div>{catalogError && <p role="alert">Katalog gagal dimuat: {catalogError}</p>}{!catalogError && !catalogItems.length && <p>Belum ada item aktif. Tambahkan di menu Katalog WA.</p>}{catalogItems.map(item => <button key={item.id} onClick={() => selectCatalog(item)}><img src={fotoUrl(item.image_key)} alt="" loading="lazy"/><span>{item.title}</span></button>)}</div>}
                 <div className="wa-compose-row"><textarea ref={composer} id="waInput" aria-label="Pesan WhatsApp" rows={2} value={waInput} onChange={e => { setWaInput(e.target.value); if (!e.target.value) { draftContexts.current.delete(phone); setDraftContext(null); } }} disabled={sending} placeholder="Tulis pesan untuk pelanggan…" onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !isMobile) { e.preventDefault(); handleSend(); } }} /><button className="wa-send" disabled={sending || !waInput.trim()} onClick={handleSend}>{sending ? "Mengirim…" : "Kirim ↗"}</button></div><div className="wa-composer-hint">{isMobile ? "Ketuk Kirim untuk mengirim pesan." : "Enter untuk kirim · Shift + Enter untuk baris baru"}<span>Draf dapat diedit sebelum dikirim</span></div>
               </div>
             </>}

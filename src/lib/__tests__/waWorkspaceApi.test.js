@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const { client, validate, dispatch, query } = vi.hoisted(()=>({client:{},validate:vi.fn(),dispatch:vi.fn(),query:{}}));
+const { client, validate, dispatch, verify, query } = vi.hoisted(()=>({client:{},validate:vi.fn(),dispatch:vi.fn(),verify:vi.fn(),query:{}}));
 vi.mock("@supabase/supabase-js",()=>({createClient:()=>client}));
-vi.mock("../../../api/_wa-workspace.js",()=>({validateWorkspacePayload:validate,dispatchWorkspaceMessage:dispatch,deliverWorkspaceMessage:vi.fn()}));
+vi.mock("../../../api/_wa-workspace.js",()=>({validateWorkspacePayload:validate,dispatchWorkspaceMessage:dispatch,deliverWorkspaceMessage:vi.fn(),verifyCatalogMedia:verify}));
 import { waWorkspaceSend } from "../../../api/_handlers/wa-workspace.js";
 const id="11111111-1111-4111-8111-111111111111";
 const res=()=>({code:0,body:null,status(n){this.code=n;return this;},json(v){this.body=v;return this;}});
 beforeEach(()=>{
   vi.clearAllMocks();query.select=vi.fn(()=>query);query.eq=vi.fn(()=>query);query.single=vi.fn();client.from=vi.fn(()=>query);
-  validate.mockResolvedValue({phone:"6281234567890",kind:"TEXT",message:"Halo"});dispatch.mockResolvedValue({id,status:"ACCEPTED"});
+  validate.mockResolvedValue({phone:"6281234567890",kind:"TEXT",message:"Halo"});dispatch.mockResolvedValue({id,status:"ACCEPTED"});verify.mockResolvedValue();
 });
 describe("Workspace send authorization",()=>{
   it("rejects unauthenticated/legacy and forged body roles",async()=>{
@@ -29,5 +29,13 @@ describe("Workspace send authorization",()=>{
     const a=res();await waWorkspaceSend({method:"POST",appClaims:{role:"Admin"},body:{id:"bad"}},a);expect(a.code).toBe(400);expect(dispatch).not.toHaveBeenCalled();
     validate.mockRejectedValueOnce(new Error("Dokumen belum diverifikasi"));
     const b=res();await waWorkspaceSend({method:"POST",appClaims:{role:"Admin"},body:{id}},b);expect(b.body.error).toContain("diverifikasi");expect(dispatch).not.toHaveBeenCalled();
+  });
+  it("blocks catalog sending when the public image cannot be fetched",async()=>{
+    validate.mockResolvedValueOnce({phone:"6281234567890",kind:"CATALOG",message:"SOP",url:"https://cdn.example.test/catalog/a.jpg"});
+    verify.mockRejectedValueOnce(new Error("Foto katalog tidak dapat diambil"));
+    dispatch.mockImplementationOnce(async (_db,_id,payload,_actor,deliver)=>deliver(payload));
+    const response=res();await waWorkspaceSend({method:"POST",appClaims:{role:"Admin"},body:{id}},response);
+    expect(response.code).toBe(200);expect(response.body.row).toMatchObject({status:"FAILED",error:"Foto katalog tidak dapat diambil"});
+    expect(dispatch).toHaveBeenCalledTimes(1);
   });
 });

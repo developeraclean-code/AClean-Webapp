@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { deliverWorkspaceMessage, dispatchWorkspaceMessage, validateWorkspacePayload } from "../_wa-workspace.js";
+import { deliverWorkspaceMessage, dispatchWorkspaceMessage, validateWorkspacePayload, verifyCatalogMedia } from "../_wa-workspace.js";
 
 // Router authenticates first; role comes from signed claims or the verified Supabase user.
 export async function waWorkspaceSend(req, res) {
@@ -15,7 +15,12 @@ export async function waWorkspaceSend(req, res) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.id || "")) return res.status(400).json({ error: "ID pengiriman tidak valid" });
   try {
     const payload = await validateWorkspacePayload(db, body);
-    const row = await dispatchWorkspaceMessage(db, body.id, payload, actor || role, deliverWorkspaceMessage);
+    const deliver = payload.kind === "CATALOG" ? async value => {
+      try { await verifyCatalogMedia(value.url); }
+      catch (error) { return { status: "FAILED", error: error.message }; }
+      return deliverWorkspaceMessage(value);
+    } : deliverWorkspaceMessage;
+    const row = await dispatchWorkspaceMessage(db, body.id, payload, actor || role, deliver);
     return res.status(200).json({ row });
   } catch (error) { return res.status(400).json({ error: error.message }); }
 }

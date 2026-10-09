@@ -210,7 +210,7 @@ export async function foto(req, res) {
       // Tolak: "../...", path absolut, file backup, file env, dll.
       // Prefix yang diizinkan: foto/, tool-bag/, laporan/, invoice/, wa-group/, wa-snapshots/, wa-images/
       // Extension: jpg/jpeg/png/gif/webp/pdf/json
-      const SAFE_KEY_RE = /^(foto|tool-bag|material-checkout|laporan|invoice|invoices|wa-group|wa-snapshots|wa-images|service-reports|orders|materials|payments|projects|maintenance|quotations|customer-photos|expense-photos|expenses|merged-pdfs)\/[a-zA-Z0-9_\-./]{1,200}\.(jpg|jpeg|png|gif|webp|pdf|json)$/i;
+      const SAFE_KEY_RE = /^(foto|tool-bag|material-checkout|laporan|invoice|invoices|wa-group|wa-snapshots|wa-images|service-reports|orders|materials|payments|projects|maintenance|quotations|customer-photos|expense-photos|expenses|merged-pdfs|catalog)\/[a-zA-Z0-9_\-./]{1,200}\.(jpg|jpeg|png|gif|webp|pdf|json)$/i;
       // Cek path traversal sekaligus (defense in depth)
       if (!SAFE_KEY_RE.test(key) || key.includes("..") || key.includes("//") || key.startsWith("/")) {
         return res.status(400).json({ error: "key tidak valid" });

@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import { invoiceBalance } from "../../src/lib/waWorkspace.js";
+import { catalogCaption } from "../../src/lib/waCatalog.js";
 import WaPanel from "../../src/views/WaPanel.jsx";
+import WaCatalogView from "../../src/views/WaCatalogView.jsx";
 import SchedulePlanModal from "../../src/views/SchedulePlanModal.jsx";
 import TeamScheduleBoard from "../../src/views/TeamScheduleBoard.jsx";
 import { planningWeek, planningWeekOffset, planSnapshot } from "../../src/lib/teamPlanning.js";
@@ -11,6 +13,8 @@ import OrderInboxView from "../../src/views/OrderInboxView.jsx";
 import { AppContext } from "../../src/context/AppContext.js";
 
 const phones = ["6281234567890", "6281234567891", "6281234567892"];
+const catalogItems = [{ id: "11111111-1111-4111-8111-111111111111", title: "SOP Cleaning Service", description: "Pembersihan unit indoor dan outdoor", image_key: "catalog/demo.jpg", price_source: "price_list", source_id: "1", is_active: true }];
+const catalogPrices = [{ id: 1, service: "Cleaning", type: "Cleaning AC", price: 95000, is_active: true }];
 const conversations = [
   { id: "c1", name: "Andi", phone: phones[0], unread: 3, last_message: "Bisa dijadwalkan hari Senin?", updated_at: "2026-10-04T09:15:00Z" },
   { id: "c2", name: "Maya", phone: phones[1], unread: 1, last_message: "Terima kasih, AClean", updated_at: "2026-10-04T08:10:00Z" },
@@ -60,13 +64,16 @@ window.waTest.presets = presets;
 window.waTest.rosters = rosters;
 window.waTest.absences = absences;
 window.waTest.orders = demoOrders;
+window.waTest.catalogItems = catalogItems;
 const mockSend = async payload => {
   if(outbox.has(payload.id))return outbox.get(payload.id);
-  const row={...payload,status:"SENDING",actor:"Dedy",created_at:new Date().toISOString()};outbox.set(payload.id,row);
+  const catalog = catalogItems.find(item => item.id === payload.catalog_id);
+  const row={...payload,message:catalog ? catalogCaption(catalog,catalogPrices[0].price,payload.message) : payload.message,
+    attachment_url:catalog ? `/api/foto?key=${catalog.image_key}` : payload.url,status:"SENDING",actor:"Dedy",created_at:new Date().toISOString()};outbox.set(payload.id,row);
   window.waTest.calls.push({type:"send",phone:payload.phone,text:payload.message,kind:payload.kind});
   await new Promise(r=>setTimeout(r,window.waTest.sendDelay));
   row.status=window.waTest.sendUncertain?"UNCERTAIN":window.waTest.sendResult?"ACCEPTED":"FAILED";
-  if(row.status==="ACCEPTED")messages[payload.phone].push({id:payload.id,phone:payload.phone,content:payload.message,role:"admin",name:"Dedy",created_at:row.created_at});
+  if(row.status==="ACCEPTED")messages[payload.phone].push({id:payload.id,phone:payload.phone,content:row.message,image_url:catalog?row.attachment_url:null,role:"admin",name:"Dedy",created_at:row.created_at});
   return {...row};
 };
 const db = {
@@ -102,7 +109,7 @@ const db = {
   },
   from(table) {
     const q = { mode: "read", phone: null, payload: null, date: null, from: null, to: null,
-      select() { return this; }, eq(key, value) { if (key === "phone") this.phone = value; if(key==="date")this.date=value; return this; },
+      select() { return this; }, eq(key, value) { if (key === "phone") this.phone = value; if(key==="date")this.date=value; if(key==="id")this.id=value; return this; },
       in(key,values) { if(key==="phone")this.phones=values; return this; }, gte(key,value) { if(key==="date")this.from=value; return this; }, neq() { return this; }, ilike() { return this; }, or() { return this; },
       lte(key,value) { if(key==="date")this.to=value; return this; }, order() { return this; }, limit() { return this; }, single() { return this; },
       range(start,end) { this.pageStart=start;this.pageEnd=end;return this; },
@@ -135,6 +142,10 @@ const db = {
             if (conv) Object.assign(conv, this.payload);
             resolve({ data: conv ? [conv] : [] });
           } else if(table==="wa_followups") resolve({data:[...followups.values()]});
+          else if(table==="wa_catalog_items" && this.mode==="insert") { const row={id:crypto.randomUUID(),...this.payload};catalogItems.push(row);resolve({data:row}); }
+          else if(table==="wa_catalog_items" && this.mode==="update") { const row=catalogItems.find(item=>item.id===this.id);if(row)Object.assign(row,this.payload);resolve({data:row||null,error:row?null:{message:"not found"}}); }
+          else if(table==="wa_catalog_items") resolve({data:catalogItems});
+          else if(table==="ac_price_list") resolve({data:[]});
           else if(table==="wa_outbox") resolve({data:[...outbox.values()].filter(r=>r.phone===this.phone).reverse()});
           else if(["orders","daily_team_slots","technician_availability","team_presets"].includes(table)) {
             const rows=table==="orders"?demoOrders:table==="daily_team_slots"?rosters:table==="technician_availability"?absences:presets;
@@ -164,6 +175,7 @@ export default function WorkspaceFixture({ onAction, onNotice, planningMode = fa
   const [waInput, setWaInput] = useState("");
   const [customersData, setCustomersData] = useState(new URLSearchParams(location.search).has("empty-customers") ? [] : customers);
   const notice = text => { window.waTest.calls.push({ type: "notice", text }); onNotice?.(text); };
+  if (new URLSearchParams(location.search).has("catalog")) return <WaCatalogView supabase={db} apiFetch={fetch} priceListData={catalogPrices} currentUser={{name:"Dedy",role:"Owner"}} showNotif={notice}/>;
   const action = event => {
     window.waTest.calls.push(event);
     if (event.type === "order" && planningMode) {
@@ -190,7 +202,7 @@ export default function WorkspaceFixture({ onAction, onNotice, planningMode = fa
     </AppContext.Provider></section>}
     <WaPanel {...{ open, waConversations, setWaConversations, selectedConv, setSelectedConv, waMessages, setWaMessages, waSearch, setWaSearch, waInput, setWaInput, customersData, setCustomersData }}
     onClose={() => setOpen(false)} waProvider="fonnte" currentUser={{ name: "Dedy", role: "Owner" }} supabase={db}
-    ordersData={orderRows} invoicesData={invoiceRows} paymentSuggestions={proofRows}
+    ordersData={orderRows} invoicesData={invoiceRows} paymentSuggestions={proofRows} priceListData={catalogPrices}
     technicians={[{name:"Tim Rian",role:"Teknisi",active:true},{name:"Tim Budi",role:"Teknisi",active:true}]}
     duration={(service,units)=>service==="Install"?Number(units)*2.5:Math.max(1,Number(units)*0.5)}
     reports={[{id:"RPT-100",job_id:"JOB-100",status:"VERIFIED"}]}

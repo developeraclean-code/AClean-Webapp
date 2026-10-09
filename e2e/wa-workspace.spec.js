@@ -10,6 +10,7 @@ test.beforeAll(async () => {
 test.beforeEach(async ({ page }) => {
   await page.route("https://wa-workspace.test/**", route => {
     const path = new URL(route.request().url()).pathname;
+    if (path === "/api/upload-foto") return route.fulfill({ contentType: "application/json", body: JSON.stringify({ success: true, key: "catalog/demo-upload.jpg" }) });
     return route.fulfill({ contentType: path.endsWith(".js") ? "application/javascript" : path.endsWith(".css") ? "text/css" : "text/html",
       body: path.endsWith(".js") ? js : path.endsWith(".css") ? css : '<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/bundle.css"><style>body{font-family:Arial,sans-serif;background:#0a0f1e;color:white}</style></head><body><div id="root"></div><script src="/bundle.js"></script></body></html>' });
   });
@@ -17,6 +18,32 @@ test.beforeEach(async ({ page }) => {
 });
 const chooseAndi = page => page.locator('.wa-conversation[data-phone="6281234567890"]').click();
 const chooseMaya = page => page.locator('.wa-conversation[data-phone="6281234567891"]').click();
+
+test("catalog quick reply previews a saved image and sends it as catalog media", async ({ page }) => {
+  await chooseAndi(page);
+  await page.getByRole("button", { name: "🖼️ Katalog" }).click();
+  await page.getByRole("button", { name: "SOP Cleaning Service" }).click();
+  await expect(page.locator(".wa-catalog-draft")).toContainText("SOP Cleaning Service");
+  await expect(page.locator(".wa-catalog-draft")).toContainText("Rp 95.000");
+  await expect(page.getByLabel("Pesan WhatsApp")).toHaveValue("Halo, berikut informasi dari AClean:");
+  await page.getByRole("button", { name: "Kirim ↗", exact: true }).click();
+  const calls = await page.evaluate(() => window.waTest.calls.filter(call => call.type === "send"));
+  expect(calls).toMatchObject([{ kind: "CATALOG", phone: "6281234567890" }]);
+  await expect(page.locator(".wa-message-content").filter({ hasText: "Harga: Rp 95.000" })).toHaveCount(1);
+});
+
+test("owner can save a structured catalog item with R2 photo and a live price reference", async ({ page }) => {
+  await page.goto("https://wa-workspace.test/?catalog");
+  await page.getByRole("button", { name: "+ Item baru" }).click();
+  await page.getByLabel("Nama katalog").fill("SOP Test Press");
+  await page.getByLabel("Deskripsi / rincian").fill("Pemeriksaan tekanan AC");
+  await page.getByLabel("Foto (JPG, PNG, WebP · maks. 2,5 MB)").setInputFiles({ name: "test.jpg", mimeType: "image/jpeg", buffer: Buffer.from([0xff,0xd8,0xff,0xd9]) });
+  await page.getByLabel("Sumber harga").selectOption("price_list");
+  await page.getByLabel("Item Price List").selectOption("1");
+  await page.getByRole("button", { name: "Simpan item" }).click();
+  await expect(page.getByRole("button", { name: /SOP Test Press/ })).toBeVisible();
+  expect(await page.evaluate(() => window.waTest.catalogItems.find(item => item.title === "SOP Test Press"))).toMatchObject({ description: "Pemeriksaan tekanan AC", image_key: "catalog/demo-upload.jpg", price_source: "price_list", source_id: "1" });
+});
 
 test("desktop keeps inbox alongside chat and scopes orders, invoices, and reorder to a location", async ({ page }) => {
   const errors = []; page.on("pageerror", error => errors.push(error.message));

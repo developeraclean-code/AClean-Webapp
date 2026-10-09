@@ -273,14 +273,45 @@ export async function manageUser(req, res) {
 
     const uid = authData.id;
     const colorMap = { Owner: "#f59e0b", Admin: "#38bdf8", Teknisi: "#22c55e", Helper: "#a78bfa" };
-    const profileRes = await fetch(SU + "/rest/v1/user_profiles", {
-      method: "POST",
-      headers: { ...headers, Prefer: "return=representation" },
-      body: JSON.stringify({ id: uid, name, role, phone: phone || "", avatar: name.charAt(0).toUpperCase(), color: colorMap[role] || "#38bdf8", active: true })
-    });
-    const profileData = await profileRes.json();
-    if (!profileRes.ok) return res.status(207).json({ ok: true, warning: "Auth OK, profile gagal: " + JSON.stringify(profileData), user: authData });
-    return res.status(200).json({ ok: true, user: { ...authData, ...profileData[0] } });
+    let profileRes = null;
+    let profileData = [];
+    try {
+      profileRes = await fetch(SU + "/rest/v1/user_profiles", {
+        method: "POST",
+        headers: { ...headers, Prefer: "return=representation" },
+        body: JSON.stringify({ id: uid, name, role, phone: phone || "", avatar: name.charAt(0).toUpperCase(), color: colorMap[role] || "#38bdf8", active: true })
+      });
+      profileData = await profileRes.json().catch(() => []);
+    } catch (error) { console.warn("[manage-user] Profile request failed:", error); }
+    let savedProfile = profileRes?.ok && Array.isArray(profileData) ? profileData[0] : null;
+    if (savedProfile && (savedProfile.id !== uid || savedProfile.name !== name || savedProfile.role !== role)) savedProfile = null;
+    // Sebagian instalasi membuat profil lewat trigger auth.users, sehingga INSERT
+    // dapat konflik walaupun profilnya sudah tersedia. Verifikasi sebelum gagal.
+    if (!savedProfile) {
+      let verifyRes = null;
+      try {
+        verifyRes = await fetch(`${SU}/rest/v1/user_profiles?id=eq.${encodeURIComponent(uid)}&select=id,name,role&limit=1`, {
+          headers: { apikey: SK, Authorization: "Bearer " + SK }
+        });
+      } catch (error) { console.warn("[manage-user] Profile verification failed:", error); }
+      const verified = verifyRes?.ok ? await verifyRes.json().catch(() => []) : [];
+      savedProfile = verified[0] || null;
+      if (!savedProfile || savedProfile.id !== uid || savedProfile.name !== name || savedProfile.role !== role) {
+        console.warn("[manage-user] Profile create failed:", profileData);
+        // Rollback hanya saat INSERT ditolak secara pasti dan pembacaan
+        // memastikan profil tidak ada. Timeout/5xx bisa berarti hasil belum pasti.
+        if (profileRes && profileRes.status >= 400 && profileRes.status < 500 && verifyRes?.ok && !savedProfile) {
+          let rollbackRes = null;
+          try { rollbackRes = await fetch(`${adminUrl}/${encodeURIComponent(uid)}`, { method: "DELETE", headers }); }
+          catch (error) { console.warn("[manage-user] Auth rollback failed:", error); }
+          if (rollbackRes?.ok || rollbackRes?.status === 404) {
+            return res.status(500).json({ ok: false, error: "Profil karyawan gagal disimpan; akun baru dibatalkan. Silakan coba lagi." });
+          }
+        }
+        return res.status(502).json({ ok: false, error: "Akun login dibuat tetapi profil karyawan belum terverifikasi. Hubungi admin sebelum mencoba lagi.", userId: uid });
+      }
+    }
+    return res.status(200).json({ ok: true, user: { ...authData, ...savedProfile } });
   }
 
   // ── UPDATE PROFILE ──

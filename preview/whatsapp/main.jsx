@@ -6,6 +6,7 @@ import "./preview.css";
 
 function Preview() {
   const schedulePreview = new URLSearchParams(location.search).get("view") === "jadwal";
+  const catalogPreview = new URLSearchParams(location.search).has("catalog");
   const [action, setAction] = useState(null);
   const [notice, setNotice] = useState("");
   const [failSend, setFailSend] = useState(false);
@@ -19,16 +20,18 @@ function Preview() {
   const closeAction = () => { action?.returnToChat(); setAction(null); };
   return <>
     <header className="demo-bar">
-      <div><b>AClean · Testing {schedulePreview ? 'Jadwal' : 'WhatsApp'}</b><span>Data simulasi · Tidak terhubung ke WhatsApp asli</span></div>
+      <div><b>AClean · Testing {catalogPreview ? 'Katalog WA' : schedulePreview ? 'Jadwal' : 'WhatsApp'}</b><span>Data simulasi · Tidak terhubung ke WhatsApp asli</span></div>
       <button onClick={() => location.reload()}>Reset demo</button>
     </header>
     <main className="demo-home">
       <span className="demo-label">PREVIEW LOKAL</span>
-      <h1>{schedulePreview ? "Jadwal Team AClean" : "Coba alur WhatsApp Workspace"}</h1>
-      {!schedulePreview && <p>Klik Andi, pilih lokasi Rumah atau Kantor, lalu Jadwalkan/Reorder untuk membuka pop-up rencana. Pilih tanggal, Team opsional, dan jam; setelah disimpan klik Lihat di Jadwal.</p>}
-      <p>Tombol Jadwal Tim menampilkan Team 01–08 dari preset, anggota yang berbeda setiap hari, dan contoh teknisi absen. Klik kartu untuk reschedule; klik hari untuk timeline per jam. Semua data simulasi dan kembali ke awal saat halaman dimuat ulang.</p>
+      <h1>{catalogPreview ? "Kelola Katalog WA" : schedulePreview ? "Jadwal Team AClean" : "Coba alur WhatsApp Workspace"}</h1>
+      <p><a href="/">WhatsApp Workspace</a> · <a href="/?catalog">Katalog WA</a> · <a href="/?view=jadwal">Jadwal</a></p>
+      {!schedulePreview && !catalogPreview && <p>Klik Andi, pilih lokasi Rumah atau Kantor, lalu Jadwalkan/Reorder untuk membuka pop-up rencana. Pilih tanggal, Team opsional, dan jam; setelah disimpan klik Lihat di Jadwal.</p>}
+      {!catalogPreview && <p>Tombol Jadwal Tim menampilkan Team 01–08 dari preset, anggota yang berbeda setiap hari, dan contoh teknisi absen. Klik kartu untuk reschedule; klik hari untuk timeline per jam. Semua data simulasi dan kembali ke awal saat halaman dimuat ulang.</p>}
+      {catalogPreview && <p>Tambah atau ubah item, unggah foto, tautkan harga, lalu periksa Balasan Cepat di WhatsApp Workspace. Data contoh kembali ke awal saat halaman dimuat ulang.</p>}
       {schedulePreview && <p>Contoh area BSD dan Graha Raya tampil di kartu dan grid jam. Klik tanggal {shiftDateStr(getLocalDate(),1)} atau {shiftDateStr(getLocalDate(),2)}, lalu seret blok pekerjaan ke jam atau Team lain. Perubahan baru tersimpan setelah konfirmasi di pop-up Planning; tombol Planning Order menampilkan job yang sama.</p>}
-      {!schedulePreview && <label className="demo-switch"><input type="checkbox" checked={failSend} onChange={e => { setFailSend(e.target.checked); window.waTest.sendResult = !e.target.checked; }} /> Simulasikan pengiriman gagal</label>}
+      {!schedulePreview && !catalogPreview && <label className="demo-switch"><input type="checkbox" checked={failSend} onChange={e => { setFailSend(e.target.checked); window.waTest.sendResult = !e.target.checked; }} /> Simulasikan pengiriman gagal</label>}
       <WorkspaceFixture planningMode initialView={schedulePreview ? "schedule" : "whatsapp"} onNotice={setNotice} onAction={(event, returnToChat) => setAction({ ...event, returnToChat })} />
     </main>
     {action && <section className="demo-action" role="dialog" aria-modal="true" aria-labelledby="demo-action-title" ref={actionBox} tabIndex={-1} onKeyDown={e => { if (e.key === "Escape") closeAction(); }}>

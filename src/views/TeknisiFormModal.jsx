@@ -95,7 +95,7 @@ export default function TeknisiFormModal({
           body: JSON.stringify({ action: "create", email: newTeknisiForm.email.trim(), password: autoPass, name: newTeknisiForm.name.trim(), role: newTeknisiForm.role, phone: normalizePhone(newTeknisiForm.phone), callerRole: currentUser?.role }),
         });
         const result = await res.json();
-        if (!result.ok) { showNotif("❌ " + (result.error || "Gagal buat akun")); return; }
+        if (!res.ok || !result.ok || !result.user?.id) { showNotif("❌ " + (result.error || "Profil karyawan belum tersimpan. Coba lagi atau hubungi admin.")); return; }
         const uid = result.user?.id;
         const colorMap = { Teknisi: "#22c55e", Helper: "#a78bfa", Supervisor: "#38bdf8" };
         const newTek = { id: uid, name: newTeknisiForm.name.trim(), role: newTeknisiForm.role, phone: normalizePhone(newTeknisiForm.phone), email: newTeknisiForm.email.trim(), skills: [], jobs_today: 0, status: "active", active: true, color: colorMap[newTeknisiForm.role] || "#22c55e", avatar: newTeknisiForm.name.charAt(0).toUpperCase() };
@@ -105,6 +105,8 @@ export default function TeknisiFormModal({
         showNotif("✅ " + newTeknisiForm.name + " ditambahkan — password: " + autoPass);
       }
       onClose();
+    } catch (error) {
+      showNotif("❌ " + (error.message || "Data karyawan gagal disimpan. Coba lagi."));
     } finally {
       setSaving(false);
     }
