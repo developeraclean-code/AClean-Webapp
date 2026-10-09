@@ -3688,10 +3688,18 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
   };
 
   const renderDashboardMain = () => {
+    const openInvoiceQueue = (status) => {
+      setSearchInvoice("");
+      setInvoiceDateFrom("");
+      setInvoiceDateTo("");
+      setInvoicePage(1);
+      setInvoiceFilter(status);
+      setActiveMenu("invoice");
+    };
     return (
     <DashboardView ordersData={ordersData} invoicesData={invoicesData} inventoryData={inventoryData}
       teknisiData={teknisiData} omsetView={omsetView} setOmsetView={setOmsetView} waConversations={waConversations}
-      bulanIni={bulanIni} setActiveMenu={setActiveMenu} setInvoiceFilter={setInvoiceFilter} setModalOrder={setModalOrder}
+      bulanIni={bulanIni} setActiveMenu={setActiveMenu} setInvoiceFilter={setInvoiceFilter} openInvoiceQueue={openInvoiceQueue} setModalOrder={setModalOrder}
       setWaPanel={setWaPanel} setWaTekTarget={setWaTekTarget} setModalWaTek={setModalWaTek}
       getTechColor={getTechColor} triggerRekapHarian={triggerRekapHarian} openLaporanModal={openLaporanModal} openBAPModal={openBAPModal} bapEnabled={appSettings?.bap_enabled === "true"}
       openMaterialBringModal={openMaterialBringModal} openJobReport={openJobReport} materialsBroughtMap={materialsBroughtMap}

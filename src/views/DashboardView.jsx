@@ -136,7 +136,7 @@ const normalizeMonthlyWorkSummary = (payload) => {
   return Object.fromEntries(Object.keys(EMPTY_MONTHLY_WORK).map(key => [key, Number(raw?.[key]) || 0]));
 };
 
-function DashboardView({ ordersData, invoicesData, inventoryData, teknisiData, omsetView, setOmsetView, waConversations, bulanIni, setActiveMenu, setInvoiceFilter, setModalOrder, setWaPanel, setWaTekTarget, setModalWaTek, getTechColor, triggerRekapHarian, openLaporanModal, openBAPModal, openMaterialBringModal, openJobReport, materialsBroughtMap, sendWA, dispatchWA, setSelectedInvoice, setModalPDF, customersData, laporanReports, findCustomer, setSelectedCustomer, setCustomerTab, setHistoryPreview, expensesData, apiHeaders, bapEnabled, bootstrapReady = true }) {
+function DashboardView({ ordersData, invoicesData, inventoryData, teknisiData, omsetView, setOmsetView, waConversations, bulanIni, setActiveMenu, setInvoiceFilter, openInvoiceQueue, setModalOrder, setWaPanel, setWaTekTarget, setModalWaTek, getTechColor, triggerRekapHarian, openLaporanModal, openBAPModal, openMaterialBringModal, openJobReport, materialsBroughtMap, sendWA, dispatchWA, setSelectedInvoice, setModalPDF, customersData, laporanReports, findCustomer, setSelectedCustomer, setCustomerTab, setHistoryPreview, expensesData, apiHeaders, bapEnabled, bootstrapReady = true }) {
   // Fase 1: primitif global dari AppContext.
   const { currentUser, isMobile, fmt, showNotif, TODAY, addAgentLog, supabase } = useAppContext();
 const role = currentUser?.role || "Admin";
@@ -456,8 +456,7 @@ return (
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={() => { setActiveMenu("invoice"); setInvoiceFilter("PENDING_APPROVAL"); }} style={{ padding: "7px 14px", borderRadius: 8, background: "#ef444422", border: "1px solid #ef444444", color: "#ef4444", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Lihat Invoice</button>
-          <button onClick={() => { showNotif("WA reminder dikirim ke admin"); }} style={{ padding: "7px 14px", borderRadius: 8, background: "#ef444422", border: "1px solid #ef444444", color: "#ef4444", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>📱 WA Remind</button>
+          <button onClick={() => openInvoiceQueue("PENDING_APPROVAL")} style={{ padding: "7px 14px", borderRadius: 8, background: "#ef444422", border: "1px solid #ef444444", color: "#ef4444", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Lihat Invoice</button>
         </div>
       </div>
     )}
@@ -471,7 +470,7 @@ return (
             <div style={{ fontSize: 11, color: cs.muted }}>Perlu ditindaklanjuti pada menu Invoice</div>
           </div>
         </div>
-        <button onClick={() => { setActiveMenu("invoice"); setInvoiceFilter("APPROVED"); }} style={{ padding: "7px 14px", borderRadius: 8, background: cs.yellow + "22", border: "1px solid " + cs.yellow + "44", color: cs.yellow, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Lihat Invoice</button>
+        <button onClick={() => openInvoiceQueue("APPROVED")} style={{ padding: "7px 14px", borderRadius: 8, background: cs.yellow + "22", border: "1px solid " + cs.yellow + "44", color: cs.yellow, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Lihat Invoice</button>
       </div>
     )}
 

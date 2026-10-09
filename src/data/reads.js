@@ -41,10 +41,36 @@ export const searchOrdersServer = (supabase, query) => {
 };
 
 const INVOICE_COLS = "id,job_id,customer,phone,address,service,units,labor,material,discount,trade_in,trade_in_amount,total,pph23,pph23_amount,status,due,paid_at,sent,sent_at,created_at,updated_at,follow_up,teknisi,garansi_days,garansi_expires,paid_method,materials_detail,payment_proof_url,repair_gratis,invoice_type,unit_ac_amount,paket_pasang,paid_amount,remaining_amount,wa_sent_count,wa_last_sent_at,wa_last_sent_mode,wa_last_sent_by,wa_last_sent_method,pdf_url,pdf_generated_at,quotation_id";
-export const fetchInvoices = (supabase) =>
-  supabase.from("invoices")
-    .select(INVOICE_COLS)
-    .order("created_at", { ascending: false }).limit(300);
+const ACTIONABLE_INVOICE_STATUSES = ["PENDING_APPROVAL", "APPROVED", "UNPAID", "OVERDUE", "PARTIAL_PAID"];
+const INVOICE_ACTION_PAGE = 500;
+
+// Invoice lama yang masih butuh tindakan harus tetap ada setelah menu Invoice
+// melakukan full reload. PostgREST membatasi hasil per request, jadi lanjutkan
+// halaman sampai habis alih-alih mengambil hanya 300 invoice terbaru.
+const fetchActionableInvoices = async (supabase) => {
+  const rows = [];
+  for (let from = 0;; from += INVOICE_ACTION_PAGE) {
+    const { data, error } = await supabase.from("invoices").select(INVOICE_COLS)
+      .in("status", ACTIONABLE_INVOICE_STATUSES)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, from + INVOICE_ACTION_PAGE - 1);
+    if (error) return { data: null, error };
+    rows.push(...(data || []));
+    if (!data || data.length < INVOICE_ACTION_PAGE) break;
+  }
+  return { data: rows, error: null };
+};
+
+export const fetchInvoices = async (supabase) => {
+  const [recent, actionable] = await Promise.all([
+    supabase.from("invoices").select(INVOICE_COLS)
+      .order("created_at", { ascending: false }).limit(300),
+    fetchActionableInvoices(supabase),
+  ]);
+  const error = recent.error || actionable.error;
+  return { data: error ? null : mergeRowsById(recent.data, actionable.data), error };
+};
 
 const mergeRowsById = (...groups) => {
   const map = new Map();
@@ -58,9 +84,7 @@ export const fetchBootstrapInvoices = async (supabase, sinceIso) => {
   const [recent, actionable] = await Promise.all([
     supabase.from("invoices").select(INVOICE_COLS)
       .gte("created_at", sinceIso).order("created_at", { ascending: false }).limit(150),
-    supabase.from("invoices").select(INVOICE_COLS)
-      .in("status", ["PENDING_APPROVAL", "APPROVED", "UNPAID", "OVERDUE", "PARTIAL_PAID"])
-      .order("created_at", { ascending: false }).limit(300),
+    fetchActionableInvoices(supabase),
   ]);
   const error = recent.error || actionable.error;
   return { data: error ? null : mergeRowsById(recent.data, actionable.data), error };

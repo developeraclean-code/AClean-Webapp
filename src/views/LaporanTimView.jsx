@@ -6,6 +6,7 @@ import { clientCleaningUnitPrice } from "../lib/maintClientPrice.js";
 import { fetchServiceReportsPage, probeTeamInvoiceWorkflow } from "../data/reads.js";
 import { finalizeServiceReportAtomic } from "../data/writes.js";
 import { getTeamFinalizationOutcome, isTeamSplitOrder } from "../lib/teamSplitWorkflow.js";
+import { isProjectReportArchive } from "../lib/projectReportArchive.js";
 
 const isMissingFinalizeRpc = (error) => error?.code === "PGRST202" || error?.code === "42883"
   || /finalize_service_report_atomic.*(schema cache|does not exist|not found)/i.test(error?.message || "");
@@ -1344,6 +1345,9 @@ return (
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", flex: 1, minWidth: 0 }}>
               <span style={{ fontFamily: "monospace", fontWeight: 700, color: cs.accent, fontSize: 13 }}>{r.job_id}</span>
               {badge(r.status)}
+              {isProjectReportArchive(r) && (
+                <span title="Salinan laporan ini tersimpan di Project. Arsip reguler hanya untuk riwayat." style={{ fontSize: 10, color: cs.accent, background: cs.accent + "15", padding: "2px 7px", borderRadius: 99, border: "1px solid " + cs.accent + "33" }}>Arsip Project</span>
+              )}
               {(() => {
                 const linkedOrder = ordersData.find(o => o.id === r.job_id);
                 return linkedOrder?.maintenance_client_id ? (
@@ -1586,7 +1590,7 @@ return (
               // window ordersData. Gunakan data minimal report sebagai fallback;
               // endpoint tetap memvalidasi job_id di server.
               const reportOrder = linkedOrder || { id: r.job_id, customer: r.customer, phone: r.phone, address: r.address, service: r.service };
-              const canLink = (currentUser?.role === "Owner" || currentUser?.role === "Admin") && r.job_id && !linkedOrder?.maintenance_client_id;
+              const canLink = (currentUser?.role === "Owner" || currentUser?.role === "Admin") && r.job_id && !linkedOrder?.maintenance_client_id && !isProjectReportArchive(r);
               return canLink ? (
                 <button onClick={() => setMaintenanceLinkReport({ report: r, order: reportOrder })}
                   style={{ background: cs.yellow + "22", border: "1px solid " + cs.yellow + "44", color: cs.yellow, padding: "8px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
@@ -1594,7 +1598,7 @@ return (
                 </button>
               ) : null;
             })()}
-            {r.status === "SUBMITTED" && (<>
+            {r.status === "SUBMITTED" && !isProjectReportArchive(r) && (<>
               {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && r.service !== "Survey" && (() => {
                 const est = buildVerifyInvoice(r, ordersData.find(o => o.id === r.job_id));
                 return (
@@ -1638,7 +1642,7 @@ return (
               }} style={{ background: cs.red + "22", border: "1px solid " + cs.red + "44", color: cs.red, padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}>Tolak</button>
             </>)}
             {/* Edit laporan — Owner, Admin, atau Teknisi/Helper yang membuat laporan */}
-            {((currentUser?.role === "Owner" || currentUser?.role === "Admin") || r.teknisi === currentUser?.name || r.helper === currentUser?.name) && (
+            {!isProjectReportArchive(r) && ((currentUser?.role === "Owner" || currentUser?.role === "Admin") || r.teknisi === currentUser?.name || r.helper === currentUser?.name) && (
               <button onClick={() => {
                 const mats = JSON.parse(JSON.stringify(r.materials || []));
                 // ✨ PHASE 2: Load barang items separately from existing laporan
@@ -1677,7 +1681,7 @@ return (
                 ✏️ Edit Laporan
               </button>
             )}
-            {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
+            {!isProjectReportArchive(r) && (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
               r.service === "Survey"
                 ? (r.status === "VERIFIED" || r.status === "SUBMITTED") && (
                   <button onClick={() => setSurveyKirimModal(r)}
@@ -1692,7 +1696,7 @@ return (
                   </button>
                 )
             )}
-            {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
+            {!isProjectReportArchive(r) && (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
               <button onClick={async () => {
                 const ok = await showConfirm({
                   icon: "🗑️", title: "Hapus Laporan?",
@@ -1767,8 +1771,8 @@ return (
                 🗑️ Hapus Laporan
               </button>
             )}
-            {r.status === "REVISION" && <span style={{ fontSize: 12, color: cs.yellow }}>Menunggu revisi dari {r.teknisi}</span>}
-            {r.status === "VERIFIED" && <span style={{ fontSize: 12, color: cs.green }}>Laporan sudah terverifikasi</span>}
+            {r.status === "REVISION" && !isProjectReportArchive(r) && <span style={{ fontSize: 12, color: cs.yellow }}>Menunggu revisi dari {r.teknisi}</span>}
+            {r.status === "VERIFIED" && <span style={{ fontSize: 12, color: cs.green }}>{isProjectReportArchive(r) ? "Arsip terverifikasi; pekerjaan dilanjutkan di Project" : "Laporan sudah terverifikasi"}</span>}
             {r.status === "REJECTED" && <span style={{ fontSize: 12, color: cs.red }}>Laporan ditolak</span>}
           </div>
         </div>
