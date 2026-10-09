@@ -312,7 +312,7 @@ const openTeamCalendar=async page=>{
   await expect(page.locator('.team-row-label')).toHaveCount(9);
 };
 
-test('grid satu jam menampilkan nama dan area lengkap tanpa mengubah panjang blok waktu',async({page})=>{
+test('grid menjaga nama dan area di dalam box slot tanpa mengubah panjang blok waktu',async({page})=>{
   await openTeamCalendar(page);
   await page.evaluate(()=>{
     window.waTest.orders.push({id:'SHORT-LONG-NAME',customer:'IBU JULIANA MELATI MAS',address:'Villa Melati Mas Blok I 10, BSD',area:'BSD',service:'Cleaning',units:1,status:'CONFIRMED',date:'2026-10-05',time:'09:00',time_end:'10:00',team_slot:'Team 05'});
@@ -320,17 +320,25 @@ test('grid satu jam menampilkan nama dan area lengkap tanpa mengubah panjang blo
   });
   await page.getByRole('button',{name:'↻ Muat ulang',exact:true}).click();
   const lane=page.locator('.team-time-row[data-team="Team 05"] .team-time-lane').filter({hasText:'IBU JULIANA MELATI MAS'});
-  await expect(lane.locator('.team-time-detail')).toContainText('09:00–10:00 · IBU JULIANA MELATI MAS');
-  await expect(lane.locator('.team-time-detail')).toContainText('📍 BSD');
-  expect(await lane.locator('button').evaluate(el=>el.style.width)).toBe('10%');
-  const layout=await lane.locator('.team-time-detail').evaluate(el=>({content:el.scrollHeight,visible:el.clientHeight,clipped:el.scrollWidth>el.clientWidth}));
-  expect(layout.content).toBeLessThanOrEqual(layout.visible);
-  expect(layout.clipped).toBe(false);
+  const box=lane.locator('.team-time-slot');
+  await expect(box.locator('.team-time-slot-time')).toHaveText('09:00–10:00');
+  await expect(box.locator('.team-time-slot-name')).toHaveText('IBU JULIANA MELATI MAS');
+  await expect(box.locator('.team-time-slot-area')).toHaveText('📍 BSD');
+  expect(await box.evaluate(el=>el.style.width)).toBe('10%');
+  const layout=await box.evaluate(el=>{
+    const outer=el.getBoundingClientRect();
+    const lane=el.closest('.team-time-lane').getBoundingClientRect();
+    const children=[...el.children].map(child=>child.getBoundingClientRect());
+    return {withinLane:outer.left>=lane.left-1&&outer.right<=lane.right+1,childrenInside:children.every(rect=>rect.left>=outer.left-1&&rect.right<=outer.right+1)};
+  });
+  expect(layout).toEqual({withinLane:true,childrenInside:true});
   const halfHour=page.locator('.team-time-row[data-team="Team 06"] .team-time-lane').filter({hasText:'BAPAK ROBERT INTAN'});
-  await expect(halfHour.locator('.team-time-detail')).toContainText('17:30–18:00 · BAPAK ROBERT INTAN');
-  await expect(halfHour.locator('.team-time-detail')).toContainText('📍 Alam Sutera');
-  await expect(halfHour.locator('button')).toBeEmpty();
+  await expect(halfHour.locator('.team-time-slot-time')).toHaveText('17:30');
+  await expect(halfHour.locator('.team-time-slot-name')).toHaveText('BAPAK ROBERT INTAN');
+  await expect(halfHour.locator('.team-time-slot-area')).toHaveText('📍 Alam Sutera');
+  await expect(halfHour.locator('button')).toHaveAttribute('aria-label',/17:30–18:00 · BAPAK ROBERT INTAN · Area Alam Sutera/);
   await page.locator('.team-time-row[data-team="Team 05"]').screenshot({path:'/tmp/aclean-grid-readability.png'});
+  await page.locator('.team-time-row[data-team="Team 06"]').screenshot({path:'/tmp/aclean-grid-half-hour.png'});
 });
 
 test('weekly Team calendar follows presets, daily crews, absences and hourly detail',async({page})=>{
@@ -655,13 +663,13 @@ test('hourly grid shows the approximate area and planning lets admin correct it'
   await openTeamCalendar(page);
   await page.locator('.team-day').filter({hasText:'06/10'}).click();
   const bsd=page.getByLabel('Timeline harian').locator('.team-time-lane').filter({has:page.locator('button[data-area="BSD"]')});
-  await expect(bsd.locator('.team-time-detail')).toContainText('Ibu Ratna');
-  await expect(bsd.locator('.team-time-detail')).toContainText('📍 BSD');
+  await expect(bsd.locator('.team-time-slot')).toContainText('Ibu Ratna');
+  await expect(bsd.locator('.team-time-slot-area')).toContainText('📍 BSD');
   await expect(page.locator('.team-day-cell[data-date="2026-10-06"] .team-job').filter({hasText:'Ibu Ratna'})).toContainText('BSD');
   await expect(page.getByRole('link',{name:'Periksa alamat Ibu Ratna di Maps'})).toHaveAttribute('href',/De%20Park%20BSD%20City/);
   await page.locator('.team-day').filter({hasText:'07/10'}).click();
   const graha=page.locator('.team-time-lane').filter({has:page.locator('button[data-area="Graha Raya"]')});
-  await expect(graha.locator('.team-time-detail')).toContainText('📍 Graha Raya');
+  await expect(graha.locator('.team-time-slot-area')).toContainText('📍 Graha Raya');
   await page.locator('.team-day-cell[data-team="unassigned"][data-date="2026-10-06"] .team-add').click();
   await page.getByLabel('Pelanggan',{exact:true}).fill('Ibu Rini');
   await page.getByLabel('WhatsApp',{exact:true}).fill('6281234567888');
@@ -677,6 +685,6 @@ test('hourly grid shows the approximate area and planning lets admin correct it'
   await page.setViewportSize({width:390,height:844});
   await page.getByRole('button',{name:'Tutup rencana'}).click();
   await page.locator('.team-day').filter({hasText:'06/10'}).click();
-  await expect(page.getByLabel('Timeline harian').locator('.team-time-lane').filter({has:page.locator('button[data-area="BSD"]')}).locator('.team-time-detail')).toContainText('📍 BSD');
+  await expect(page.getByLabel('Timeline harian').locator('.team-time-lane').filter({has:page.locator('button[data-area="BSD"]')}).locator('.team-time-slot-area')).toContainText('📍 BSD');
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
