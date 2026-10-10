@@ -6,8 +6,18 @@ const scopedKey = (prefix, jobId, userKey = "") => `${prefix}${userKey ? `${user
 const FIELD_MEMBER_KEYS = ["teknisi", "helper", "teknisi2", "helper2", "teknisi3", "helper3"];
 const DISPLAY_MEMBER_KEYS = ["teknisi", "teknisi2", "teknisi3", "helper", "helper2", "helper3"];
 const PRE_REPORT_STATUSES = new Set([
-  "PENDING", "CONFIRMED", "DISPATCHED", "ON_SITE", "WORKING", "IN_PROGRESS", "COMPLETED",
+  "PENDING", "CONFIRMED", "DISPATCHED", "ON_SITE", "WORKING", "IN_PROGRESS", "CONTINUED", "COMPLETED",
 ]);
+
+export const isReportableFieldOrder = order =>
+  Boolean(order && PRE_REPORT_STATUSES.has(String(order.status || "").toUpperCase()));
+
+export function isOldUnreportedFieldOrder(order, today, days = 7) {
+  const due = Date.parse(`${String(order?.date || "").slice(0, 10)}T00:00:00Z`);
+  const current = Date.parse(`${today}T00:00:00Z`);
+  return Number.isFinite(due) && Number.isFinite(current) &&
+    current - due > days * 24 * 60 * 60 * 1000;
+}
 
 export function isFieldOrderAssigned(order, employeeName) {
   const name = String(employeeName || "").trim().toLowerCase();
@@ -174,6 +184,6 @@ export function findDelayedFieldReports(orders, reports, employeeName, today) {
     const due = order.date < today || ["COMPLETED", "REPORT_SUBMITTED"].includes(order.status);
     // Status invoice/paid menandakan workflow laporan sudah lewat. Jangan menuduh
     // laporan tertunda hanya karena dataset laporan di bootstrap sedang dipaginasi.
-    return assigned && due && PRE_REPORT_STATUSES.has(order.status) && !reported.has(order.id);
+    return assigned && due && isReportableFieldOrder(order) && !reported.has(order.id);
   }).sort((a, b) => `${a.date} ${a.time || ""}`.localeCompare(`${b.date} ${b.time || ""}`));
 }

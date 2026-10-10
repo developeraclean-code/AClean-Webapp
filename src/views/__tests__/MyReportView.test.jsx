@@ -15,8 +15,8 @@ const report = {
   editLog: [], materials: [], units: [],
 };
 
-const renderFor = (name, overrides = {}) => renderToStaticMarkup(createElement(MyReportView, {
-  laporanReports: [{ ...report, ...overrides }], projectDailyReports: [], ordersData: [order], invoicesData: [],
+const renderFor = (name, overrides = {}, orderOverrides = {}) => renderToStaticMarkup(createElement(MyReportView, {
+  laporanReports: [{ ...report, ...overrides }], projectDailyReports: [], ordersData: [{ ...order, ...orderOverrides }], invoicesData: [],
   currentUser: { id: name === "Dedi" ? "USER-DEDI" : `USER-${name.toUpperCase()}`, name, role: "Teknisi" }, searchLaporan: "", setSearchLaporan: () => {},
   safeArr: value => Array.isArray(value) ? value : [], TODAY: "2026-10-10", INSTALL_ITEMS: [],
 }));
@@ -57,5 +57,32 @@ describe("Laporan Saya multi anggota", () => {
     const html = renderFor("Dedi", { status: "VERIFIED" });
     expect(html).toContain("Lihat Detail");
     expect(html).not.toContain("Tulis Ulang");
+  });
+
+  it("tidak menampilkan laporan order yang kemudian dibatalkan", () => {
+    expect(renderFor("Dedi", {}, { status: "CANCELLED" })).not.toContain("JAYA-KREASI");
+  });
+
+  it("mengeluarkan job batal dari antrean Belum Dibuat", () => {
+    const html = renderToStaticMarkup(createElement(MyReportView, {
+      laporanReports: [], projectDailyReports: [], ordersData: [{ ...order, status: "CANCELLED" }], invoicesData: [],
+      currentUser: { name: "Angga", role: "Helper" }, searchLaporan: "", setSearchLaporan: () => {},
+      safeArr: value => Array.isArray(value) ? value : [], TODAY: "2026-10-10", INSTALL_ITEMS: [],
+    }));
+    expect(html).not.toContain("JAYA-KREASI");
+    expect(html).toContain("Belum Laporan</div>");
+  });
+
+  it("memisahkan pekerjaan lama yang masih confirmed tanpa menganggapnya batal", () => {
+    const props = {
+      laporanReports: [], projectDailyReports: [],
+      ordersData: [{ ...order, status: "CONFIRMED", date: "2026-10-01" }], invoicesData: [],
+      currentUser: { name: "Angga", role: "Helper" }, searchLaporan: "", setSearchLaporan: () => {},
+      safeArr: value => Array.isArray(value) ? value : [], TODAY: "2026-10-10", INSTALL_ITEMS: [],
+    };
+    const html = renderToStaticMarkup(createElement(MyReportView, props));
+    expect(html).toContain("1 pekerjaan lama belum dilaporkan");
+    expect(html).not.toContain("JAYA-KREASI");
+    expect(renderToStaticMarkup(createElement(MyReportView, { ...props, searchLaporan: "JAYA" }))).toContain("JAYA-KREASI");
   });
 });

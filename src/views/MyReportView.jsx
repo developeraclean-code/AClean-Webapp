@@ -1,16 +1,18 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import { cs } from "../theme/cs.js";
-import { canOriginalReporterEdit, isFieldOrderAssigned, isFieldReportAssigned } from "../lib/fieldReportWorkflow.js";
+import { canOriginalReporterEdit, isFieldOrderAssigned, isFieldReportAssigned, isOldUnreportedFieldOrder, isReportableFieldOrder } from "../lib/fieldReportWorkflow.js";
 
 function MyReportView({ laporanReports, projectDailyReports, ordersData, invoicesData, currentUser, searchLaporan, setSearchLaporan, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setEditStockMats, setLaporanInstallItems, openLaporanModal, openBAPModal, bapEnabled, safeArr, TODAY, INSTALL_ITEMS, downloadServiceReportPDF }) {
+const [showOldJobs, setShowOldJobs] = useState(false);
 const myName = currentUser?.name || "";
 const orderById = new Map(ordersData.map(order => [order.id, order]));
 // Get all submitted reports (service_reports → order biasa)
 const submittedReps = laporanReports.filter(r =>
-  isFieldReportAssigned(r, orderById.get(r.job_id), myName)
+  isFieldReportAssigned(r, orderById.get(r.job_id), myName) &&
+  !["CANCELLED", "RESCHEDULED"].includes(String(orderById.get(r.job_id)?.status || "").toUpperCase())
 );
 // Get my ORDERS_DATA jobs — include all teknisi/helper slots (teknisi2/3, helper2/3 for multi-person teams)
-const myJobs = ordersData.filter(o => isFieldOrderAssigned(o, myName));
+const myJobs = ordersData.filter(o => isFieldOrderAssigned(o, myName) && isReportableFieldOrder(o));
 // Job IDs yang sudah dilaporkan: service_reports (order biasa) + project_daily_reports (order project)
 const pdrByOrderId = new Set((projectDailyReports || []).map(r => r.order_id).filter(Boolean));
 // Job dianggap "sudah dilaporkan" bila ADA laporan dari SIAPA PUN (1 laporan/job).
@@ -31,6 +33,8 @@ const pendingAsDraft = pendingJobs.map(o => ({
   status: "PENDING", kondisi_sebelum: "", kondisi_setelah: "", pekerjaan: [],
   rekomendasi: "", catatan: "", freon: "0", ampere: "", editLog: []
 }));
+const oldPendingIds = new Set(pendingJobs.filter(o => isOldUnreportedFieldOrder(o, TODAY)).map(o => o.id));
+const activePendingCount = pendingJobs.length - oldPendingIds.size;
 let myReps = [...submittedReps, ...pendingAsDraft]
   .sort((a, b) => {
     const da = a.date || a.submitted?.slice(0, 10) || "";
@@ -56,10 +60,13 @@ if (isTeknisiOrHelper) {
 // CUTOFF_DATE dihapus — tampilkan semua belum-laporan yang real, tanpa filter tanggal.
 // Auto-hide VERIFIED untuk teknisi/helper tetap berlaku (laporan selesai tidak menumpuk).
 
-const filtReps = myReps.filter(r =>
+const matchingReps = myReps.filter(r =>
   !searchLaporan ||
   (r.customer || "").toLowerCase().includes(searchLaporan.toLowerCase()) ||
   (r.job_id || "").toLowerCase().includes(searchLaporan.toLowerCase())
+);
+const filtReps = matchingReps.filter(r =>
+  !isTeknisiOrHelper || showOldJobs || searchLaporan || !oldPendingIds.has(r.job_id)
 );
 
 const sMap = { SUBMITTED: [cs.accent, "Submitted"], VERIFIED: [cs.green, "Terverifikasi"], REVISION: [cs.yellow, "Perlu Revisi"], REJECTED: [cs.red, "Ditolak"], PENDING: [cs.muted, "Belum Dibuat"] };
@@ -75,7 +82,7 @@ return (
     <div>
       <div style={{ fontWeight: 800, fontSize: 18, color: cs.text }}>Laporan Saya</div>
       <div style={{ fontSize: 12, color: cs.muted, marginTop: 3 }}>
-        {isTeknisiOrHelper ? "📋 Menampilkan laporan baru & revisi saja. Laporan terverifikasi disembunyikan. " : ""}
+        {isTeknisiOrHelper ? "📋 Job batal tidak perlu laporan. Laporan terverifikasi hari ini masih tampil; hari sebelumnya disembunyikan. " : ""}
         {!isTeknisiOrHelper ? "Semua job kamu — buat laporan untuk job yang belum dilaporkan, edit yang sudah masuk" : ""}
       </div>
     </div>
@@ -83,7 +90,7 @@ return (
     {/* Stats */}
     <div style={{ display: "grid", gridTemplateColumns: `repeat(${isTeknisiOrHelper ? 2 : 3},1fr)`, gap: 10 }}>
       {(isTeknisiOrHelper
-        ? [["Belum Laporan", pendingAsDraft.length, cs.muted], ["Submitted", submittedReps.filter(r => (r.status || "").toUpperCase() === "SUBMITTED").length, cs.accent]]
+        ? [["Belum Laporan", activePendingCount, cs.muted], ["Submitted", submittedReps.filter(r => (r.status || "").toUpperCase() === "SUBMITTED").length, cs.accent]]
         : [["Belum Laporan", pendingAsDraft.length, cs.muted], ["Submitted", submittedReps.filter(r => (r.status || "").toUpperCase() === "SUBMITTED").length, cs.accent], ["Terverifikasi", submittedReps.filter(r => (r.status || "").toUpperCase() === "VERIFIED").length, cs.green]]
       ).map(([lbl, val, col]) => (
         <div key={lbl} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 12, padding: 16, textAlign: "center" }}>
@@ -92,6 +99,15 @@ return (
         </div>
       ))}
     </div>
+
+    {isTeknisiOrHelper && oldPendingIds.size > 0 && (
+      <button type="button" onClick={() => setShowOldJobs(value => !value)}
+        aria-expanded={showOldJobs}
+        style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "10px 14px", color: cs.muted, textAlign: "left", cursor: "pointer", fontSize: 12 }}>
+        {showOldJobs ? "▾" : "▸"} {oldPendingIds.size} pekerjaan lama belum dilaporkan · {showOldJobs ? "Sembunyikan" : "Tinjau"}
+        <span style={{ display: "block", marginTop: 3 }}>Jika pekerjaan dibatalkan, minta Admin ubah status order. Data tidak dihapus otomatis.</span>
+      </button>
+    )}
 
     {/* Search */}
     <div style={{ position: "relative" }}>
@@ -105,7 +121,9 @@ return (
     {/* List */}
     {filtReps.length === 0
       ? <div style={{ background: cs.card, borderRadius: 14, padding: 40, textAlign: "center", color: cs.muted }}>
-        Belum ada laporan. Gunakan tombol Laporan di halaman Jadwal.
+        {oldPendingIds.size > 0 && isTeknisiOrHelper && !showOldJobs && !searchLaporan
+          ? "Tidak ada laporan aktif. Pekerjaan lama dapat dibuka melalui tombol Tinjau di atas."
+          : "Tidak ada laporan yang perlu ditindaklanjuti."}
       </div>
       : filtReps.map(r => {
         const isPending = r.status === "PENDING";

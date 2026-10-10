@@ -57,7 +57,7 @@ export async function submitLaporan({
     {
       const { data: liveOrder, error: liveErr } = await supabase
         .from("orders")
-        .select("id, customer, teknisi")
+        .select("id, customer, teknisi, status")
         .eq("id", laporanModal.id)
         .maybeSingle();
       if (liveErr) {
@@ -68,6 +68,11 @@ export async function submitLaporan({
       }
       if (!liveOrder) {
         showNotif(`❌ Order ${laporanModal.id} tidak ditemukan di database. Tutup form ini, refresh halaman, lalu buka ulang job yang benar.`);
+        submitLaporanLock.current = false;
+        return;
+      }
+      if (["CANCELLED", "RESCHEDULED"].includes(String(liveOrder.status || "").toUpperCase())) {
+        showNotif("🔒 Job ini sudah dibatalkan atau dijadwal ulang. Laporan tidak dikirim; buka order aktif yang benar.");
         submitLaporanLock.current = false;
         return;
       }

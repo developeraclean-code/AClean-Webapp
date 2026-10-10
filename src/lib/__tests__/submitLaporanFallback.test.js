@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { invoiceBlocksReportRewrite, reportSubmissionMutationKey, shouldFallbackAtomicReportSubmit } from "../submitLaporan.js";
+import { describe, expect, it, vi } from "vitest";
+import { invoiceBlocksReportRewrite, reportSubmissionMutationKey, shouldFallbackAtomicReportSubmit, submitLaporan } from "../submitLaporan.js";
 
 describe("atomic report submit fallback", () => {
   it("memakai jalur kompatibilitas untuk mismatch foto_urls migration 177", () => {
@@ -19,6 +19,23 @@ describe("atomic report submit fallback", () => {
 });
 
 describe("koreksi satu laporan sebelum verifikasi", () => {
+  it("menolak submit bila order live sudah dibatalkan sejak form dibuka", async () => {
+    const showNotif = vi.fn();
+    const from = vi.fn(() => ({
+      select: () => ({ eq: () => ({ maybeSingle: async () => ({
+        data: { id: "JOB-BATAL", customer: "Customer", teknisi: "Dedi", status: "CANCELLED" }, error: null,
+      }) }) }),
+    }));
+    const lock = { current: false };
+    await submitLaporan({
+      laporanModal: { id: "JOB-BATAL", customer: "Customer", teknisi: "Dedi" },
+      submitLaporanLock: lock, showNotif, supabase: { from },
+    });
+    expect(showNotif).toHaveBeenCalledWith(expect.stringContaining("dibatalkan"));
+    expect(from).toHaveBeenCalledTimes(1);
+    expect(lock.current).toBe(false);
+  });
+
   it("memakai mutation key baru saat menulis ulang ID laporan yang sama", () => {
     expect(reportSubmissionMutationKey("R1", false)).toBe("report-submit:R1");
     expect(reportSubmissionMutationKey("R1", true, "edit-1")).toBe("report-submit:R1:revision:edit-1");

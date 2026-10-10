@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   canOriginalReporterEdit, fieldReportAssignedNames, findDelayedFieldReports, isFieldOrderAssigned, isFieldReportAssigned,
+  isOldUnreportedFieldOrder, isReportableFieldOrder,
   loadFieldReportDraft, saveFieldReportDraft, uploadWithRetry,
 } from "../fieldReportWorkflow.js";
 import { openLaporanModal } from "../openLaporanModal.js";
@@ -16,6 +17,24 @@ beforeEach(() => {
 });
 
 describe("field report workflow", () => {
+  it("hanya memasukkan order aktif ke antrean laporan dan memisahkan yang lama", () => {
+    expect(isReportableFieldOrder({ status: "CONFIRMED" })).toBe(true);
+    expect(isReportableFieldOrder({ status: "CONTINUED" })).toBe(true);
+    expect(isReportableFieldOrder({ status: "CANCELLED" })).toBe(false);
+    expect(isReportableFieldOrder({ status: "RESCHEDULED" })).toBe(false);
+    expect(isReportableFieldOrder({ status: "REPORT_SUBMITTED" })).toBe(false);
+    expect(isOldUnreportedFieldOrder({ date: "2026-10-02" }, "2026-10-10")).toBe(true);
+    expect(isOldUnreportedFieldOrder({ date: "2026-10-03" }, "2026-10-10")).toBe(false);
+  });
+
+  it("menolak membuka form untuk job yang dibatalkan", () => {
+    const showNotif = vi.fn();
+    const setLaporanModal = vi.fn();
+    openLaporanModal({ id: "BATAL", status: "CANCELLED" }, { showNotif, setLaporanModal });
+    expect(showNotif).toHaveBeenCalledWith(expect.stringContaining("dibatalkan"));
+    expect(setLaporanModal).not.toHaveBeenCalled();
+  });
+
   it("mengizinkan hanya pengirim awal mengedit sampai diverifikasi", () => {
     const reporter = { id: "USER-ANGGA" };
     const teammate = { id: "USER-FIKRI" };

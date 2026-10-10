@@ -19,6 +19,10 @@ export function openLaporanModal(order, {
   setShowUnitPresetModal, setUnitPresetHistory, setUnitPresetSelected, showNotif,
   submitLaporanLock, supabase,
 } = {}) {
+    if (["CANCELLED", "RESCHEDULED"].includes(String(order?.status || "").toUpperCase())) {
+      showNotif("🔒 Job ini sudah dibatalkan atau dijadwal ulang. Buka order aktif yang benar untuk membuat laporan.");
+      return;
+    }
     // Draft lokal di-scope per akun agar data dua teknisi pada perangkat bersama
     // tidak tertukar. Gunakan scope yang sama saat mencegah async prefill registry
     // menimpa draft yang akan dipulihkan oleh LaporanTeknisiModal.
