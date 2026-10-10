@@ -6,7 +6,7 @@ import { useAppContext } from "../context/AppContext.js";
 import { categoryOf, LINE_CATEGORY } from "../lib/invoicing.js";
 import { downloadCsv } from "../lib/exportUtils.js";
 import { acknowledgePaidInvoicesWithoutProofAtomic } from "../data/writes.js";
-import { dismissedProofsForInvoice, pendingProofsForInvoice } from "../lib/paymentEvidence.js";
+import { dismissedProofsForInvoice, invoiceProofAction, pendingProofsForInvoice } from "../lib/paymentEvidence.js";
 import AcUnitInvoiceModal from "./AcUnitInvoiceModal.jsx";
 import QuotationView from "./QuotationView.jsx";
 import { BlobProvider } from "@react-pdf/renderer";
@@ -57,7 +57,7 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
         const { data: dismissed, error: dismissedError } = await supabase
           .from("payment_suggestions")
           .select("id, phone, sender_name, amount, bank, transfer_date, image_url, created_at, invoice_id, match_source, raw_message, status")
-          .eq("status", "DISMISSED").eq("invoice_id", inv.id)
+          .eq("status", "DISMISSED").eq("validation_status", "PENDING").eq("invoice_id", inv.id)
           .not("image_url", "is", null)
           .order("created_at", { ascending: false }).limit(20);
         if (dismissedError) throw dismissedError;
@@ -142,46 +142,64 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
     if (needsManualReview && !reviewAcknowledged) { showNotif("⚠️ Buka dan periksa file sebelum melampirkan bukti yang belum dikenali AI"); return; }
     setBusy(true);
     try {
+      const { data: freshInv, error: freshError } = await supabase.from("invoices")
+        .select("status,payment_proof_url").eq("id", inv.id).single();
+      if (freshError || !freshInv) throw freshError || new Error("Invoice tidak ditemukan");
+      const action = invoiceProofAction(freshInv);
+      if (action === "already_attached") throw new Error("Bukti sudah terpasang pada invoice ini. Muat ulang halaman sebelum melanjutkan.");
+      if (action === "unavailable") throw new Error("Status invoice sudah berubah. Muat ulang halaman sebelum melanjutkan.");
       const beda = tab === "wa" && selSugg && invTail && !(selSugg.phone || "").replace(/\D/g, "").endsWith(invTail);
       const srcNote = tab === "wa" && selSugg
         ? `Bukti manual dari ${selSugg.sender_name || selSugg.phone || "WA"}${beda ? " (nomor beda)" : ""}`
         : tab === "url" ? "Bukti dilampirkan manual (URL)" : "Bukti dilampirkan manual (upload)";
 
-      if (alreadyPaid) {
-        // Sudah lunas → cukup lampirkan bukti
-        const { error } = await supabase.from("invoices")
-          .update({ payment_proof_url: chosenUrl, updated_at: new Date().toISOString() }).eq("id", inv.id);
-        if (error) throw error;
+      if (action === "attach_only") {
+        // Invoice sudah lunas: lampirkan bukti tanpa mencatat pembayaran lagi.
+        // Kondisi pada update mencegah bukti yang dipasang admin lain tertimpa.
+        const { data: updated, error } = await supabase.from("invoices")
+          .update({ payment_proof_url: chosenUrl, updated_at: new Date().toISOString() })
+          .eq("id", inv.id).eq("status", "PAID")
+          .or("payment_proof_url.is.null,payment_proof_url.eq.,payment_proof_url.eq.verified-no-proof,payment_proof_url.eq.verified-manual-no-proof")
+          .select("id");
+        if (error || !updated?.length) throw error || new Error("Bukti sudah berubah. Muat ulang halaman sebelum melanjutkan.");
         setInvoicesData(prev => prev.map(i => i.id === inv.id ? { ...i, payment_proof_url: chosenUrl } : i));
       } else {
         // Belum lunas → tandai lunas sekaligus simpan bukti.
         // markPaid TIDAK melempar error saat gagal (hanya notif+return), jadi verifikasi
         // ke DB sebelum lanjut — cegah "false success" & resolve suggestion yang menyesatkan.
-        await markPaid(inv, "transfer", srcNote, false, chosenUrl);
-        const { data: chk } = await supabase.from("invoices").select("status").eq("id", inv.id).single();
-        if (!chk || chk.status !== "PAID") {
-          throw new Error("invoice belum tertandai lunas (cek status/izin) — bukti tidak jadi dilampirkan");
+        await markPaid({ ...inv, status: freshInv.status }, "transfer", srcNote, false, chosenUrl);
+        const { data: chk, error: chkError } = await supabase.from("invoices")
+          .select("status,payment_proof_url").eq("id", inv.id).single();
+        if (chkError || chk?.status !== "PAID" || chk?.payment_proof_url !== chosenUrl) {
+          throw chkError || new Error("Invoice belum lunas dengan bukti ini. Periksa status terbaru sebelum mencoba lagi.");
         }
       }
 
       let suggestionSyncError = null;
       if (tab === "wa" && selSugg) {
         const now = new Date().toISOString();
-        const { data: updatedSuggestions, error } = await supabase.from("payment_suggestions").update({
-            invoice_id: inv.id, order_id: inv.job_id || null,
-            status: "CONFIRMED", validation_status: "LINKED", matched_at: now, match_source: "manual",
-            resolved_at: now, resolved_by: currentUser?.name || (auditUserName ? auditUserName() : "Owner"),
-          }).eq("id", selSugg.id).eq("status", selSugg.status || "PENDING").select("id");
-        if (error || !updatedSuggestions?.length) suggestionSyncError = error?.message || "status saran WA sudah berubah";
-        else {
-          setPaymentSuggestions?.(prev => prev.filter(p => p.id !== selSugg.id));
-          onSuggestionResolved?.(selSugg.id);
+        const { data: freshSugg, error: suggestionReadError } = await supabase.from("payment_suggestions")
+          .select("status,validation_status,invoice_id,image_url").eq("id", selSugg.id).single();
+        if (suggestionReadError || !freshSugg) suggestionSyncError = suggestionReadError?.message || "saran WA tidak ditemukan";
+        else if (freshSugg.image_url !== chosenUrl || (freshSugg.invoice_id && freshSugg.invoice_id !== inv.id)) {
+          suggestionSyncError = "saran WA sudah tertaut ke invoice atau file lain";
+        } else {
+          const { data: updatedSuggestions, error } = await supabase.from("payment_suggestions").update({
+              invoice_id: inv.id, order_id: inv.job_id || null,
+              status: "CONFIRMED", validation_status: "LINKED", matched_at: now, match_source: "manual",
+              resolved_at: now, resolved_by: currentUser?.name || (auditUserName ? auditUserName() : "Owner"),
+            }).eq("id", selSugg.id).eq("status", freshSugg.status).eq("image_url", chosenUrl).select("id");
+          if (error || !updatedSuggestions?.length) suggestionSyncError = error?.message || "status saran WA sudah berubah";
+          else {
+            setPaymentSuggestions?.(prev => prev.filter(p => p.id !== selSugg.id));
+            onSuggestionResolved?.(selSugg.id);
+          }
         }
       }
-      addAgentLog?.("INVOICE_PROOF_ATTACHED", `Bukti bayar dilampirkan manual ke ${inv.id} (${tab})${alreadyPaid ? "" : " + tandai lunas"}`, "SUCCESS");
+      addAgentLog?.("INVOICE_PROOF_ATTACHED", `Bukti bayar dilampirkan manual ke ${inv.id} (${tab})${action === "attach_only" ? "" : " + tandai lunas"}`, "SUCCESS");
       showNotif(suggestionSyncError
         ? `⚠️ Bukti sudah terpasang, tetapi status saran WA gagal diperbarui: ${suggestionSyncError}`
-        : `✅ Bukti dilampirkan${alreadyPaid ? "" : ` & ${inv.id} ditandai lunas`}`);
+        : `✅ Bukti dilampirkan${action === "attach_only" ? "" : ` & ${inv.id} ditandai lunas`}`);
       onClose();
     } catch (err) { showNotif("❌ Gagal: " + (err.message || err)); }
     finally { setBusy(false); }
@@ -200,8 +218,9 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
       <div onClick={e => e.stopPropagation()} style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 16, padding: 18, width: "100%", maxWidth: 520, maxHeight: "90vh", overflowY: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
           <div>
-            <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>🔗 Lampirkan Bukti Bayar</div>
+            <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>{inv.initialSuggestionId ? "🔎 Periksa & Lampirkan Bukti WA" : inv.alternateProof ? "🔗 Cari / Lampirkan Bukti Lain" : "🔗 Lampirkan Bukti Bayar"}</div>
             <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>{inv.id} · {inv.customer} · {fmt(inv.total)}{alreadyPaid ? " · sudah PAID" : ""}</div>
+            <div style={{ fontSize: 11, color: cs.muted, marginTop: 3 }}>{alreadyPaid ? "Simpan bukti saja; pembayaran tidak dicatat ulang." : "Satu konfirmasi akan menautkan bukti dan mencatat pelunasan."}</div>
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer", lineHeight: 1 }}>×</button>
         </div>
@@ -2216,7 +2235,7 @@ return (
             )}
             {/* Bukti bayar — ada URL: tombol lihat. "verified-no-proof": dikonfirmasi manual. PAID tanpa bukti: warning */}
             {inv.status === "PAID" && inv.total > 0 && (
-              inv.payment_proof_url === "verified-no-proof" ? (
+              ["verified-no-proof", "verified-manual-no-proof"].includes(inv.payment_proof_url) ? (
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#0ea5e918", border: "1px solid #0ea5e944", color: "#0ea5e9", padding: "7px 12px", borderRadius: 8, fontSize: 11, fontWeight: 700 }}>
                   {inv.paid_method === "cash" ? "✅ Cash dikonfirmasi" : "✅ Lunas tanpa bukti"}
                 </span>
@@ -2245,12 +2264,12 @@ return (
             )}
             {/* Lampirkan bukti bayar manual — Owner, invoice tanpa bukti (bisa lintas-nomor / email) */}
             {currentUser?.role === "Owner" && inv.total > 0 &&
-              (!inv.payment_proof_url || inv.payment_proof_url === "verified-no-proof") &&
+              (!inv.payment_proof_url || ["verified-no-proof", "verified-manual-no-proof"].includes(inv.payment_proof_url)) &&
               !["CANCELLED", "PENDING_APPROVAL"].includes(inv.status) && (
-              <button onClick={() => setAttachProofInv(inv)}
-                title="Lampirkan bukti bayar manual (pilih dari WA monitor / tempel URL / upload) — untuk bukti dari nomor beda atau via email"
+              <button onClick={() => setAttachProofInv({ ...inv, alternateProof: !!(pendingProof || dismissedProof) })}
+                title={pendingProof || dismissedProof ? "Cari bukti lain dari WA, tempel URL, atau upload jika bukti yang disarankan bukan pembayaran invoice ini" : "Lampirkan bukti bayar manual dari WA, URL, atau upload"}
                 style={{ background: "#0ea5e922", border: "1px solid #0ea5e944", color: "#38bdf8", padding: "7px 12px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
-                🔗 Lampirkan Bukti
+                {pendingProof || dismissedProof ? "🔗 Bukti Lain / Upload" : "🔗 Lampirkan Bukti"}
               </button>
             )}
             <button

@@ -23,3 +23,11 @@ export function dismissedProofsForInvoice(suggestions, invoice) {
     && !!suggestion.image_url && suggestion.invoice_id === invoice.id
   ).sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
 }
+
+export function invoiceProofAction(invoice) {
+  if (!invoice) return "unavailable";
+  const proof = String(invoice.payment_proof_url || "").trim();
+  if (proof && !["verified-no-proof", "verified-manual-no-proof"].includes(proof)) return "already_attached";
+  if (invoice.status === "PAID") return "attach_only";
+  return ["UNPAID", "OVERDUE", "PARTIAL_PAID"].includes(invoice.status) ? "settle" : "unavailable";
+}

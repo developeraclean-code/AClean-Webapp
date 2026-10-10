@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dismissedProofsForInvoice, pendingProofsForInvoice } from "../paymentEvidence.js";
+import { dismissedProofsForInvoice, invoiceProofAction, pendingProofsForInvoice } from "../paymentEvidence.js";
 
 const invoice = { id: "INV-1", phone: "081234567890", total: 195000 };
 const proof = { id: "S1", status: "PENDING", validation_status: "PENDING", image_url: "/api/foto?key=x.jpg", phone: "6281234567890", amount: 195000 };
@@ -23,5 +23,15 @@ describe("pendingProofsForInvoice", () => {
   it("keeps a previously dismissed proof in a separate explicit review lane", () => {
     expect(dismissedProofsForInvoice([{ ...proof, status: "DISMISSED", invoice_id: "INV-1" }], invoice)).toHaveLength(1);
     expect(dismissedProofsForInvoice([{ ...proof, status: "DISMISSED", validation_status: "REJECTED", invoice_id: "INV-1" }], invoice)).toEqual([]);
+  });
+
+  it("prevents a second payment or replacing an already attached proof", () => {
+    expect(invoiceProofAction({ status: "UNPAID", payment_proof_url: null })).toBe("settle");
+    expect(invoiceProofAction({ status: "PAID", payment_proof_url: null })).toBe("attach_only");
+    expect(invoiceProofAction({ status: "PAID", payment_proof_url: "verified-no-proof" })).toBe("attach_only");
+    expect(invoiceProofAction({ status: "PAID", payment_proof_url: "verified-manual-no-proof" })).toBe("attach_only");
+    expect(invoiceProofAction({ status: "PAID", payment_proof_url: "/api/foto?key=proof.jpg" })).toBe("already_attached");
+    expect(invoiceProofAction({ status: "UNPAID", payment_proof_url: "/api/foto?key=proof.jpg" })).toBe("already_attached");
+    expect(invoiceProofAction({ status: "CANCELLED", payment_proof_url: null })).toBe("unavailable");
   });
 });
