@@ -6,6 +6,7 @@ import { displayStock } from "../lib/inventory.js";
 import { flushPerfMetrics, measureAsync } from "../lib/perfMetrics.js";
 import AbsenBanner from "./AbsenBanner.jsx";
 import { useAppContext } from "../context/AppContext.js";
+import { isFieldOrderAssigned } from "../lib/fieldReportWorkflow.js";
 
 // Biaya dihitung ke total/chart HANYA bila sudah final: bukan menunggu approval Admin
 // (≥500rb) dan bukan draft AI belum di-review (PENDING_AI). Konsisten dgn ExpensesView,
@@ -266,7 +267,7 @@ if (role === "Teknisi" || role === "Helper") {
   const myName = currentUser?.name || "";
   const techColors = Object.fromEntries([...new Set(ordersData.map(o => o.teknisi).filter(Boolean))].map(n => [n, getTechColor(n, teknisiData)]))
   const myColor = techColors[myName] || cs.accent;
-  const myJobs = ordersData.filter(o => o.teknisi === myName);
+  const myJobs = ordersData.filter(o => isFieldOrderAssigned(o, myName));
   const todayJobs = myJobs.filter(o => o.date === TODAY);
   // "Selesai" = ORDER_DONE_STATUSES (sumber bersama dgn Statistik/reports), BUKAN hanya
   // status literal COMPLETED. Order yang sudah maju ke REPORT_SUBMITTED/INVOICE_APPROVED/
@@ -635,8 +636,10 @@ return (
       const todayOrders2 = ordersData.filter(o => o.date === todayStr);
       const jobsToday = {};
       todayOrders2.forEach(o => {
-        if (o.teknisi) { jobsToday[o.teknisi] = (jobsToday[o.teknisi] || 0) + 1; }
-        if (o.helper) { jobsToday[o.helper] = (jobsToday[o.helper] || 0) + 1; }
+        const crew = o.assigned_members?.length
+          ? o.assigned_members
+          : [o.teknisi,o.teknisi2,o.teknisi3,o.helper,o.helper2,o.helper3].filter(Boolean);
+        [...new Set(crew)].forEach(name => { jobsToday[name] = (jobsToday[name] || 0) + 1; });
       });
 
       // Semua anggota tim (dari teknisiData)

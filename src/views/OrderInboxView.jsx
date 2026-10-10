@@ -941,6 +941,7 @@ function ProjectPlanningPanel({ slotDate, runningProjects, ordersData, activeTek
 
 const TFIELDS = ORDER_TEKNISI_FIELDS;
 const HFIELDS = ORDER_HELPER_FIELDS;
+const ROSTER_ASSIGNABLE_STATUSES = ["PENDING", "CONFIRMED", "DISPATCHED", "ON_SITE", "IN_PROGRESS", "WORKING", "COMPLETED"];
 
 function ProjectCard({ project, slotDate, ordersData, personNames, fmtD, onAssign }) {
   const ord = ordersData.find(o => o.project_id === project.id && o.date === slotDate && o.status !== "CANCELLED");
@@ -1182,12 +1183,9 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     }).filter(Boolean);
   }
 
-  // Upsert slot ke DB + auto-propagate ke orders dgn team_slot ini
-  // Propagasi ke kolom orders: hingga 3 teknisi + 3 helper (TFIELDS/HFIELDS —
-  // kapasitas kolom orders yang sudah ada & dipakai luas di conflict-check/bonus/
-  // WA dispatch). Slot tim boleh sampai 8 orang (migrasi 127); kalau lebih dari
-  // 3 teknisi atau 3 helper, sisanya TETAP tercatat di roster tim (kehadiran/
-  // payroll via daily_team_slots) tapi tidak ikut ditandai di baris order.
+  // Upsert slot ke DB + auto-propagate ke orders dgn team_slot ini.
+  // Kolom legacy menyimpan 3 teknisi + 3 helper; assigned_members mencatat
+  // seluruh roster agar anggota ke-7/8 tetap terhubung ke job dan laporan.
   function buildTeamPropagatePayload(members) {
     return {
       ...buildOrderTeamAssignment(members),
@@ -1222,18 +1220,20 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     // Auto-propagate teknisi/helper ke semua orders dgn team_slot ini
     // (jaring untuk order yang dibuat sebelum slot diisi atau saat backfill member)
     const members = slotMemberRoles(data);
-    if (members.length > 0) {
-      const propagatePayload = buildTeamPropagatePayload(members);
-      await supabase.from("orders")
-        .update(propagatePayload)
-        .eq("date", date).eq("team_slot", slotName)
-        .neq("status", "CANCELLED");
-      setOrdersData(prev => prev.map(o =>
-        o.date === date && o.team_slot === slotName && o.status !== "CANCELLED"
-          ? { ...o, ...propagatePayload }
-          : o
-      ));
+    const propagatePayload = buildTeamPropagatePayload(members);
+    const { error: orderError } = await supabase.from("orders")
+      .update(propagatePayload)
+      .eq("date", date).eq("team_slot", slotName)
+      .in("status", ROSTER_ASSIGNABLE_STATUSES);
+    if (orderError) {
+      showNotif("Roster tersimpan, tetapi penugasan order gagal: " + orderError.message, "error");
+      return null;
     }
+    setOrdersData(prev => prev.map(o =>
+      o.date === date && o.team_slot === slotName && ROSTER_ASSIGNABLE_STATUSES.includes(o.status)
+        ? { ...o, ...propagatePayload }
+        : o
+    ));
 
     return data;
   }
@@ -1250,19 +1250,20 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     const { error: ordErr } = await supabase.from("orders")
       .update(updatePayload)
       .eq("date", date).eq("team_slot", slotName)
-      .neq("status", "CANCELLED");
+      .in("status", ROSTER_ASSIGNABLE_STATUSES);
 
     if (ordErr) return showNotif("Gagal propagasi ke orders: " + ordErr.message);
 
     // Update state orders lokal
     setOrdersData(prev => prev.map(o =>
-      o.date === date && o.team_slot === slotName && o.status !== "CANCELLED"
+      o.date === date && o.team_slot === slotName && ROSTER_ASSIGNABLE_STATUSES.includes(o.status)
         ? { ...o, ...updatePayload }
         : o
     ));
 
     // Tandai slot sebagai confirmed
-    await saveSlot(date, slotName, { ...slot, confirmed: true });
+    const savedSlot = await saveSlot(date, slotName, { ...slot, confirmed: true });
+    if (!savedSlot) return;
     showNotif(`${slotName} dikonfirmasi → ${members.map(m => m.name).join(", ")} ter-assign ke ${date}`);
   }
 
@@ -2068,8 +2069,8 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         showNotif("⚠️ Tim " + value + " belum punya anggota & belum ada preset", "warning");
         return false;
       }
-      // Tulis semua enam kolom supaya quick assign, drag, create, dan edit memakai
-      // aturan identik serta tidak menyisakan personel dari slot sebelumnya.
+      // Tulis enam kolom legacy dan snapshot seluruh anggota agar quick assign,
+      // drag, create, dan edit tidak menyisakan personel dari slot sebelumnya.
       update = { ...update, ...assignment };
     }
 
@@ -2078,7 +2079,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     // bukan blok keras. Reuse hasConflict (lokal, sudah cross-slot + semua peran setelah P4).
     if (order.date && hasValidTime(order.time)) {
       const assigned = (field === "team_slot")
-        ? [...TFIELDS, ...HFIELDS].map(personField => update[personField])
+        ? (update.assigned_members || [...TFIELDS, ...HFIELDS].map(personField => update[personField]))
         : [value];
       const seen = new Set();
       const reasons = [];

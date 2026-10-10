@@ -23,6 +23,7 @@ describe("team assignment order reguler", () => {
       helper: "Boim",
       helper2: null,
       helper3: null,
+      assigned_members: ["Rey", "Boim"],
     });
   });
 
@@ -39,6 +40,7 @@ describe("team assignment order reguler", () => {
       helper: "Ari",
       helper2: "Boim",
       helper3: null,
+      assigned_members: ["Aji", "Dedi", "Ari", "Boim"],
     });
   });
 
@@ -62,6 +64,19 @@ describe("team assignment order reguler", () => {
     })).toEqual({
       ...emptyOrderTeamAssignment(),
       teknisi: "Samsul",
+      assigned_members: ["Samsul"],
     });
+  });
+
+  it("menyimpan anggota ke-4 per peran walau enam kolom legacy penuh", () => {
+    const result = buildOrderTeamAssignment([
+      { name: "Dedi", role: "teknisi" }, { name: "Rey", role: "teknisi" },
+      { name: "Angga", role: "teknisi" }, { name: "Fikri", role: "teknisi" },
+      { name: "Aji", role: "helper" }, { name: "Rizal", role: "helper" },
+      { name: "Ezra", role: "helper" }, { name: "Boim", role: "helper" },
+    ]);
+    expect(result.teknisi3).toBe("Angga");
+    expect(result.helper3).toBe("Ezra");
+    expect(result.assigned_members).toEqual(["Dedi", "Rey", "Angga", "Fikri", "Aji", "Rizal", "Ezra", "Boim"]);
   });
 });

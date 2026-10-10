@@ -1,6 +1,6 @@
 const OPERATIONAL_FIELDS = [
   "customer", "customer_id", "phone", "address", "area", "notes", "service", "type", "units",
-  "teknisi", "helper", "teknisi2", "helper2", "teknisi3", "helper3",
+  "teknisi", "helper", "teknisi2", "helper2", "teknisi3", "helper3", "assigned_members",
   "date", "time", "time_end", "maintenance_client_id", "maintenance_unit_ids",
 ];
 

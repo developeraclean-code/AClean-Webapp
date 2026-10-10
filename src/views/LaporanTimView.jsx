@@ -7,6 +7,7 @@ import { fetchServiceReportsPage, probeTeamInvoiceWorkflow } from "../data/reads
 import { finalizeServiceReportAtomic } from "../data/writes.js";
 import { getTeamFinalizationOutcome, isTeamSplitOrder } from "../lib/teamSplitWorkflow.js";
 import { isProjectReportArchive } from "../lib/projectReportArchive.js";
+import { fieldReportAssignedNames, isFieldReportAssigned } from "../lib/fieldReportWorkflow.js";
 
 const isMissingFinalizeRpc = (error) => error?.code === "PGRST202" || error?.code === "42883"
   || /finalize_service_report_atomic.*(schema cache|does not exist|not found)/i.test(error?.message || "");
@@ -545,6 +546,8 @@ const techColors = Object.fromEntries(
     n, ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#f97316", "#ec4899"][i % 8]
   ])
 );
+const orderById = new Map(ordersData.map(order => [order.id, order]));
+const reportTeamNames = report => fieldReportAssignedNames(report, orderById.get(report.job_id));
 // ── SIM-8: date + service + status filters + pagination ──
 const todayLap = getLocalDate();
 const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
@@ -599,12 +602,12 @@ else if (laporanDateFilter === "Range" && (laporanDateFrom || laporanDateTo)) {
 if (laporanSvcFilter !== "Semua") filtered = filtered.filter(r => (r.service || "") === laporanSvcFilter);
 if (laporanStatusFilter === "BELUM_VERIFIED") filtered = filtered.filter(r => ["SUBMITTED","REVISION"].includes((r.status || "").toUpperCase()));
 else if (laporanStatusFilter !== "Semua") filtered = filtered.filter(r => (r.status || "").toUpperCase() === laporanStatusFilter.toUpperCase());
-if (laporanTeamFilter !== "Semua") filtered = filtered.filter(r => r.teknisi === laporanTeamFilter || r.helper === laporanTeamFilter);
+if (laporanTeamFilter !== "Semua") filtered = filtered.filter(r => isFieldReportAssigned(r, orderById.get(r.job_id), laporanTeamFilter));
 if (searchLaporan.trim()) {
   const q = searchLaporan.trim().toLowerCase();
   filtered = filtered.filter(r =>
     (r.customer || "").toLowerCase().includes(q) ||
-    (r.teknisi || "").toLowerCase().includes(q) ||
+    reportTeamNames(r).some(name => name.toLowerCase().includes(q)) ||
     (r.job_id || r.id || "").toLowerCase().includes(q) ||
     (r.helper || "").toLowerCase().includes(q) ||
     (r.service || "").toLowerCase().includes(q) ||
@@ -1148,10 +1151,7 @@ return (
       ))}
       <span style={{ width: 1, height: 16, background: cs.border }} />
       {/* Filter per tim/teknisi */}
-      {["Semua", ...[...new Set([
-        ...laporanReports.map(r => r.teknisi),
-        ...laporanReports.map(r => r.helper)
-      ].filter(Boolean))].sort()].map(f => (
+      {["Semua", ...[...new Set(laporanReports.flatMap(reportTeamNames).filter(Boolean))].sort()].map(f => (
         <button key={f} onClick={() => { setLaporanTeamFilter(f); setLaporanPage(1); }}
           style={{
             padding: "5px 12px", borderRadius: 99, fontSize: 12, cursor: "pointer",
@@ -1301,7 +1301,7 @@ return (
                           {r.customer} · {r.service}
                         </div>
                         <div style={{ fontSize: 11, color: cs.muted }}>
-                          👷 {r.teknisi}{r.helper ? " + " + r.helper : ""}
+                          👷 {reportTeamNames(r).join(" + ")}
                           {" · "}{r.job_id || r.id}
                         </div>
                       </div>
@@ -1366,7 +1366,7 @@ return (
           {/* Info grid — responsive: 1 col mobile, 2 col desktop */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "6px 24px", fontSize: 12, marginBottom: 14 }}>
             <div><span style={{ color: cs.muted }}>Customer: </span><span style={{ fontWeight: 700, color: cs.text }}>{r.customer}</span></div>
-            <div><span style={{ color: cs.muted }}>Teknisi: </span><span style={{ fontWeight: 700, color: cs.accent }}>{r.teknisi}{r.helper ? " + " + r.helper + " (Helper)" : ""}</span></div>
+            <div><span style={{ color: cs.muted }}>Tim bertugas: </span><span style={{ fontWeight: 700, color: cs.accent }}>{reportTeamNames(r).join(" + ") || "—"}</span></div>
             <div><span style={{ color: cs.muted }}>Layanan: </span><span style={{ color: cs.text }}>{r.service}</span></div>
             <div><span style={{ color: cs.muted }}>Tanggal: </span><span style={{ color: cs.text }}>{r.date}</span></div>
             <div><span style={{ color: cs.muted }}>Jumlah Unit: </span><span style={{ color: cs.accent, fontWeight: 700 }}>{r.total_units || 1} unit</span></div>

@@ -1,16 +1,16 @@
 import { memo } from "react";
 import { cs } from "../theme/cs.js";
+import { canOriginalReporterEdit, isFieldOrderAssigned, isFieldReportAssigned } from "../lib/fieldReportWorkflow.js";
 
 function MyReportView({ laporanReports, projectDailyReports, ordersData, invoicesData, currentUser, searchLaporan, setSearchLaporan, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setEditStockMats, setLaporanInstallItems, openLaporanModal, openBAPModal, bapEnabled, safeArr, TODAY, INSTALL_ITEMS, downloadServiceReportPDF }) {
 const myName = currentUser?.name || "";
+const orderById = new Map(ordersData.map(order => [order.id, order]));
 // Get all submitted reports (service_reports → order biasa)
-const submittedReps = laporanReports.filter(r => r.teknisi === myName || r.helper === myName);
-// Get my ORDERS_DATA jobs — include all teknisi/helper slots (teknisi2/3, helper2/3 for multi-person teams)
-const myJobs = ordersData.filter(o =>
-  o.teknisi === myName || o.helper === myName ||
-  o.teknisi2 === myName || o.helper2 === myName ||
-  o.teknisi3 === myName || o.helper3 === myName
+const submittedReps = laporanReports.filter(r =>
+  isFieldReportAssigned(r, orderById.get(r.job_id), myName)
 );
+// Get my ORDERS_DATA jobs — include all teknisi/helper slots (teknisi2/3, helper2/3 for multi-person teams)
+const myJobs = ordersData.filter(o => isFieldOrderAssigned(o, myName));
 // Job IDs yang sudah dilaporkan: service_reports (order biasa) + project_daily_reports (order project)
 const pdrByOrderId = new Set((projectDailyReports || []).map(r => r.order_id).filter(Boolean));
 // Job dianggap "sudah dilaporkan" bila ADA laporan dari SIAPA PUN (1 laporan/job).
@@ -109,10 +109,14 @@ return (
       </div>
       : filtReps.map(r => {
         const isPending = r.status === "PENDING";
-        const canEdit = (r.status === "SUBMITTED" || r.status === "REVISION") &&
-          ((currentUser?.role === "Owner" || currentUser?.role === "Admin") || r.teknisi === myName || r.helper === myName);
-        const isReadOnly = false;
-        const isHelper = r.helper === myName;
+        const assignedOrder = orderById.get(r.job_id);
+        const isManager = currentUser?.role === "Owner" || currentUser?.role === "Admin";
+        const canEdit = (isManager && ["SUBMITTED", "REVISION"].includes(r.status)) ||
+          canOriginalReporterEdit(r, currentUser);
+        const isReadOnly = !isPending && !canEdit;
+        const isHelper = currentUser?.role === "Helper" ||
+          [assignedOrder?.helper, assignedOrder?.helper2, assignedOrder?.helper3, r.helper]
+            .some(name => String(name || "").trim().toLowerCase() === myName.trim().toLowerCase());
         return (
           <div key={r.id} style={{ background: cs.card, border: "1px solid " + (r.status === "REVISION" ? cs.yellow : r.status === "VERIFIED" ? cs.green : cs.border) + "44", borderRadius: 14, padding: 18 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
@@ -129,7 +133,8 @@ return (
 
             {r.status === "REVISION" && (
               <div style={{ background: cs.yellow + "12", border: "1px solid " + cs.yellow + "33", borderRadius: 8, padding: "10px 14px", marginBottom: 12, fontSize: 12, color: cs.yellow }}>
-                Laporan diminta revisi oleh Owner/Admin. Silakan edit dan simpan ulang.
+                {canEdit ? "Laporan diminta revisi oleh Owner/Admin. Silakan edit dan simpan ulang." :
+                  "Laporan diminta revisi. Hanya pengirim awal yang dapat mengubahnya; hubungi Admin/Owner bila perlu dialihkan."}
               </div>
             )}
 
@@ -177,8 +182,8 @@ return (
               })()}
               {isReadOnly && (
                 <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 14px", fontSize: 12, color: cs.muted, display: "flex", alignItems: "center", gap: 6 }}>
-                  🔒 Dibuat oleh <b style={{ color: cs.accent, marginLeft: 4 }}>{r.teknisi}</b>
-                  <span style={{ color: cs.muted, marginLeft: 4 }}>— kamu sebagai helper</span>
+                  🔒 {r.status === "VERIFIED" ? "Laporan sudah diverifikasi dan terkunci." :
+                    "Hanya pengirim awal yang dapat mengedit sebelum laporan diverifikasi."}
                 </div>
               )}
               {canEdit && (

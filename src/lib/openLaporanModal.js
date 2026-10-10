@@ -2,7 +2,7 @@
 // (seed unit dari registry AC/maintenance, riwayat customer, reset step/form).
 // TIDAK memutasi DB — hanya set state UI. Diekstrak dari App.jsx (Fase 2, pola ctx).
 // ctx = param ke-2. Body verbatim (behavior-preserving).
-import { hasFieldReportDraft } from "./fieldReportWorkflow.js";
+import { canOriginalReporterEdit, hasFieldReportDraft, isFieldReportAssigned } from "./fieldReportWorkflow.js";
 import { fieldUserKey } from "./fieldOfflineQueue.js";
 
 export function openLaporanModal(order, {
@@ -24,19 +24,21 @@ export function openLaporanModal(order, {
     // menimpa draft yang akan dipulihkan oleh LaporanTeknisiModal.
     const hadDraftAtOpen = hasFieldReportDraft(order?.id, fieldUserKey(currentUser));
     // ANTI-DUPLIKAT: cek apakah sudah ada laporan untuk job ini
-    const existingReport = laporanReports.find(r => r.job_id === (order._rewriteId ? order.id : order.id) && r.status !== "PENDING");
+    const existingReport = laporanReports.find(r => r.job_id === order.id && r.status !== "PENDING");
+    if (order._rewriteId && !["Owner", "Admin"].includes(currentUser?.role) &&
+        (!existingReport || existingReport.id !== order._rewriteId ||
+         !canOriginalReporterEdit(existingReport, currentUser))) {
+      showNotif("🔒 Laporan terkunci. Hanya pengirim awal dapat mengedit sebelum verifikasi.");
+      return;
+    }
     if (existingReport && !order._rewriteId) {
-      const isOwner = existingReport.teknisi === currentUser?.name;
-      const isHelper = existingReport.helper === currentUser?.name;
-      if (!isOwner && !isHelper) {
+      if (!isFieldReportAssigned(existingReport, order, currentUser?.name) &&
+          !["Owner", "Admin"].includes(currentUser?.role)) {
         showNotif("⚠️ Laporan untuk job ini sudah dibuat oleh tim lain");
         return;
       }
-      if (!isOwner) {
-        // Helper mencoba buat laporan padahal teknisi sudah isi
-        showNotif(`⚠️ Laporan sudah dibuat oleh ${existingReport.teknisi}. Kamu bisa lihat di menu Laporan Saya.`);
-        return;
-      }
+      showNotif(`⚠️ Laporan job ini sudah dibuat. Buka ${["Owner", "Admin"].includes(currentUser?.role) ? "Laporan Tim" : "Laporan Saya"} untuk melihat atau merevisi laporan yang sama.`);
+      return;
     }
     const count = Math.min(order.units || 1, 30);
     // Order maintenance memakai grid-picker unit → grid ADALAH sumber unit. Jangan

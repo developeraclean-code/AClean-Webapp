@@ -4,7 +4,7 @@
 // Kolom di-seleksi eksplisit (bukan SELECT *) untuk hemat egress.
 import { ORDER_DONE_STATUSES } from "../constants/status.js";
 
-const ORDER_COLS = "id,customer,customer_id,phone,address,area,service,type,units,teknisi,helper,date,time,time_end,status,notes,dispatch,dispatch_at,invoice_id,created_at,updated_at,teknisi_id,helper_id,teknisi2,helper2,teknisi3,helper3,source,team_slot,on_site_at,parent_job_id,is_multi_day,day_number,maintenance_client_id,maintenance_unit_ids,job_group_id,is_team_split,project_id";
+const ORDER_COLS = "id,customer,customer_id,phone,address,area,service,type,units,teknisi,helper,date,time,time_end,status,notes,dispatch,dispatch_at,invoice_id,created_at,updated_at,teknisi_id,helper_id,teknisi2,helper2,teknisi3,helper3,assigned_members,source,team_slot,on_site_at,parent_job_id,is_multi_day,day_number,maintenance_client_id,maintenance_unit_ids,job_group_id,is_team_split,project_id";
 export const fetchOrders = (supabase) =>
   supabase.from("orders")
     .select(ORDER_COLS)
@@ -212,11 +212,11 @@ export const fetchInventory = (supabase) =>
 // Catatan perf: units_json & materials_json (TEXT) DIBUANG dari kolom ini — keduanya
 // duplikat dari units & materials_used (jsonb). Semua 1133 row sudah di-backfill jsonb-nya
 // (scripts/backfill-report-jsonb), jadi parseLaporan cukup pakai jsonb. Hemat ~0,9MB payload startup.
-const REPORT_COLS = "id,job_id,teknisi,helper,customer,service,type,date,total_units,total_freon,units,materials_used,foto_urls,fotos,rekomendasi,catatan_global,edit_log,status,submitted_at,updated_at,submitted,unit_mismatch,created_at,is_substitute,is_install,bap_number,bap_statement,bap_recommendation,ttd_customer_url,ttd_customer_name,bap_skipped_reason,bap_signed_at,hasil_survey,catatan_rekomendasi,survey_sent_at,report_card_sent_at,report_card_sent_by,report_card_sent_count,report_card_last_sent_mode,report_card_last_sent_method";
+const REPORT_COLS = "id,job_id,teknisi,helper,submitted_by_user_id,customer,service,type,date,total_units,total_freon,units,materials_used,foto_urls,fotos,rekomendasi,catatan_global,edit_log,status,submitted_at,updated_at,submitted,unit_mismatch,created_at,is_substitute,is_install,bap_number,bap_statement,bap_recommendation,ttd_customer_url,ttd_customer_name,bap_skipped_reason,bap_signed_at,hasil_survey,catatan_rekomendasi,survey_sent_at,report_card_sent_at,report_card_sent_by,report_card_sent_count,report_card_last_sent_mode,report_card_last_sent_method";
 // Bootstrap hanya membawa daftar URL foto, bukan objek `fotos` rinci yang menduplikasi
 // URL + label/unit tag. Units/materials/BAP tetap ada karena dipakai langsung untuk
 // audit kartu. Detail foto lengkap diambil per-ID ketika modal dibuka/report card dibuat.
-const REPORT_SUMMARY_COLS = "id,job_id,teknisi,helper,customer,service,type,date,total_units,total_freon,units,materials_used,foto_urls,rekomendasi,catatan_global,edit_log,status,submitted_at,updated_at,submitted,unit_mismatch,created_at,is_substitute,is_install,bap_number,bap_statement,bap_recommendation,ttd_customer_url,ttd_customer_name,bap_skipped_reason,bap_signed_at,hasil_survey,catatan_rekomendasi,survey_sent_at,report_card_sent_at,report_card_sent_by,report_card_sent_count,report_card_last_sent_mode,report_card_last_sent_method";
+const REPORT_SUMMARY_COLS = "id,job_id,teknisi,helper,submitted_by_user_id,customer,service,type,date,total_units,total_freon,units,materials_used,foto_urls,rekomendasi,catatan_global,edit_log,status,submitted_at,updated_at,submitted,unit_mismatch,created_at,is_substitute,is_install,bap_number,bap_statement,bap_recommendation,ttd_customer_url,ttd_customer_name,bap_skipped_reason,bap_signed_at,hasil_survey,catatan_rekomendasi,survey_sent_at,report_card_sent_at,report_card_sent_by,report_card_sent_count,report_card_last_sent_mode,report_card_last_sent_method";
 export const fetchServiceReports = async (supabase) => {
   const result = await supabase.from("service_reports")
     .select(REPORT_SUMMARY_COLS)

@@ -3,6 +3,7 @@
 // order & state. Diekstrak dari App.jsx (Fase 3, pola ctx). 67 dependency via ctx.
 // Body verbatim (behavior-preserving). JALUR UANG — test ketat.
 import { isHarianManagedItem } from "./materialRecon.js";
+import { canOriginalReporterEdit } from "./fieldReportWorkflow.js";
 import { submitServiceReportAtomic } from "../data/writes.js";
 import { isTeamSplitOrder } from "./teamSplitWorkflow.js";
 
@@ -15,6 +16,19 @@ export const shouldFallbackAtomicReportSubmit = (error) => {
     // sehingga Helper tetap bisa submit sambil menunggu migration 182 diterapkan.
     || (error?.code === "42804" && /foto_urls.*text\[\].*jsonb|foto_urls.*jsonb.*text\[\]/i.test(message));
 };
+
+// Report ID tetap sama saat koreksi. Mutation key harus baru per aksi koreksi;
+// key lama akan dianggap replay oleh operational_mutations dan data tidak berubah.
+export function reportSubmissionMutationKey(reportId, isRewrite, revisionToken) {
+  if (!isRewrite) return `report-submit:${reportId}`;
+  const token = revisionToken || globalThis.crypto?.randomUUID?.() ||
+    `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `report-submit:${reportId}:revision:${token}`;
+}
+
+export const invoiceBlocksReportRewrite = invoice =>
+  !["PENDING_APPROVAL", "CANCELLED"].includes(invoice?.status) ||
+  invoice?.sent === true || Number(invoice?.paid_amount || 0) > 0;
 
 export async function submitLaporan({
   INSTALL_ITEMS, _apiHeaders, addAgentLog, appSettings, auditUserName, buildInvoiceDetail,
@@ -70,6 +84,41 @@ export async function submitLaporan({
         submitLaporanLock.current = false;
         return;
       }
+      // Periksa sebelum pekerjaan upload/faktur dimulai. RPC di database tetap
+      // menjadi pengunci akhir saat dua anggota menekan Submit bersamaan.
+      const { data: existingReport, error: reportCheckError } = await supabase
+        .from("service_reports")
+        .select("id,status,submitted_by_user_id")
+        .eq("job_id", laporanModal.id)
+        .maybeSingle();
+      if (reportCheckError) {
+        showNotif("❌ Gagal memeriksa laporan job: " + reportCheckError.message);
+        submitLaporanLock.current = false;
+        return;
+      }
+      if (existingReport && (existingReport.id !== laporanModal._rewriteId ||
+          !canOriginalReporterEdit(existingReport, currentUser)) &&
+          !["Owner", "Admin"].includes(currentUser?.role)) {
+        showNotif("🔒 Job ini sudah dilaporkan. Hanya pengirim awal dapat mengedit sebelum verifikasi.");
+        submitLaporanLock.current = false;
+        return;
+      }
+      if (laporanModal._rewriteId) {
+        const { data: existingInvoices, error: invoiceCheckError } = await supabase
+          .from("invoices")
+          .select("id,status,sent,paid_amount")
+          .eq("job_id", laporanModal.id);
+        if (invoiceCheckError) {
+          showNotif("❌ Gagal memeriksa invoice sebelum menulis ulang: " + invoiceCheckError.message);
+          submitLaporanLock.current = false;
+          return;
+        }
+        if ((existingInvoices || []).some(invoiceBlocksReportRewrite)) {
+          showNotif("🔒 Invoice sudah final. Gunakan Edit laporan; Tulis Ulang tidak boleh mengganti tagihan ini.");
+          submitLaporanLock.current = false;
+          return;
+        }
+      }
     }
     // ── 1. Definisikan isInstall PERTAMA sebelum digunakan ──
     const isInstall = laporanModal?.service === "Install";
@@ -90,7 +139,7 @@ export async function submitLaporan({
         return;
       }
       const now = new Date().toLocaleString("id-ID", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-      const reportId = "LPR_" + laporanModal.id + "_" + Date.now().toString(36).slice(-4).toUpperCase();
+      const reportId = laporanModal._rewriteId || ("LPR_" + laporanModal.id + "_" + Date.now().toString(36).slice(-4).toUpperCase());
       const surveyFotoUrls = laporanFotos.filter(f => f.url).map(f => f.url);
       const surveyReport = {
         id: reportId, job_id: laporanModal.id, teknisi: laporanModal.teknisi,
@@ -104,7 +153,6 @@ export async function submitLaporan({
         catatan_rekomendasi: laporanSurveyCatatan.trim(),
         editLog: [],
       };
-      setLaporanReports(prev => [...prev.filter(r => r.job_id !== laporanModal.id), surveyReport]);
       showNotif("⏳ Menyimpan laporan survey...");
       const surveyPayload = {
         ...surveyReport,
@@ -112,9 +160,9 @@ export async function submitLaporan({
         materials_used: [],
       };
       let { error: sErr } = await submitServiceReportAtomic(
-        supabase, surveyPayload, auditUserName(), `report-submit:${reportId}`
+        supabase, surveyPayload, auditUserName(), reportSubmissionMutationKey(reportId, !!laporanModal._rewriteId)
       );
-      if (sErr && shouldFallbackAtomicReportSubmit(sErr)) {
+      if (sErr && shouldFallbackAtomicReportSubmit(sErr) && ["Owner", "Admin"].includes(currentUser?.role)) {
         // Fallback khusus trial lokal sebelum migration 177 dipasang.
         ({ error: sErr } = await supabase.from("service_reports").upsert({
           id: reportId, job_id: laporanModal.id, teknisi: laporanModal.teknisi,
@@ -127,8 +175,13 @@ export async function submitLaporan({
         }, { onConflict: "id" }));
         if (!sErr) await updateOrderStatus(supabase, laporanModal.id, "REPORT_SUBMITTED", auditUserName());
       }
-      if (sErr) { showNotif("⚠️ Tersimpan lokal, sync gagal: " + sErr.message); }
-      else { showNotif("✅ Laporan Survey terkirim!"); }
+      if (sErr) {
+        showNotif("❌ Laporan Survey belum tersimpan: " + sErr.message);
+        submitLaporanLock.current = false;
+        return;
+      }
+      setLaporanReports(prev => [...prev.filter(r => r.job_id !== laporanModal.id), { ...surveyReport, submitted_by_user_id: currentUser?.id || null }]);
+      showNotif("✅ Laporan Survey terkirim!");
       const admR2 = userAccounts.filter(u => (u.role === "Admin" || u.role === "Owner") && u.active !== false);
       admR2.forEach(u => { if (u.phone) sendWA(u.phone, "Laporan Survey\nJob: " + laporanModal.id + "\nCustomer: " + laporanModal.customer + "\nTeknisi: " + laporanModal.teknisi + "\n\nHasil: " + laporanSurveyHasil.trim().slice(0, 200)); });
       setLaporanSubmitted(true);
@@ -297,8 +350,6 @@ export async function submitLaporan({
       }] : [],
     };
 
-    setLaporanReports(prev => [...prev.filter(r => r.job_id !== laporanModal.id), newReport]);
-
     // ── 6. Siapkan WA notif. Pengiriman dilakukan setelah transaksi database sukses,
     // supaya Admin/Owner tidak menerima notifikasi untuk laporan yang gagal tersimpan.
     const adminUsers = userAccounts.filter(u => u.role === "Owner" && u.active !== false);
@@ -342,11 +393,11 @@ export async function submitLaporan({
     };
     {
       const { error: atomicError } = await submitServiceReportAtomic(
-        supabase, atomicPayload, auditUserName(), `report-submit:${newReport.id}`
+        supabase, atomicPayload, auditUserName(), reportSubmissionMutationKey(newReport.id, !!laporanModal._rewriteId)
       );
       if (!atomicError) {
         savedOk = true;
-      } else if (shouldFallbackAtomicReportSubmit(atomicError)) {
+      } else if (shouldFallbackAtomicReportSubmit(atomicError) && ["Owner", "Admin"].includes(currentUser?.role)) {
         // Migration belum terpasang pada trial lokal: lanjutkan jalur kompatibilitas.
         lastError = atomicError;
       } else {
@@ -427,6 +478,8 @@ export async function submitLaporan({
       showNotif("❌ Gagal simpan laporan: " + errMsg + ". Coba lagi atau hubungi admin.");
       return; // Don't proceed to reload/notify if save failed
     }
+
+    setLaporanReports(prev => [...prev.filter(r => r.job_id !== laporanModal.id), { ...newReport, submitted_by_user_id: currentUser?.id || null }]);
 
     adminUsers.forEach(u => { if (u.phone) sendWA(u.phone, notifMsg); });
 

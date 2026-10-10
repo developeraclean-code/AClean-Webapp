@@ -588,7 +588,12 @@ export default function LaporanDetailModal({ ctx }) {
                 }
                 // If editPhotoMode = false, skip foto_urls → keep old photos
                 const { error: elErr } = await updateServiceReport(supabase, selectedLaporan.id, updatePayload, auditUserName());
-                if (elErr) { console.warn("❌ update service_reports failed:", elErr.message, "payload:", updatePayload); addAgentLog("LAPORAN_UPDATE_ERROR", `Laporan ${selectedLaporan.job_id} update error: ${elErr.message.slice(0, 100)}`, "WARNING"); }
+                if (elErr) {
+                  console.warn("❌ update service_reports failed:", elErr.message, "payload:", updatePayload);
+                  addAgentLog("LAPORAN_UPDATE_ERROR", `Laporan ${selectedLaporan.job_id} update error: ${elErr.message.slice(0, 100)}`, "WARNING");
+                  showNotif(`❌ Laporan belum tersimpan: ${elErr.message}`);
+                  return;
+                }
 
                 // Update local state
                 // foto_urls + fotos ikut di-sync bila admin re-upload foto (editPhotoMode) —

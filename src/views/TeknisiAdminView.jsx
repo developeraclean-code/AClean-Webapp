@@ -3,6 +3,7 @@ import { cs } from "../theme/cs.js";
 import { useAppContext } from "../context/AppContext.js";
 import { DEFAULT_BONUS_CATEGORIES } from "../constants/bonus.js";
 import { ORDER_DONE_STATUSES } from "../constants/status.js";
+import { isFieldOrderAssigned, isFieldReportAssigned } from "../lib/fieldReportWorkflow.js";
 import { employmentStatus, fmtTenure } from "../lib/employment.js";
 import { formatPhone } from "../lib/phone.js";
 import {
@@ -78,23 +79,24 @@ const [activeTab, setActiveTab] = useState("tim"); // "tim" | "sla" | "gaji"
 // GAP-11: Rekap performa per teknisi
 const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+const orderById = new Map(ordersData.map(order => [order.id, order]));
 const perfMap = {};
 teknisiData.forEach(t => {
   const jobsMinggu = ordersData.filter(o =>
-    (o.teknisi === t.name || o.helper === t.name) && (o.date || "") >= weekAgo
+    isFieldOrderAssigned(o, t.name) && (o.date || "") >= weekAgo
   );
   const jobsBulan = ordersData.filter(o =>
-    (o.teknisi === t.name || o.helper === t.name) && (o.date || "") >= monthAgo
+    isFieldOrderAssigned(o, t.name) && (o.date || "") >= monthAgo
   );
   const laporanMinggu = laporanReports.filter(r =>
-    (r.teknisi === t.name || r.helper === t.name) && (r.submitted_at || r.submitted || "") >= weekAgo
+    isFieldReportAssigned(r, orderById.get(r.job_id), t.name) && (r.submitted_at || r.submitted || "") >= weekAgo
   );
   const revisi = laporanReports.filter(r =>
-    (r.teknisi === t.name || r.helper === t.name) && r.status === "REVISION"
+    isFieldReportAssigned(r, orderById.get(r.job_id), t.name) && r.status === "REVISION"
   ).length;
   // Job stuck: DISPATCHED/ON_SITE tapi belum ada laporan & sudah lewat jam selesai
   const stuck = ordersData.filter(o =>
-    (o.teknisi === t.name || o.helper === t.name) &&
+    isFieldOrderAssigned(o, t.name) &&
     ["DISPATCHED", "ON_SITE"].includes(o.status) &&
     o.date < TODAY &&
     !laporanReports.some(r => r.job_id === o.id) &&
@@ -123,7 +125,7 @@ teknisiData.forEach(t => {
 
 // ── SLA Calculations (dipakai di tab SLA) ──
 const slaData = teknisiData.filter(isActiveFieldEmployee).map(t => {
-  const allOrders = ordersData.filter(o => o.teknisi === t.name || o.helper === t.name);
+  const allOrders = ordersData.filter(o => isFieldOrderAssigned(o, t.name));
   const completed = allOrders.filter(o => ["COMPLETED","REPORT_SUBMITTED","INVOICE_APPROVED","INVOICE_CREATED","PAID"].includes(o.status));
   const thisMonth = new Date().toISOString().slice(0, 7);
   const completedThisM = completed.filter(o => (o.date || "").startsWith(thisMonth));
@@ -371,7 +373,7 @@ return (
                   </div>
                 );
               })()}
-              <div>🔧 {ordersData.filter(o => o.teknisi === t.name && o.date === TODAY).length} job hari ini</div>
+              <div>🔧 {ordersData.filter(o => isFieldOrderAssigned(o, t.name) && o.date === TODAY).length} job hari ini</div>
               <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 6 }}>
                 {t.skills.map(s => <span key={s} style={{ background: cs.accent + "18", color: cs.accent, fontSize: 9, padding: "2px 6px", borderRadius: 4, fontWeight: 600 }}>{s}</span>)}
               </div>

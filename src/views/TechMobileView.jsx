@@ -309,8 +309,9 @@ function TechMobileView({ currentUser, ordersData, setOrdersData, laporanReports
           const isDispatched = order.status === "DISPATCHED" || order.status === "IN_PROGRESS";
           const isPending = order.status === "PENDING" || order.status === "CONFIRMED";
           const bCount = (materialsBroughtMap || {})[order.id] || 0;
-          const helperNote = [order.helper, order.helper2, order.helper3].filter(Boolean).join(", ");
-          const team2 = [order.teknisi2, order.teknisi3].filter(Boolean).join(", ");
+          const assignedNames = (order.assigned_members?.length
+            ? order.assigned_members
+            : [order.teknisi, order.teknisi2, order.teknisi3, order.helper, order.helper2, order.helper3].filter(Boolean));
 
           return (
             <div key={order.id} style={{ background: cs.card, border: "2px solid " + st.color + "55", borderRadius: 16, overflow: "hidden" }}>
@@ -324,8 +325,7 @@ function TechMobileView({ currentUser, ordersData, setOrdersData, laporanReports
                     </div>
                     <div style={{ fontWeight: 700, fontSize: 15, color: cs.text }}>{order.customer}</div>
                     <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>{order.service} · {order.units} unit</div>
-                    {helperNote && <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>🤝 Helper: {helperNote}</div>}
-                    {team2 && <div style={{ fontSize: 11, color: cs.muted }}>👷 Tim: {team2}</div>}
+                    {assignedNames.length > 0 && <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>👥 Tim: {assignedNames.join(", ")}</div>}
                   </div>
                   <span style={{ fontSize: 11, padding: "4px 10px", borderRadius: 99, fontWeight: 700, background: st.bg, color: st.color, whiteSpace: "nowrap" }}>
                     {st.label}

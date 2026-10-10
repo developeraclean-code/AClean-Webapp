@@ -189,6 +189,7 @@ export async function cacheFieldJobPackage(userKey, jobs, reminders = []) {
     address: job.address, area: job.area, service: job.service, type: job.type,
     units: job.units, teknisi: job.teknisi, helper: job.helper, teknisi2: job.teknisi2,
     helper2: job.helper2, teknisi3: job.teknisi3, helper3: job.helper3,
+    assigned_members: job.assigned_members,
     date: job.date, time: job.time, time_end: job.time_end, status: job.status,
     notes: job.notes, updated_at: job.updated_at, maintenance_client_id: job.maintenance_client_id,
     maintenance_unit_ids: job.maintenance_unit_ids,

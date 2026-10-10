@@ -255,6 +255,7 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
 196       # Applied 7 Okt 2026 — antrean review ARA; RLS/RPC Owner/Admin dan penolakan Helper/Teknisi diuji dengan rollback; mode review, toggle tetap OFF
 197       # Applied 8 Okt 2026 — unique media_job_id kompatibel PostgREST; perbaiki 42P10 bukti bayar, tanpa mengubah invoice/ledger
 198       # Applied 9 Okt 2026 — tabel katalog WA, RLS Owner/Admin, pengiriman media CATALOG; transaksi dan akses role diuji dengan rollback
+201       # Applied 10 Okt 2026 — satu laporan/job untuk seluruh anggota; pengirim pertama dapat edit sebelum Verified, dijaga trigger dan RPC; role diuji dengan rollback
 ```
 
 > Daftar di atas pernah tertinggal jauh (berhenti di 126 padahal file sudah 132).

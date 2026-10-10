@@ -4,6 +4,7 @@ const DRAFT_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 const scopedKey = (prefix, jobId, userKey = "") => `${prefix}${userKey ? `${userKey}:` : ""}${jobId}`;
 
 const FIELD_MEMBER_KEYS = ["teknisi", "helper", "teknisi2", "helper2", "teknisi3", "helper3"];
+const DISPLAY_MEMBER_KEYS = ["teknisi", "teknisi2", "teknisi3", "helper", "helper2", "helper3"];
 const PRE_REPORT_STATUSES = new Set([
   "PENDING", "CONFIRMED", "DISPATCHED", "ON_SITE", "WORKING", "IN_PROGRESS", "COMPLETED",
 ]);
@@ -11,7 +12,40 @@ const PRE_REPORT_STATUSES = new Set([
 export function isFieldOrderAssigned(order, employeeName) {
   const name = String(employeeName || "").trim().toLowerCase();
   if (!name) return false;
-  return FIELD_MEMBER_KEYS.some(key => String(order?.[key] || "").trim().toLowerCase() === name);
+  return FIELD_MEMBER_KEYS.some(key => String(order?.[key] || "").trim().toLowerCase() === name) ||
+    (Array.isArray(order?.assigned_members) && order.assigned_members.some(member => String(member || "").trim().toLowerCase() === name));
+}
+
+// Laporan hanya menyimpan teknisi/helper utama; keanggotaan lengkap berada di order.
+// Fallback ke laporan menjaga riwayat lama yang order-nya sudah tidak dimuat.
+export function isFieldReportAssigned(report, order, employeeName) {
+  const name = String(employeeName || "").trim().toLowerCase();
+  if (!name) return false;
+  return fieldReportAssignedNames(report, order).some(member => member.toLowerCase() === name);
+}
+
+// Satu job memiliki satu laporan. Sampai diverifikasi, hanya akun pengirim
+// pertama yang boleh memperbaikinya; nama teknisi utama bukan bukti pengirim.
+export function canOriginalReporterEdit(report, user) {
+  return Boolean(report?.submitted_by_user_id && user?.id &&
+    report.submitted_by_user_id === user.id &&
+    ["SUBMITTED", "REVISION"].includes(report.status));
+}
+
+export function fieldReportAssignedNames(report, order) {
+  const names = [
+    ...DISPLAY_MEMBER_KEYS.map(key => order?.[key]),
+    ...(Array.isArray(order?.assigned_members) ? order.assigned_members : []),
+    ...(Array.isArray(report?.assigned_members) ? report.assigned_members : []),
+    report?.teknisi, report?.helper,
+  ];
+  const seen = new Set();
+  return names.map(value => String(value || "").trim()).filter(name => {
+    const key = name.toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 const storage = (kind = "local") => {

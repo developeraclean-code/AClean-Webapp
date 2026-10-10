@@ -2,9 +2,9 @@ export const ORDER_TEKNISI_FIELDS = ["teknisi", "teknisi2", "teknisi3"];
 export const ORDER_HELPER_FIELDS = ["helper", "helper2", "helper3"];
 
 export function emptyOrderTeamAssignment() {
-  return Object.fromEntries(
+  return { ...Object.fromEntries(
     [...ORDER_TEKNISI_FIELDS, ...ORDER_HELPER_FIELDS].map(field => [field, null])
-  );
+  ), assigned_members: [] };
 }
 
 // Ubah roster harian menjadi enam kolom personel order secara deterministik.
@@ -28,6 +28,7 @@ export function buildOrderTeamAssignment(members = []) {
   }
 
   const payload = emptyOrderTeamAssignment();
+  payload.assigned_members = [...new Set(normalized.map(member => member.name))];
   ORDER_TEKNISI_FIELDS.forEach((field, index) => {
     payload[field] = teknisi[index]?.name || null;
   });
@@ -48,6 +49,7 @@ export function resolveRegularOrderTeam({ teamSlot, members = [], presetTeknisi 
     return {
       ...emptyOrderTeamAssignment(),
       teknisi: String(presetTeknisi).trim(),
+      assigned_members: [String(presetTeknisi).trim()],
     };
   }
   return null;
