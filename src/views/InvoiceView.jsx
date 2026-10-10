@@ -6,6 +6,7 @@ import { useAppContext } from "../context/AppContext.js";
 import { categoryOf, LINE_CATEGORY } from "../lib/invoicing.js";
 import { downloadCsv } from "../lib/exportUtils.js";
 import { acknowledgePaidInvoicesWithoutProofAtomic } from "../data/writes.js";
+import { dismissedProofsForInvoice, pendingProofsForInvoice } from "../lib/paymentEvidence.js";
 import AcUnitInvoiceModal from "./AcUnitInvoiceModal.jsx";
 import QuotationView from "./QuotationView.jsx";
 import { BlobProvider } from "@react-pdf/renderer";
@@ -13,10 +14,11 @@ import QuotationPDF from "../components/QuotationPDF.jsx";
 
 // ── Modal Lampirkan Bukti Bayar manual ──────────────────────────────────────
 // 3 sumber: (WA) pilih saran PENDING yang belum terhubung atau terhubung ke invoice ini,
+// termasuk saran yang pernah diabaikan untuk invoice yang sama dan diperiksa ulang,
 // (URL) tempel link, (UPLOAD) file. Confirm → markPaid(inv,...,proofUrl) bila belum
 // lunas / update proof saja bila sudah PAID. Bila dari WA monitor → suggestion
 // di-set CONFIRMED (sekalian mengurangi backlog).
-function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInvoicesData, setPaymentSuggestions, showNotif, currentUser, auditUserName, addAgentLog, fmt, onClose }) {
+function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInvoicesData, setPaymentSuggestions, onSuggestionResolved, showNotif, currentUser, auditUserName, addAgentLog, fmt, onClose }) {
   const [tab, setTab] = useState("wa");
   const [suggs, setSuggs] = useState([]);
   const [loadingSuggs, setLoadingSuggs] = useState(true);
@@ -40,7 +42,7 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
         for (let from = 0; ; from += 200) {
           const { data, error } = await supabase
             .from("payment_suggestions")
-            .select("id, phone, sender_name, amount, bank, transfer_date, image_url, created_at, invoice_id, match_source, raw_message")
+            .select("id, phone, sender_name, amount, bank, transfer_date, image_url, created_at, invoice_id, match_source, raw_message, status")
             .eq("status", "PENDING")
             .or(`invoice_id.is.null,invoice_id.eq.${inv.id}`)
             .not("image_url", "is", null)
@@ -50,7 +52,20 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
           rows.push(...(data || []));
           if (cancelled || (data || []).length < 200) break;
         }
-        if (!cancelled) setSuggs(rows);
+        // A proof previously dismissed for this exact invoice stays out of
+        // automatic suggestions, but the Owner can deliberately re-review it.
+        const { data: dismissed, error: dismissedError } = await supabase
+          .from("payment_suggestions")
+          .select("id, phone, sender_name, amount, bank, transfer_date, image_url, created_at, invoice_id, match_source, raw_message, status")
+          .eq("status", "DISMISSED").eq("invoice_id", inv.id)
+          .not("image_url", "is", null)
+          .order("created_at", { ascending: false }).limit(20);
+        if (dismissedError) throw dismissedError;
+        rows.push(...(dismissed || []));
+        if (!cancelled) {
+          setSuggs(rows);
+          if (inv.initialSuggestionId) setSelSugg(rows.find(row => row.id === inv.initialSuggestionId) || null);
+        }
       } catch (error) {
         if (!cancelled) {
           setSuggs([]);
@@ -60,7 +75,7 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
       finally { if (!cancelled) setLoadingSuggs(false); }
     })();
     return () => { cancelled = true; };
-  }, [supabase, inv.id, showNotif]);
+  }, [supabase, inv.id, inv.initialSuggestionId, showNotif]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -118,7 +133,7 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
   };
 
   const chosenUrl = tab === "wa" ? (selSugg?.image_url || "") : tab === "url" ? urlInput.trim() : uploadedUrl;
-  const needsManualReview = tab === "wa" && selSugg?.match_source === "wa_image_review";
+  const needsManualReview = tab === "wa" && (selSugg?.match_source === "wa_image_review" || selSugg?.status === "DISMISSED");
   const canConfirm = !!chosenUrl && (!needsManualReview || reviewAcknowledged) && !busy;
   const alreadyPaid = inv.status === "PAID";
 
@@ -156,9 +171,12 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
             invoice_id: inv.id, order_id: inv.job_id || null,
             status: "CONFIRMED", validation_status: "LINKED", matched_at: now, match_source: "manual",
             resolved_at: now, resolved_by: currentUser?.name || (auditUserName ? auditUserName() : "Owner"),
-          }).eq("id", selSugg.id).eq("status", "PENDING").select("id");
-        if (error || !updatedSuggestions?.length) suggestionSyncError = error?.message || "saran WA tidak lagi PENDING";
-        else setPaymentSuggestions?.(prev => prev.filter(p => p.id !== selSugg.id));
+          }).eq("id", selSugg.id).eq("status", selSugg.status || "PENDING").select("id");
+        if (error || !updatedSuggestions?.length) suggestionSyncError = error?.message || "status saran WA sudah berubah";
+        else {
+          setPaymentSuggestions?.(prev => prev.filter(p => p.id !== selSugg.id));
+          onSuggestionResolved?.(selSugg.id);
+        }
       }
       addAgentLog?.("INVOICE_PROOF_ATTACHED", `Bukti bayar dilampirkan manual ke ${inv.id} (${tab})${alreadyPaid ? "" : " + tandai lunas"}`, "SUCCESS");
       showNotif(suggestionSyncError
@@ -201,7 +219,7 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
             {loadingSuggs ? (
               <div style={{ color: cs.muted, fontSize: 12, padding: 12, textAlign: "center" }}>Memuat bukti…</div>
             ) : filtered.length === 0 ? (
-              <div style={{ color: cs.muted, fontSize: 12, padding: 12, textAlign: "center" }}>Tidak ada bukti WA yang menunggu review untuk invoice ini.</div>
+              <div style={{ color: cs.muted, fontSize: 12, padding: 12, textAlign: "center" }}>Tidak ada bukti WA yang tersedia untuk invoice ini.</div>
             ) : (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(150px,1fr))", gap: 8, maxHeight: 320, overflowY: "auto" }}>
                 {filtered.slice(0, visibleLimit).map(s => {
@@ -222,6 +240,7 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
                         <div style={{ fontSize: 10, color: cs.muted }}>{s.amount ? fmt(Number(s.amount)) : "—"} · {s.bank || "?"}</div>
                         <div style={{ fontSize: 9, color: cs.muted }}>{(s.created_at || "").slice(0, 10)} · {s.phone}</div>
                         {s.match_source === "wa_image_review" && <div style={{ fontSize: 9, color: cs.yellow }}>⚠ Perlu cek manual</div>}
+                        {s.status === "DISMISSED" && <div style={{ fontSize: 9, color: cs.yellow }}>⚠ Pernah diabaikan · cek ulang</div>}
                       </div>
                     </div>
                   );
@@ -234,7 +253,7 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
             </button>}
             {selSugg && <a href={fotoSrc(selSugg.image_url)} target="_blank" rel="noreferrer" style={{ display: "inline-block", marginTop: 8, color: cs.accent, fontSize: 11 }}>Buka file terpilih ↗</a>}
             {needsManualReview && <label style={{ display: "block", marginTop: 8, color: cs.yellow, fontSize: 11 }}>
-              <input type="checkbox" checked={reviewAcknowledged} onChange={e => setReviewAcknowledged(e.target.checked)} /> Saya sudah memeriksa file dan memastikan ini bukti pembayaran.
+              <input type="checkbox" checked={reviewAcknowledged} onChange={e => setReviewAcknowledged(e.target.checked)} /> Saya sudah memeriksa file dan memastikan ini bukti pembayaran{selSugg?.status === "DISMISSED" ? " meski sebelumnya diabaikan" : ""}.
               {selSugg?.raw_message && <span style={{ display: "block", marginTop: 4 }}>{selSugg.raw_message}</span>}
             </label>}
           </div>
@@ -599,6 +618,7 @@ const [invoiceSubTab, setInvoiceSubTab] = useState("invoice"); // "invoice" | "q
 // Pending AI: semua saran pembayaran yang menunggu validasi, termasuk foto
 // WA yang sudah punya kandidat invoice dan entri lama tanpa media_job_id.
 const [pendingPayments, setPendingPayments] = useState([]);
+const [dismissedPayments, setDismissedPayments] = useState([]);
 const [pendingPaymentCount, setPendingPaymentCount] = useState(0);
 const [loadingPendingPayments, setLoadingPendingPayments] = useState(false);
 const [pendingSelectedInvoice, setPendingSelectedInvoice] = useState({}); // { suggestion_id: invoice_id }
@@ -635,7 +655,21 @@ const loadPendingPayments = async () => {
       rows.push(...(data || []));
       if ((data || []).length < 200) break;
     }
+    const dismissedRows = [];
+    const recent = new Date(Date.now() - 14 * 86400000).toISOString();
+    for (let from = 0; ; from += 200) {
+      const { data, error } = await supabase.from("payment_suggestions")
+        .select("id, phone, sender_name, amount, image_url, invoice_id, status, validation_status, created_at")
+        .eq("status", "DISMISSED").eq("validation_status", "PENDING")
+        .not("invoice_id", "is", null).not("image_url", "is", null)
+        .gte("created_at", recent).order("created_at", { ascending: false })
+        .range(from, from + 199);
+      if (error) throw error;
+      dismissedRows.push(...(data || []));
+      if ((data || []).length < 200) break;
+    }
     setPendingPayments(rows);
+    setDismissedPayments(dismissedRows);
     setPendingPaymentCount(rows.length);
   } catch (e) {
     showNotif?.("Gagal load Pending AI: " + e.message, "error");
@@ -643,7 +677,14 @@ const loadPendingPayments = async () => {
     setLoadingPendingPayments(false);
   }
 };
-useEffect(() => { if (invoiceSubTab === "pending_ai") loadPendingPayments(); /* eslint-disable-line */ }, [invoiceSubTab]);
+// Load once when Invoice opens so older pending WA proofs are visible on UNPAID
+// cards. A manual refresh is available; no additional background polling.
+useEffect(() => {
+  if (supabase && ["Owner", "Admin"].includes(currentUser?.role) && (invoiceSubTab === "invoice" || invoiceSubTab === "pending_ai")) {
+    loadPendingPayments();
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [supabase, invoiceSubTab, currentUser?.role]);
 
 // Cari kandidat invoice berdasarkan amount + phone match
 const findInvoiceCandidates = (sug) => {
@@ -978,6 +1019,10 @@ return (
         inv={attachProofInv}
         fotoSrc={fotoSrc} apiHeaders={apiHeaders} supabase={supabase}
         markPaid={markPaid} setInvoicesData={setInvoicesData} setPaymentSuggestions={setPaymentSuggestions}
+        onSuggestionResolved={id => {
+          setPendingPayments(prev => prev.filter(row => row.id !== id));
+          setDismissedPayments(prev => prev.filter(row => row.id !== id));
+        }}
         showNotif={showNotif} currentUser={currentUser} auditUserName={auditUserName} addAgentLog={addAgentLog} fmt={fmt}
         onClose={() => setAttachProofInv(null)}
       />
@@ -1417,6 +1462,12 @@ return (
       </div>
     )}
     {/* Status filter pills — SIM-3 */}
+    {invoiceSubTab === "invoice" && (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
+      <button onClick={loadPendingPayments} disabled={loadingPendingPayments}
+        style={{ alignSelf: "flex-start", background: cs.card, border: "1px solid " + cs.border, color: cs.accent, borderRadius: 8, padding: "6px 10px", cursor: loadingPendingPayments ? "wait" : "pointer", fontSize: 11 }}>
+        {loadingPendingPayments ? "Memuat bukti WA..." : "↻ Perbarui bukti WA"}
+      </button>
+    )}
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
       {[
         ["Semua", cs.muted],
@@ -1654,6 +1705,10 @@ return (
       {pageInv.map(inv => {
         const isSelected = mergeMode && mergeSelectedIds.includes(inv.id);
         const atCapacity = mergeMode && !isSelected && mergeSelectedIds.length >= MERGE_MAX;
+        const pendingProofs = INVOICE_UNPAID_STATUSES.includes(inv.status) ? pendingProofsForInvoice(pendingPayments, inv) : [];
+        const pendingProof = pendingProofs[0];
+        const dismissedProof = !pendingProof && INVOICE_UNPAID_STATUSES.includes(inv.status)
+          ? dismissedProofsForInvoice(dismissedPayments, inv)[0] : null;
         return (
         <div key={inv.id} style={{
           background: isSelected ? cs.accent + "12" : cs.card,
@@ -1781,6 +1836,40 @@ return (
             <span>🔧 {inv.service} · {Array.isArray(inv.units) ? inv.units.length : (inv.units || 1)} unit</span>
             {inv.due && <span>⏰ Jatuh tempo: {inv.due}</span>}
           </div>
+          {pendingProof && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", background: cs.yellow + "14", border: "1px solid " + cs.yellow + "55", borderRadius: 9, padding: "8px 10px", marginBottom: 12 }}>
+              <a href={fotoSrc(pendingProof.image_url)} target="_blank" rel="noreferrer" title="Buka bukti WA untuk diperiksa">
+                <img src={fotoSrc(pendingProof.image_url)} alt="Bukti WA menunggu verifikasi" loading="lazy" style={{ width: 42, height: 42, objectFit: "cover", borderRadius: 6 }} />
+              </a>
+              <div style={{ flex: 1, minWidth: 160, fontSize: 11, color: cs.text }}>
+                <b style={{ color: cs.yellow }}>Bukti WA menunggu verifikasi{pendingProofs.length > 1 ? ` (${pendingProofs.length})` : ""}</b>
+                <div>{pendingProof.amount ? fmt(Number(pendingProof.amount)) : "Nominal belum terbaca"} · {pendingProof.sender_name || inv.customer} · {(pendingProof.created_at || "").slice(0, 10)}</div>
+              </div>
+              <button onClick={() => currentUser?.role === "Owner"
+                ? setAttachProofInv({ ...inv, initialSuggestionId: pendingProof.id })
+                : setInvoiceSubTab("pending_ai")}
+                style={{ background: cs.yellow + "22", color: cs.yellow, border: "1px solid " + cs.yellow + "66", borderRadius: 7, padding: "6px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                Periksa & lampirkan
+              </button>
+            </div>
+          )}
+          {dismissedProof && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", background: cs.red + "12", border: "1px solid " + cs.red + "55", borderRadius: 9, padding: "8px 10px", marginBottom: 12 }}>
+              <a href={fotoSrc(dismissedProof.image_url)} target="_blank" rel="noreferrer" title="Buka bukti WA yang pernah diabaikan">
+                <img src={fotoSrc(dismissedProof.image_url)} alt="Bukti WA pernah diabaikan" loading="lazy" style={{ width: 42, height: 42, objectFit: "cover", borderRadius: 6 }} />
+              </a>
+              <div style={{ flex: 1, minWidth: 160, fontSize: 11, color: cs.text }}>
+                <b style={{ color: cs.red }}>Bukti WA pernah diabaikan · perlu tinjau ulang</b>
+                <div>{dismissedProof.amount ? fmt(Number(dismissedProof.amount)) : "Nominal belum terbaca"} · {(dismissedProof.created_at || "").slice(0, 10)}</div>
+              </div>
+              {currentUser?.role === "Owner" && (
+                <button onClick={() => setAttachProofInv({ ...inv, initialSuggestionId: dismissedProof.id })}
+                  style={{ background: cs.red + "22", color: cs.red, border: "1px solid " + cs.red + "66", borderRadius: 7, padding: "6px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                  Tinjau ulang
+                </button>
+              )}
+            </div>
+          )}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button onClick={() => { setSelectedInvoice(inv); setModalPDF(true); }} style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>👁 Preview</button>
             {/* Edit Material — khusus invoice AC unit sale (Owner only, kecuali CANCELLED) */}
