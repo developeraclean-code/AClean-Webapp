@@ -6,6 +6,7 @@ import { uploadBufferToR2, hasR2Config } from "../_r2-upload.js";
 import { parseKasbonText, matchKasbonName, isKasbonApprovalMessage, resolveKasbonEntry, KASBON_APPROVER_PHONES } from "../_kasbon-parser.js";
 import { buildExpenseDedupKey } from "../_expense-dedup.js";
 import { retryOnePaymentMediaJob } from "../_payment-media.js";
+import { trustedProofForInvoice } from "../../src/lib/waPaymentMatch.js";
 
 // Maksimal satu media per invocation agar aman untuk Vercel/Supabase free tier.
 // Job idempoten; kegagalan disimpan dan dicoba lagi maksimal tiga kali.
@@ -379,22 +380,26 @@ export async function taskScanBuktiBayar() {
   const cutoff90 = new Date(Date.now() - 90 * 86400000).toISOString();
   const cutoffDate = cutoff90 > "2026-05-01T00:00:00+00:00" ? cutoff90 : "2026-05-01T00:00:00+00:00";
 
+  const invoicePage = from => sb.from("invoices")
+    .select("id, customer, created_at")
+    .eq("status", "PAID")
+    .gt("total", 0)
+    .or("payment_proof_url.is.null,payment_proof_url.eq.,payment_proof_url.eq.verified-manual-no-proof")
+    .gte("created_at", cutoffDate)
+    .order("created_at", { ascending: false }).order("id")
+    .range(from, from + 199);
+  const suggestionPage = from => sb.from("payment_suggestions")
+    .select("invoice_id, image_url, status, validation_status")
+    .gte("created_at", cutoffDate)
+    .eq("status", "CONFIRMED")
+    .eq("validation_status", "LINKED")
+    .not("invoice_id", "is", null)
+    .not("image_url", "is", null)
+    .order("created_at", { ascending: true }).order("id")
+    .range(from, from + 499);
   const [invRes, suggRes] = await Promise.all([
-    sb.from("invoices")
-      .select("id, customer, phone, total, paid_at, created_at")
-      .eq("status", "PAID")
-      .gt("total", 0)
-      .or("payment_proof_url.is.null,payment_proof_url.eq.,payment_proof_url.eq.verified-manual-no-proof")
-      .gte("created_at", cutoffDate)
-      .order("created_at", { ascending: false })
-      .limit(200),
-    // Ambil semua payment_suggestions (PENDING dan RESOLVED) dalam 90 hari — jangan filter PENDING saja
-    // supaya bukti yang sudah pernah diproses pun bisa dipakai sebagai fallback
-    sb.from("payment_suggestions")
-      .select("phone, image_url, created_at, amount, status")
-      .gte("created_at", cutoffDate)
-      .order("created_at", { ascending: true })
-      .limit(500),
+    invoicePage(0),
+    suggestionPage(0),
   ]);
 
   if (invRes.error) {
@@ -410,122 +415,54 @@ export async function taskScanBuktiBayar() {
     return { error: suggRes.error.message };
   }
 
-  const invs = invRes.data;
-  const suggestions = suggRes.data || [];
-
-  // Build phone → suggestions map (sorted oldest→newest, sudah di-sort dari query)
-  const phoneMap = {};
-  // Suffix-6-digit map: untuk fallback kalau phone customer typo (e.g. 1 digit hilang)
-  // Contoh: invoice phone "62856976881" (typo) cocok dengan bukti dari "628567976881"
-  // karena last 6 digit sama: "976881"
-  const suffixMap = {};
-  // All suggestions list (untuk fuzzy amount fallback)
-  const allEntries = [];
-  for (const s of suggestions) {
-    const phone = (s.phone || "").replace(/[^0-9]/g, "");
-    if (!phone || phone.length < 8 || !s.image_url) continue;
-    const entry = { ...s, phone, ts: new Date(s.created_at).getTime(), amountNum: Number(s.amount) || 0 };
-    if (!phoneMap[phone]) phoneMap[phone] = [];
-    phoneMap[phone].push(entry);
-    if (phone.length >= 9) {
-      const suf = phone.slice(-6);
-      if (!suffixMap[suf]) suffixMap[suf] = [];
-      suffixMap[suf].push(entry);
+  const invs = [...invRes.data];
+  for (let from = 200; invs.length === from; from += 200) {
+    const page = await invoicePage(from);
+    if (page.error) {
+      await log("SCAN_BUKTI", "Gagal paginate invoices: " + page.error.message, "ERROR");
+      return { error: page.error.message };
     }
-    allEntries.push(entry);
+    invs.push(...(page.data || []));
+    if ((page.data || []).length < 200) break;
+  }
+  const suggestions = [...(suggRes.data || [])];
+  for (let from = 500; suggestions.length === from; from += 500) {
+    const page = await suggestionPage(from);
+    if (page.error) {
+      await log("SCAN_BUKTI", "Gagal paginate payment_suggestions: " + page.error.message, "ERROR");
+      return { error: page.error.message };
+    }
+    suggestions.push(...(page.data || []));
+    if ((page.data || []).length < 500) break;
+  }
+
+  // Nomor/nominal tidak dipakai untuk memasang bukti. Satu-satunya sumber
+  // tepercaya ialah suggestion yang telah dikonfirmasi untuk invoice ini.
+  const byInvoice = new Map();
+  for (const suggestion of suggestions) {
+    if (!byInvoice.has(suggestion.invoice_id)) byInvoice.set(suggestion.invoice_id, []);
+    byInvoice.get(suggestion.invoice_id).push(suggestion);
   }
 
   let updated = 0;
-  let fuzzyMatched = 0;
   const updateLog = [];
-  const fuzzyReview = []; // bukti yang match by amount tapi phone beda — perlu owner verify
-
-  const before3d = 3 * 24 * 60 * 60 * 1000;
-  const after30d = 30 * 24 * 60 * 60 * 1000;
-  const inWindowFn = (entries, invTs) => entries.filter(e => e.ts >= invTs - before3d && e.ts <= invTs + after30d);
-  const pickBestFn = (entries, invTs) => {
-    const afterInv = entries.filter(e => e.ts >= invTs).sort((a, b) => a.ts - b.ts);
-    const beforeInv = entries.filter(e => e.ts < invTs).sort((a, b) => a.ts - b.ts);
-    return afterInv.length > 0 ? afterInv[0]
-         : beforeInv.length > 0 ? beforeInv[beforeInv.length - 1]
-         : null;
-  };
-
   for (const inv of invs) {
-    const rawPhone = (inv.phone || "").replace(/[^0-9]/g, "");
-    if (!rawPhone || rawPhone.length < 8) continue;
-    const invTs = new Date(inv.created_at).getTime();
-    const invTotal = Number(inv.total) || 0;
-
-    // ── TIER 1: Exact phone match (existing logic) ──
-    let best = null;
-    let matchMode = "exact_phone";
-    const entries = phoneMap[rawPhone];
-    if (entries && entries.length > 0) {
-      best = pickBestFn(inWindowFn(entries, invTs), invTs);
-    }
-
-    // ── TIER 2: Suffix-6 match (fallback kalau phone typo 1 digit) ──
-    // Hanya jika TIER 1 gagal & amount match (toleransi 5% atau Rp 5.000)
-    if (!best && rawPhone.length >= 9 && invTotal > 0) {
-      const suf = rawPhone.slice(-6);
-      const sufCands = suffixMap[suf] || [];
-      const inWin = inWindowFn(sufCands, invTs).filter(e => {
-        if (!e.amountNum) return false;
-        const diff = Math.abs(e.amountNum - invTotal);
-        return diff <= Math.max(5000, invTotal * 0.05);
-      });
-      if (inWin.length > 0) {
-        best = pickBestFn(inWin, invTs);
-        matchMode = "suffix6_amount";
-      }
-    }
-
-    // ── TIER 3: Amount-only fuzzy match (toleransi ketat: ≤1% atau Rp 1.000) ──
-    // Untuk kasus customer bayar dari rekening keluarga (phone beda total).
-    // Tier 3 hanya AUTO-LINK kalau amount exact match (toleransi Rp 1.000) AND ada exactly 1 kandidat.
-    // Kalau ambigu (>1 match) → log ke fuzzyReview untuk owner verify, jangan auto-link.
-    if (!best && invTotal > 0) {
-      const inWin = inWindowFn(allEntries, invTs).filter(e => {
-        if (!e.amountNum) return false;
-        return Math.abs(e.amountNum - invTotal) <= 1000;
-      });
-      if (inWin.length === 1) {
-        best = inWin[0];
-        matchMode = "amount_exact_unique";
-      } else if (inWin.length > 1) {
-        fuzzyReview.push({
-          invoice_id: inv.id,
-          customer: inv.customer,
-          total: invTotal,
-          candidates: inWin.map(e => ({ phone: e.phone, sender: e.sender_name, amount: e.amountNum, ts: e.created_at })),
-        });
-      }
-    }
-
-    if (!best) continue;
-
-    const { error: upErr } = await sb
-      .from("invoices")
-      .update({ payment_proof_url: best.image_url, updated_at: new Date().toISOString() })
-      .eq("id", inv.id);
-
-    if (!upErr) {
+    const trustedUrl = trustedProofForInvoice(inv.id, byInvoice.get(inv.id));
+    if (!trustedUrl) continue;
+    const { data: changed, error: upErr } = await sb.from("invoices")
+      .update({ payment_proof_url: trustedUrl, updated_at: new Date().toISOString() })
+      .eq("id", inv.id).eq("status", "PAID")
+      .or("payment_proof_url.is.null,payment_proof_url.eq.,payment_proof_url.eq.verified-manual-no-proof")
+      .select("id");
+    if (upErr) {
+      await log("SCAN_BUKTI", `Gagal melampirkan bukti ke ${inv.id}: ${upErr.message}`, "ERROR");
+    } else if (changed?.length) {
       updated++;
-      if (matchMode !== "exact_phone") fuzzyMatched++;
-      const tag = matchMode === "exact_phone" ? "" : ` [${matchMode}]`;
-      updateLog.push(inv.id + " ← " + inv.customer + " (" + (best.amount ? "Rp " + Number(best.amount).toLocaleString("id") : "?") + ")" + tag);
+      updateLog.push(inv.id + " ← " + inv.customer);
     }
   }
 
-  // Log kandidat ambigu untuk owner review
-  if (fuzzyReview.length > 0) {
-    await log("SCAN_BUKTI_FUZZY", "Ambiguous matches (amount sama, multi-kandidat — perlu verify owner):\n" +
-      fuzzyReview.map(r => `${r.invoice_id} ${r.customer} Rp${r.total.toLocaleString("id")} → ${r.candidates.length} kandidat: ${r.candidates.map(c => c.phone).join(", ")}`).join("\n"),
-      "WARNING");
-  }
-
-  const summary = `Dicek: ${invs.length} invoice, ${suggestions.length} bukti WA | Diupdate: ${updated} (fuzzy: ${fuzzyMatched}, ambigu: ${fuzzyReview.length})`;
+  const summary = `Dicek: ${invs.length} invoice, ${suggestions.length} bukti WA terverifikasi | Diupdate: ${updated}`;
   await log("SCAN_BUKTI", summary + (updateLog.length ? "\n" + updateLog.join("\n") : ""), updated > 0 ? "SUCCESS" : "INFO");
 
   // Notif owner jika ada yang terupdate

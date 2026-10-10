@@ -7,6 +7,17 @@ export function paymentPhoneVariants(phone) {
     ? [p, `+${p}`, `0${p.slice(2)}`, p.slice(2)] : [p, `+${p}`])] : [];
 }
 
+// Cron hanya boleh memulihkan bukti yang sudah diverifikasi admin untuk
+// invoice yang tepat. Kesamaan nomor atau nominal bukan bukti kepemilikan.
+export function trustedProofForInvoice(invoiceId, suggestions) {
+  const urls = new Set((suggestions || [])
+    .filter(s => s.invoice_id === invoiceId && s.status === 'CONFIRMED'
+      && s.validation_status === 'LINKED' && typeof s.image_url === 'string'
+      && s.image_url.trim())
+    .map(s => s.image_url.trim()));
+  return urls.size === 1 ? [...urls][0] : null;
+}
+
 // Suggest only a UNIQUE exact combination. Never assume newest = correct.
 // Bound the subset search; large or ambiguous sets require manual selection.
 export function matchPaymentInvoices(invoices, phone, amount) {

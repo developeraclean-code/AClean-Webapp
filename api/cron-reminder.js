@@ -83,8 +83,9 @@ async function taskTick({ cleanupOnly = false } = {}) {
 
   const ran = [];
   const failures = [];
-  // bukti-bayar: scan tiap tick jam kerja 9-18 WIB
-  if (!cleanupOnly && hour >= 9 && hour <= 18) {
+  // Retry media berjalan pada setiap tick, termasuk malam hari: URL Fonnte
+  // sementara tidak boleh menunggu sampai jam kerja berikutnya.
+  if (!cleanupOnly) {
     const retryBudget = cronTaskBudget(tickStartedAt, 11_000);
     if (!retryBudget) return { hourWib: hour, ran, pending: 1, items_processed: ran.length };
     try { await runWithCronLogging(sb, "payment-media-retry", () => taskRetryPaymentMedia(), { timeoutMs: retryBudget }); ran.push("payment-media-retry"); }
@@ -96,6 +97,9 @@ async function taskTick({ cleanupOnly = false } = {}) {
         return { ok: false, error: e.message, hourWib: hour, ran, pending: 1, timedOut: "payment-media-retry", items_processed: ran.length };
       }
     }
+  }
+  // Scan invoice PAID tanpa bukti tetap dibatasi jam kerja.
+  if (!cleanupOnly && hour >= 9 && hour <= 18) {
     const scanBudget = cronTaskBudget(tickStartedAt, 6_500);
     if (!scanBudget) return { ok: failures.length === 0, hourWib: hour, ran, pending: 1, failures, items_processed: ran.length };
     try { await runWithCronLogging(sb, "bukti-bayar", () => taskScanBuktiBayar(), { timeoutMs: scanBudget }); ran.push("bukti-bayar"); }

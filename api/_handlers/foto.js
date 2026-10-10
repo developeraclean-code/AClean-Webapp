@@ -200,6 +200,23 @@ export async function uploadFoto(req, res) {
       }
 }
 
+// Prefix R2 yang dipakai media WA harus dapat dibaca oleh proxy yang sama
+// dengan URL yang disimpan pada wa_messages dan payment_suggestions.
+export function isSafeFotoKey(key) {
+      const safeKey = /^(foto|tool-bag|material-checkout|laporan|invoice|invoices|wa-group|wa-snapshots|wa-images|wa-inbox|service-reports|orders|materials|payments|projects|maintenance|quotations|customer-photos|expense-photos|expenses|merged-pdfs|catalog)\/[a-zA-Z0-9_\-./]{1,200}\.(jpg|jpeg|png|gif|webp|pdf|json)$/i;
+      return safeKey.test(key) && !key.includes("..") && !key.includes("//") && !key.startsWith("/");
+}
+
+export function sniffWaInboxMimeType(buffer) {
+      const bytes = Buffer.from(buffer || []);
+      if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+      if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
+      if (bytes.length >= 6 && ["GIF87a", "GIF89a"].includes(bytes.toString("ascii", 0, 6))) return "image/gif";
+      if (bytes.length >= 12 && bytes.toString("ascii", 0, 4) === "RIFF" && bytes.toString("ascii", 8, 12) === "WEBP") return "image/webp";
+      if (bytes.length >= 5 && bytes.toString("ascii", 0, 5) === "%PDF-") return "application/pdf";
+      return null;
+}
+
         // ── FOTO PROXY: serve R2 images via server (bypass CORS & auth) ──
 export async function foto(req, res) {
       const key = req.query?.key || (req.body?.key) || "";
@@ -208,11 +225,10 @@ export async function foto(req, res) {
       // ── Quick Win 2: Whitelist regex untuk cegah path traversal ──
       // Hanya boleh akses prefix folder yang memang dipakai app + extension whitelist.
       // Tolak: "../...", path absolut, file backup, file env, dll.
-      // Prefix yang diizinkan: foto/, tool-bag/, laporan/, invoice/, wa-group/, wa-snapshots/, wa-images/
+      // Prefix yang diizinkan mencakup wa-inbox/ untuk media WA yang dicadangkan.
       // Extension: jpg/jpeg/png/gif/webp/pdf/json
-      const SAFE_KEY_RE = /^(foto|tool-bag|material-checkout|laporan|invoice|invoices|wa-group|wa-snapshots|wa-images|service-reports|orders|materials|payments|projects|maintenance|quotations|customer-photos|expense-photos|expenses|merged-pdfs|catalog)\/[a-zA-Z0-9_\-./]{1,200}\.(jpg|jpeg|png|gif|webp|pdf|json)$/i;
       // Cek path traversal sekaligus (defense in depth)
-      if (!SAFE_KEY_RE.test(key) || key.includes("..") || key.includes("//") || key.startsWith("/")) {
+      if (!isSafeFotoKey(key)) {
         return res.status(400).json({ error: "key tidak valid" });
       }
 
@@ -262,16 +278,24 @@ export async function foto(req, res) {
           },
         });
         if (!r2res.ok) return res.status(r2res.status).json({ error: "Foto tidak ditemukan" });
-        const ct = r2res.headers.get("content-type") || "image/jpeg";
+        const buf = await r2res.arrayBuffer();
+        const bufNode = Buffer.from(buf);
+        // Media Fonnte dapat memiliki Content-Type keliru. Jangan pernah
+        // menyajikan payload HTML dari wa-inbox sebagai dokumen aktif.
+        const waInbox = key.startsWith("wa-inbox/");
+        const ct = waInbox
+          ? (sniffWaInboxMimeType(bufNode) || "application/octet-stream")
+          : (r2res.headers.get("content-type") || "image/jpeg");
         res.setHeader("Content-Type", ct);
-        if (ct.includes("text/html") || ct.includes("application/pdf")) {
+        if (waInbox && ct === "application/octet-stream") {
+          res.setHeader("Cache-Control", "no-store");
+          res.setHeader("Content-Disposition", "attachment");
+        } else if (ct.includes("text/html") || ct.includes("application/pdf")) {
           res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
           res.setHeader("Content-Disposition", "inline");
         } else {
           res.setHeader("Cache-Control", "public, max-age=86400");
         }
-        const buf = await r2res.arrayBuffer();
-        const bufNode = Buffer.from(buf);
         res.setHeader("Content-Length", bufNode.length);
         return res.status(200).send(bufNode);
       } catch (err) {

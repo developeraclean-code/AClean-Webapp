@@ -12,7 +12,7 @@ import { logAiUsageRest } from "../_logger.js";
 import { analyzeToolBagPhoto } from "../_tool-bag-vision.js";
 import { classifyText, matchSelesaiToOrder, persistTextClassification, extractMaterialUsage, resolveUsageJobs, looksLikeMaterialUsage } from "../_ai-text.js";
 import { uploadBufferToR2, downloadToBuffer, hasR2Config } from "../_r2-upload.js";
-import { classifyPaymentMedia, findPaymentInvoiceMatch, ensurePaymentSuggestion, registerPaymentMediaReference, stagePaymentMedia, updatePaymentMediaJob } from "../_payment-media.js";
+import { classifyPaymentMedia, findPaymentInvoiceMatch, ensurePaymentSuggestion, hasPaymentMediaHint, manualPaymentReviewReason, registerPaymentMediaReference, stagePaymentMedia, updatePaymentMediaJob } from "../_payment-media.js";
 import { callVision } from "../_vision-provider.js";
 import { md5Buffer, checkImageDuplicate } from "../_image-dedup.js";
 import { parseKasbonText, matchKasbonName, isKasbonApprovalMessage, isKasbonRevisionMessage, resolveKasbonEntry, KASBON_APPROVER_PHONES } from "../_kasbon-parser.js";
@@ -1374,11 +1374,35 @@ export async function receiveWa(req, res) {
       // ── Save inbound message ke wa_messages (schema: phone,name,content,role,created_at) ──
       // Simpan created_at sebagai anchor agar image classifier bisa PATCH record yang tepat
       const msgCreatedAt = nowIso;
-      if (SU && SK) fetch(SU + "/rest/v1/wa_messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
-        body: JSON.stringify({ phone: sender, name: senderName, content: message, role: "customer", created_at: msgCreatedAt })
-      }).catch(err => console.error("[WA_MSG_SAVE]", err.message));
+      const mayContainMedia = wb.type === "image" || wb.type === "document"
+        || /^https?:\/\/.+\.(jpg|jpeg|png|gif|webp|pdf)(\?|$)/i.test(message);
+      let savedWaMessageId = null;
+      if (SU && SK) {
+        try {
+          const saved = await fetch(SU + "/rest/v1/wa_messages", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK,
+              Prefer: mayContainMedia ? "return=representation" : "return=minimal" },
+            body: JSON.stringify({ phone: sender, name: senderName, content: message, role: "customer", created_at: msgCreatedAt }),
+            signal: AbortSignal.timeout(5000),
+          });
+          if (!saved.ok) throw new Error(`HTTP ${saved.status}`);
+          if (mayContainMedia) savedWaMessageId = (await saved.json())?.[0]?.id || null;
+        } catch (error) { console.error("[WA_MSG_SAVE]", error.message); }
+      }
+      const patchWaMessageImage = async imageUrl => {
+        const filter = savedWaMessageId
+          ? "id=eq." + encodeURIComponent(savedWaMessageId)
+          : "phone=eq." + encodeURIComponent(sender) + "&created_at=eq." + encodeURIComponent(msgCreatedAt);
+        try {
+          const patched = await fetch(SU + "/rest/v1/wa_messages?" + filter, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=representation" },
+            body: JSON.stringify({ image_url: imageUrl }), signal: AbortSignal.timeout(5000),
+          });
+          if (!patched.ok || !(await patched.json())?.length) console.warn("[WA_IMG_PATCH_MISS]", patched.status, filter);
+        } catch (error) { console.warn("[WA_IMG_PATCH_FAIL]", error.message); }
+      };
 
       // ── Upsert wa_conversations (phone unik, increment unread, update last) ──
       if (SU && SK) {
@@ -1978,6 +2002,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                   supabaseUrl: SU, serviceKey: SK, sourceUrl: mediaUrl, phone: sender, senderName,
                 })
               : null;
+            if (stagedMedia && !stagedMedia.ok) console.warn("[WA_IMG_QUEUE_REGISTER_FAIL]", stagedMedia.error);
             // HEAD request dulu untuk cek ukuran — tidak download isi gambar
             let skipDueToSize = false;
             try {
@@ -2019,11 +2044,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                   })
                 : null;
               if (stagedMedia?.ok && stagedMedia.url) {
-                await fetch(SU + "/rest/v1/wa_messages?phone=eq." + encodeURIComponent(sender) + "&created_at=eq." + encodeURIComponent(msgCreatedAt), {
-                  method: "PATCH",
-                  headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
-                  body: JSON.stringify({ image_url: stagedMedia.url })
-                }).catch(e => console.warn("[WA_IMG_STAGE_PATCH]", e.message));
+                await patchWaMessageImage(stagedMedia.url);
               } else if (stagedMedia && !stagedMedia.ok) {
                 console.warn("[WA_IMG_STAGE_FAIL]", stagedMedia.error);
                 try { Sentry.captureMessage(`WA payment media staging gagal: ${stagedMedia.error}`, "warning"); } catch (_) {}
@@ -2038,7 +2059,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                 if (stagedMedia?.job) {
                   await ensurePaymentSuggestion({
                     supabaseUrl: SU, serviceKey: SK, job: stagedMedia.job,
-                    pendingReason: classifyResult.error,
+                    pendingReason: classifyResult.error, forceReview: true,
                   });
                   await updatePaymentMediaJob({
                     supabaseUrl: SU, serviceKey: SK, id: stagedMedia.job.id,
@@ -2066,19 +2087,53 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                     await updatePaymentMediaJob({
                       supabaseUrl: SU, serviceKey: SK, id: stagedMedia.job.id,
                       patch: {
-                        status: classified.category === "bukti_transfer" ? "STORED" : "IGNORED",
+                        // Jangan tandai IGNORED sebelum review manual berhasil dibuat.
+                        status: "STORED",
                         category: classified.category,
                         transfer_amount: classified.amount, fee_amount: classified.fee_amount,
                         total_debit: classified.total_debit, bank: classified.bank,
                         transfer_date: safeDateStr(classified.transfer_date),
-                        next_retry_at: classified.category === "bukti_transfer" ? new Date().toISOString() : null,
+                        next_retry_at: new Date().toISOString(),
                       },
                     });
                   }
 
-                  // Hanya simpan bukti_transfer — kategori lain tidak perlu disimpan di R2
+                  // Semua media pelanggan sudah dicadangkan ke R2. Kategori bukti
+                  // pembayaran diproses lebih lanjut untuk saran invoice.
                   const shouldSave = classified && classified.category === "bukti_transfer";
                   console.log("[WA_IMG_CLASSIFIED]", { sender, category: classified?.category, shouldSave, amount: classified?.amount });
+
+                  if (!shouldSave && stagedMedia?.job) {
+                    const mediaMessage = wb.caption || (message === mediaUrl ? "" : message);
+                    let candidateMatch = null;
+                    let invoiceLookupError = null;
+                    if (classified.category !== "dokumen" && !hasPaymentMediaHint(mediaMessage)) {
+                      try { candidateMatch = await findPaymentInvoiceMatch({ supabaseUrl: SU, serviceKey: SK, phone: sender, amount: null }); }
+                      catch (error) { invoiceLookupError = error.message; console.warn("[WA_IMG_REVIEW_LOOKUP]", error.message); }
+                    }
+                    const reason = manualPaymentReviewReason({
+                      category: classified.category, message: mediaMessage,
+                      hasOpenInvoice: !!candidateMatch?.candidates?.length, invoiceLookupError,
+                    });
+                    if (reason) {
+                      const review = await ensurePaymentSuggestion({
+                        supabaseUrl: SU, serviceKey: SK, job: stagedMedia.job,
+                        pendingReason: reason, forceReview: true, invoiceMatch: candidateMatch,
+                      });
+                      const status = review.ok
+                        ? (review.alreadySettled || review.suggestion?.status !== "PENDING" ? "DONE" : "PENDING_REVIEW")
+                        : "FAILED_RETRYABLE";
+                      const saved = await updatePaymentMediaJob({ supabaseUrl: SU, serviceKey: SK, id: stagedMedia.job.id,
+                        patch: { status, last_error: review.ok ? null : review.error,
+                          next_retry_at: review.ok ? null : new Date(Date.now() + 3600000).toISOString() },
+                      });
+                      if (!review.ok || !saved.ok) console.warn("[WA_IMG_REVIEW_SAVE]", review.error || saved.error);
+                    } else {
+                      await updatePaymentMediaJob({ supabaseUrl: SU, serviceKey: SK, id: stagedMedia.job.id,
+                        patch: { status: "IGNORED", next_retry_at: null },
+                      });
+                    }
+                  }
 
                   // Step 2: Upload ke R2 hanya jika kategori relevan
                   if (shouldSave && !savedImageUrl) {
@@ -2136,13 +2191,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                   }
 
                   // Step 3: Update wa_messages dengan image_url — match exact record via phone+created_at
-                  if (savedImageUrl && SU && SK) {
-                    fetch(SU + "/rest/v1/wa_messages?phone=eq." + encodeURIComponent(sender) + "&created_at=eq." + encodeURIComponent(msgCreatedAt), {
-                      method: "PATCH",
-                      headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal" },
-                      body: JSON.stringify({ image_url: savedImageUrl })
-                    }).catch(e => console.warn("[WA_IMG_PATCH]", e.message));
-                  }
+                  if (savedImageUrl && savedImageUrl !== stagedMedia?.url) await patchWaMessageImage(savedImageUrl);
 
                   // Step 4: Durable review suggestion; invoice proof is linked on manual confirmation.
                   console.log("[WA_IMG_PAY_GATE]", { sender, payDetectOn, classifiedCat: classified?.category });
@@ -2157,10 +2206,8 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                     let paymentSaved = false;
                     let paymentInserted = false;
 
-                    // Nomor internal: jangan buat saran pembayaran, tapi JANGAN pula dibuang
-                    // diam-diam — kalau ternyata staf meneruskan bukti bayar customer, harus
-                    // masih bisa ditemukan. Jejaknya disimpan di agent_logs lengkap dengan
-                    // foto & nominalnya. Foto R2-nya sendiri sudah tersimpan lebih dulu.
+                    // Nomor internal tidak masuk saran pembayaran customer. Jejak
+                    // dan foto tetap tersedia di Monitoring untuk cek manual.
                     if (senderIsInternal) {
                       console.log("[PAY_SKIP_INTERNAL]", sender, senderName, classified.amount);
                       await fetch(SU + "/rest/v1/agent_logs", {
@@ -2322,6 +2369,12 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                 }
               }
               } // end: double-check size setelah download
+            } else if (stagedMedia?.job) {
+              await updatePaymentMediaJob({
+                supabaseUrl: SU, serviceKey: SK, id: stagedMedia.job.id,
+                patch: { status: "FAILED_RETRYABLE", last_error: `Fonnte media HTTP ${imgFetch.status}`,
+                  next_retry_at: new Date(Date.now() + 5 * 60000).toISOString() },
+              });
             }
             } // end: skipDueToSize else
         } catch(imgErr) {

@@ -1,12 +1,55 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  classifyPaymentMedia, ensurePaymentSuggestion, normalizePaymentClassification,
+  classifyPaymentMedia, ensurePaymentSuggestion, hasPaymentMediaHint, manualPaymentReviewReason, normalizePaymentClassification,
   parsePaymentClassification, registerPaymentMediaReference, stagePaymentMedia, retryOnePaymentMediaJob,
 } from "../../../api/_payment-media.js";
+import { foto, isSafeFotoKey, sniffWaInboxMimeType } from "../../../api/_handlers/foto.js";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("WA payment media classification", () => {
+  it("proxy foto menerima object wa-inbox dari R2 tanpa membuka traversal", () => {
+    expect(isSafeFotoKey("wa-inbox/2026-10/0123456789abcdef01234567.jpg")).toBe(true);
+    expect(isSafeFotoKey("wa-inbox/2026-10/0123456789abcdef01234567.pdf")).toBe(true);
+    expect(isSafeFotoKey("wa-inbox/../secret.jpg")).toBe(false);
+    expect(isSafeFotoKey("backup/secret.json")).toBe(false);
+  });
+  it("metadata media WA tidak dapat menyamarkan HTML sebagai foto", () => {
+    expect(sniffWaInboxMimeType(Buffer.from([0xff, 0xd8, 0xff, 0x00]))).toBe("image/jpeg");
+    expect(sniffWaInboxMimeType(Buffer.from("%PDF-1.7"))).toBe("application/pdf");
+    expect(sniffWaInboxMimeType(Buffer.from("<script>alert(1)</script>"))).toBeNull();
+  });
+  it("proxy memaksa HTML palsu dari wa-inbox menjadi unduhan", async () => {
+    vi.stubEnv("R2_ACCESS_KEY", "key");
+    vi.stubEnv("R2_SECRET_KEY", "secret");
+    vi.stubEnv("R2_ACCOUNT_ID", "account");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      headers: new Headers({ "content-type": "text/html" }),
+      arrayBuffer: async () => new TextEncoder().encode("<script>alert(1)</script>").buffer,
+    }));
+    const headers = {};
+    const response = {
+      status(code) { this.code = code; return this; },
+      json() { return this; },
+      setHeader(name, value) { headers[name] = value; },
+      send() { return this; },
+    };
+    await foto({ query: { key: "wa-inbox/2026-10/0123456789abcdef01234567.jpg" } }, response);
+    expect(response.code).toBe(200);
+    expect(headers["Content-Type"]).toBe("application/octet-stream");
+    expect(headers["Content-Disposition"]).toBe("attachment");
+  });
+  it("mengirim dokumen dan foto berkonteks pembayaran ke review, bukan membuangnya diam-diam", () => {
+    expect(manualPaymentReviewReason({ category: "dokumen" })).toContain("dokumen");
+    expect(manualPaymentReviewReason({ category: "tidak_relevan", message: "sudah transfer ya" })).toContain("Pesan menyebut pembayaran");
+    expect(manualPaymentReviewReason({ category: "kerusakan_ac", hasOpenInvoice: true })).toContain("invoice terbuka");
+    expect(manualPaymentReviewReason({ category: "tidak_relevan", invoiceLookupError: "HTTP 503" })).toContain("Pencarian invoice gagal");
+    expect(manualPaymentReviewReason({ category: "kerusakan_ac", message: "AC bocor" })).toBeNull();
+    expect(hasPaymentMediaHint("Bukti pembayaran terlampir")).toBe(true);
+    expect(hasPaymentMediaHint("Saya lampirkan bukti ya")).toBe(true);
+    expect(hasPaymentMediaHint("Foto AC bocor")).toBe(false);
+  });
   it("memakai nominal transfer, bukan total debit yang termasuk biaya admin", () => {
     const parsed = normalizePaymentClassification({
       category: "bukti_transfer",
@@ -21,8 +64,17 @@ describe("WA payment media classification", () => {
     expect(parsed.total_debit).toBe(202500);
   });
 
+  it("tidak mengalikan nominal 100x saat OCR menyertakan sen nol", () => {
+    expect(normalizePaymentClassification({ category: "bukti_transfer", transfer_amount: "Rp 950.000,00" }).amount).toBe(950000);
+    expect(normalizePaymentClassification({ category: "bukti_transfer", transfer_amount: "Rp 950,000.00" }).amount).toBe(950000);
+  });
+
   it("tetap kompatibel dengan response AI lama yang hanya punya amount", () => {
     expect(normalizePaymentClassification({ category: "bukti_transfer", amount: 150000 }).amount).toBe(150000);
+  });
+
+  it("kategori AI tak dikenal masuk dokumen untuk review manual", () => {
+    expect(normalizePaymentClassification({ category: "receipt", amount: 150000 }).category).toBe("dokumen");
   });
 
   it("membaca JSON walau dibungkus markdown", () => {
@@ -95,6 +147,55 @@ describe("WA payment media classification", () => {
     const payload = JSON.parse(fetchMock.mock.calls[1][1].body);
     expect(payload).toMatchObject({ amount: null, invoice_id: null, media_job_id: "job-1", validation_status: "PENDING" });
   });
+  it("menyimpan media AI gagal untuk review walau tidak ada invoice terbuka", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ id: "SUG-REVIEW", status: "PENDING" }] });
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await ensurePaymentSuggestion({
+      supabaseUrl: "https://example.supabase.co", serviceKey: "service",
+      job: { id: "job-review", phone: "628179527958", r2_url: "/api/foto?key=receipt.jpg" },
+      pendingReason: "AI gagal membaca foto", forceReview: true,
+    });
+    expect(result).toMatchObject({ ok: true, inserted: true, suggestion: { id: "SUG-REVIEW" } });
+    const payload = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(payload).toMatchObject({ status: "PENDING", validation_status: "PENDING",
+      match_source: "wa_image_review", invoice_id: null, amount: null });
+  });
+  it("tetap menyimpan bukti ke review saat pencarian invoice gagal", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 503 })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ id: "SUG-LOOKUP", status: "PENDING" }] });
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await ensurePaymentSuggestion({
+      supabaseUrl: "https://example.supabase.co", serviceKey: "service",
+      job: { id: "job-lookup", phone: "628179527958", r2_url: "/api/foto?key=receipt.jpg" },
+      classification: { category: "bukti_transfer", amount: 200000 },
+    });
+    expect(result).toMatchObject({ ok: true, suggestion: { id: "SUG-LOOKUP" }, invoice: null });
+    const payload = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(payload.raw_message).toContain("Pencocokan invoice gagal");
+    expect(payload.invoice_id).toBeNull();
+  });
+  it("media yang butuh review manual tidak otomatis terikat ke kandidat invoice", async () => {
+    const invoice = { id: "INV-CUSTOMER", job_id: "JOB-CUSTOMER", phone: "628179527958", status: "UNPAID", total: 200000 };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ id: "SUG-STAFF", status: "PENDING" }] });
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await ensurePaymentSuggestion({
+      supabaseUrl: "https://example.supabase.co", serviceKey: "service",
+      job: { id: "job-staff", phone: invoice.phone, r2_url: "/api/foto?key=staff.jpg" },
+      classification: { category: "bukti_transfer", amount: 200000 }, forceReview: true,
+      pendingReason: "Diteruskan staf", invoiceMatch: { kind: "single", invoices: [invoice], candidates: [invoice] },
+    });
+    expect(result).toMatchObject({ ok: true, invoice: null });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({
+      invoice_id: null, order_id: null, match_source: "wa_image_review", amount: 200000,
+    });
+  });
 });
 
 
@@ -102,6 +203,20 @@ describe("durable payment retry", () => {
   const job = { id: "j1", phone: "6281234567890", r2_url: "/api/foto?key=proof.jpg", category: "bukti_transfer", transfer_amount: 950000, attempts: 2 };
   const invoices = [500000,450000].map((total,n)=>({id:`I${n}`,phone:job.phone,status:"UNPAID",total}));
   const response = data => ({ok:true,json:async()=>data});
+  it("memprioritaskan referensi Fonnte yang belum aman di R2", async () => {
+    const urgent = { id: "urgent", phone: job.phone, source_url: "https://fonnte.test/expired.jpg", attempts: 2 };
+    const mock = vi.fn(async (url, options) => {
+      if (url.includes("r2_key=is.null")) return response([urgent]);
+      if (options?.method === "PATCH") return response([]);
+      if (url === urgent.source_url) return { ok: false, status: 404 };
+      throw new Error("Unexpected call: " + url);
+    });
+    vi.stubGlobal("fetch", mock);
+    const result = await retryOnePaymentMediaJob({supabaseUrl:"https://db.test",serviceKey:"key"});
+    expect(result).toMatchObject({checked:1,failed:1});
+    expect(mock.mock.calls.some(([url]) => url.includes("status=in.(STORED,FAILED_RETRYABLE)"))).toBe(false);
+    expect(JSON.parse(mock.mock.calls.at(-1)[1].body).status).toBe("FAILED_PERMANENT");
+  });
   it("reuses OCR without AI/download and propagates database errors to cron", async () => {
     const mock = vi.fn(async (url, options) => {
       if (url.includes("wa_payment_media_jobs?select")) return response([job]);

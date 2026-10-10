@@ -3,7 +3,8 @@ import { createHash } from "node:crypto";
 import { downloadBufferFromR2, downloadToBuffer, uploadBufferToR2 } from "./_r2-upload.js";
 import { callVision, getVisionProvider } from "./_vision-provider.js";
 
-export const PAYMENT_MEDIA_PROMPT = `Klasifikasikan gambar ini. Pilih SATU kategori: "bukti_transfer" (struk transfer/screenshot m-banking), "kerusakan_ac", "dokumen", atau "tidak_relevan".
+export const PAYMENT_MEDIA_PROMPT = `Klasifikasikan gambar ini. Pilih SATU kategori: "bukti_transfer" (bukti pembayaran BERHASIL: transfer bank, m-banking, QRIS, e-wallet, virtual account, setor tunai, atau mutasi kredit), "kerusakan_ac", "dokumen", atau "tidak_relevan".
+Tagihan/invoice, permintaan pembayaran, dan layar transfer yang belum berhasil BUKAN bukti_transfer. Jika tulisan kurang jelas atau tidak yakin, pilih "dokumen" agar diperiksa manual.
 Jika bukti_transfer, pisahkan dengan tepat:
 - transfer_amount: nominal yang diterima penerima / nominal transfer, TANPA biaya admin
 - fee_amount: biaya admin (0 jika tidak ada)
@@ -16,17 +17,24 @@ Jangan memakai total_debit sebagai transfer_amount. Format JSON SAJA:
 const cleanMoney = value => {
   if (value === null || value === undefined || value === "") return null;
   // Nilai invoice AClean memakai Rupiah bulat; titik/koma dari OCR adalah
-  // pemisah ribuan ("Rp 200.000"), bukan desimal.
+  // pemisah ribuan ("Rp 200.000"), kecuali dua digit terakhir yang
+  // jelas merupakan sen ("Rp 200.000,00" atau "Rp 200,000.00").
+  const raw = typeof value === "number" ? "" : String(value).replace(/[^0-9.,]/g, "");
+  const normalized = /[.,]\d{2}$/.test(raw) && (/[.,]\d{3}[.,]\d{2}$/.test(raw) || /[.,]00$/.test(raw))
+    ? raw.slice(0, -3) : raw;
+  if (typeof value !== "number" && !/\d/.test(normalized)) return null;
   const number = typeof value === "number"
     ? value
-    : Number(String(value).replace(/[^0-9]/g, ""));
+    : Number(normalized.replace(/[^0-9]/g, ""));
   return Number.isFinite(number) && number >= 0 ? number : null;
 };
 
 export function normalizePaymentClassification(input) {
   if (!input || typeof input !== "object") return null;
-  const category = String(input.category || "").trim().toLowerCase();
-  if (!category) return null;
+  const rawCategory = String(input.category || "").trim().toLowerCase();
+  if (!rawCategory) return null;
+  const category = ["bukti_transfer", "kerusakan_ac", "dokumen", "tidak_relevan"].includes(rawCategory)
+    ? rawCategory : "dokumen"; // kategori tak dikenal perlu review, bukan dibuang
   const transferAmount = cleanMoney(input.transfer_amount ?? input.nominal_transfer ?? input.amount);
   const feeAmount = cleanMoney(input.fee_amount ?? input.admin_fee ?? input.biaya_admin);
   const totalDebit = cleanMoney(input.total_debit ?? input.total_amount);
@@ -74,7 +82,21 @@ const restHeaders = (serviceKey, prefer = "return=representation") => ({
 
 const extensionFor = mimeType => mimeType === "image/png" ? "png"
   : mimeType === "image/webp" ? "webp"
-  : mimeType === "image/gif" ? "gif" : "jpg";
+  : mimeType === "image/gif" ? "gif"
+  : mimeType === "application/pdf" ? "pdf" : "jpg";
+
+export function hasPaymentMediaHint(message) {
+  return /bukti\s*(?:bayar|transfer|pembayaran|tf)\b|(?:lampir\w*|terlampir|kirim\w*|ini|berikut)\s+bukti(?:nya)?\b|\b(?:bayar|transfer|tf|lunas|pembayaran|tagihan|struk|receipt)\b/i.test(String(message || ""));
+}
+
+export function manualPaymentReviewReason({ category, message = "", hasOpenInvoice = false, invoiceLookupError = null }) {
+  if (category === "bukti_transfer") return null;
+  if (invoiceLookupError) return `Pencarian invoice gagal: ${invoiceLookupError}. Periksa apakah media ini bukti bayar.`;
+  if (category === "dokumen") return "AI mengategorikan media sebagai dokumen; periksa apakah ini bukti bayar.";
+  if (hasPaymentMediaHint(message)) return `Pesan menyebut pembayaran, tetapi AI mengategorikan media sebagai ${category || "tidak diketahui"}.`;
+  if (hasOpenInvoice) return `Pengirim memiliki invoice terbuka, tetapi AI mengategorikan media sebagai ${category || "tidak diketahui"}.`;
+  return null;
+}
 
 export async function registerPaymentMediaReference({ supabaseUrl, serviceKey, sourceUrl, phone, senderName, mimeType }) {
   if (!supabaseUrl || !serviceKey || !sourceUrl || !phone) return { ok: false, error: "parameter queue tidak lengkap" };
@@ -182,32 +204,38 @@ export async function findSettledPaymentMedia({ supabaseUrl, serviceKey, job }) 
   return (await response.json())?.[0] || null;
 }
 
-export async function ensurePaymentSuggestion({ supabaseUrl, serviceKey, job, classification = null, pendingReason = null, invoiceMatch = null }) {
+export async function ensurePaymentSuggestion({ supabaseUrl, serviceKey, job, classification = null, pendingReason = null, invoiceMatch = null, forceReview = false }) {
   if (!job?.id || !job?.phone || !job?.r2_url) return { ok: false, error: "job media belum lengkap" };
   let match;
+  let lookupWarning = null;
   try { match = invoiceMatch || await findPaymentInvoiceMatch({ supabaseUrl, serviceKey, phone: job.phone, amount: classification?.amount }); }
-  catch (error) { return { ok: false, error: error.message }; }
+  catch (error) {
+    // Gagal mencari invoice tidak boleh membuang bukti yang sudah aman di R2.
+    // Simpan sebagai review tanpa auto-link; admin tetap memeriksa kecocokannya.
+    match = matchPaymentInvoices([], job.phone, classification?.amount);
+    lookupWarning = `Pencocokan invoice gagal: ${error.message}`;
+  }
   if (classification || !match.candidates.length) {
     try {
       const settled = await findSettledPaymentMedia({ supabaseUrl, serviceKey, job });
       if (settled) return { ok: true, alreadySettled: true, invoice: settled, inserted: false };
-    } catch (error) { return { ok: false, error: error.message }; }
+    } catch (error) { lookupWarning = `Pemeriksaan bukti terpakai gagal: ${error.message}`; }
   }
-  const invoice = match.kind === "single" ? match.invoices[0] : null;
-  if (!classification && !match.candidates.length) return { ok: true, skipped: true };
+  const invoice = !forceReview && match.kind === "single" ? match.invoices[0] : null;
+  if (!classification && !forceReview && !match.candidates.length) return { ok: true, skipped: true };
   const payload = {
     media_job_id: job.id,
     phone: job.phone,
     sender_name: job.sender_name || null,
-    raw_message: pendingReason ? `Media WA perlu review manual: ${pendingReason}`
+    raw_message: pendingReason ? `Media WA perlu review manual: ${pendingReason}${lookupWarning ? ` · ${lookupWarning}` : ""}`
       : match.kind === "multi" ? `Saran alokasi ${match.invoices.length} invoice: ${match.invoices.map(i => i.id).join(", ")}. Periksa sebelum konfirmasi.`
-      : "Bukti transfer terdeteksi AI. Periksa invoice dan nominal sebelum konfirmasi.",
+      : `Bukti transfer terdeteksi AI. Periksa invoice dan nominal sebelum konfirmasi.${lookupWarning ? ` ${lookupWarning}` : ""}`,
     amount: classification?.amount ?? null,
     bank: classification?.bank || null,
     transfer_date: classification?.transfer_date || null,
     invoice_id: invoice?.id || null,
     order_id: invoice?.job_id || null,
-    match_source: classification ? (match.kind === "multi" ? "wa_image_ai_multi" : "wa_image_ai") : "wa_image_ai_pending",
+    match_source: forceReview ? "wa_image_review" : classification ? (match.kind === "multi" ? "wa_image_ai_multi" : "wa_image_ai") : "wa_image_ai_pending",
     status: "PENDING",
     validation_status: "PENDING",
     source: "image",
@@ -230,8 +258,8 @@ export async function ensurePaymentSuggestion({ supabaseUrl, serviceKey, job, cl
       suggestion = (await lookup.json())?.[0];
       // Enrich an AI-timeout fallback only while still pending; conditional PATCH
       // also protects a concurrent admin confirmation.
-      if (classification && suggestion?.status === "PENDING" && suggestion.match_source === "wa_image_ai_pending") {
-        const enrich = await fetch(`${supabaseUrl}/rest/v1/payment_suggestions?id=eq.${suggestion.id}&status=eq.PENDING&match_source=eq.wa_image_ai_pending`, {
+      if (classification && suggestion?.status === "PENDING" && ["wa_image_ai_pending", "wa_image_review"].includes(suggestion.match_source)) {
+        const enrich = await fetch(`${supabaseUrl}/rest/v1/payment_suggestions?id=eq.${suggestion.id}&status=eq.PENDING&match_source=eq.${suggestion.match_source}`, {
           method: "PATCH", headers: restHeaders(serviceKey), body: JSON.stringify(payload), signal: AbortSignal.timeout(5000),
         });
         if (!enrich.ok) return { ok: false, error: `suggestion enrich ${enrich.status}` };
@@ -247,17 +275,26 @@ export async function ensurePaymentSuggestion({ supabaseUrl, serviceKey, job, cl
 
 export async function retryOnePaymentMediaJob({ supabaseUrl, serviceKey, apiKey }) {
   const due = encodeURIComponent(new Date().toISOString());
-  let response;
+  let job;
   try {
-    response = await fetch(`${supabaseUrl}/rest/v1/wa_payment_media_jobs?select=*&status=in.(RECEIVED,STORED,FAILED_RETRYABLE)&next_retry_at=lte.${due}&attempts=lt.3&order=created_at.asc&limit=1`, {
+    // Referensi yang belum sempat tersalin ke R2 didahulukan: URL Fonnte bisa
+    // kedaluwarsa, sedangkan job STORED sudah aman di R2 untuk retry berikutnya.
+    const urgentResponse = await fetch(`${supabaseUrl}/rest/v1/wa_payment_media_jobs?select=*&status=in.(RECEIVED,FAILED_RETRYABLE)&r2_key=is.null&next_retry_at=lte.${due}&attempts=lt.3&order=created_at.asc&limit=1`, {
       headers: restHeaders(serviceKey),
       signal: AbortSignal.timeout(5000),
     });
+    if (!urgentResponse.ok) return { error: `queue fetch ${urgentResponse.status}` };
+    job = (await urgentResponse.json())?.[0];
+    if (!job) {
+      const storedResponse = await fetch(`${supabaseUrl}/rest/v1/wa_payment_media_jobs?select=*&status=in.(STORED,FAILED_RETRYABLE)&r2_key=not.is.null&next_retry_at=lte.${due}&attempts=lt.3&order=created_at.asc&limit=1`, {
+        headers: restHeaders(serviceKey), signal: AbortSignal.timeout(5000),
+      });
+      if (!storedResponse.ok) return { error: `queue fetch ${storedResponse.status}` };
+      job = (await storedResponse.json())?.[0];
+    }
   } catch (error) {
     return { error: `queue fetch gagal: ${error?.message || error}` };
   }
-  if (!response.ok) return { error: `queue fetch ${response.status}` };
-  const job = (await response.json())?.[0];
   if (!job) return { checked: 0, retried: 0 };
   const attempt = Number(job.attempts || 0) + 1;
   // Tetap berstatus retryable saat proses berjalan. Jika serverless diputus paksa,
@@ -289,7 +326,7 @@ export async function retryOnePaymentMediaJob({ supabaseUrl, serviceKey, apiKey 
     ai = await classifyPaymentMedia({ buffer: media.buffer, mimeType: activeJob.mime_type || media.mimeType, apiKey, timeoutMs: 9000 });
   }
   if (!ai.ok) {
-    const fallback = await ensurePaymentSuggestion({ supabaseUrl, serviceKey, job: activeJob, pendingReason: ai.error });
+    const fallback = await ensurePaymentSuggestion({ supabaseUrl, serviceKey, job: activeJob, pendingReason: ai.error, forceReview: true });
     const exhaustedStatus = fallback?.suggestion ? "PENDING_REVIEW" : "FAILED_PERMANENT";
     await updatePaymentMediaJob({ supabaseUrl, serviceKey, id: job.id, patch: {
       status: attempt >= 3 ? exhaustedStatus : "FAILED_RETRYABLE",
@@ -300,8 +337,30 @@ export async function retryOnePaymentMediaJob({ supabaseUrl, serviceKey, apiKey 
   }
   const c = ai.classification;
   if (c.category !== "bukti_transfer") {
-    await updatePaymentMediaJob({ supabaseUrl, serviceKey, id: job.id, patch: { status: "IGNORED", category: c.category, next_retry_at: null } });
-    return { checked: 1, retried: 1, ignored: 1 };
+    let match = null;
+    let invoiceLookupError = null;
+    if (c.category !== "dokumen") {
+      try { match = await findPaymentInvoiceMatch({ supabaseUrl, serviceKey, phone: job.phone, amount: null }); }
+      catch (error) { invoiceLookupError = error.message; }
+    }
+    const reason = manualPaymentReviewReason({ category: c.category,
+      hasOpenInvoice: !!match?.candidates?.length, invoiceLookupError });
+    if (reason) {
+      const review = await ensurePaymentSuggestion({ supabaseUrl, serviceKey, job: activeJob,
+        pendingReason: reason, forceReview: true, invoiceMatch: match });
+      const status = review.ok ? (review.alreadySettled || review.suggestion?.status !== "PENDING" ? "DONE" : "PENDING_REVIEW")
+        : attempt >= 3 ? "FAILED_PERMANENT" : "FAILED_RETRYABLE";
+      const saved = await updatePaymentMediaJob({ supabaseUrl, serviceKey, id: job.id, patch: {
+        status, category: c.category, last_error: review.ok ? null : review.error,
+        next_retry_at: review.ok || attempt >= 3 ? null : new Date(Date.now() + attempt * 3600000).toISOString(),
+      } });
+      return { ok: review.ok && saved.ok, checked: 1, retried: 1,
+        pendingReview: review.suggestion?.status === "PENDING" ? 1 : 0,
+        error: review.error || saved.error || null };
+    }
+    const ignored = await updatePaymentMediaJob({ supabaseUrl, serviceKey, id: job.id,
+      patch: { status: "IGNORED", category: c.category, next_retry_at: null } });
+    return { ok: ignored.ok, checked: 1, retried: 1, ignored: 1, error: ignored.error || null };
   }
   const suggestion = await ensurePaymentSuggestion({ supabaseUrl, serviceKey, job: activeJob, classification: c });
   const saved = await updatePaymentMediaJob({ supabaseUrl, serviceKey, id: job.id, patch: {

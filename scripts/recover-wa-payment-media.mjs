@@ -40,8 +40,9 @@ for(const job of jobs){
     continue;
   }
   const invoiceMatch=await findPaymentInvoiceMatch({supabaseUrl,serviceKey,phone:job.phone,amount:job.transfer_amount});
-  // Historical receipts without an open invoice need manual reconciliation.
-  if(!invoiceMatch.candidates.length){summary.noOpenInvoice++;continue;}
+  // Bukti yang belum punya invoice terbuka tetap harus terlihat untuk review
+  // manual; jangan membuang foto R2 hanya karena invoice sudah lunas/nomor beda.
+  if(!invoiceMatch.candidates.length)summary.noOpenInvoice++;
   summary.eligible++;
   if(!apply)continue;
   const result=await ensurePaymentSuggestion({supabaseUrl,serviceKey,job,classification:normalizePaymentClassification(job),invoiceMatch});

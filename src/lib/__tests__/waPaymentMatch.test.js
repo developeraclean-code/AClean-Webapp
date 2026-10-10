@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { matchPaymentInvoices } from '../waPaymentMatch.js';
+import { matchPaymentInvoices, trustedProofForInvoice } from '../waPaymentMatch.js';
 import { waMediaUrl } from '../waPaymentContext.js';
 const phone='62816833809';
 const invoice=(id,total,extra={})=>({id,total,phone,status:'UNPAID',...extra});
@@ -26,5 +26,26 @@ describe('WA media URL',()=>{
     expect(waMediaUrl('/api/foto?key=wa-inbox%2Fa.jpg')).toContain('a.jpg');
     expect(waMediaUrl('https://api.fonnte.com/a.jpg')).toBe('https://api.fonnte.com/a.jpg');
     for(const bad of ['javascript:alert(1)','//evil.test/a','/api/other?key=x','data:text/html,x']) expect(waMediaUrl(bad)).toBeNull();
+  });
+});
+
+describe('pemulihan bukti invoice PAID', () => {
+  const proof = (invoice_id, image_url, extra = {}) => ({
+    invoice_id, image_url, status: 'CONFIRMED', validation_status: 'LINKED', ...extra,
+  });
+  it('hanya memakai bukti yang admin tautkan ke ID invoice yang tepat', () => {
+    const suggestions = [
+      proof('INV-500', '/api/foto?key=wa-inbox%2Fproof-500.jpg'),
+      proof('INV-450', '/api/foto?key=wa-inbox%2Fproof-450.jpg'),
+    ];
+    expect(trustedProofForInvoice('INV-500', suggestions)).toBe(suggestions[0].image_url);
+    expect(trustedProofForInvoice('INV-450', suggestions)).toBe(suggestions[1].image_url);
+    expect(trustedProofForInvoice('INV-LAIN', suggestions)).toBeNull();
+  });
+  it('menolak saran belum diverifikasi, ditolak, atau bukti ganda yang berbeda', () => {
+    expect(trustedProofForInvoice('INV-1', [proof('INV-1', '/api/foto?key=pending.jpg', { status: 'PENDING' })])).toBeNull();
+    expect(trustedProofForInvoice('INV-1', [proof('INV-1', '/api/foto?key=unlinked.jpg', { validation_status: 'PENDING' })])).toBeNull();
+    expect(trustedProofForInvoice('INV-1', [proof('INV-1', '/api/foto?key=rejected.jpg', { status: 'DISMISSED' })])).toBeNull();
+    expect(trustedProofForInvoice('INV-1', [proof('INV-1', 'a.jpg'), proof('INV-1', 'b.jpg')])).toBeNull();
   });
 });

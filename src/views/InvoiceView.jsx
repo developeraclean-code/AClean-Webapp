@@ -12,7 +12,7 @@ import { BlobProvider } from "@react-pdf/renderer";
 import QuotationPDF from "../components/QuotationPDF.jsx";
 
 // ── Modal Lampirkan Bukti Bayar manual ──────────────────────────────────────
-// 3 sumber: (WA) pilih dari payment_suggestions belum ter-match (lintas-nomor),
+// 3 sumber: (WA) pilih saran PENDING yang belum terhubung atau terhubung ke invoice ini,
 // (URL) tempel link, (UPLOAD) file. Confirm → markPaid(inv,...,proofUrl) bila belum
 // lunas / update proof saja bila sudah PAID. Bila dari WA monitor → suggestion
 // di-set CONFIRMED (sekalian mengurangi backlog).
@@ -21,7 +21,9 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
   const [suggs, setSuggs] = useState([]);
   const [loadingSuggs, setLoadingSuggs] = useState(true);
   const [search, setSearch] = useState("");
+  const [visibleLimit, setVisibleLimit] = useState(60);
   const [selSugg, setSelSugg] = useState(null);
+  const [reviewAcknowledged, setReviewAcknowledged] = useState(false);
   const [urlInput, setUrlInput] = useState("");
   const [uploadedUrl, setUploadedUrl] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -34,19 +36,31 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
     (async () => {
       setLoadingSuggs(true);
       try {
-        const { data } = await supabase
-          .from("payment_suggestions")
-          .select("id, phone, sender_name, amount, bank, transfer_date, image_url, created_at, invoice_id")
-          .is("invoice_id", null)
-          .not("image_url", "is", null)
-          .order("created_at", { ascending: false })
-          .limit(120);
-        if (!cancelled) setSuggs(data || []);
-      } catch { if (!cancelled) setSuggs([]); }
+        const rows = [];
+        for (let from = 0; ; from += 200) {
+          const { data, error } = await supabase
+            .from("payment_suggestions")
+            .select("id, phone, sender_name, amount, bank, transfer_date, image_url, created_at, invoice_id, match_source, raw_message")
+            .eq("status", "PENDING")
+            .or(`invoice_id.is.null,invoice_id.eq.${inv.id}`)
+            .not("image_url", "is", null)
+            .order("created_at", { ascending: false })
+            .range(from, from + 199);
+          if (error) throw error;
+          rows.push(...(data || []));
+          if (cancelled || (data || []).length < 200) break;
+        }
+        if (!cancelled) setSuggs(rows);
+      } catch (error) {
+        if (!cancelled) {
+          setSuggs([]);
+          showNotif("Gagal memuat bukti WA: " + error.message);
+        }
+      }
       finally { if (!cancelled) setLoadingSuggs(false); }
     })();
     return () => { cancelled = true; };
-  }, [supabase]);
+  }, [supabase, inv.id, showNotif]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -104,10 +118,13 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
   };
 
   const chosenUrl = tab === "wa" ? (selSugg?.image_url || "") : tab === "url" ? urlInput.trim() : uploadedUrl;
+  const needsManualReview = tab === "wa" && selSugg?.match_source === "wa_image_review";
+  const canConfirm = !!chosenUrl && (!needsManualReview || reviewAcknowledged) && !busy;
   const alreadyPaid = inv.status === "PAID";
 
   const confirm = async () => {
     if (!chosenUrl) { showNotif("⚠️ Pilih/isi bukti bayar dulu"); return; }
+    if (needsManualReview && !reviewAcknowledged) { showNotif("⚠️ Buka dan periksa file sebelum melampirkan bukti yang belum dikenali AI"); return; }
     setBusy(true);
     try {
       const beda = tab === "wa" && selSugg && invTail && !(selSugg.phone || "").replace(/\D/g, "").endsWith(invTail);
@@ -132,19 +149,21 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
         }
       }
 
+      let suggestionSyncError = null;
       if (tab === "wa" && selSugg) {
         const now = new Date().toISOString();
-        try {
-          await supabase.from("payment_suggestions").update({
+        const { data: updatedSuggestions, error } = await supabase.from("payment_suggestions").update({
             invoice_id: inv.id, order_id: inv.job_id || null,
-            status: "CONFIRMED", matched_at: now, match_source: "manual",
+            status: "CONFIRMED", validation_status: "LINKED", matched_at: now, match_source: "manual",
             resolved_at: now, resolved_by: currentUser?.name || (auditUserName ? auditUserName() : "Owner"),
-          }).eq("id", selSugg.id);
-        } catch (_) { /* non-blocking */ }
-        setPaymentSuggestions?.(prev => prev.filter(p => p.id !== selSugg.id));
+          }).eq("id", selSugg.id).eq("status", "PENDING").select("id");
+        if (error || !updatedSuggestions?.length) suggestionSyncError = error?.message || "saran WA tidak lagi PENDING";
+        else setPaymentSuggestions?.(prev => prev.filter(p => p.id !== selSugg.id));
       }
       addAgentLog?.("INVOICE_PROOF_ATTACHED", `Bukti bayar dilampirkan manual ke ${inv.id} (${tab})${alreadyPaid ? "" : " + tandai lunas"}`, "SUCCESS");
-      showNotif(`✅ Bukti dilampirkan${alreadyPaid ? "" : ` & ${inv.id} ditandai lunas`}`);
+      showNotif(suggestionSyncError
+        ? `⚠️ Bukti sudah terpasang, tetapi status saran WA gagal diperbarui: ${suggestionSyncError}`
+        : `✅ Bukti dilampirkan${alreadyPaid ? "" : ` & ${inv.id} ditandai lunas`}`);
       onClose();
     } catch (err) { showNotif("❌ Gagal: " + (err.message || err)); }
     finally { setBusy(false); }
@@ -182,17 +201,19 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
             {loadingSuggs ? (
               <div style={{ color: cs.muted, fontSize: 12, padding: 12, textAlign: "center" }}>Memuat bukti…</div>
             ) : filtered.length === 0 ? (
-              <div style={{ color: cs.muted, fontSize: 12, padding: 12, textAlign: "center" }}>Tidak ada bukti belum ter-match.</div>
+              <div style={{ color: cs.muted, fontSize: 12, padding: 12, textAlign: "center" }}>Tidak ada bukti WA yang menunggu review untuk invoice ini.</div>
             ) : (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(150px,1fr))", gap: 8, maxHeight: 320, overflowY: "auto" }}>
-                {filtered.slice(0, 60).map(s => {
+                {filtered.slice(0, visibleLimit).map(s => {
                   const sel = selSugg?.id === s.id;
                   const sameNo = invTail && (s.phone || "").replace(/\D/g, "").endsWith(invTail);
                   return (
-                    <div key={s.id} onClick={() => setSelSugg(sel ? null : s)}
+                    <div key={s.id} onClick={() => { setSelSugg(sel ? null : s); setReviewAcknowledged(false); }}
                       style={{ border: "2px solid " + (sel ? cs.green : cs.border), borderRadius: 10, overflow: "hidden", cursor: "pointer", background: cs.card }}>
                       <div style={{ position: "relative", width: "100%", height: 100, background: "#0008" }}>
-                        <img src={fotoSrc(s.image_url)} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        {s.image_url?.toLowerCase().includes(".pdf")
+                          ? <div style={{ padding: 22, color: cs.text, textAlign: "center" }}>📄 PDF · buka file</div>
+                          : <img src={fotoSrc(s.image_url)} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
                         {sel && <div style={{ position: "absolute", top: 4, right: 4, background: cs.green, color: "#fff", borderRadius: 99, width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12 }}>✓</div>}
                         {sameNo && <div style={{ position: "absolute", top: 4, left: 4, background: "#22c55e", color: "#fff", fontSize: 8, padding: "1px 5px", borderRadius: 99, fontWeight: 700 }}>nomor sama</div>}
                       </div>
@@ -200,12 +221,22 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
                         <div style={{ fontSize: 11, fontWeight: 700, color: cs.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.sender_name || s.phone || "—"}</div>
                         <div style={{ fontSize: 10, color: cs.muted }}>{s.amount ? fmt(Number(s.amount)) : "—"} · {s.bank || "?"}</div>
                         <div style={{ fontSize: 9, color: cs.muted }}>{(s.created_at || "").slice(0, 10)} · {s.phone}</div>
+                        {s.match_source === "wa_image_review" && <div style={{ fontSize: 9, color: cs.yellow }}>⚠ Perlu cek manual</div>}
                       </div>
                     </div>
                   );
                 })}
               </div>
             )}
+            {filtered.length > visibleLimit && <button onClick={() => setVisibleLimit(n => n + 60)}
+              style={{ marginTop: 8, padding: "7px 10px", color: cs.accent, background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, cursor: "pointer" }}>
+              Tampilkan lebih banyak ({filtered.length - visibleLimit} tersisa)
+            </button>}
+            {selSugg && <a href={fotoSrc(selSugg.image_url)} target="_blank" rel="noreferrer" style={{ display: "inline-block", marginTop: 8, color: cs.accent, fontSize: 11 }}>Buka file terpilih ↗</a>}
+            {needsManualReview && <label style={{ display: "block", marginTop: 8, color: cs.yellow, fontSize: 11 }}>
+              <input type="checkbox" checked={reviewAcknowledged} onChange={e => setReviewAcknowledged(e.target.checked)} /> Saya sudah memeriksa file dan memastikan ini bukti pembayaran.
+              {selSugg?.raw_message && <span style={{ display: "block", marginTop: 4 }}>{selSugg.raw_message}</span>}
+            </label>}
           </div>
         )}
 
@@ -231,8 +262,8 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
 
         <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
           <button onClick={onClose} style={{ flex: 1, background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "11px", borderRadius: 10, cursor: "pointer", fontWeight: 600 }}>Batal</button>
-          <button onClick={confirm} disabled={busy || !chosenUrl}
-            style={{ flex: 2, background: chosenUrl && !busy ? cs.green : cs.surface, border: "none", color: chosenUrl && !busy ? "#fff" : cs.muted, padding: "11px", borderRadius: 10, cursor: chosenUrl && !busy ? "pointer" : "not-allowed", fontWeight: 800, fontSize: 13 }}>
+          <button onClick={confirm} disabled={!canConfirm}
+            style={{ flex: 2, background: canConfirm ? cs.green : cs.surface, border: "none", color: canConfirm ? "#fff" : cs.muted, padding: "11px", borderRadius: 10, cursor: canConfirm ? "pointer" : "not-allowed", fontWeight: 800, fontSize: 13 }}>
             {busy ? "Proses…" : alreadyPaid ? "✅ Simpan Bukti" : "✅ Simpan Bukti & Tandai Lunas"}
           </button>
         </div>
@@ -565,41 +596,47 @@ const dismissRetry = () => setLastFailedMerge(null);
 
 const [invoiceSubTab, setInvoiceSubTab] = useState("invoice"); // "invoice" | "quotation" | "voucher" | "pending_ai"
 
-// Pending AI: payment_suggestions menunggu validasi (dari grup Finance / reverse-flow personal)
+// Pending AI: semua saran pembayaran yang menunggu validasi, termasuk foto
+// WA yang sudah punya kandidat invoice dan entri lama tanpa media_job_id.
 const [pendingPayments, setPendingPayments] = useState([]);
+const [pendingPaymentCount, setPendingPaymentCount] = useState(0);
 const [loadingPendingPayments, setLoadingPendingPayments] = useState(false);
 const [pendingSelectedInvoice, setPendingSelectedInvoice] = useState({}); // { suggestion_id: invoice_id }
 const [pendingPaymentBusy, setPendingPaymentBusy] = useState(null);
 const [manualPickerOpen, setManualPickerOpen] = useState({}); // { suggestion_id: bool }
 const [manualPickerSearch, setManualPickerSearch] = useState({}); // { suggestion_id: search_string }
+useEffect(() => {
+  if (!supabase) return;
+  let cancelled = false;
+  (async () => {
+    try {
+      const { count, error } = await supabase.from("payment_suggestions")
+        .select("id", { count: "exact", head: true })
+        .eq("validation_status", "PENDING").eq("status", "PENDING");
+      if (!cancelled && !error) setPendingPaymentCount(count || 0);
+    } catch { /* Daftar lengkap tetap bisa dibuka dan menampilkan errornya. */ }
+  })();
+  return () => { cancelled = true; };
+}, [supabase]);
 const loadPendingPayments = async () => {
   if (!supabase) return;
   setLoadingPendingPayments(true);
   try {
-    let { data, error } = await supabase
-      .from("payment_suggestions")
-      .select("*, ai_extractions:ai_extraction_id(*)")
-      .eq("validation_status", "PENDING")
-      .eq("status", "PENDING")  // defensive: exclude kalau old UI sudah CONFIRMED/DISMISSED
-      .or("ai_extraction_id.not.is.null,forwarded_to_group.not.is.null,media_job_id.not.is.null")
-      .order("created_at", { ascending: false })
-      .limit(50);
-    // Deployment frontend dapat tiba beberapa menit sebelum migration 188.
-    // Dalam window itu tetap gunakan query lama agar tab Pending AI tidak blank/error.
-    if (error && /media_job_id/i.test(String(error.message || error.details || ""))) {
-      const legacy = await supabase
+    const rows = [];
+    for (let from = 0; ; from += 200) {
+      const { data, error } = await supabase
         .from("payment_suggestions")
         .select("*, ai_extractions:ai_extraction_id(*)")
         .eq("validation_status", "PENDING")
         .eq("status", "PENDING")
-        .or("ai_extraction_id.not.is.null,forwarded_to_group.not.is.null")
         .order("created_at", { ascending: false })
-        .limit(50);
-      data = legacy.data;
-      error = legacy.error;
+        .range(from, from + 199);
+      if (error) throw error;
+      rows.push(...(data || []));
+      if ((data || []).length < 200) break;
     }
-    if (error) throw error;
-    setPendingPayments(data || []);
+    setPendingPayments(rows);
+    setPendingPaymentCount(rows.length);
   } catch (e) {
     showNotif?.("Gagal load Pending AI: " + e.message, "error");
   } finally {
@@ -636,23 +673,37 @@ const findInvoiceCandidates = (sug) => {
 const handleLinkPayment = async (sug) => {
   const invId = pendingSelectedInvoice[sug.id];
   if (!invId) { showNotif?.("Pilih invoice dulu", "error"); return; }
+  if (sug.match_source === "wa_image_review") {
+    const confirmed = await showConfirm({
+      title: "Pastikan file ini bukti bayar",
+      message: `AI belum memastikan media dari ${sug.sender_name || sug.phone || "WA"} adalah bukti pembayaran. Buka file, cocokkan nominal dan rekening, lalu lanjutkan hanya jika benar.\n\n${sug.raw_message || ""}`,
+      confirmText: "Sudah diperiksa, lanjut",
+    });
+    if (!confirmed) return;
+  }
   setPendingPaymentBusy(sug.id);
+  let invoicePaid = false;
   try {
     const paidAt = getLocalDate ? getLocalDate() : new Date().toISOString().slice(0,10);
-    const { error: payErr } = await markInvoicePaid(supabase, invId, paidAt, auditUserName ? auditUserName() : "AI Validator");
+    const { error: payErr } = await markInvoicePaid(supabase, invId, paidAt, auditUserName ? auditUserName() : "AI Validator",
+      { paymentProofUrl: sug.image_url || null });
     if (payErr) throw payErr;
-    // Patch payment_proof_url di invoice kalau belum ada
-    if (sug.image_url) {
-      await supabase.from("invoices").update({ payment_proof_url: sug.image_url }).eq("id", invId).is("payment_proof_url", null);
-    }
-    await supabase.from("payment_suggestions").update({ validation_status: "LINKED", status: "CONFIRMED", invoice_id: invId, resolved_at: new Date().toISOString(), resolved_by: auditUserName ? auditUserName() : "AI Validator" }).eq("id", sug.id);
+    invoicePaid = true;
+    const { data: linked, error: linkErr } = await supabase.from("payment_suggestions")
+      .update({ validation_status: "LINKED", status: "CONFIRMED", invoice_id: invId,
+        resolved_at: new Date().toISOString(), resolved_by: auditUserName ? auditUserName() : "AI Validator" })
+      .eq("id", sug.id).eq("status", "PENDING").select("id");
+    if (linkErr || !linked?.length) throw linkErr || new Error("saran pembayaran tidak lagi PENDING");
     if (sug.ai_extraction_id) {
-      await supabase.from("ai_extractions").update({ status: "approved", linked_table: "invoices", linked_id: invId }).eq("id", sug.ai_extraction_id);
+      const { error: aiErr } = await supabase.from("ai_extractions")
+        .update({ status: "approved", linked_table: "invoices", linked_id: invId }).eq("id", sug.ai_extraction_id);
+      if (aiErr) showNotif?.("Invoice dan bukti tersimpan, tetapi audit AI gagal diperbarui: " + aiErr.message);
     }
     showNotif?.("✓ Linked & marked PAID: " + invId, "success");
     setPendingPayments(prev => prev.filter(x => x.id !== sug.id));
+    setPendingPaymentCount(prev => Math.max(0, prev - 1));
   } catch (e) {
-    showNotif?.("Gagal link: " + e.message, "error");
+    showNotif?.((invoicePaid ? "Invoice sudah PAID dengan bukti, tetapi status saran WA belum sinkron: " : "Gagal link: ") + e.message, "error");
   } finally { setPendingPaymentBusy(null); }
 };
 const handleRejectPayment = async (sug) => {
@@ -662,12 +713,18 @@ const handleRejectPayment = async (sug) => {
     onConfirm: async () => {
       setPendingPaymentBusy(sug.id);
       try {
-        await supabase.from("payment_suggestions").update({ validation_status: "REJECTED", status: "DISMISSED" }).eq("id", sug.id);
+        const { data: rejected, error: rejectErr } = await supabase.from("payment_suggestions")
+          .update({ validation_status: "REJECTED", status: "DISMISSED" })
+          .eq("id", sug.id).eq("status", "PENDING").select("id");
+        if (rejectErr || !rejected?.length) throw rejectErr || new Error("saran pembayaran tidak lagi PENDING");
         if (sug.ai_extraction_id) {
-          await supabase.from("ai_extractions").update({ status: "rejected" }).eq("id", sug.ai_extraction_id);
+          const { error: aiErr } = await supabase.from("ai_extractions")
+            .update({ status: "rejected" }).eq("id", sug.ai_extraction_id);
+          if (aiErr) showNotif?.("Saran ditolak, tetapi audit AI gagal diperbarui: " + aiErr.message);
         }
         showNotif?.("✕ Rejected", "info");
         setPendingPayments(prev => prev.filter(x => x.id !== sug.id));
+        setPendingPaymentCount(prev => Math.max(0, prev - 1));
       } catch (e) {
         showNotif?.("Gagal: " + e.message, "error");
       } finally { setPendingPaymentBusy(null); }
@@ -878,7 +935,7 @@ return (
         { key: "invoice",   label: "🧾 Invoice" },
         ...(currentUser?.role !== "Finance" ? [{ key: "quotation", label: "📋 Quotation" }] : []),
         ...(["Owner","Admin"].includes(currentUser?.role) ? [{ key: "voucher", label: "🎁 Voucher" }] : []),
-        ...(["Owner","Admin"].includes(currentUser?.role) ? [{ key: "pending_ai", label: "🤖 Pending AI" + (pendingPayments.length ? ` (${pendingPayments.length})` : "") }] : []),
+        ...(["Owner","Admin"].includes(currentUser?.role) ? [{ key: "pending_ai", label: "🤖 Pending AI" + (pendingPaymentCount ? ` (${pendingPaymentCount})` : "") }] : []),
       ].map(t => (
         <button key={t.key} onClick={() => {
           setInvoiceSubTab(t.key);
@@ -983,7 +1040,7 @@ return (
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <div style={{ fontSize: 12, color: cs.muted }}>
-            Bukti TF dari grup Finance / reverse-flow personal. Pilih invoice yang dimaksud lalu Link.
+            Bukti pembayaran dan media yang perlu diperiksa. Buka file, pilih invoice, lalu konfirmasi jika benar.
           </div>
           <button onClick={loadPendingPayments} disabled={loadingPendingPayments}
             style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, borderRadius: 8, padding: "6px 12px", fontSize: 12, cursor: "pointer" }}>
@@ -998,16 +1055,18 @@ return (
         {pendingPayments.map(sug => {
           const ai = sug.ai_extractions || {};
           const candidates = findInvoiceCandidates(sug);
-          const isManualRecovery = !!sug.media_job_id && !sug.amount;
+          const isManualRecovery = sug.match_source === "wa_image_review" || (!!sug.media_job_id && !sug.amount);
           const conf = isManualRecovery ? "REVIEW" : (sug.ai_extractions?.confidence || "?");
           const confColor = conf === "HIGH" ? "#10b981" : conf === "MEDIUM" ? "#f59e0b" : "#ef4444";
-          const selected = pendingSelectedInvoice[sug.id] || candidates[0]?.inv?.id;
+          const selected = pendingSelectedInvoice[sug.id] || null;
           return (
             <div key={sug.id} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: 14, display: "flex", gap: 14 }}>
               {sug.image_url && (
                 <a href={sug.image_url} target="_blank" rel="noreferrer" style={{ flexShrink: 0 }}>
-                  <img src={sug.image_url} alt="bukti TF" style={{ width: 160, height: 200, objectFit: "cover", borderRadius: 8, border: "1px solid " + cs.border }}
-                    onError={e => { e.target.style.display = "none"; }} />
+                  {sug.image_url.toLowerCase().includes(".pdf")
+                    ? <div style={{ width: 160, height: 200, display: "grid", placeItems: "center", color: cs.text, background: cs.surface, borderRadius: 8 }}>📄 Buka PDF</div>
+                    : <img src={sug.image_url} alt="media WA" style={{ width: 160, height: 200, objectFit: "cover", borderRadius: 8, border: "1px solid " + cs.border }}
+                      onError={e => { e.target.style.display = "none"; }} />}
                 </a>
               )}
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -1015,11 +1074,12 @@ return (
                   <span style={{ fontSize: 18, fontWeight: 800, color: cs.text }}>{sug.amount ? fmt(sug.amount) : "Nominal belum terbaca"}</span>
                   <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 6, background: confColor + "22", color: confColor }}>{conf}</span>
                   {sug.forwarded_to_group && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 6, background: "#ec489922", color: "#ec4899" }}>📥 Auto-forwarded</span>}
-                  {isManualRecovery && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 6, background: "#f59e0b22", color: "#f59e0b" }}>⚠ AI gagal · cek manual</span>}
+                  {isManualRecovery && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 6, background: "#f59e0b22", color: "#f59e0b" }}>⚠ Belum dipastikan AI · cek manual</span>}
                 </div>
                 <div style={{ fontSize: 12, color: cs.text, marginBottom: 4 }}>🏦 {sug.bank || "—"} · 📅 {sug.transfer_date || "—"}</div>
                 <div style={{ fontSize: 12, color: cs.muted, marginBottom: 8 }}>👤 {sug.sender_name || "—"} ({sug.phone || "—"})</div>
                 {ai.notes && <div style={{ fontSize: 11, color: cs.muted, fontStyle: "italic", marginBottom: 8 }}>🧠 {ai.notes}</div>}
+                {isManualRecovery && sug.raw_message && <div style={{ fontSize: 11, color: cs.yellow, marginBottom: 8 }}>{sug.raw_message}</div>}
 
                 <div style={{ marginTop: 8, padding: 10, background: cs.surface, borderRadius: 8 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
@@ -1467,6 +1527,7 @@ return (
               const headers = apiHeaders ? await apiHeaders() : {};
               const res = await fetch("/api/cron-reminder?task=bukti-bayar", { method: "GET", headers });
               const json = await res.json().catch(() => ({}));
+              if (!res.ok || json.error) throw new Error(json.error || `HTTP ${res.status}`);
               const updated = json.updated ?? 0;
               if (updated > 0) {
                 const { data } = await supabase
@@ -1477,7 +1538,7 @@ return (
                 if (data) setInvoicesData(data);
                 showNotif(`Scan selesai — ${updated} bukti bayar ditemukan & dilink`);
               } else {
-                showNotif("Scan selesai — tidak ada bukti baru ditemukan di R2");
+                showNotif("Scan selesai — tidak ada saran bukti WA yang cocok otomatis. Periksa Pending AI atau Lampirkan Bukti.");
               }
             } catch (e) {
               showNotif("Scan gagal: " + e.message);
@@ -1490,7 +1551,7 @@ return (
             background: scanningBukti ? cs.surface : "#f43f5e18", color: scanningBukti ? cs.muted : "#f43f5e",
             cursor: scanningBukti ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 600,
           }}>
-          {scanningBukti ? "Sedang scan R2..." : "Scan Bukti Sekarang"}
+          {scanningBukti ? "Sedang scan saran WA..." : "Scan Bukti WA"}
         </button>
         {/* Verifikasi pembayaran tanpa file bukti — hanya Finance & Owner. */}
         {(currentUser?.role === "Finance" || currentUser?.role === "Owner") && (() => {
