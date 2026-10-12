@@ -1,5 +1,6 @@
 // sendDispatchWA — kirim WA dispatch ke teknisi/helper untuk sebuah order.
 // Diekstrak dari App.jsx (Fase 3, pola ctx).
+import { scheduleEndDate } from './scheduleTime.js';
 export async function sendDispatchWA(order, {
   _apiHeaders, addAgentLog, appSettings, currentUser, sendWA, showNotif, supabase, teknisiData,
 } = {}) {
@@ -10,7 +11,7 @@ export async function sendDispatchWA(order, {
       + "Customer: " + order.customer + "\n"
       + "Alamat: " + order.address + "\n"
       + "Service: " + order.service + " - " + order.units + " unit\n"
-      + "Jadwal: " + order.date + " jam " + order.time + (order.time_end ? " - " + order.time_end : "") + "\n\n"
+      + "Jadwal: " + order.date + " jam " + order.time + (order.time_end ? " - " + order.time_end + (scheduleEndDate(order.date, order.time, order.time_end) !== order.date ? " (" + scheduleEndDate(order.date, order.time, order.time_end) + ")" : "") : "") + "\n\n"
       + `Segera konfirmasi kehadiran. — ${appSettings.app_name || "AClean"}`;
     const ok = await sendWA(tek.phone, msg);
     if (order.helper) {

@@ -5,6 +5,7 @@ import KasbonWidget from "./KasbonWidget.jsx";
 import ExpenseInputWidget from "./ExpenseInputWidget.jsx";
 import { findDelayedFieldReports, isFieldOrderAssigned } from "../lib/fieldReportWorkflow.js";
 import { normalizePhone, samePhone } from "../lib/phone.js";
+import { scheduleEndDate } from "../lib/scheduleTime.js";
 import { ORDER_DONE_STATUSES } from "../constants/status.js";
 import {
   cacheFieldJobPackage, enqueueFieldStatus, fieldUserKey, getFieldStorageHealth,
@@ -320,7 +321,7 @@ function TechMobileView({ currentUser, ordersData, setOrdersData, laporanReports
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
                   <div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
-                      <span style={{ fontSize: 16, fontWeight: 800, color: cs.accent }}>{order.time || "--:--"}{order.time_end ? `–${order.time_end}` : ""}</span>
+                      <span style={{ fontSize: 16, fontWeight: 800, color: cs.accent }}>{order.time || "--:--"}{order.time_end ? `–${order.time_end}${scheduleEndDate(order.date, order.time, order.time_end) !== order.date ? " (+1 hari)" : ""}` : ""}</span>
                       <span style={{ fontSize: 10, color: cs.muted, fontFamily: "monospace" }}>{order.id}</span>
                     </div>
                     <div style={{ fontWeight: 700, fontSize: 15, color: cs.text }}>{order.customer}</div>

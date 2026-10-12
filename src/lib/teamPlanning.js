@@ -1,10 +1,11 @@
 import { shiftDateStr } from './dateTime.js';
 import { normalizePhone } from './phone.js';
+import { scheduleEndDate, scheduleRange, schedulesOverlap } from './scheduleTime.js';
 export const PERSON_FIELDS = ['teknisi','teknisi2','teknisi3','helper','helper2','helper3'];
 export const EDITABLE_PLAN = ['PENDING','CONFIRMED','DISPATCHED'];
 export const ACTIVE_PLAN = [...EDITABLE_PLAN,'ON_SITE','IN_PROGRESS'];
 export const minutes = value => { const m=/^(\d{2}):(\d{2})(?::\d{2})?$/.exec(value || ''); return m && +m[1]<24 && +m[2]<60 ? +m[1]*60 + +m[2] : NaN; };
-export const clockTime = n => `${String(Math.floor(n/60)).padStart(2,'0')}:${String(n%60).padStart(2,'0')}`;
+export const clockTime = n => `${String(Math.floor((n % 1440)/60)).padStart(2,'0')}:${String(n%60).padStart(2,'0')}`;
 export function planningHours(service, units) {
   const u=Number(units)||1;
   if(service==='Install')return Math.min(u*2.5,8);
@@ -12,7 +13,7 @@ export function planningHours(service, units) {
   if(service==='Complain')return Math.max(.5,u*.5);
   return u<=3?u:u<=4?3:u<=6?4:u<=8?5:u<=10?6:8;
 }
-export const estimatedEnd = (time,service,units) => { const end=minutes(time)+planningHours(service,units)*60; return Number.isFinite(end) && end<1440 ? clockTime(end) : ""; };
+export const estimatedEnd = (time,service,units) => { const end=minutes(time)+planningHours(service,units)*60; return Number.isFinite(end) && end<1800 ? clockTime(end) : ""; };
 export function planningWeek(today,offset=0) {
   const dow=new Date(`${today}T12:00:00Z`).getUTCDay();
   const first=shiftDateStr(today,(dow===0?-6:1-dow)+offset*7);
@@ -55,15 +56,14 @@ export function teamSlotCrew(team,date,rosters=[],absences=[],presets=[]) {
 }
 export function planConflict(plan,orders,rosters) {
   if(!plan.team_slot)return null;
-  const people=rosterMembers(rosters.find(r=>r.slot===plan.team_slot && r.date===plan.date)).map(m=>m.name);
-  const jobs=orders.filter(o=>o.id!==plan.id && o.date===plan.date && ACTIVE_PLAN.includes(o.status));
-  const own=jobs.filter(o=>o.team_slot===plan.team_slot);
+  const people=[...new Set([...PERSON_FIELDS.map(f=>plan[f]),...rosterMembers(rosters.find(r=>r.slot===plan.team_slot && r.date===plan.date)).map(m=>m.name)].filter(Boolean))];
+  const jobs=orders.filter(o=>o.id!==plan.id && ACTIVE_PLAN.includes(o.status));
+  const own=jobs.filter(o=>o.team_slot===plan.team_slot && o.date===plan.date);
   if(own.length>=6)return 'Tim sudah memiliki 6 pekerjaan pada tanggal ini.';
   return jobs.find(o=>{
     const other=[...PERSON_FIELDS.map(f=>o[f]),...rosterMembers(rosters.find(r=>r.slot===o.team_slot && r.date===o.date)).map(m=>m.name)];
     if(o.team_slot!==plan.team_slot && !people.some(p=>other.includes(p)))return false;
-    const start=minutes(o.time),end=minutes(o.time_end || estimatedEnd(o.time,o.service,o.units));
-    return !Number.isFinite(start+end) || end<=start || (minutes(plan.time)<end && minutes(plan.time_end)>start);
+    return schedulesOverlap(plan,{...o,time_end:o.time_end || estimatedEnd(o.time,o.service,o.units)});
   }) ? 'Slot tim atau anggota bertabrakan dengan pekerjaan lain. Pilih jam/tim lain.' : null;
 }
 export function gridMoveProposal(order,team,rawStart) {
@@ -81,7 +81,7 @@ export function suggestedTeamSlots({date,team,service,units,orders,rosters,exclu
   if(!team || !date || date<today || !Number.isInteger(Number(units)) || +units<1)return [];
   const current=minutes(now.toLocaleTimeString('en-GB',{timeZone:'Asia/Jakarta',hour:'2-digit',minute:'2-digit'}));
   const length=planningHours(service,units)*60, slots=[];
-  const night=team.startsWith('Malam '),limit=night?1439:1080;
+  const night=team.startsWith('Malam '),limit=night?1800:1080;
   for(let start=night?1080:540;start+length<=limit;start+=30){
     if(date===today && start<=current)continue;
     const plan={id:excludeId,date,team_slot:team,time:clockTime(start),time_end:clockTime(start+length)};
@@ -97,8 +97,11 @@ export function validatePlan(form) {
   if(!Number.isInteger(+form.units) || +form.units<1 || +form.units>100)return 'Jumlah unit harus 1–100.';
   if(!form.service?.trim())return 'Pilih layanan.';
   const start=minutes(form.time),end=minutes(form.time_end);
-  if(!Number.isFinite(start+end) || start<540 || end<=start || end>1439)return 'Jam mulai–selesai harus valid, mulai minimal 09:00 dan selesai pada hari yang sama.';
+  const range=scheduleRange(form.date,form.time,form.time_end);
+  if(!Number.isFinite(start+end) || start<540 || !range || range.end-range.start>12*3600000)return 'Jam mulai–selesai harus valid dan durasi maksimal 12 jam.';
   if(start<1080 && end>1080)return 'Pekerjaan reguler harus selesai maksimal 18:00.';
+  if(start<1080 && scheduleEndDate(form.date,form.time,form.time_end)!==form.date)return 'Pekerjaan reguler tidak boleh selesai keesokan hari.';
+  if(start>=1080 && end<start && end>360)return 'Pekerjaan malam harus selesai paling lambat 06:00 esok hari.';
   if(start>=1080 && form.team_slot && !form.team_slot.startsWith('Malam '))return 'Pilih slot Malam untuk pekerjaan mulai 18:00 ke atas.';
   if(start<1080 && form.team_slot?.startsWith('Malam '))return 'Slot Malam dimulai pukul 18:00.';
   return null;

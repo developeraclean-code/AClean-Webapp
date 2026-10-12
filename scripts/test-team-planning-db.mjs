@@ -28,6 +28,9 @@ try {
  await sql(old.slice(old.indexOf('CREATE TABLE IF NOT EXISTS public.operational_mutations'),old.indexOf('CREATE OR REPLACE FUNCTION public.settle_invoice_atomic')));
  await sql(readFileSync(new URL('../migrations/070_atomic_teknisi_slot_claim.sql',import.meta.url),'utf8'));
  await sql(readFileSync(new URL('../migrations/194_team_schedule_planning.sql',import.meta.url),'utf8'));
+ const rangeMigration=readFileSync(new URL('../migrations/121_technician_schedule_no_overlap.sql',import.meta.url),'utf8');
+ await sql(rangeMigration.slice(rangeMigration.indexOf('CREATE OR REPLACE FUNCTION public.slot_tsrange'),rangeMigration.indexOf('-- 4. Constraint')));
+ await sql(readFileSync(new URL('../migrations/203_overnight_team_schedule.sql',import.meta.url),'utf8'));
  let first;
  const rid=request();
  await check('future planning saves without personnel and preserves last completed service',async()=>{
@@ -96,6 +99,33 @@ try {
   await assert.rejects(()=>call('ROLLBACK',{...base,date:'2099-10-14',time:'14:00',time_end:'16:00'}),/tidak tersedia/);
   assert.equal((await query("select count(*)::int as n from orders where id='ROLLBACK'")).rows[0].n,0);
   assert.equal((await query('select total_orders from customers')).rows[0].total_orders,count);
+ });
+ await check('night job persists from 23:00 to 04:00 tomorrow without shifting start date',async()=>{
+  await sql("INSERT INTO daily_team_slots(date,slot,member1,member1_role) VALUES('2099-10-20','Malam 01','Rian','teknisi'),('2099-10-21','Malam 02','Rian','teknisi')");
+  const result=await call('NIGHT-1',{...base,date:'2099-10-20',time:'23:00',time_end:'04:00',team_slot:'Malam 01'});
+  assert.equal(result.order.date,'2099-10-20');
+  assert.equal(result.order.time_end,'04:00:00');
+  assert.equal((await query("SELECT count(*)::int n FROM technician_schedule WHERE order_id='NIGHT-1'")).rows[0].n,1);
+ });
+ await check('overlap across midnight is blocked, adjacent shift after 04:00 succeeds',async()=>{
+  await assert.rejects(()=>sql("INSERT INTO orders(id,date,time,time_end,status,teknisi) VALUES('EARLY-OVERLAP','2099-10-21','01:00','03:00','PENDING','Rian')"),/bertabrakan/);
+  await sql("INSERT INTO orders(id,date,time,time_end,status,teknisi) VALUES('EARLY-ADJACENT','2099-10-21','04:00','05:00','PENDING','Rian')");
+  assert.equal((await query("SELECT public.try_claim_teknisi_slot('Rian','2099-10-21','EARLY-ADJACENT','04:00','05:00') AS ok")).rows[0].ok,true);
+  await sql("INSERT INTO daily_team_slots(date,slot,member1,member1_role) VALUES('2099-10-25','Malam 01','Rian','teknisi')");
+  await sql("INSERT INTO orders(id,date,time,time_end,status,team_slot,teknisi) VALUES('EARLY-EXISTING','2099-10-26','01:00','03:00','PENDING','Malam 02','Rian')");
+  await assert.rejects(()=>call('NIGHT-OVERLAP',{...base,date:'2099-10-25',time:'23:00',time_end:'04:00',team_slot:'Malam 01'}),/bertabrakan/);
+ });
+ await check('regular overnight and night ending after 06:00 are rejected',async()=>{
+  await assert.rejects(()=>call('BAD-REGULAR',{...base,date:'2099-10-22',time:'17:00',time_end:'01:00'}),/Jam pekerjaan/);
+  await assert.rejects(()=>call('BAD-LATE',{...base,date:'2099-10-22',time:'23:00',time_end:'07:00',team_slot:'Malam 01'}),/Jam pekerjaan/);
+ });
+ await check('legacy night order can change status, but a reschedule requires a night slot',async()=>{
+  await sql('ALTER TABLE orders DISABLE TRIGGER trg_guard_night_order_schedule');
+  await sql("INSERT INTO orders(id,date,time,time_end,status,team_slot) VALUES('LEGACY-NIGHT','2099-10-27','18:00','18:30','PENDING','Team 08')");
+  await sql('ALTER TABLE orders ENABLE TRIGGER trg_guard_night_order_schedule');
+  await sql("UPDATE orders SET status='CONFIRMED' WHERE id='LEGACY-NIGHT'");
+  assert.equal((await query("SELECT status FROM orders WHERE id='LEGACY-NIGHT'")).rows[0].status,'CONFIRMED');
+  await assert.rejects(()=>sql("UPDATE orders SET time='19:00',time_end='19:30' WHERE id='LEGACY-NIGHT'"),/slot Malam/);
  });
  console.log(`PASS ${checks} PostgreSQL planning contract groups`);
 }finally{await db.close();}

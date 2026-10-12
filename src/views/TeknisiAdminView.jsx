@@ -6,6 +6,7 @@ import { ORDER_DONE_STATUSES } from "../constants/status.js";
 import { isFieldOrderAssigned, isFieldReportAssigned } from "../lib/fieldReportWorkflow.js";
 import { employmentStatus, fmtTenure } from "../lib/employment.js";
 import { formatPhone } from "../lib/phone.js";
+import { scheduleEndDate } from "../lib/scheduleTime.js";
 import {
   detectBonusFromInvoice, bonusCandidateInfo,
   daysSinceBonusDate as daysSinceDate, effBonusStatus,
@@ -109,7 +110,8 @@ teknisiData.forEach(t => {
   const laporanTerlambat = laporanMinggu.filter(r => {
     const order = ordersData.find(o => o.id === r.job_id || o.id === r.order_id);
     if (!order || !order.time_end || !r.submitted_at) return false;
-    const endMs = new Date((order.date || "") + "T" + (order.time_end || "17:00") + ":00").getTime();
+    const endDate = scheduleEndDate(order.date, order.time, order.time_end) || order.date;
+    const endMs = new Date((endDate || "") + "T" + (order.time_end || "17:00") + ":00").getTime();
     const subMs = new Date(r.submitted_at).getTime();
     return subMs > (endMs + 2 * 60 * 60 * 1000); // > 2 jam setelah selesai
   }).length;

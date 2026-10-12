@@ -1,3 +1,5 @@
+import { scheduleEndDate } from './scheduleTime.js';
+
 const DRAFT_PREFIX = "aclean:field-report:draft:v1:";
 const SESSION_PREFIX = "aclean:field-report:session:v1:";
 const DRAFT_TTL_MS = 14 * 24 * 60 * 60 * 1000;
@@ -181,7 +183,7 @@ export function findDelayedFieldReports(orders, reports, employeeName, today) {
     .flatMap(r => [r.job_id, r.order_id].filter(Boolean)));
   return (orders || []).filter(order => {
     const assigned = isFieldOrderAssigned(order, employeeName);
-    const due = order.date < today || ["COMPLETED", "REPORT_SUBMITTED"].includes(order.status);
+    const due = (scheduleEndDate(order.date, order.time, order.time_end) || order.date) < today || ["COMPLETED", "REPORT_SUBMITTED"].includes(order.status);
     // Status invoice/paid menandakan workflow laporan sudah lewat. Jangan menuduh
     // laporan tertunda hanya karena dataset laporan di bootstrap sedang dipaginasi.
     return assigned && due && isReportableFieldOrder(order) && !reported.has(order.id);

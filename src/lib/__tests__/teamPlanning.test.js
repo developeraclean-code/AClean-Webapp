@@ -1,5 +1,5 @@
 import { describe,it,expect,vi } from 'vitest';
-import { planningTeams, planningWeek, planningWeekOffset, teamReadiness, teamSlotCrew, suggestedTeamSlots, planConflict, gridMoveProposal, validatePlan, planSnapshot, loadPlanningRange } from '../teamPlanning.js';
+import { planningTeams, planningWeek, planningWeekOffset, teamReadiness, teamSlotCrew, suggestedTeamSlots, planConflict, gridMoveProposal, validatePlan, planSnapshot, loadPlanningRange, estimatedEnd } from '../teamPlanning.js';
 const presets=Array.from({length:8},(_,i)=>({slot:`Team ${String(i+1).padStart(2,'0')}`}));
 const rosters=[{date:'2099-10-12',slot:'Team 01',member1:'Rian',member1_role:'teknisi',member2:'Danu',member2_role:'helper'},{date:'2099-10-13',slot:'Team 01',member1:'Budi',member1_role:'teknisi',member2:'Sari',member2_role:'helper'}];
 const plan={id:'new',customer:'Andi',phone:'6281234567890',date:'2099-10-12',time:'09:00',time_end:'11:00',service:'Cleaning',units:2,team_slot:'Team 01'};
@@ -53,9 +53,18 @@ describe('team-first weekly planning',()=>{
     expect(suggestedTeamSlots({date:plan.date,team:'Malam 01',service:'Cleaning',units:2,orders:[],rosters})[0]).toMatchObject({time:'18:00',time_end:'20:00'});
     expect(suggestedTeamSlots({date:'2000-01-01',team:'Team 01',service:'Cleaning',units:1,orders:[],rosters})).toEqual([]);
   });
-  it('validates mandatory fields and prevents invalid/cross-midnight times',()=>{
+  it('detects a shared person at 01:00 after a 23:00 night shift',()=>{
+    const night={...plan,date:'2099-10-12',time:'23:00',time_end:'04:00',team_slot:'Malam 01',status:'PENDING',helper:'Danu'};
+    const next={...plan,id:'other',date:'2099-10-13',time:'01:00',time_end:'02:00',team_slot:'Malam 02',helper:'Danu',status:'PENDING'};
+    expect(planConflict(night,[next],rosters)).toContain('bertabrakan');
+    expect(planConflict(night,[{...next,time:'04:00',time_end:'05:00'}],rosters)).toBeNull();
+  });
+  it('validates mandatory fields and permits only night shifts through 06:00 tomorrow',()=>{
     expect(validatePlan(plan)).toBeNull();
     for(const patch of [{date:''},{date:'2099-02-30'},{units:0},{units:1.5},{time_end:'08:00'},{time_end:'25:00'},{time:'17:00',time_end:'19:00'},{time:'18:00',time_end:'20:00'}])expect(validatePlan({...plan,...patch})).toBeTruthy();
+    expect(validatePlan({...plan,team_slot:'Malam 01',time:'23:00',time_end:'04:00'})).toBeNull();
+    expect(validatePlan({...plan,team_slot:'Malam 01',time:'23:00',time_end:'07:00'})).toContain('06:00');
+    expect(estimatedEnd('23:00','Cleaning',2)).toBe('01:00');
     expect(planSnapshot({...plan,status:'CONFIRMED',helper:'Danu'})).toMatchObject({status:'CONFIRMED',helper:'Danu',notes:null});
   });
   it('fails closed on read errors or a truncated range',async()=>{

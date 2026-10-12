@@ -1,5 +1,6 @@
 // checkStuckJobs — cek order stuck / laporan telat + kirim reminder WA (SLA check).
 // Diekstrak dari App.jsx (Fase 3, pola ctx).
+import { scheduleEndDate } from './scheduleTime.js';
 export async function checkStuckJobs({
   TODAY, addAgentLog, agentLogs, appSettings, laporanReports, ordersData, sendWA,
   showNotif, teknisiData, userAccounts,
@@ -43,8 +44,9 @@ export async function checkStuckJobs({
       // Sudah lewat tanggal job
       if (o.date > TODAY) return false;
       // Hitung estimasi selesai
-      const [h, m] = (o.time_end || "17:00").split(":").map(Number);
-      const jobEndMs = (o.date && o.time_end ? new Date(o.date + "T" + o.time_end + ":00").getTime() : 0);
+      const endClock = o.time_end || "17:00";
+      const endDate = scheduleEndDate(o.date, o.time || "09:00", endClock) || o.date;
+      const jobEndMs = o.date ? new Date(endDate + "T" + endClock).getTime() : 0;
       const satu_jam = 60 * 60 * 1000;
       // Sudah lebih dari 1 jam setelah selesai
       return nowMs > (jobEndMs + satu_jam);

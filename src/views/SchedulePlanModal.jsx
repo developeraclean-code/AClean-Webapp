@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { normalizePhone } from '../lib/phone.js';
-import { getLocalDate } from '../lib/dateTime.js';
+import { getLocalDate, shiftDateStr } from '../lib/dateTime.js';
+import { scheduleEndDate, scheduleMinutes } from '../lib/scheduleTime.js';
 import { estimatedEnd, planningTeams, teamReadiness, teamSlotCrew, suggestedTeamSlots, validatePlan, planConflict, planSnapshot, loadPlanningRange, EDITABLE_PLAN } from '../lib/teamPlanning.js';
 import { usePlanningData } from '../lib/usePlanningData.js';
 import { SERVICE_AREAS, resolveServiceArea } from '../lib/serviceArea.js';
@@ -17,7 +18,7 @@ export default function SchedulePlanModal({ request, supabase, onClose, onSaved,
   const [areaManuallyChosen,setAreaManuallyChosen]=useState(false);
   const [reason,setReason]=useState(''),[reasonEdited,setReasonEdited]=useState(false),[error,setError]=useState(''),[busy,setBusy]=useState(false),[saved,setSaved]=useState(null),[pending,setPending]=useState(null);
   const lock=useRef(false),dialog=useRef(null),previousFocus=useRef(null);
-  const {data,loading,error:loadError,reload}=usePlanningData(supabase,form.date || getLocalDate(),form.date || getLocalDate());
+  const {data,loading,error:loadError,reload}=usePlanningData(supabase,shiftDateStr(form.date || getLocalDate(),-1),shiftDateStr(form.date || getLocalDate(),1));
   const readonly=!!original && (!EDITABLE_PLAN.includes(original.status) || !!original.project_id);
   const teams=planningTeams(data.presets,data.rosters,[...data.orders,...(original?[original]:[])]);
   const ready=teamReadiness(form.team_slot,form.date,data.rosters,data.absences);
@@ -36,7 +37,7 @@ export default function SchedulePlanModal({ request, supabase, onClose, onSaved,
     lock.current=true;setBusy(true);setError('');
     try {
       if(!pending && dragSummary){
-        const latest=await loadPlanningRange(supabase,form.date,form.date);
+        const latest=await loadPlanningRange(supabase,shiftDateStr(form.date,-1),shiftDateStr(form.date,1));
         const crew=teamSlotCrew(form.team_slot,form.date,latest.rosters,latest.absences,latest.presets);
         if(crew.blocked)throw new Error(crew.detail);
         const changed=planConflict({...form,id:original.id},latest.orders,latest.rosters);
@@ -66,7 +67,7 @@ export default function SchedulePlanModal({ request, supabase, onClose, onSaved,
   return <div className="plan-overlay" onClick={e=>{if(e.target===e.currentTarget)close();}}>
     <section ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="plan-title" className="plan-dialog" onKeyDown={keys}>
       <header><div><span className="team-eyebrow">ACLEAN · PLANNING</span><h2 id="plan-title">{original?'Ubah rencana pekerjaan':request.source==='manual'?'Rencanakan pekerjaan':'Rencanakan dari WhatsApp'}</h2><p>Satu job untuk Planning Order dan Jadwal. Tim dapat diisi kemudian.</p></div><button aria-label="Tutup rencana" disabled={busy || !!pending} onClick={close}>×</button></header>
-      {saved?<div className="plan-success" role="status"><span>✓</span><h3>Planning tersimpan</h3><p>{saved.customer} · {saved.date}<br/>{saved.time}–{saved.time_end} WIB · {saved.team_slot || 'Belum ada tim'}</p><p>{saved.status==='PENDING'?'Tentatif':saved.status==='CANCELLED'?'Dibatalkan':'Pelanggan terkonfirmasi'}. Tidak ada pesan otomatis yang dikirim.</p><div className="team-actions"><button className="team-primary" onClick={()=>onViewSchedule(saved)}>Lihat di Jadwal</button><button onClick={onClose}>Tutup</button></div></div>:<>
+      {saved?<div className="plan-success" role="status"><span>✓</span><h3>Planning tersimpan</h3><p>{saved.customer} · {saved.date}<br/>{saved.time}–{saved.time_end}{scheduleEndDate(saved.date,saved.time,saved.time_end)!==saved.date?' (+1 hari)':''} WIB · {saved.team_slot || 'Belum ada tim'}</p><p>{saved.status==='PENDING'?'Tentatif':saved.status==='CANCELLED'?'Dibatalkan':'Pelanggan terkonfirmasi'}. Tidak ada pesan otomatis yang dikirim.</p><div className="team-actions"><button className="team-primary" onClick={()=>onViewSchedule(saved)}>Lihat di Jadwal</button><button onClick={onClose}>Tutup</button></div></div>:<>
         <div className="plan-content">
           {dragSummary && <p className="team-warning">Usulan: {dragSummary}. Perubahan baru berlaku setelah disimpan.</p>}
           {readonly && <p className="team-alert">Job ini sudah berjalan/ditutup atau merupakan project. Perubahan melalui alur operasional terkait.</p>}
@@ -86,8 +87,18 @@ export default function SchedulePlanModal({ request, supabase, onClose, onSaved,
             <label>Team<select aria-label="Team" value={form.team_slot} onChange={e=>update('team_slot',e.target.value)}><option value="">Belum ada tim</option>{teams.map(t=><option key={t}>{t}</option>)}</select></label>
             <label>Jam mulai<input type="time" value={form.time} onChange={e=>update('time',e.target.value)}/></label>
             <label>Jam selesai<input type="time" value={form.time_end} onChange={e=>update('time_end',e.target.value)}/></label>
+            {scheduleMinutes(form.time)>=18*60 && <label className="plan-wide">Tanggal selesai
+              <select aria-label="Tanggal selesai planning" value={scheduleEndDate(form.date,form.time,form.time_end)!==form.date?'next':'same'}
+                onChange={e=>setForm(prev=>{
+                  const nextDay=e.target.value==='next',start=scheduleMinutes(prev.time),end=scheduleMinutes(prev.time_end);
+                  return {...prev,time_end:nextDay && end>=start?'04:00':!nextDay && end<start?'23:59':prev.time_end};
+                })}>
+                <option value="same">Hari yang sama · {form.date}</option>
+                <option value="next">Hari berikutnya · {shiftDateStr(form.date,1)}</option>
+              </select><small>Untuk selesai besok, pilih jam 00:00–06:00.</small>
+            </label>}
             <div className="plan-wide"><small>Estimasi selesai {estimatedEnd(form.time,form.service,form.units)} WIB. Bisa disesuaikan dengan kondisi lapangan.</small><p className={`team-pill ${ready.tone}`}>{ready.label}{ready.members.length?` · ${ready.members.map(m=>`${m.name} (${m.role==='teknisi'?'T':'H'})`).join(' · ')}`:''}</p>{ready.missing.length>0 && <p className="team-alert">Tidak tersedia: {ready.missing.map(m=>m.name).join(', ')}. Konfirmasi pelanggan tetap dipertahankan; ganti anggota melalui Planning Order.</p>}</div>
-            {form.team_slot && <div className="plan-wide team-suggestions"><b>Jam disarankan</b><small>{loading?'Memeriksa jadwal…':'Berdasarkan durasi dan jadwal tim pada tanggal pilihan.'}</small><div className="team-actions">{!loading && !loadError && suggestions.map(s=><button type="button" key={s.time} onClick={()=>setForm(f=>({...f,time:s.time,time_end:s.time_end}))}>{s.time}–{s.time_end}</button>)}</div>{!loading && !suggestions.length && <small>Tidak ada slot yang dapat disarankan. Pilih tim atau tanggal lain.</small>}</div>}
+            {form.team_slot && <div className="plan-wide team-suggestions"><b>Jam disarankan</b><small>{loading?'Memeriksa jadwal…':'Berdasarkan durasi dan jadwal tim pada tanggal pilihan.'}</small><div className="team-actions">{!loading && !loadError && suggestions.map(s=><button type="button" key={s.time} onClick={()=>setForm(f=>({...f,time:s.time,time_end:s.time_end}))}>{s.time}–{s.time_end}{scheduleEndDate(s.date,s.time,s.time_end)!==s.date?' (+1 hari)':''}</button>)}</div>{!loading && !suggestions.length && <small>Tidak ada slot yang dapat disarankan. Pilih tim atau tanggal lain.</small>}</div>}
             {conflict && <p className="plan-wide team-alert">{conflict}</p>}
             <label className="plan-wide">Konfirmasi pelanggan<select value={form.status} onChange={e=>update('status',e.target.value)}><option value="PENDING">Tentatif · menunggu pelanggan</option><option value="CONFIRMED">Pelanggan terkonfirmasi</option>{original && <option value="CANCELLED">Batalkan pekerjaan</option>}</select></label>
             <label className="plan-wide">Catatan<textarea rows={2} value={form.notes} onChange={e=>update('notes',e.target.value)}/></label>

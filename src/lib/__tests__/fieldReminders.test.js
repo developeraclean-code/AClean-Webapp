@@ -30,6 +30,13 @@ describe("field reminders", () => {
     expect(rows.map(row => row.type)).toEqual(expect.arrayContaining(["material", "report"]));
   });
 
+  it("does not flag an overnight job as late before 04:00 next day", () => {
+    const job = { id: "NIGHT", date: "2026-10-12", time: "23:00", time_end: "04:00", status: "DISPATCHED", customer: "Malam", teknisi: "Ari" };
+    const args = { orders: [job], reports: [], employeeName: "Ari", today: "2026-10-13", materialsBroughtMap: { NIGHT: 1 } };
+    expect(buildFieldReminders({ ...args, now: new Date("2026-10-13T02:00:00+07:00") })).toEqual([]);
+    expect(buildFieldReminders({ ...args, now: new Date("2026-10-13T05:00:00+07:00") }).map(row => row.type)).toContain("material");
+  });
+
   it("claims the same reminder only once", () => {
     const data = new Map();
     const store = { getItem: key => data.get(key) || null, setItem: (key, value) => data.set(key, value) };

@@ -1,4 +1,5 @@
 import { findDelayedFieldReports, isFieldOrderAssigned } from "./fieldReportWorkflow.js";
+import { scheduleEndDate } from "./scheduleTime.js";
 
 const ACTIVE_UPCOMING = new Set(["PENDING", "CONFIRMED"]);
 
@@ -36,9 +37,10 @@ export function buildFieldReminders({ orders = [], reports = [], employeeName, t
       });
     }
     const end = minutesOfDay(order.time_end || order.time);
+    const endDate = scheduleEndDate(order.date, order.time, order.time_end || order.time) || order.date;
     const materialDue = Number(materialsBroughtMap?.[order.id] || 0) > 0
       && !reported.has(order.id)
-      && (order.date < today || (order.date === today && end != null && nowMinutes > end));
+      && (endDate < today || (endDate === today && end != null && nowMinutes > end));
     if (materialDue) reminders.push({
       key: `material:${order.id}:${today}`, type: "material",
       message: `📦 Material ${order.customer} belum direkonsiliasi lewat laporan.`,
