@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import { summarize } from "../lib/invoicing.js";
+import { PPH23_RATE, storedPph23Rate, summarize } from "../lib/invoicing.js";
 import { invalidateCachedPDF } from "../lib/pdfCache.js";
 
 export default function InvoicePreviewModal({
   open, onClose, selectedInvoice, invoicesData, setInvoicesData,
-  appSettings, currentUser, supabase, showNotif,
+  currentUser, supabase, showNotif,
   approveInvoice, downloadInvoicePDF, invoiceReminderWA,
   computePph23, updateInvoice, parseMD, fmt, auditUserName,
   onOpenEditInvoice, generateInvoicePDFBlob,
@@ -12,7 +12,7 @@ export default function InvoicePreviewModal({
   const liveInv = (open && selectedInvoice)
     ? (invoicesData.find(i => i.id === selectedInvoice.id) || selectedInvoice)
     : null;
-  const rate = parseFloat(appSettings?.pph23_rate) || 0.025;
+  const rate = PPH23_RATE;
 
   const mArr = (() => {
     if (!liveInv) return [];
@@ -30,6 +30,9 @@ export default function InvoicePreviewModal({
   const pph = computePph23(jasaSubtotal, rate);
   const savedPphAmount = Number(liveInv?.pph23_amount) || 0;
   const savedDpp = jasaSubtotal + savedPphAmount;
+  const displayedRate = liveInv?.pph23
+    ? storedPph23Rate(jasaSubtotal, savedPphAmount)
+    : rate;
 
   // Preview = hasil generate PDF ASLI (InvoicePDF.jsx via generateInvoicePDFBlob),
   // BUKAN markup HTML terpisah — dulu preview ini re-implementasi manual yang gampang
@@ -109,7 +112,7 @@ export default function InvoicePreviewModal({
                 }
               }}
               style={{ width: 15, height: 15, accentColor: "#0891b2", cursor: pphSaving ? "wait" : "pointer" }} />
-            Customer potong PPh 23 ({(rate * 100).toLocaleString("id-ID")}%){pphSaving ? " — menyimpan…" : ""}
+            Customer potong PPh 23 ({(displayedRate * 100).toLocaleString("id-ID", { maximumFractionDigits: 1 })}%){pphSaving ? " — menyimpan…" : ""}
           </label>
           {liveInv.pph23 && <span style={{ fontSize: 11, color: "#0e7490", fontFamily: "monospace" }}>DPP {fmt(savedDpp)} · PPh −{fmt(savedPphAmount)} · diterima {fmt(liveInv.total)}</span>}
         </div>

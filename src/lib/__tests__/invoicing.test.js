@@ -14,7 +14,9 @@ import {
   auditInvoices,
   categoryFromCatalog,
   auditQuoteDeviation,
+  PPH23_RATE,
   computePph23,
+  storedPph23Rate,
   grossUpPph23Rows,
 } from "../invoicing.js";
 
@@ -266,24 +268,31 @@ describe("P2 auditInvoices", () => {
   });
 });
 
-describe("computePph23 (gross-up 2,5%)", () => {
-  it("gross-up: net 1jt → DPP 1.025.641, PPh 25.641, AClean tetap terima 1jt", () => {
-    const r = computePph23(1000000, 0.025);
-    expect(r.dpp).toBe(1025641);
-    expect(r.amount).toBe(25641);
+describe("computePph23 (gross-up 2%)", () => {
+  it("gross-up: jasa net 1jt → DPP 1.020.408, PPh 20.408, AClean tetap terima 1jt", () => {
+    const r = computePph23(1000000);
+    expect(r.dpp).toBe(1020408);
+    expect(r.amount).toBe(20408);
     // verifikasi: DPP - PPh = net (yang diterima AClean)
     expect(r.dpp - r.amount).toBe(1000000);
   });
-  it("rate default 2,5%", () => {
-    expect(computePph23(1000000).amount).toBe(25641);
+  it("rate default 2%", () => {
+    expect(PPH23_RATE).toBe(0.02);
+    expect(computePph23(1000000).amount).toBe(20408);
   });
   it("net 0 / rate 0 → tanpa potongan", () => {
-    expect(computePph23(0)).toEqual({ dpp: 0, amount: 0, rate: 0.025 });
+    expect(computePph23(0)).toEqual({ dpp: 0, amount: 0, rate: 0.02 });
     expect(computePph23(500000, 0).amount).toBe(0);
   });
-  it("rate lain (mis. 2%) tetap konsisten dpp-amount=net", () => {
-    const r = computePph23(2000000, 0.02);
-    expect(r.dpp - r.amount).toBe(2000000);
+  it("rate invoice historis 2,5% tetap dapat dibaca tanpa mengubah nominalnya", () => {
+    const r = computePph23(1000000, 0.025);
+    expect(r.amount).toBe(25641);
+    expect(storedPph23Rate(1000000, r.amount)).toBeCloseTo(0.025, 5);
+    expect(r.dpp - r.amount).toBe(1000000);
+  });
+  it("rate tampilan dari nominal tersimpan memakai default 2% bila belum ada PPh", () => {
+    expect(storedPph23Rate(1000000, 20408)).toBeCloseTo(0.02, 5);
+    expect(storedPph23Rate(1000000, 0)).toBe(0.02);
   });
 });
 

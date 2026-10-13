@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { pdf } from "@react-pdf/renderer";
 import InvoicePDF from "../InvoicePDF.jsx";
+import { computePph23 } from "../../lib/invoicing.js";
+
+function documentText(node) {
+  if (Array.isArray(node)) return node.map(documentText).join("");
+  if (node == null || typeof node === "boolean") return "";
+  if (typeof node !== "object") return String(node);
+  if (typeof node.type === "function") return documentText(node.type(node.props));
+  return documentText(node.props?.children);
+}
 
 const baseInvoice = {
   id: "INV-PPH-TEST",
@@ -28,12 +37,18 @@ const baseInvoice = {
 };
 
 describe("InvoicePDF PPh 23", () => {
-  it("merender invoice tunggal dengan gross-up PPh tanpa crash", async () => {
+  it("merender invoice tunggal baru dengan PPh 2% tanpa crash", async () => {
+    const newInvoice = { ...baseInvoice, pph23_amount: computePph23(baseInvoice.labor).amount };
+    expect(documentText(InvoicePDF({ inv: newInvoice, appSettings: {} }))).toContain("PPh 23 (2%) dipotong customer");
     const blob = await pdf(
-      <InvoicePDF inv={baseInvoice} appSettings={{ pph23_rate: "0.025" }} />
+      <InvoicePDF inv={newInvoice} appSettings={{ pph23_rate: "0.02" }} />
     ).toBlob();
     expect(blob.type).toBe("application/pdf");
     expect(blob.size).toBeGreaterThan(1000);
+  });
+
+  it("invoice lama tetap menampilkan 2,5% sesuai nominal tersimpan", () => {
+    expect(documentText(InvoicePDF({ inv: baseInvoice, appSettings: {} }))).toContain("PPh 23 (2,5%) dipotong customer");
   });
 
   it("merender invoice gabungan yang berisi PPh dan non-PPh", async () => {
@@ -48,7 +63,7 @@ describe("InvoicePDF PPh 23", () => {
       <InvoicePDF
         invList={[{ inv: baseInvoice }, { inv: regular }]}
         unified
-        appSettings={{ pph23_rate: "0.025" }}
+        appSettings={{ pph23_rate: "0.02" }}
       />
     ).toBlob();
     expect(blob.type).toBe("application/pdf");

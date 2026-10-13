@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { normalizePhone, formatPhone } from "../lib/phone.js";
-import { categoryFromCatalog, computePph23 } from "../lib/invoicing.js";
+import { categoryFromCatalog, computePph23, PPH23_RATE } from "../lib/invoicing.js";
 import { searchCustomersServer } from "../data/reads.js";
 import {
   QUOTATION_PAYMENT,
@@ -800,11 +800,11 @@ export default function QuotationModal({
                 <div>
                   <label style={{ fontSize: 12, color: cs.muted, cursor: "pointer", display: "flex", gap: 8, alignItems: "center" }}>
                     <input type="checkbox" checked={pph23On} onChange={e => setPph23On(e.target.checked)} />
-                    PPh 23 (2,5%) — dari baris Jasa saja, ditambah ke DPP
+                    PPh 23 ({(PPH23_RATE * 100).toLocaleString("id-ID")}%) — dari baris Jasa saja, ditambah ke DPP
                   </label>
                   <div style={{ fontSize: 10, color: cs.muted, marginTop: 4, maxWidth: "48ch", lineHeight: 1.5 }}>
                     Dihitung dari baris ber-centang "PPh?" di grid atas (kategori Jasa, termasuk Cleaning semua tipe/PK) — Material &amp; Unit AC tidak kena.
-                    Gross-up (Total = Jasa ÷ 0,975): tidak mengurangi omset kita — cuma info DPP di PDF supaya customer transfer sesuai harga normal setelah mereka potong PPh.
+                    Gross-up (Total = Jasa ÷ 0,98): tidak mengurangi omset kita — cuma info DPP di PDF supaya customer transfer sesuai harga normal setelah mereka potong PPh.
                   </div>
                   {pph23On && jasaSubtotal > 0 && (
                     <div style={{ marginTop: 6, fontSize: 12, color: cs.accent, fontWeight: 700 }}>

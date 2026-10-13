@@ -1,5 +1,5 @@
 import { Document, Page, Text, View, StyleSheet, Image, Font } from "@react-pdf/renderer";
-import { BILLING_CATEGORY, grossUpPph23Rows, lineCategory } from "../lib/invoicing.js";
+import { BILLING_CATEGORY, grossUpPph23Rows, lineCategory, storedPph23Rate } from "../lib/invoicing.js";
 
 // Matikan hyphenation otomatis react-pdf — defaultnya suka motong kata di
 // ujung baris (mis. "Service" → "Ser-vice") walau bukan bahasa Inggris.
@@ -295,10 +295,7 @@ function InvoicePage({ inv, logoUrl, appSettings = {}, invoiceItems = [], portal
 
   const hasPph = !!inv.pph23 && (inv.pph23_amount || 0) > 0;
   if (hasPph) rows = grossUpPph23Rows(rows, inv.pph23_amount);
-  const storedPphDpp = (Number(inv.labor) || 0) + (Number(inv.pph23_amount) || 0);
-  const pphRate = hasPph && storedPphDpp > 0
-    ? ((Number(inv.pph23_amount) || 0) / storedPphDpp) * 100
-    : (Number(appSettings.pph23_rate) || 0.025) * 100;
+  const pphRate = storedPph23Rate(Number(inv.labor) || 0, Number(inv.pph23_amount) || 0) * 100;
   const grossInvoiceTotal = (Number(inv.total) || 0) + (hasPph ? Number(inv.pph23_amount) || 0 : 0);
   const sisaBayar = (inv.remaining_amount || 0) > 0 ? inv.remaining_amount : Math.max(0, (inv.total || 0) - (inv.paid_amount || 0));
   const hasPageLabel = pageTotal && pageTotal > 1;
@@ -355,7 +352,7 @@ function InvoicePage({ inv, logoUrl, appSettings = {}, invoiceItems = [], portal
         {hasPph && (
           <>
             <View style={s.adjRow}><Text>Total sebelum potongan PPh 23</Text><Text>{fmt(grossInvoiceTotal)}</Text></View>
-            <View style={[s.adjRow, { color: "#2f5ea3" }]}><Text>PPh 23 ({pphRate.toLocaleString("id-ID")}%) dipotong customer</Text><Text>- {fmt(inv.pph23_amount)}</Text></View>
+            <View style={[s.adjRow, { color: "#2f5ea3" }]}><Text>PPh 23 ({pphRate.toLocaleString("id-ID", { maximumFractionDigits: 1 })}%) dipotong customer</Text><Text>- {fmt(inv.pph23_amount)}</Text></View>
           </>
         )}
 

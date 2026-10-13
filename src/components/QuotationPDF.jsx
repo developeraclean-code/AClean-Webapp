@@ -1,5 +1,6 @@
 import { Document, Page, Text, View, StyleSheet, Image, Font } from "@react-pdf/renderer";
 import { QUOTATION_PAYMENT, quotationPaymentDetails } from "../lib/quotation.js";
+import { storedPph23Rate } from "../lib/invoicing.js";
 
 // Matikan hyphenation otomatis react-pdf — defaultnya suka motong kata di
 // ujung baris (mis. "Service" → "Ser-vice") walau bukan bahasa Inggris.
@@ -131,7 +132,7 @@ export default function QuotationPDF({ quo, appSettings, logoUrl }) {
 
   const hasPph = !!quo.pph23 && (quo.pph23_amount || 0) > 0;
   // DPP = nilai JASA saja + PPh — bukan total (jasa+material+unit AC).
-  const dpp = hasPph ? (quo.labor || 0) + (quo.pph23_amount || 0) : 0;
+  const dpp = hasPph ? (Number(quo.labor) || 0) + (Number(quo.pph23_amount) || 0) : 0;
   const payment = quotationPaymentDetails({
     method: quo.payment_method,
     downPaymentAmount: quo.down_payment_amount,
@@ -210,7 +211,7 @@ export default function QuotationPDF({ quo, appSettings, logoUrl }) {
           {hasPph && (
             <>
               <View style={s.adjRow}><Text>Nilai Jasa (DPP)</Text><Text>{fmt(dpp)}</Text></View>
-              <View style={[s.adjRow, { color: "#2f5ea3" }]}><Text>PPh 23 (2,5%) dipotong customer</Text><Text>- {fmt(quo.pph23_amount)}</Text></View>
+              <View style={[s.adjRow, { color: "#2f5ea3" }]}><Text>PPh 23 ({(storedPph23Rate(quo.labor, quo.pph23_amount) * 100).toLocaleString("id-ID", { maximumFractionDigits: 1 })}%) dipotong customer</Text><Text>- {fmt(quo.pph23_amount)}</Text></View>
             </>
           )}
 

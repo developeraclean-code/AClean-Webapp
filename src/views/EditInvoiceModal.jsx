@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { cs } from "../theme/cs.js";
-import { summarize, checkInvoiceConsistency, describeInconsistency, normalizeLines, categoryOf, LINE_CATEGORY, computePph23 } from "../lib/invoicing.js";
+import { summarize, checkInvoiceConsistency, describeInconsistency, normalizeLines, categoryOf, LINE_CATEGORY, computePph23, PPH23_RATE } from "../lib/invoicing.js";
 
 export default function EditInvoiceModal({
   open, onClose,
@@ -9,7 +9,7 @@ export default function EditInvoiceModal({
   editJasaItems, setEditJasaItems,
   priceListData, inventoryData, customersData,
   lookupHargaGlobal, parseMD, fmt,
-  appSettings, currentUser, supabase,
+  currentUser, supabase,
   showNotif, addAgentLog,
   updateInvoice, setInvoicesData,
   auditUserName, _apiHeaders,
@@ -20,6 +20,7 @@ export default function EditInvoiceModal({
   const [voucherCheckResult, setVoucherCheckResult] = useState(null);
   const [voucherCheckLoading, setVoucherCheckLoading] = useState(false);
   const [voucherApplied, setVoucherApplied] = useState(null);
+  const [editSaving, setEditSaving] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -69,6 +70,7 @@ export default function EditInvoiceModal({
   };
 
   const handleSave = async () => {
+    if (editSaving) return;
     const discountFinal = parseInt(editInvoiceForm.discount || 0) || 0;
     const tradeInFinal = !!editInvoiceForm.trade_in;
     const tradeInAmtFinal = tradeInFinal ? (parseInt(editInvoiceForm.trade_in_amount) || 0) : 0;
@@ -88,30 +90,31 @@ export default function EditInvoiceModal({
     // PPh 23 HANYA dari kategori Jasa (labor), BUKAN dari total (jasa+material) — fix:
     // sebelumnya computePph23(newTotalFinal) ikut hitung material, salah basis DPP.
     const pph23On = !!editInvoiceForm.pph23;
-    const pph23Amt = pph23On ? computePph23(labor, parseFloat(appSettings?.pph23_rate) || 0.025).amount : 0;
+    const pph23Amt = pph23On ? computePph23(labor).amount : 0;
     const billingName = (editInvoiceForm.billing_name ?? editInvoiceData.customer) || editInvoiceData.customer;
     const billingAddress = editInvoiceForm.billing_address ?? (editInvoiceData.address || "");
-    // pdf_url/updated_at ikut di-reset di state lokal — mirror invalidasi updateInvoice()
-    // di DB. Tanpa ini, download sebelum poll berikutnya masih ambil PDF lama dari R2.
-    setInvoicesData(prev => prev.map(i => i.id === editInvoiceData.id
-      ? { ...i, labor, material, discount: discountFinal, trade_in: tradeInFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal, pph23: pph23On, pph23_amount: pph23Amt, materials_detail: newMD, customer: billingName, address: billingAddress, pdf_url: null, pdf_generated_at: null, updated_at: new Date().toISOString() } : i));
-    {
-      const _chk = checkInvoiceConsistency({ ...editInvoiceData, lines: newMD, labor, material, discount: discountFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal });
-      if (!_chk.ok) addAgentLog("INVOICE_INVARIANT", describeInconsistency(_chk, editInvoiceData.id) + " (edit nilai)", "WARNING");
-    }
-    let saved = false;
-    {
-      const { error: e1 } = await updateInvoice(supabase, editInvoiceData.id, {
+    setEditSaving(true);
+    let savedData;
+    try {
+      const { data, error } = await updateInvoice(supabase, editInvoiceData.id, {
         labor, material, discount: discountFinal, trade_in: tradeInFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal,
         pph23: pph23On, pph23_amount: pph23Amt,
         materials_detail: JSON.stringify(newMD), customer: billingName, address: billingAddress
-      }, auditUserName()); if (!e1) saved = true; else console.warn("editInv e1:", e1.message);
+      }, auditUserName()).select("id,labor,material,discount,trade_in,trade_in_amount,total,pph23,pph23_amount,materials_detail,customer,address,pdf_url,pdf_generated_at,updated_at").maybeSingle();
+      if (error || !data) throw error || new Error("Invoice tidak ditemukan setelah update");
+      savedData = data;
+    } catch (error) {
+      showNotif("⚠️ Gagal menyimpan invoice/PPh 23: " + (error?.message || "unknown"));
+      return;
+    } finally {
+      setEditSaving(false);
     }
-    if (!saved) {
-      const { error: e2 } = await updateInvoice(supabase, editInvoiceData.id, { labor, material, discount: discountFinal, trade_in: tradeInFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal }, auditUserName());
-      if (!e2) saved = true;
-    }
-    if (!saved) await updateInvoice(supabase, editInvoiceData.id, { total: newTotalFinal }, auditUserName());
+
+    // State dan cache PDF berubah hanya setelah seluruh nilai, termasuk PPh, tersimpan.
+    setInvoicesData(prev => prev.map(i => i.id === editInvoiceData.id
+      ? { ...i, ...savedData, materials_detail: newMD } : i));
+    const chk = checkInvoiceConsistency({ ...editInvoiceData, lines: newMD, labor, material, discount: discountFinal, trade_in_amount: tradeInAmtFinal, total: newTotalFinal });
+    if (!chk.ok) addAgentLog("INVOICE_INVARIANT", describeInconsistency(chk, editInvoiceData.id) + " (edit nilai)", "WARNING");
     addAgentLog("INVOICE_EDITED", `Invoice ${editInvoiceData.id} diedit → ${fmt(newTotalFinal)}` + (editInvoiceForm.notes ? ` (${editInvoiceForm.notes})` : "") + ` by ${currentUser?.name || auditUserName?.() || "?"} (${currentUser?.role || "?"})`, "SUCCESS");
     showNotif(`✅ Invoice ${editInvoiceData.id} diupdate → ${fmt(newTotalFinal)}`);
     onClose();
@@ -379,7 +382,7 @@ export default function EditInvoiceModal({
 
             {/* PPh 23 — HANYA dari kategori Jasa (jasaTotal), bukan newTotal (jasa+material) */}
             {(() => {
-              const rate = parseFloat(appSettings?.pph23_rate) || 0.025;
+              const rate = PPH23_RATE;
               const pph = computePph23(jasaTotal, rate);
               return (
                 <div style={{ background: editInvoiceForm.pph23 ? "#0ea5e912" : cs.surface, border: "1px solid " + (editInvoiceForm.pph23 ? "#0ea5e944" : cs.border), borderRadius: 8, padding: "8px 10px" }}>
@@ -427,13 +430,13 @@ export default function EditInvoiceModal({
 
           {/* Buttons */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10 }}>
-            <button onClick={handleClose}
+            <button onClick={handleClose} disabled={editSaving}
               style={{ padding: "11px", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 10, color: cs.text, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>
               Batal
             </button>
-            <button onClick={handleSave}
+            <button onClick={handleSave} disabled={editSaving}
               style={{ padding: "11px", background: "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", borderRadius: 10, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
-              💾 Simpan Perubahan
+              {editSaving ? "⏳ Menyimpan…" : "💾 Simpan Perubahan"}
             </button>
           </div>
         </div>
