@@ -2556,7 +2556,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       <label style={{ display: "flex", alignItems: "center", gap: 9, width: "fit-content", maxWidth: "100%", background: cs.surface, border: "1px solid " + (weekHasNightOrders ? cs.yellow + "88" : cs.border), borderRadius: 10, padding: "8px 12px", color: cs.text, cursor: weekHasNightOrders ? "default" : "pointer" }}>
         <input type="checkbox" checked={showNightGrid || weekHasNightOrders} disabled={weekHasNightOrders}
           onChange={e => setShowNightGrid(e.target.checked)} />
-        <span style={{ fontSize: 12, fontWeight: 700 }}>Tampilkan grid malam (18:00–23:59)</span>
+        <span style={{ fontSize: 12, fontWeight: 700 }}>Tampilkan grid malam (18:00–06:00 esok hari)</span>
         {weekHasNightOrders && <span style={{ fontSize: 10, color: cs.yellow, fontWeight: 700 }}>Otomatis · {weekOrders.filter(o => hasValidTime(o.time) && toMinutes(o.time) >= NIGHT_GRID_START * 60).length} job minggu ini</span>}
       </label>
       {(showNightGrid || weekHasNightOrders) && <TimeGrid
@@ -2668,32 +2668,24 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
                 // Hitung order & konflik untuk tim ini — pakai BASE (tanpa filter tim)
                 // supaya badge tiap chip tetap akurat walau satu tim sedang dipilih.
                 const teamOrders = inboxOrdersBase.filter(o => o.team_slot === s);
-                // Paritas dgn isConflict di TimeGrid: jam selesai pakai time_end AKTUAL
-                // (fallback estimasi), hanya bandingkan tanggal sama, dan order yang
-                // sudah selesai/batal tidak dihitung. Dulu chip pakai estimasi flat →
-                // ⚠️ palsu padahal grid bersih (time_end aktual tidak overlap).
+                // Cocokkan tanggal + jam aktual agar badge ikut menangkap shift
+                // lintas tengah malam, termasuk job yang dimulai kemarin.
                 const DONE_OR_CANCELLED = ["REPORT_SUBMITTED","COMPLETED","VERIFIED","INVOICE_APPROVED","PAID","INVOICED","CANCELLED"];
-                const activeOrders = teamOrders.filter(o =>
+                const isActiveOrder = o =>
                   o.time &&
                   !DONE_OR_CANCELLED.includes(o.status) &&
-                  !laporanJobSet.has(o.id)
+                  !laporanJobSet.has(o.id);
+                const activeOrders = teamOrders.filter(isActiveOrder);
+                const relevantDates = new Set(activeOrders.flatMap(o =>
+                  [shiftDateStr(o.date, -1), o.date, shiftDateStr(o.date, 1)]
+                ));
+                const allSlotOrders = ordersData.filter(o =>
+                  relevantDates.has(o.date) && o.team_slot === s && isActiveOrder(o)
                 );
-                const rangeOf = (o) => {
-                  const st = toMinutes(o.time);
-                  if (st === null) return null;
-                  const tEnd = toMinutes(o.time_end);
-                  const en = (tEnd !== null && tEnd > st) ? tEnd : st + Math.round(hitungDurasi(o.service, o.units) * 60);
-                  return [st, en];
-                };
-                const hasConflict = activeOrders.some(o => {
-                  const r1 = rangeOf(o);
-                  if (!r1) return false;
-                  return activeOrders.some(o2 => {
-                    if (o2.id === o.id || o2.date !== o.date) return false;
-                    const r2 = rangeOf(o2);
-                    return r2 && r1[0] < r2[1] && r1[1] > r2[0];
-                  });
-                });
+                const withEnd = o => ({ ...o, time_end: o.time_end || calcTimeEnd(o.time, o.service, o.units) });
+                const hasConflict = activeOrders.some(o => allSlotOrders.some(o2 =>
+                  o2.id !== o.id && schedulesOverlap(withEnd(o), withEnd(o2))
+                ));
                 const isActive = filterTeam === s;
                 return (
                   <button key={s}

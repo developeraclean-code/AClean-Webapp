@@ -5,7 +5,7 @@ import KasbonWidget from "./KasbonWidget.jsx";
 import ExpenseInputWidget from "./ExpenseInputWidget.jsx";
 import { findDelayedFieldReports, isFieldOrderAssigned } from "../lib/fieldReportWorkflow.js";
 import { normalizePhone, samePhone } from "../lib/phone.js";
-import { scheduleEndDate } from "../lib/scheduleTime.js";
+import { scheduleEndDate, scheduleTouchesDate } from "../lib/scheduleTime.js";
 import { ORDER_DONE_STATUSES } from "../constants/status.js";
 import {
   cacheFieldJobPackage, enqueueFieldStatus, fieldUserKey, getFieldStorageHealth,
@@ -117,10 +117,10 @@ function TechMobileView({ currentUser, ordersData, setOrdersData, laporanReports
     ? [...ordersData, ...cachedJobs.filter(cached => !ordersData.some(order => order.id === cached.id))]
     : ordersData;
   const todayOrders = fieldOrders.filter(o => {
-    if (o.date !== TODAY) return false;
+    if (!scheduleTouchesDate(o, TODAY)) return false;
     if (["CANCELLED", "RESCHEDULED"].includes(o.status)) return false;
     return isFieldOrderAssigned(o, myName);
-  }).sort((a, b) => (a.time || "").localeCompare(b.time || ""));
+  }).sort((a, b) => (a.date === TODAY) - (b.date === TODAY) || (a.time || "").localeCompare(b.time || ""));
 
   // Stats hari ini
   const countDone      = todayOrders.filter(o => ORDER_DONE_STATUSES.includes(o.status)).length;
@@ -129,7 +129,9 @@ function TechMobileView({ currentUser, ordersData, setOrdersData, laporanReports
   const focusPriority = { WORKING: 0, ON_SITE: 1, IN_PROGRESS: 2, DISPATCHED: 3, CONFIRMED: 4, PENDING: 5 };
   const focusedOrder = [...todayOrders]
     .filter(order => Object.hasOwn(focusPriority, order.status))
-    .sort((a, b) => (focusPriority[a.status] ?? 9) - (focusPriority[b.status] ?? 9) || (a.time || "").localeCompare(b.time || ""))[0] || null;
+    .sort((a, b) => (focusPriority[a.status] ?? 9) - (focusPriority[b.status] ?? 9)
+      || (a.date === TODAY) - (b.date === TODAY)
+      || (a.time || "").localeCompare(b.time || ""))[0] || null;
   const displayedOrders = showAllJobs || !focusedOrder ? todayOrders : [focusedOrder];
   const hiddenJobCount = Math.max(0, todayOrders.length - displayedOrders.length);
   const delayedReports = findDelayedFieldReports(fieldOrders, laporanReports, myName, TODAY);
@@ -325,6 +327,7 @@ function TechMobileView({ currentUser, ordersData, setOrdersData, laporanReports
                       <span style={{ fontSize: 10, color: cs.muted, fontFamily: "monospace" }}>{order.id}</span>
                     </div>
                     <div style={{ fontWeight: 700, fontSize: 15, color: cs.text }}>{order.customer}</div>
+                    {order.date !== TODAY && <div style={{ fontSize: 11, color: cs.yellow, fontWeight: 700, marginTop: 2 }}>🌙 Lanjutan dari {order.date} · selesai hari ini</div>}
                     <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>{order.service} · {order.units} unit</div>
                     {assignedNames.length > 0 && <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>👥 Tim: {assignedNames.join(", ")}</div>}
                   </div>

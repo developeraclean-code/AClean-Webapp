@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { scheduleEndDate, scheduleRange, schedulesOverlap } from '../scheduleTime.js';
+import { scheduleEndDate, scheduleRange, schedulesOverlap, scheduleTouchesDate } from '../scheduleTime.js';
 
 describe('jadwal malam lintas tanggal', () => {
   const night = { date: '2026-10-12', time: '23:00', time_end: '04:00' };
@@ -12,6 +12,12 @@ describe('jadwal malam lintas tanggal', () => {
     expect(schedulesOverlap(night, { date: '2026-10-13', time: '01:00', time_end: '02:00' })).toBe(true);
     expect(schedulesOverlap(night, { date: '2026-10-13', time: '04:00', time_end: '05:00' })).toBe(false);
     expect(schedulesOverlap(night, { date: '2026-10-12', time: '18:00', time_end: '23:00' })).toBe(false);
+  });
+  it('menjaga job malam terlihat bagi teknisi pada tanggal mulai dan selesai saja', () => {
+    expect(scheduleTouchesDate(night, '2026-10-12')).toBe(true);
+    expect(scheduleTouchesDate(night, '2026-10-13')).toBe(true);
+    expect(scheduleTouchesDate(night, '2026-10-14')).toBe(false);
+    expect(scheduleTouchesDate({ date: '2026-10-12', time: '09:00', time_end: '11:00' }, '2026-10-13')).toBe(false);
   });
   it('menolak jam sama dan waktu tak valid', () => {
     expect(scheduleRange('2026-10-12', '23:00', '23:00')).toBeNull();

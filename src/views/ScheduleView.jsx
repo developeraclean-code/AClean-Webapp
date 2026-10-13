@@ -1,6 +1,8 @@
 import { memo } from "react";
 import TeamScheduleBoard from "./TeamScheduleBoard.jsx";
 import { planningWeek } from "../lib/teamPlanning.js";
+import { scheduleTouchesDate } from "../lib/scheduleTime.js";
+import { isFieldOrderAssigned } from "../lib/fieldReportWorkflow.js";
 import { cs } from "../theme/cs.js";
 import { statusColor, statusLabel } from "../constants/status.js";
 import { smartSearchNormalize } from "../lib/phone.js";
@@ -19,14 +21,12 @@ const myTekName = currentUser?.name || "";
 const activeTek = isTekRole ? myTekName : filterTeknisi;
 
 const allTekNames = [...new Set(ordersData.map(o => o.teknisi).filter(Boolean))];
-// Helper: lihat jadwal via field o.helper, bukan o.teknisi
-const isHelperRole = currentUser?.role === "Helper";
 const _sqSched = searchSchedule.trim().toLowerCase();
-const _baseOrders = activeTek === "Semua"
+const _baseOrders = isTekRole
+  ? ordersData.filter(o => isFieldOrderAssigned(o, myTekName))
+  : activeTek === "Semua"
   ? ordersData
-  : ordersData.filter(o => isHelperRole
-    ? (o.helper === activeTek || o.teknisi === activeTek)
-    : o.teknisi === activeTek);
+  : ordersData.filter(o => o.teknisi === activeTek);
 // BUG-4: tambah search text filter di jadwal
 const filteredOrders = !_sqSched ? _baseOrders : _baseOrders.filter(o =>
   (o.customer || "").toLowerCase().includes(_sqSched) ||
@@ -38,7 +38,7 @@ const filteredOrders = !_sqSched ? _baseOrders : _baseOrders.filter(o =>
   (o.phone || "").includes(searchSchedule.trim())
 );
 // Untuk teknisi/helper: filter hanya hari ini
-const todayOrdersTek = isTekRole ? filteredOrders.filter(o => o.date === TODAY) : filteredOrders;
+const todayOrdersTek = isTekRole ? filteredOrders.filter(o => scheduleTouchesDate(o, TODAY)) : filteredOrders;
 
 // ── Report card sent helpers ──
 const getLaporan = (jobId) => laporanReports.find(r => r.job_id === jobId);
@@ -257,7 +257,7 @@ return (
         <div style={{ flex: 1 }}>
           <div style={{ fontWeight: 700, color: cs.text, fontSize: 13 }}>{activeTek}</div>
           <div style={{ fontSize: 11, color: cs.muted }}>
-            {filteredOrders.filter(o => o.date === TODAY).length} job hari ini ·{" "}
+            {filteredOrders.filter(o => isTekRole ? scheduleTouchesDate(o, TODAY) : o.date === TODAY).length} job hari ini ·{" "}
             {filteredOrders.filter(o => o.date > TODAY).length} mendatang ·{" "}
             {filteredOrders.filter(o => o.status === "COMPLETED").length} selesai
           </div>
@@ -279,7 +279,9 @@ return (
         Tidak ada tab Minggu, hanya list pekerjaan hari ini
         ════════════════════════════════════════════════ */}
     {isTekRole && (() => {
-      const myJobs = todayOrdersTek.sort((a, b) => (a.time || "").localeCompare(b.time || ""));
+      const myJobs = [...todayOrdersTek].sort((a, b) =>
+        (a.date === TODAY) - (b.date === TODAY) || (a.time || "").localeCompare(b.time || "")
+      );
       if (myJobs.length === 0) return (
         <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 14, padding: 40, textAlign: "center" }}>
           <div style={{ fontSize: 32, marginBottom: 10 }}>✅</div>
@@ -311,7 +313,7 @@ return (
           {myJobs.map((o, idx) => {
             const myColor = techColors[o.teknisi] || cs.accent;
             const sCol = statusColor[o.status] || cs.border;
-            const isMe = o.teknisi === myTekName;
+            const isMe = [o.teknisi, o.teknisi2, o.teknisi3].includes(myTekName);
             return (
               <div key={o.id} style={{ background: cs.card, border: "1px solid " + sCol + "55", borderRadius: 12, padding: "14px 16px", display: "flex", gap: 12, alignItems: "flex-start" }}>
                 {/* Urutan + jam */}
@@ -324,6 +326,7 @@ return (
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5, flexWrap: "wrap" }}>
                     <span style={{ fontFamily: "monospace", fontWeight: 800, color: cs.accent, fontSize: 12 }}>{o.id}</span>
+                    {o.date !== TODAY && <span style={{ fontSize: 10, color: cs.yellow }}>🌙 Lanjutan dari {o.date}</span>}
                     <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 99, background: sCol + "22", color: sCol, fontWeight: 700 }}>{o.status}</span>
                     {!isMe && <span style={{ fontSize: 10, background: cs.yellow + "22", color: cs.yellow, padding: "2px 8px", borderRadius: 99 }}>🤝 Helper</span>}
                   </div>

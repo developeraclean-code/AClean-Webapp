@@ -14,6 +14,14 @@ export function scheduleEndDate(date, start, end) {
   return to < from ? shiftDateStr(date, 1) : date;
 }
 
+// A shift that crosses midnight remains actionable on its end date.
+export function scheduleTouchesDate(order, targetDate) {
+  return !!order?.date && !!targetDate && (
+    order.date === targetDate ||
+    scheduleEndDate(order.date, order.time, order.time_end) === targetDate
+  );
+}
+
 export function scheduleRange(date, start, end) {
   const from = scheduleMinutes(start), to = scheduleMinutes(end);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '') || !Number.isFinite(from + to) || from === to) return null;
