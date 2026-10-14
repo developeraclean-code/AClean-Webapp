@@ -1,11 +1,14 @@
 // Helper bonus/komisi order — dipindah dari views/TeknisiAdminView.jsx agar bisa dipakai
 // bersama panel review komisi DAN builder rekap bulanan (src/lib/bonusRekap.js).
 // Satu sumber kebenaran: kalau kriteria berubah, panel review & rekap cetak ikut berubah.
+import { marginBonusTiers } from './bonusSettings.js';
+import { DEFAULT_BONUS_CATEGORIES } from '../constants/bonus.js';
 
 // Kategori bonus yang terdeteksi otomatis dari item invoice (bukan margin/install/manual).
 export const SPECIAL_BONUS_IDS = ["freon", "kapasitor", "thermis"];
 
-// Threshold omset "job besar" — non-Install >= 1jt, Install >= 1,5jt.
+// Batas margin mengikuti Setting Bonus (harus lebih besar dari batas).
+// Minimum omset tambahan untuk kandidat Install tetap >= 1,5jt.
 export const OMSET_THRESHOLD_DEFAULT = 1000000;
 export const OMSET_THRESHOLD_INSTALL = 1500000;
 
@@ -105,17 +108,19 @@ export function cariJobBersambung(order, semuaOrder = []) {
 // bisa menjelaskan "kenapa job ini TIDAK termasuk".
 // Syarat gugur (mutlak): job lintas hari.
 // Syarat layak (OR): omset besar, install multi-unit, atau ada material bonus khusus.
-export function bonusCandidateInfo(order, invTotal, detected = [], semuaOrder = []) {
+export function bonusCandidateInfo(order, invTotal, detected = [], semuaOrder = [], bonusCategories = DEFAULT_BONUS_CATEGORIES) {
   const multiDay = isMultiDayJob(order);
   const total = Number(invTotal || 0);
   const isInstall = order?.service === "Install";
-  const isOmsetBesar   = (!isInstall && total >= OMSET_THRESHOLD_DEFAULT) ||
-                         (isInstall && total >= OMSET_THRESHOLD_INSTALL);
+  const minimumMargin = marginBonusTiers(bonusCategories)[0]?.threshold ?? Infinity;
+  const omsetThreshold = isInstall ? Math.max(minimumMargin, OMSET_THRESHOLD_INSTALL) : minimumMargin;
+  const omsetComparison = isInstall && OMSET_THRESHOLD_INSTALL > minimumMargin ? "≥" : ">";
+  const isOmsetBesar = total > minimumMargin && (!isInstall || total >= OMSET_THRESHOLD_INSTALL);
   const isInstallMulti = isInstall && Number(order?.units) >= 2;
   const special        = detected.filter(cid => SPECIAL_BONUS_IDS.includes(cid));
 
   const reasons = [];
-  if (isOmsetBesar)   reasons.push(isInstall ? "Omset Install ≥1,5jt" : "Omset ≥1jt");
+  if (isOmsetBesar) reasons.push(`${isInstall ? "Omset Install" : "Omset"} ${omsetComparison}Rp${omsetThreshold.toLocaleString("id-ID")}`);
   if (isInstallMulti) reasons.push(`Install ${Number(order?.units) || 0} unit`);
   if (special.length) reasons.push("Material: " + special.join(", "));
 
@@ -132,7 +137,7 @@ export function bonusCandidateInfo(order, invTotal, detected = [], semuaOrder = 
     reasons, warnings, komplain, bersambung, multiDay,
     // Alasan gugur ditulis eksplisit supaya rekap cetak bisa menjelaskannya.
     blockedReason: multiDay ? "Job lintas hari — bonus hanya untuk pekerjaan selesai 1 hari" : null,
-    isOmsetBesar, isInstallMulti, special,
+    isOmsetBesar, omsetThreshold, omsetComparison, isInstallMulti, special,
   };
 }
 

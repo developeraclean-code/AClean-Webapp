@@ -156,7 +156,7 @@ export function buildBonusRekap({ month, bonuses = [], orders = [], invMap = {},
     if (orderIdsWithBonus.has(o.id)) continue;
     const inv  = invOf(o);
     const det  = detectBonusFromInvoice(inv?.materials_detail, o.service, bonusCategories);
-    const cand = bonusCandidateInfo(o, Number(inv?.total || 0), det.detected, orders);
+    const cand = bonusCandidateInfo(o, Number(inv?.total || 0), det.detected, orders, bonusCategories);
     const dis  = dismissedMap[o.id];
     // Sudah tercatat lewat baris VOID di atas? (dismissed sentinel ditangani terpisah)
     if (excluded.some(e => e.orderId === o.id && e.kategori === "VOID")) continue;

@@ -5,6 +5,7 @@ import { resolveAraBrain } from "./araPolicy.js";
 // verbatim. Dipanggil dari efek init & auto-refresh polling (nama tetap `loadAll`).
 import { flushPerfMetrics, recordPerfMetric } from "./perfMetrics.js";
 import { requireAppSettingsResult } from "./settingsPersistence.js";
+import { normalizeBonusCategories } from "./bonusSettings.js";
 
 export function hydratePriceListCache(rows, {
   buildPriceListFromDB, setPriceListData, setPriceListCache, setPriceListSyncedAt,
@@ -132,7 +133,7 @@ export async function loadAllData({
             if (sMap.bonus_categories) {
               try {
                 const parsed = JSON.parse(sMap.bonus_categories);
-                if (Array.isArray(parsed) && parsed.length > 0) setBonusCategories(parsed);
+                if (Array.isArray(parsed) && parsed.length > 0) setBonusCategories(normalizeBonusCategories(parsed));
               } catch (e) { console.error("Failed to parse bonus_categories:", e); }
             }
             // ── FIXED: Load dari DB dan LOG untuk debugging ──

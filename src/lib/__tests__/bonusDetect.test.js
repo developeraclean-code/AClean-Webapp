@@ -74,9 +74,10 @@ describe("nominal mengikuti poster Skema Insentif 2025", () => {
     expect(amt("install_3")).toBe(150000);
     expect(amt("install_4")).toBe(300000);
   });
-  it("omset TIDAK diubah di repo ini (ditangani terpisah)", () => {
+  it("bonus margin 1jt/1,5jt/2,5jt per tim", () => {
     expect(amt("margin_1jt")).toBe(50000);
     expect(amt("margin_2jt")).toBe(100000);
     expect(amt("margin_3jt")).toBe(200000);
+    expect(CATS.filter(c => c.id.startsWith("margin_")).map(c => c.threshold)).toEqual([1000000, 1500000, 2500000]);
   });
 });

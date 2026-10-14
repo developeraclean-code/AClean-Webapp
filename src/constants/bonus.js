@@ -1,12 +1,14 @@
 // Default bonus categories — fallback bila app_settings.bonus_categories belum di-set.
-// Mirror dari migrations/155_bonus_skema_insentif_2025.sql (BUKAN 075 — itu seed lama
-// yang sudah usang). Owner bisa override via
+// Nominal mengikuti skema insentif 2025; batas margin diperbarui menjadi
+// 1jt/1,5jt/2,5jt dan bisa diubah Owner melalui Setting Bonus.
+// Owner bisa override via
 // Tim Teknisi → Gaji → 🎯 Komisi Order → ⚙️ Setting Bonus (disimpan ke app_settings).
 //
 // Struktur tiap kategori:
 //   id                  — key unik (dipakai sebagai bonus_type di order_bonuses)
 //   label               — nama tampil
 //   amount              — nominal default per tim (0 = isi manual)
+//   threshold           — batas margin dalam rupiah, khusus kategori margin
 //   detection_keywords  — keyword (AND-logic, lowercase) untuk auto-deteksi dari materials_detail invoice.
 //                         Kosong = tidak auto-terdeteksi (mis. margin/install/manual ditentukan threshold lain).
 //   exclude_keywords    — keyword pengecualian (OR-logic): satu cocok, item langsung dibuang.
@@ -16,12 +18,10 @@
 
 export const DEFAULT_BONUS_CATEGORIES = [
   // ── SERVICE AC + JASA LAIN (omset di luar harga sparepart/material) ──
-  // CATATAN: ambang margin di repo ini masih 1jt/2jt/3jt. Poster "Skema Insentif 2025"
-  // menulis 1jt/1,5jt/2,5jt per HARI — perbaikan itu dikerjakan di repo terpisah
-  // (keputusan Owner 26 Agu 2026), jadi JANGAN diubah di sini tanpa instruksi baru.
-  { id: "margin_1jt",  label: "Margin >1jt",         amount: 50000,  detection_keywords: [], exclude_keywords: [] },
-  { id: "margin_2jt",  label: "Margin >2jt",         amount: 100000, detection_keywords: [], exclude_keywords: [] },
-  { id: "margin_3jt",  label: "Margin >3jt",         amount: 200000, detection_keywords: [], exclude_keywords: [] },
+  // ID lama dipertahankan agar entri bonus historis tetap tertaut ke kategori sama.
+  { id: "margin_1jt",  label: "Margin >1jt",   threshold: 1000000, amount: 50000,  detection_keywords: [], exclude_keywords: [] },
+  { id: "margin_2jt",  label: "Margin >1,5jt", threshold: 1500000, amount: 100000, detection_keywords: [], exclude_keywords: [] },
+  { id: "margin_3jt",  label: "Margin >2,5jt", threshold: 2500000, amount: 200000, detection_keywords: [], exclude_keywords: [] },
 
   // ── SPAREPART (nominal per poster "Skema Insentif Terbaru 2025") ──
   // Satu keyword saja: SEMUA item yang memuat "freon" masuk kategori ini — "Tambah Freon",

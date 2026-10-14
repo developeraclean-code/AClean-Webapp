@@ -14,6 +14,7 @@ import {
 import { buildBonusRekap } from "../lib/bonusRekap.js";
 import { invoiceMaterialCostHPP } from "../lib/hpp.js";
 import { bonusEditChanges, buildBonusEditPayload } from "../lib/bonusEdit.js";
+import { buildBonusSettingsPayload, isMarginBonus, marginBonusForProfit, marginBonusLabel, marginBonusTiers, normalizeBonusCategories } from "../lib/bonusSettings.js";
 import { downloadCsv, printDocument, htmlTable, rp, fmtTanggal, escapeHtml } from "../lib/exportUtils.js";
 import BonusRekapPanel from "./BonusRekapPanel.jsx";
 import {
@@ -709,7 +710,7 @@ function GajiTab({ teknisiData, setTeknisiData, ordersData, invoicesData, curren
       if (existingOrderIds.has(o.id)) return false;
       const inv = fetchedInvMap[o.invoice_id];
       const det = detectBonusFromInvoice(inv?.materials_detail, o.service, bonusCategories);
-      return bonusCandidateInfo(o, Number(inv?.total || 0), det.detected, konteks).eligible;
+      return bonusCandidateInfo(o, Number(inv?.total || 0), det.detected, konteks, bonusCategories).eligible;
     });
     setPeriodInvMap(fetchedInvMap);
     setPeriodOrders(orders);
@@ -1733,12 +1734,10 @@ function GajiTab({ teknisiData, setTeknisiData, ordersData, invoicesData, curren
                     const isComplain = o.service === "Complain";
                     const detected = detectBonusFromInvoice(inv?.materials_detail, o.service, bonusCategories);
                     const invTotal = Number(inv?.total || 0);
-                    const isOmsetBesar = (o.service !== "Install" && invTotal >= 1000000) ||
-                                         (o.service === "Install" && invTotal >= 1500000);
                     const isInstallMulti = o.service === "Install" && Number(o.units) >= 2;
                     const isOpen = openBonusIds.has(o.id);
                     // Peringatan (bukan penghalang): komplain 30 hari & kemungkinan job bersambung.
-                    const cand = bonusCandidateInfo(o, invTotal, detected.detected, [...periodOrders, ...periodKomplain]);
+                    const cand = bonusCandidateInfo(o, invTotal, detected.detected, [...periodOrders, ...periodKomplain], bonusCategories);
                     return (
                       <div key={o.id} style={{ background: cs.card, borderRadius: 8, padding: "10px 12px", border: "1px solid " + (isOpen ? cs.accent : (isComplain ? cs.red + "66" : cs.border)) }}>
                         <div style={{ display: "flex", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
@@ -1753,7 +1752,7 @@ function GajiTab({ teknisiData, setTeknisiData, ordersData, invoicesData, curren
                               {detected.detected.map(cid => (
                                 <span key={cid} style={{ fontSize: 10, background: "#1e3a5f", color: "#93c5fd", borderRadius: 4, padding: "1px 6px" }}>✨ {BONUS_LABELS[cid] || cid}</span>
                               ))}
-                              {isOmsetBesar && <span style={{ fontSize: 10, background: "#14532d", color: "#86efac", borderRadius: 4, padding: "1px 6px" }}>💰 Omset {o.service === "Install" ? "≥1,5jt" : "≥1jt"}</span>}
+                              {cand.isOmsetBesar && <span style={{ fontSize: 10, background: "#14532d", color: "#86efac", borderRadius: 4, padding: "1px 6px" }}>💰 Omset {cand.omsetComparison}{fmtRp(cand.omsetThreshold)}</span>}
                               {isInstallMulti && <span style={{ fontSize: 10, background: "#422006", color: "#fcd34d", borderRadius: 4, padding: "1px 6px" }}>🔩 Install {o.units} unit</span>}
                             </div>
                             {cand.warnings.length > 0 && (
@@ -1972,48 +1971,43 @@ function GajiTab({ teknisiData, setTeknisiData, ordersData, invoicesData, curren
 // SETTING BONUS — kelola kategori bonus (label, nominal, keyword deteksi)
 // Disimpan ke app_settings.bonus_categories (JSON). Owner only.
 // ═══════════════════════════════════════════════════════════════
-function BonusSettingPanel({ bonusCategories, setBonusCategories, supabase, showNotif, showConfirm }) {
-  const [rows, setRows]     = useState(() => bonusCategories.map(c => ({
+export function BonusSettingPanel({ bonusCategories, setBonusCategories, supabase, showNotif, showConfirm }) {
+  const [rows, setRows]     = useState(() => normalizeBonusCategories(bonusCategories).map(c => ({
     ...c,
-    detection_keywords: [...(c.detection_keywords || [])],
-    exclude_keywords:   [...(c.exclude_keywords   || [])],
+    detection_keywords: Array.isArray(c.detection_keywords) ? [...c.detection_keywords] : (c.detection_keywords || ""),
+    exclude_keywords: Array.isArray(c.exclude_keywords) ? [...c.exclude_keywords] : (c.exclude_keywords || ""),
   })));
   const [saving, setSaving] = useState(false);
 
-  const slugify = (s) => (s || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || ("bonus_" + Date.now());
-
-  const updateRow = (idx, field, val) => setRows(prev => prev.map((r, i) => i === idx ? { ...r, [field]: val } : r));
+  const updateRow = (idx, field, val) => setRows(prev => prev.map((r, i) => i === idx ? {
+    ...r, [field]: val,
+    ...(field === "threshold" && Number(val) > 0 ? { label: marginBonusLabel(val) } : {}),
+  } : r));
   const addRow    = () => setRows(prev => [...prev, { id: "", label: "", amount: 0, detection_keywords: "", exclude_keywords: "" }]);
   const removeRow = (idx) => setRows(prev => prev.filter((_, i) => i !== idx));
 
   const handleSave = async () => {
-    // Validasi & normalisasi
-    const cleaned = [];
-    const seen = new Set();
-    for (const r of rows) {
-      const label = (r.label || "").trim();
-      if (!label) { showNotif?.("❌ Ada kategori tanpa label — isi atau hapus dulu"); return; }
-      let id = (r.id || "").trim() || slugify(label);
-      if (seen.has(id)) { showNotif?.(`❌ ID duplikat: ${id} — pakai label/ID unik`); return; }
-      seen.add(id);
-      // Satu normalisasi untuk kedua kolom: terima array ATAU string mentah dari input.
-      const norm = (v) => (Array.isArray(v) ? v : String(v || "").split(","))
-        .map(k => String(k || "").trim().toLowerCase()).filter(Boolean);
-      cleaned.push({
-        id, label, amount: Number(r.amount) || 0,
-        detection_keywords: norm(r.detection_keywords),
-        exclude_keywords:   norm(r.exclude_keywords),
-      });
+    if (saving) return;
+    let cleaned;
+    try {
+      cleaned = buildBonusSettingsPayload(rows);
+    } catch (error) {
+      showNotif?.("❌ " + error.message);
+      return;
     }
-    if (cleaned.length === 0) { showNotif?.("❌ Minimal 1 kategori bonus"); return; }
     setSaving(true);
-    const { error } = await supabase.from("app_settings")
-      .upsert({ key: "bonus_categories", value: JSON.stringify(cleaned) }, { onConflict: "key" });
-    setSaving(false);
-    if (error) { showNotif?.("❌ Gagal simpan: " + error.message); return; }
-    setBonusCategories?.(cleaned);
-    setRows(cleaned.map(c => ({ ...c, detection_keywords: [...c.detection_keywords], exclude_keywords: [...c.exclude_keywords] })));
-    showNotif?.("✅ Kategori bonus tersimpan");
+    try {
+      const { error } = await supabase.from("app_settings")
+        .upsert({ key: "bonus_categories", value: JSON.stringify(cleaned) }, { onConflict: "key" });
+      if (error) throw error;
+      setBonusCategories?.(cleaned);
+      setRows(cleaned.map(c => ({ ...c, detection_keywords: [...c.detection_keywords], exclude_keywords: [...c.exclude_keywords] })));
+      showNotif?.("✅ Kategori bonus tersimpan");
+    } catch (error) {
+      showNotif?.("❌ Gagal simpan: " + (error?.message || "koneksi bermasalah"));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleReset = () => {
@@ -2025,6 +2019,7 @@ function BonusSettingPanel({ bonusCategories, setBonusCategories, supabase, show
   };
 
   const inputStyle = { background: cs.card, border: "1px solid " + cs.border, borderRadius: 6, padding: "7px 9px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box", width: "100%" };
+  const columns = "1.2fr 0.8fr 0.9fr 1.2fr 1.1fr 36px";
 
   return (
     <div style={{ background: cs.surface, borderRadius: 12, padding: 16, border: "1px solid " + cs.border }}>
@@ -2034,18 +2029,30 @@ function BonusSettingPanel({ bonusCategories, setBonusCategories, supabase, show
         <br /><b>Keyword Deteksi</b> = logika <b>DAN</b> — semua kata harus muncul di nama item, jadi menambah kata justru <b>mempersempit</b>.
         <br /><b>Kecuali</b> = logika <b>ATAU</b> — satu kata cocok, item langsung dibuang. Pakai ini kalau mau mempersempit.
         <br />Kosongkan keduanya untuk kategori yang ditentukan manual/threshold (margin, install).
+        <br /><b>Batas Margin (Rp)</b> dapat diubah, misalnya 1.500.000 menjadi 2.000.000. Label margin mengikuti batasnya.
+        <br />Margin harus <b>lebih besar (&gt;)</b> dari batas; nilai yang tepat sama belum mendapat bonus tingkat tersebut.
+        <br />Bonus dipilih dari tingkat tertinggi yang tercapai. Setting berlaku untuk bonus yang baru diinput, termasuk pekerjaan lama yang belum diinput; nominal bonus yang sudah tercatat tetap tersimpan.
       </div>
 
+      <div style={{ overflowX: "auto" }}>
+      <div style={{ minWidth: 840 }}>
       {/* Header kolom */}
-      <div style={{ display: "grid", gridTemplateColumns: "1.3fr 0.9fr 1.5fr 1.2fr 36px", gap: 8, fontSize: 11, color: cs.muted, fontWeight: 700, marginBottom: 6, padding: "0 2px" }}>
-        <div>Label</div><div>Nominal/tim (Rp)</div><div>Keyword Deteksi (DAN)</div><div>Kecuali (ATAU)</div><div></div>
+      <div style={{ display: "grid", gridTemplateColumns: columns, gap: 8, fontSize: 11, color: cs.muted, fontWeight: 700, marginBottom: 6, padding: "0 2px" }}>
+        <div>Label</div><div>Nominal/tim (Rp)</div><div>Batas Margin (Rp)</div><div>Keyword Deteksi (DAN)</div><div>Kecuali (ATAU)</div><div></div>
       </div>
 
       <div style={{ display: "grid", gap: 8 }}>
-        {rows.map((r, idx) => (
-          <div key={idx} style={{ display: "grid", gridTemplateColumns: "1.3fr 0.9fr 1.5fr 1.2fr 36px", gap: 8, alignItems: "center" }}>
-            <input value={r.label} placeholder="cth: Isi Freon" onChange={e => updateRow(idx, "label", e.target.value)} style={inputStyle} />
-            <input type="number" value={r.amount} placeholder="0" onChange={e => updateRow(idx, "amount", e.target.value)} style={inputStyle} />
+        {rows.map((r, idx) => {
+          const margin = isMarginBonus({ id: r.id || String(r.label || "").trim().toLowerCase() });
+          return (
+          <div key={idx} style={{ display: "grid", gridTemplateColumns: columns, gap: 8, alignItems: "center" }}>
+            <input value={r.label} readOnly={margin} title={margin ? "Label mengikuti batas margin" : undefined} placeholder="cth: Isi Freon" onChange={e => updateRow(idx, "label", e.target.value)} style={inputStyle} />
+            <input type="number" min="0" value={r.amount} placeholder="0" onChange={e => updateRow(idx, "amount", e.target.value)} style={inputStyle} />
+            {margin ? (
+              <input type="number" min="1" step="100000" value={r.threshold ?? ""}
+                aria-label={`Batas ${r.label}`} placeholder="cth: 1500000"
+                onChange={e => updateRow(idx, "threshold", e.target.value)} style={inputStyle} />
+            ) : <div style={{ color: cs.muted, textAlign: "center" }}>—</div>}
             <input
               value={Array.isArray(r.detection_keywords) ? r.detection_keywords.join(", ") : (r.detection_keywords || "")}
               placeholder="cth: kuras vacum, freon"
@@ -2062,7 +2069,9 @@ function BonusSettingPanel({ bonusCategories, setBonusCategories, supabase, show
             />
             <button onClick={() => removeRow(idx)} title="Hapus" style={{ padding: "7px 0", borderRadius: 6, background: cs.card, border: "1px solid " + cs.red + "66", color: cs.red, cursor: "pointer", fontSize: 13 }}>🗑</button>
           </div>
-        ))}
+        );})}
+      </div>
+      </div>
       </div>
 
       <button onClick={addRow} style={{ marginTop: 10, padding: "7px 14px", borderRadius: 7, background: cs.card, border: "1px dashed " + cs.border, color: cs.muted, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>＋ Tambah Kategori</button>
@@ -2281,9 +2290,14 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
   const setAmt = (id, v) => setAmounts(prev => ({ ...prev, [id]: Number(v) || 0 }));
 
   const profit = grossRevenue && materialCost ? Number(grossRevenue) - Number(materialCost) : null;
-  const marginTier = profit === null ? null
-    : profit >= 3000000 ? "margin_3jt" : profit >= 2000000 ? "margin_2jt" : profit >= 1000000 ? "margin_1jt" : null;
-  const marginAmount = marginTier ? (Number(BONUS_DEFAULTS[marginTier]) || 0) : 0;
+  const marginTiers = marginBonusTiers(bonusCategories);
+  const minimumMargin = marginTiers[0]?.threshold;
+  const matchedMargin = marginBonusForProfit(profit, bonusCategories);
+  const marginTier = matchedMargin?.id || null;
+  const marginAmount = Number(matchedMargin?.amount) || 0;
+  const marginRequirement = minimumMargin
+    ? `margin harus lebih dari Rp ${fmt(minimumMargin)}`
+    : "kategori bonus margin belum diaktifkan di Setting Bonus";
 
   // Kumpulkan entri bonus terpilih → tiap entri jadi 1 baris order_bonuses.
   const entries = [];
@@ -2301,7 +2315,7 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
     entries.push({ bonus_type: "manual", total_amount: Number(customAmount), gross_revenue: null, material_cost: null, note: manualLabel || null });
 
   const totalTim = entries.reduce((s, e) => s + Number(e.total_amount || 0), 0);
-  const marginInvalid = marginOn && marginTier === null;   // dicentang tapi profit belum ≥1jt / belum diisi
+  const marginInvalid = marginOn && marginTier === null;
   // (C) marginInvalid TIDAK lagi memblok simpan — margin sekadar dilewati; bonus lain tetap tersimpan.
   const canSave = entries.length > 0 && selectedTeam.length > 0;
   // (A) material tanpa HPP saat margin disimpan → wajib konfirmasi (profit bisa terlalu tinggi → tier kelebihan).
@@ -2383,7 +2397,7 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
       {/* Margin (butuh omset & biaya material) */}
       <div style={rowStyle(marginOn)}>
         <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", flex: 1, minWidth: 0 }}>
-          <input type="checkbox" checked={marginOn} onChange={() => setMarginOn(v => !v)} />
+          <input type="checkbox" checked={marginOn} disabled={marginTiers.length === 0} onChange={() => setMarginOn(v => !v)} />
           <span style={{ fontSize: 12, color: "#e2e8f0", fontWeight: 600 }}>💰 Bonus Margin</span>
         </label>
         {marginOn && marginTier && <span style={{ fontSize: 11, color: "#22c55e", fontWeight: 700 }}>Rp {fmt(marginAmount)}/tim</span>}
@@ -2460,9 +2474,9 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
             )}
           </div>
           {profit !== null && (
-            <div style={{ gridColumn: "1/-1", padding: "6px 10px", borderRadius: 6, background: profit >= 1000000 ? "#052e16" : "#3f1515", fontSize: 13, fontWeight: 700, color: profit >= 1000000 ? "#22c55e" : "#fca5a5" }}>
+            <div style={{ gridColumn: "1/-1", padding: "6px 10px", borderRadius: 6, background: marginTier ? "#052e16" : "#3f1515", fontSize: 13, fontWeight: 700, color: marginTier ? "#22c55e" : "#fca5a5" }}>
               Profit: Rp {fmt(profit)}
-              {profit >= 3000000 ? " → Tier 3 ✅ Rp 200rb/tim" : profit >= 2000000 ? " → Tier 2 ✅ Rp 100rb/tim" : profit >= 1000000 ? " → Tier 1 ✅ Rp 50rb/tim" : " → Belum mencapai Rp 1jt"}
+              {matchedMargin ? ` → ${matchedMargin.label} ✅ Rp ${fmt(marginAmount)}/tim` : ` → ${marginRequirement}`}
             </div>
           )}
         </div>
@@ -2533,11 +2547,11 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
       {marginInvalid && (
         entries.length > 0 ? (
           <div style={{ background: "#422006", border: "1px solid #a16207", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#fcd34d", marginBottom: 10 }}>
-            ℹ️ Bonus Margin belum memenuhi syarat ({profit === null ? "Omset/Biaya Material belum diisi" : "profit belum ≥ Rp 1jt"}) → <b>margin akan DILEWATI</b>. {entries.length} bonus lain tetap bisa disimpan.
+            ℹ️ Bonus Margin belum memenuhi syarat ({profit === null ? "Omset/Biaya Material belum diisi" : marginRequirement}) → <b>margin akan DILEWATI</b>. {entries.length} bonus lain tetap bisa disimpan.
           </div>
         ) : (
           <div style={{ background: "#3f1515", border: "1px solid #ef4444", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#fca5a5", marginBottom: 10 }}>
-            ⚠️ Bonus margin dicentang tapi <strong>profit belum ≥ Rp 1jt</strong>. {profit === null ? "Isi Omset & Biaya Material dulu." : "Profit belum mencapai Rp 1jt."} Belum ada bonus valid untuk disimpan.
+            ⚠️ Bonus margin dicentang tapi <strong>{profit === null ? "Omset/Biaya Material belum diisi" : marginRequirement}</strong>. Belum ada bonus valid untuk disimpan.
           </div>
         )
       )}
