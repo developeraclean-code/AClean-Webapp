@@ -8,6 +8,7 @@
 // downloadBonusRekapCSV() / printBonusRekap() punya side-effect (buat file / buka window).
 
 import { detectBonusFromInvoice, bonusCandidateInfo, orderTeknisi, orderHelper, effBonusStatus } from "./bonus.js";
+import { buildBonusBillingBases, scopedBonusInvoice } from "./bonusBilling.js";
 
 export const REKAP_STATUS_LABELS = {
   PENDING:  "Dalam Warranty",
@@ -21,6 +22,7 @@ export const EXCLUDE_LABELS = {
   BELUM_INPUT:"Layak bonus — BELUM di-input",
   NO_CRITERIA:"Tidak memenuhi kriteria bonus",
   VOID:       "Bonus di-void",
+  BILLING_REVIEW: "Dasar invoice per job perlu ditinjau",
 };
 
 export function fmtMonthLabel(ym) {
@@ -43,12 +45,18 @@ function rp(n) { return "Rp " + Number(n || 0).toLocaleString("id-ID"); }
  * @param {object} p.invMap           { invoiceId: { id, total, materials_detail } }
  * @param {Array}  p.bonusCategories  kategori bonus aktif (untuk label + deteksi material)
  */
-export function buildBonusRekap({ month, bonuses = [], orders = [], invMap = {}, bonusCategories = [] }) {
+export function buildBonusRekap({ month, bonuses = [], orders = [], invMap = {}, bonusCategories = [], billingBases = null }) {
   const labels = Object.fromEntries(bonusCategories.map(c => [c.id, c.label]));
   const orderMap = Object.fromEntries(orders.map(o => [o.id, o]));
 
-  const invOf   = (o) => (o && o.invoice_id ? invMap[o.invoice_id] : null) || null;
-  const totalOf = (o) => Number(invOf(o)?.total || 0);
+  const bases = billingBases || buildBonusBillingBases({ orders, invoices: Object.values(invMap) });
+  const invOf = o => scopedBonusInvoice(bases[o?.id]);
+  const totalOf = o => bases[o?.id]?.resolved ? Number(bases[o.id].total) : null;
+  const billingInfo = o => {
+    const basis = bases[o?.id];
+    return { invoiceId: basis?.invoiceId, billingUnresolved: !basis?.resolved,
+      billingReason: basis?.reason || "Rincian invoice belum tersedia", billingWarnings: basis?.warnings || [] };
+  };
 
   // ── Kelompokkan bonus per order ──
   const byOrder = {};
@@ -93,6 +101,7 @@ export function buildBonusRekap({ month, bonuses = [], orders = [], invMap = {},
         teknisi:   orderTeknisi(o).join(", ") || (b.team_members || []).join(", ") || "-",
         helper:    orderHelper(o).join(", ") || "-",
         nilai:     o ? totalOf(o) : Number(b.gross_revenue || 0),
+        ...billingInfo(o),
         kategori:  "VOID",
         alasan:    `${labels[b.bonus_type] || b.bonus_type} — ${b.void_reason || "tanpa alasan"}`,
         nilaiBonusBatal: Number(b.total_amount || 0),
@@ -139,6 +148,7 @@ export function buildBonusRekap({ month, bonuses = [], orders = [], invMap = {},
       tim:      [...team].join(", ") || "-",
       memberCount,
       nilai,
+      ...billingInfo(o),
       freon, kapasitor, lain,
       lainDetail: lainDetail.join(" + "),
       totalBonus,
@@ -146,7 +156,7 @@ export function buildBonusRekap({ month, bonuses = [], orders = [], invMap = {},
       statusLabel: [...statuses].map(s => REKAP_STATUS_LABELS[s] || s).join(" / "),
       statuses: [...statuses],
       readyBonusIds,
-      catatan: aktif.map(b => b.note).filter(Boolean).join(" · "),
+      catatan: [aktif.map(b => b.note).filter(Boolean).join(" · "), bases[o?.id]?.resolved ? null : billingInfo(o).billingReason].filter(Boolean).join(" · "),
     });
   }
 
@@ -169,16 +179,17 @@ export function buildBonusRekap({ month, bonuses = [], orders = [], invMap = {},
       units:    o.units ?? "-",
       teknisi:  orderTeknisi(o).join(", ") || "-",
       helper:   orderHelper(o).join(", ") || "-",
-      nilai:    Number(inv?.total || 0),
-      kategori: dis ? "DISMISSED" : (cand.eligible ? "BELUM_INPUT" : (cand.multiDay ? "MULTI_HARI" : "NO_CRITERIA")),
+      nilai:    totalOf(o),
+      ...billingInfo(o),
+      kategori: dis ? "DISMISSED" : (!bases[o.id]?.resolved && bases[o.id]?.invoiceId ? "BILLING_REVIEW" : (cand.eligible ? "BELUM_INPUT" : (cand.multiDay ? "MULTI_HARI" : "NO_CRITERIA"))),
       alasan:   dis
         ? (dis.void_reason || dis.note || "Ditandai manual tidak dapat bonus")
-        : (cand.eligible
+        : (!bases[o.id]?.resolved && bases[o.id]?.invoiceId ? bases[o.id].reason : (cand.eligible
             ? "Memenuhi: " + cand.reasons.join(", ") + " — belum diinput admin"
             // Job lintas hari gugur lebih dulu dari kriteria apa pun — jangan sampai
             // dilaporkan sebagai "tanpa material bonus", karena sebabnya beda.
             : (cand.blockedReason
-                || "Omset " + rp(inv?.total || 0) + (o.service === "Install" ? ` · Install ${o.units || 0} unit` : "") + " · tanpa material bonus")),
+                || "Omset " + rp(inv?.total || 0) + (o.service === "Install" ? ` · Install ${o.units || 0} unit` : "") + " · tanpa material bonus"))),
       nilaiBonusBatal: 0,
     });
   }
@@ -198,6 +209,15 @@ export function buildBonusRekap({ month, bonuses = [], orders = [], invMap = {},
     .filter(b => effBonusStatus(b) === status)
     .reduce((sum, b) => sum + Number(b.total_amount || 0), 0);
   const readyBonusIds = [...new Set(included.flatMap(r => r.readyBonusIds || []).filter(Boolean))];
+  // Alokasi yang jelas dijumlah per job. Invoice legacy yang belum dapat dipisah
+  // dihitung SEKALI dalam ringkasan, bukan disalin ke setiap baris job.
+  const unallocatedInvoices = new Map();
+  for (const row of included) if (row.nilai == null && row.invoiceId) {
+    const basis = bases[row.orderId];
+    if (basis?.invoiceTotal != null) unallocatedInvoices.set(row.invoiceId, Number(basis.invoiceTotal));
+  }
+  const totalNilaiTrx = included.reduce((s, row) => s + Number(row.nilai || 0), 0) +
+    [...unallocatedInvoices.values()].reduce((s, value) => s + value, 0);
 
   return {
     month,
@@ -212,7 +232,9 @@ export function buildBonusRekap({ month, bonuses = [], orders = [], invMap = {},
       totalFreon:     included.reduce((s, r) => s + r.freon, 0),
       totalKapasitor: included.reduce((s, r) => s + r.kapasitor, 0),
       totalLain:      included.reduce((s, r) => s + r.lain, 0),
-      totalNilaiTrx:  included.reduce((s, r) => s + r.nilai, 0),
+      totalNilaiTrx,
+      unallocatedInvoiceCount: unallocatedInvoices.size,
+      billingReviewCount: [...included, ...excluded].filter(row => row.billingUnresolved && row.invoiceId).length,
       totalDibayar:   sumStatus("PAID"),
       totalSiapCair:  sumStatus("ELIGIBLE"),
       totalWarranty:  sumStatus("PENDING"),
@@ -242,6 +264,7 @@ export function bonusRekapToCSV(rekap) {
   rows.push([q("Job DAPAT bonus"), s.totalJobBonus].join(","));
   rows.push([q("Job TIDAK dapat bonus"), s.excludedCount].join(","));
   rows.push([q("Total nilai transaksi (job berbonus)"), s.totalNilaiTrx].join(","));
+  if (s.billingReviewCount) rows.push(q(`${s.billingReviewCount} job perlu tinjauan dasar invoice. Invoice yang belum dapat dipisah dihitung sekali pada ringkasan; nilai per job dibiarkan kosong. Bonus lama tidak diubah.`));
   rows.push([q("Total bonus Freon"), s.totalFreon].join(","));
   rows.push([q("Total bonus Kapasitor"), s.totalKapasitor].join(","));
   rows.push([q("Total bonus lain-lain"), s.totalLain].join(","));
@@ -300,6 +323,7 @@ const KATEGORI_SLUG = {
   DISMISSED:   "Ditandai_Tanpa_Bonus",
   NO_CRITERIA: "Tidak_Memenuhi_Kriteria",
   VOID:        "Bonus_Void",
+  BILLING_REVIEW: "Tinjau_Dasar_Invoice",
 };
 
 // CSV berisi HANYA job "tidak termasuk bonus" pada satu kategori (atau semua bila
@@ -355,7 +379,7 @@ const esc = (v) => String(v ?? "").replace(/[&<>]/g, c => ({ "&": "&amp;", "<": 
 
 export function bonusRekapToPrintHTML(rekap, { autoPrint = true } = {}) {
   const s = rekap.summary;
-  const money = (n) => Number(n || 0).toLocaleString("id-ID");
+  const money = (n) => n == null ? "Belum dipisah" : Number(n || 0).toLocaleString("id-ID");
 
   const incRows = rekap.included.map((r, i) => `<tr>
     <td class="c">${i + 1}</td><td class="nw">${esc(fmtDateShort(r.date))}</td><td class="mono">${esc(r.orderId)}</td>
@@ -436,6 +460,7 @@ export function bonusRekapToPrintHTML(rekap, { autoPrint = true } = {}) {
   <div class="card"><div class="l">Total Bonus</div><div class="v">${money(s.totalBonus)}</div></div>
 </div>
 <div class="note">Status komisi: Dalam Warranty (&lt;30 hari) → Siap Cair (≥30 hari) → Sudah Dibayar. Kolom ☐ paling kanan untuk centang manual saat verifikasi.</div>
+${s.billingReviewCount ? `<div class="note">${s.billingReviewCount} job perlu tinjauan dasar invoice per job. Nilai yang belum dapat dipisah tidak disalin ke tiap job; invoice bersama dihitung sekali dalam ringkasan. Nominal/status bonus lama tidak diubah.</div>` : ""}
 
 <section>
 <h2>A. TERMASUK BONUS (${rekap.included.length} job)</h2>

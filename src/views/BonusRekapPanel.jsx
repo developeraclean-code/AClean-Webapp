@@ -12,6 +12,7 @@ const KATEGORI_COLOR = {
   BELUM_INPUT: "#f59e0b",
   NO_CRITERIA: "#475569",
   VOID:        "#ef4444",
+  BILLING_REVIEW: "#f59e0b",
 };
 
 function fmtRp(n) { return "Rp " + Number(n || 0).toLocaleString("id-ID"); }
@@ -141,6 +142,10 @@ export default function BonusRekapPanel({
             <span>✅ Siap cair: <strong style={{ color: "#3b82f6" }}>{fmtRp(s.totalSiapCair)}</strong></span>
             <span>⏳ Dalam warranty: <strong style={{ color: cs.yellow }}>{fmtRp(s.totalWarranty)}</strong></span>
           </div>
+          {s.billingReviewCount > 0 && <div role="alert" style={{ padding: 10, borderRadius: 8, background: "#422006", color: "#fcd34d", fontSize: 12 }}>
+            ⚠️ {s.billingReviewCount} job belum memiliki dasar invoice per job yang pasti. Bonus/status lama tetap ditampilkan, tidak dihitung ulang.
+            {s.unallocatedInvoiceCount > 0 && ` ${s.unallocatedInvoiceCount} invoice bersama dihitung satu kali dalam ringkasan nilai transaksi; nilai tiap job ditandai belum dipisah.`}
+          </div>}
 
           {/* A. Termasuk bonus */}
           <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 10, padding: 12 }}>
@@ -172,7 +177,9 @@ export default function BonusRekapPanel({
                       <td style={td}>{r.service}</td>
                       <td style={td}>{r.teknisi}</td>
                       <td style={td}>{r.helper}</td>
-                      <td style={tdR}>{fmtRp(r.nilai)}</td>
+                      <td style={tdR}>{r.nilai == null ? <span title={r.billingReason} style={{ color: cs.yellow }}>Belum dipisah</span> : fmtRp(r.nilai)}
+                        {r.billingWarnings?.length > 0 && <div style={{ fontSize: 10, color: cs.yellow }}>{r.billingWarnings.join(" · ")}</div>}
+                      </td>
                       <td style={{ ...tdR, color: r.freon ? "#93c5fd" : cs.muted }}>{r.freon ? fmtRp(r.freon) : "-"}</td>
                       <td style={{ ...tdR, color: r.kapasitor ? "#93c5fd" : cs.muted }}>{r.kapasitor ? fmtRp(r.kapasitor) : "-"}</td>
                       <td style={tdR}>
@@ -269,7 +276,7 @@ export default function BonusRekapPanel({
                         <td style={td}>{r.service}</td>
                         <td style={td}>{r.teknisi}</td>
                         <td style={td}>{r.helper}</td>
-                        <td style={tdR}>{fmtRp(r.nilai)}</td>
+                        <td style={tdR}>{r.nilai == null ? "Belum dipisah" : fmtRp(r.nilai)}</td>
                         <td style={{ ...td, whiteSpace: "nowrap" }}>
                           <span style={{ fontSize: 10, fontWeight: 700, borderRadius: 5, padding: "2px 7px", background: (KATEGORI_COLOR[r.kategori] || cs.border) + "33", color: KATEGORI_COLOR[r.kategori] || cs.muted }}>
                             {EXCLUDE_LABELS[r.kategori] || r.kategori}

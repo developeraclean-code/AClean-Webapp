@@ -1,4 +1,4 @@
-import { memo, useState, useEffect, useCallback, useMemo } from "react";
+import { memo, useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { cs } from "../theme/cs.js";
 import { useAppContext } from "../context/AppContext.js";
 import { DEFAULT_BONUS_CATEGORIES } from "../constants/bonus.js";
@@ -12,6 +12,9 @@ import {
   daysSinceBonusDate as daysSinceDate, effBonusStatus,
 } from "../lib/bonus.js";
 import { buildBonusRekap } from "../lib/bonusRekap.js";
+import { scopedBonusInvoice, validateBonusBillingEntries } from "../lib/bonusBilling.js";
+import { loadBonusBillingContext, loadBonusHppInventory } from "../lib/bonusBillingReads.js";
+import { saveScopedOrderBonuses } from "../lib/bonusBillingWrites.js";
 import { invoiceMaterialCostHPP } from "../lib/hpp.js";
 import { bonusEditChanges, buildBonusEditPayload } from "../lib/bonusEdit.js";
 import { buildBonusSettingsPayload, isMarginBonus, marginBonusForProfit, marginBonusLabel, marginBonusTiers, normalizeBonusCategories } from "../lib/bonusSettings.js";
@@ -555,6 +558,12 @@ function GajiTab({ teknisiData, setTeknisiData, ordersData, invoicesData, curren
   const [bonuses, setBonuses]           = useState([]);
   const [ordersNoBonus, setOrdersNoBonus] = useState([]);
   const [periodInvMap, setPeriodInvMap] = useState({}); // { invoiceId: { id, total, materials_detail } }
+  const [periodBillingBases, setPeriodBillingBases] = useState({});
+  const [bonusLoadError, setBonusLoadError] = useState("");
+  const bonusLoadGeneration = useRef(0);
+  const savingBonusJobs = useRef(new Set());
+  const retryBonusJobs = useRef(new Set());
+  const [savingBonusIds, setSavingBonusIds] = useState(() => new Set());
   const [periodOrders, setPeriodOrders] = useState([]);  // SEMUA order selesai bulan itu — sumber rekap cetak
   // Order Complain periode + 30 hari sesudahnya — bahan peringatan "ada komplain setelah job".
   const [periodKomplain, setPeriodKomplain] = useState([]);
@@ -678,44 +687,41 @@ function GajiTab({ teknisiData, setTeknisiData, ordersData, invoicesData, curren
 
   // ── Load bonuses (periode BULANAN) ──
   const loadBonuses = useCallback(async () => {
+    const generation = ++bonusLoadGeneration.current;
     setLoadingBonus(true);
-    const [bonRes, ordRes, kompRes] = await Promise.all([
+    setBonusLoadError("");
+    try {
+      const [bonRes, ordRes, kompRes] = await Promise.all([
       fetchOrderBonusesByPeriod(supabase, bonusStart, bonusEnd),
       fetchOrdersWithoutBonus(supabase, bonusStart, bonusEnd),
       fetchKomplainSekitarPeriode(supabase, bonusStart, bonusEnd),
-    ]);
-    const komplain = kompRes.data || [];
-    setPeriodKomplain(komplain);
-    setBonuses(bonRes.data || []);
-
-    const orders = ordRes.data || [];
-    // Ambil invoice_id dari orders yang ada, lalu fetch langsung — tidak bergantung prop invoicesData global
-    const invoiceIds = [...new Set(orders.map(o => o.invoice_id).filter(Boolean))];
-    let fetchedInvMap = {};
-    if (invoiceIds.length > 0) {
-      const { data: invRows } = await supabase.from("invoices")
-        .select("id,total,materials_detail")
-        .in("id", invoiceIds);
-      fetchedInvMap = Object.fromEntries((invRows || []).map(i => [i.id, i]));
+      ]);
+      for (const result of [bonRes, ordRes, kompRes]) if (result.error) throw new Error(result.error.message);
+      const orders = ordRes.data || [], komplain = kompRes.data || [];
+      const billing = await loadBonusBillingContext(supabase, orders);
+      if (generation !== bonusLoadGeneration.current) return;
+      const existingOrderIds = new Set((bonRes.data || []).map(b => b.order_id));
+      const konteks = [...orders, ...komplain];
+      const eligible = orders.filter(o => {
+        if (existingOrderIds.has(o.id) && !retryBonusJobs.current.has(o.id)) return false;
+        const basis = billing.bases[o.id], inv = scopedBonusInvoice(basis);
+        const det = detectBonusFromInvoice(inv.materials_detail, o.service, bonusCategories);
+        return (basis?.invoiceId && !basis.resolved) ||
+          bonusCandidateInfo(o, Number(inv.total), det.detected, konteks, bonusCategories).eligible;
+      });
+      setBonuses(bonRes.data || []);
+      setPeriodKomplain(komplain);
+      setPeriodInvMap(billing.invMap);
+      setPeriodBillingBases(billing.bases);
+      setPeriodOrders(orders);
+      setOrdersNoBonus(eligible);
+    } catch (error) {
+      if (generation !== bonusLoadGeneration.current) return;
+      setBonusLoadError(error?.message || "Koneksi pembacaan bonus bermasalah");
+      setBonuses([]); setOrdersNoBonus([]); setPeriodOrders([]); setPeriodInvMap({}); setPeriodBillingBases({});
+    } finally {
+      if (generation === bonusLoadGeneration.current) setLoadingBonus(false);
     }
-
-    // Filter orders: belum ada bonus entry + memenuhi kriteria bonus
-    // 3 kategori: 1) Omset > 1jt (bukan pemasangan), 2) Pemasangan >= 2 unit, 3) Freon/Kapasitor
-    const existingOrderIds = new Set((bonRes.data || []).map(b => b.order_id));
-    // Kriteria layak bonus (omset besar / install multi-unit / material khusus) → lib/bonus.js
-    // supaya panel review dan rekap cetak tidak pernah beda hitungan.
-    // Konteks untuk aturan lintas-hari & komplain: order periode + order Complain sesudahnya.
-    const konteks = [...orders, ...komplain];
-    const eligible = orders.filter(o => {
-      if (existingOrderIds.has(o.id)) return false;
-      const inv = fetchedInvMap[o.invoice_id];
-      const det = detectBonusFromInvoice(inv?.materials_detail, o.service, bonusCategories);
-      return bonusCandidateInfo(o, Number(inv?.total || 0), det.detected, konteks, bonusCategories).eligible;
-    });
-    setPeriodInvMap(fetchedInvMap);
-    setPeriodOrders(orders);
-    setOrdersNoBonus(eligible);
-    setLoadingBonus(false);
   }, [supabase, bonusStart, bonusEnd, bonusCategories]);
 
   useEffect(() => { if (subTab === "payroll") loadPayroll(); }, [subTab, loadPayroll]);
@@ -723,8 +729,8 @@ function GajiTab({ teknisiData, setTeknisiData, ordersData, invoicesData, curren
 
   // Rekap bulanan siap-cetak (dibangun dari data yang sama dengan tab Komisi).
   const bonusRekap = useMemo(() => buildBonusRekap({
-    month: bonusMonth, bonuses, orders: periodOrders, invMap: periodInvMap, bonusCategories,
-  }), [bonusMonth, bonuses, periodOrders, periodInvMap, bonusCategories]);
+    month: bonusMonth, bonuses, orders: periodOrders, invMap: periodInvMap, bonusCategories, billingBases: periodBillingBases,
+  }), [bonusMonth, bonuses, periodOrders, periodInvMap, bonusCategories, periodBillingBases]);
 
   // Sync localBonus dari payrollRows setiap kali rows berubah
   useEffect(() => {
@@ -985,37 +991,25 @@ function GajiTab({ teknisiData, setTeknisiData, ordersData, invoicesData, curren
   // ── Simpan bonus order (multi-kategori) ──
   // entries: [{ bonus_type, total_amount, gross_revenue, material_cost, note }]
   // 1 order boleh punya beberapa bonus (Freon + Kapasitor, dst) — tapi tak boleh tipe sama dobel.
-  const handleSaveBonus = async (orderRow, entries, teamMembers) => {
+  const handleSaveBonus = async (orderRow, entries, teamMembers, billingSignature) => {
     if (!Array.isArray(entries) || entries.length === 0) { showNotif?.("❌ Pilih minimal satu kategori bonus"); return; }
-    // Dedup per tipe: lewati tipe yang sudah ada (non-void) untuk order ini.
-    const { data: existing } = await supabase.from("order_bonuses")
-      .select("bonus_type").eq("order_id", orderRow.id).neq("status", "VOID");
-    const existingTypes = new Set((existing || []).map(r => r.bonus_type));
-    const toInsert = entries.filter(e => !existingTypes.has(e.bonus_type));
-    const skipped  = entries.length - toInsert.length;
-    if (toInsert.length === 0) {
-      showNotif?.("⚠️ Semua kategori itu sudah ada untuk order ini. Void dulu bila ingin menggantinya.");
-      closeBonusCard(orderRow.id); loadBonuses(); return;
+    if (loadingBonus || bonusLoadError || savingBonusJobs.current.has(orderRow.id)) return;
+    savingBonusJobs.current.add(orderRow.id);
+    setSavingBonusIds(new Set(savingBonusJobs.current));
+    try {
+      const { saved, skipped, failed, errors } = await saveScopedOrderBonuses({
+        supabase, orderRow, entries, teamMembers, billingSignature, createdBy: currentUser?.name,
+      });
+      if (failed) retryBonusJobs.current.add(orderRow.id); else retryBonusJobs.current.delete(orderRow.id);
+      if (!failed) closeBonusCard(orderRow.id);
+      loadBonuses();
+      showNotif?.(`${failed ? "⚠️" : saved ? "✅" : "ℹ️"} ${saved} bonus terkonfirmasi disimpan${skipped ? `, ${skipped} dilewati (sudah ada)` : ""}${failed ? `, ${failed} belum berhasil: ${errors[0]} — refresh sebelum mencoba lagi` : ". Status: PENDING"}`);
+    } catch (error) {
+      showNotif?.("❌ Bonus tidak disimpan: " + (error?.message || "koneksi bermasalah"));
+    } finally {
+      savingBonusJobs.current.delete(orderRow.id);
+      setSavingBonusIds(new Set(savingBonusJobs.current));
     }
-    let ok = 0, fail = 0;
-    for (const e of toInsert) {
-      const { error } = await insertOrderBonus(supabase, {
-        order_id:      orderRow.id,
-        order_date:    orderRow.date,
-        bonus_type:    e.bonus_type,
-        gross_revenue: e.gross_revenue || null,
-        material_cost: e.material_cost || null,
-        material_cost_source: e.material_cost_source || null,
-        team_members:  teamMembers,
-        total_amount:  e.total_amount,
-        note:          e.note || null,
-        status:        "PENDING",
-      }, currentUser?.name);
-      if (error) fail++; else ok++;
-    }
-    closeBonusCard(orderRow.id);
-    loadBonuses();
-    showNotif?.(`✅ ${ok} bonus disimpan${skipped ? `, ${skipped} dilewati (sudah ada)` : ""}${fail ? `, ${fail} gagal` : ""}. Status: PENDING`);
   };
 
   // ── Revisi bonus yang sudah diinput — khusus Owner/Admin ──
@@ -1692,6 +1686,12 @@ function GajiTab({ teknisiData, setTeknisiData, ordersData, invoicesData, curren
         );
       })()}
 
+      {(subTab === "komisi" || subTab === "rekap") && bonusLoadError && (
+        <div role="alert" style={{ padding: 12, background: "#3f1515", color: "#fca5a5", borderRadius: 8, marginBottom: 12 }}>
+          ❌ Data bonus belum dapat dimuat: {bonusLoadError}. Perhitungan/pembayaran tidak dijalankan dari data yang tidak lengkap.
+          <button onClick={loadBonuses} style={{ marginLeft: 10, padding: "6px 12px", cursor: "pointer" }}>Coba muat ulang</button>
+        </div>
+      )}
       {/* ── KOMISI ORDER ── */}
       {subTab === "komisi" && (() => {
         return (
@@ -1707,6 +1707,7 @@ function GajiTab({ teknisiData, setTeknisiData, ordersData, invoicesData, curren
               <div style={{ fontWeight: 700, color: cs.text, fontSize: 14 }}>📅 {fmtMonth(bonusMonth)}</div>
               <button onClick={() => setBonusMonth(addMonths(bonusMonth, 1))} style={{ padding: "6px 12px", borderRadius: 6, background: cs.surface, border: "1px solid " + cs.border, color: cs.text, cursor: "pointer", fontSize: 13 }}>Bulan Depan →</button>
               <button onClick={() => setBonusMonth(todayYearMonth())} style={{ padding: "6px 12px", borderRadius: 6, background: cs.surface, border: "1px solid " + cs.border, color: cs.accent, cursor: "pointer", fontSize: 13 }}>Bulan Ini</button>
+              <button onClick={loadBonuses} disabled={loadingBonus} style={{ padding: "6px 12px", borderRadius: 6, background: cs.surface, border: "1px solid " + cs.border, color: cs.accent, cursor: "pointer", fontSize: 13 }}>🔄 Refresh</button>
             </div>
 
             {/* Filter status */}
@@ -1730,7 +1731,8 @@ function GajiTab({ teknisiData, setTeknisiData, ordersData, invoicesData, curren
                 <div style={{ display: "grid", gap: 8 }}>
                   {ordersNoBonus.map(o => {
                     const team = [o.teknisi, o.teknisi2, o.teknisi3, o.helper, o.helper2, o.helper3].filter(Boolean);
-                    const inv = periodInvMap[o.invoice_id];
+                    const basis = periodBillingBases[o.id];
+                    const inv = scopedBonusInvoice(basis);
                     const isComplain = o.service === "Complain";
                     const detected = detectBonusFromInvoice(inv?.materials_detail, o.service, bonusCategories);
                     const invTotal = Number(inv?.total || 0);
@@ -1748,13 +1750,16 @@ function GajiTab({ teknisiData, setTeknisiData, ordersData, invoicesData, curren
                             </div>
                             <div style={{ fontSize: 11, color: cs.muted }}>{fmtDate(o.date)} · {o.service} · {o.units} unit · {team.join(", ")}</div>
                             <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
-                              {inv?.total > 0 && <span style={{ fontSize: 11, color: cs.accent }}>Invoice: {fmtRp(inv.total)}</span>}
+                              {basis?.resolved && <span style={{ fontSize: 11, color: cs.accent }}>Nilai job: {fmtRp(inv.total)}{basis.shared ? ` · dari ${basis.invoiceId}` : ""}</span>}
                               {detected.detected.map(cid => (
                                 <span key={cid} style={{ fontSize: 10, background: "#1e3a5f", color: "#93c5fd", borderRadius: 4, padding: "1px 6px" }}>✨ {BONUS_LABELS[cid] || cid}</span>
                               ))}
                               {cand.isOmsetBesar && <span style={{ fontSize: 10, background: "#14532d", color: "#86efac", borderRadius: 4, padding: "1px 6px" }}>💰 Omset {cand.omsetComparison}{fmtRp(cand.omsetThreshold)}</span>}
                               {isInstallMulti && <span style={{ fontSize: 10, background: "#422006", color: "#fcd34d", borderRadius: 4, padding: "1px 6px" }}>🔩 Install {o.units} unit</span>}
                             </div>
+                            {basis?.shared && <div style={{ fontSize: 11, color: cs.muted, marginTop: 4 }}>Invoice bersama {fmtRp(basis.invoiceTotal)} · {basis.peerOrderIds.length} job. Hanya nilai/item milik pekerjaan ini yang dipakai.</div>}
+                            {!basis?.resolved && <div style={{ fontSize: 11, color: cs.yellow, marginTop: 6 }}>⚠️ {basis?.reason || "Dasar bonus belum tersedia"}. Bonus berbasis invoice tidak diisi otomatis.</div>}
+                            {basis?.warnings?.map(warning => <div key={warning} style={{ fontSize: 11, color: cs.yellow, marginTop: 4 }}>ℹ️ {warning}</div>)}
                             {cand.warnings.length > 0 && (
                               <div style={{ display: "grid", gap: 4, marginTop: 6 }}>
                                 {cand.komplain.length > 0 && (
@@ -1797,8 +1802,10 @@ function GajiTab({ teknisiData, setTeknisiData, ordersData, invoicesData, curren
                         {isOpen && (
                           <div style={{ marginTop: 10 }}>
                             <BonusInputForm
+                              key={basis?.signature || `${o.id}:unresolved`}
                               orderRow={o} inv={inv} team={team} ordersData={ordersData}
                               onSave={handleSaveBonus} onCancel={() => closeBonusCard(o.id)}
+                              billingBasis={basis} saving={savingBonusIds.has(o.id) || loadingBonus}
                               bonusCategories={bonusCategories} BONUS_LABELS={BONUS_LABELS} BONUS_DEFAULTS={BONUS_DEFAULTS}
                             />
                           </div>
@@ -1947,7 +1954,7 @@ function GajiTab({ teknisiData, setTeknisiData, ordersData, invoicesData, curren
           showNotif={showNotif}
           addAgentLog={addAgentLog}
           currentUser={currentUser}
-          canBulkPay={bolehBayar}
+          canBulkPay={bolehBayar && !bonusLoadError}
           bulkPaying={payingBonusBulk}
           onMarkAllPaid={handleMarkAllReadyBonusesPaid}
         />
@@ -2207,7 +2214,7 @@ function BonusEditForm({ form, setForm, memberOptions, bonusCategories, bonusLab
 
 // Form input bonus per order — MULTI-KATEGORI (1 order bisa dapat >1 bonus, mis. Freon + Kapasitor).
 // Centang kategori yang berlaku, isi nominal, pilih tim sekali → simpan beberapa baris komisi sekaligus.
-function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bonusCategories = [], BONUS_LABELS = {}, BONUS_DEFAULTS = {} }) {
+export function BonusInputForm({ orderRow, inv, billingBasis, saving = false, team, ordersData, onSave, onCancel, bonusCategories = [], BONUS_LABELS = {}, BONUS_DEFAULTS = {} }) {
   const isComplain = orderRow.service === "Complain";
   const detected   = detectBonusFromInvoice(inv?.materials_detail, orderRow.service, bonusCategories);
   const installInfo = orderRow.service === "Install"
@@ -2231,8 +2238,9 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
     if (installInfo?.tier) a[installInfo.tier] = Number(BONUS_DEFAULTS[installInfo.tier]) || 0;
     return a;
   });
-  const [grossRevenue, setGrossRevenue] = useState(inv?.total ? String(inv.total) : "");
+  const grossRevenue = billingBasis?.resolved ? String(inv.total) : "";
   const [materialCost, setMaterialCost] = useState("");
+  const [costEdited, setCostEdited] = useState(false);
   const [marginOn, setMarginOn]         = useState(false);
 
   // ── Autosum biaya material (Tahap 3 HPP) ──
@@ -2257,7 +2265,7 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
       try {
         // Quick count: biaya material = rincian INVOICE (materials_detail) × HPP.
         // Tak bergantung ke stok tertaut job — rincian invoice selalu lengkap.
-        const { data: invRows } = await sb.from("inventory").select("name,purchase_price").limit(500);
+        const invRows = await loadBonusHppInventory(sb);
         if (batal) return;
         const hasil = invoiceMaterialCostHPP({ materialsDetail: inv?.materials_detail, inventory: invRows || [] });
         setMatAuto(hasil);
@@ -2301,13 +2309,14 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
 
   // Kumpulkan entri bonus terpilih → tiap entri jadi 1 baris order_bonuses.
   const entries = [];
-  fixedCats.forEach(c => { if (enabled[c.id] && amounts[c.id] > 0) entries.push({ bonus_type: c.id, total_amount: amounts[c.id], gross_revenue: null, material_cost: null }); });
+  const blockedCategory = id => !billingBasis?.resolved || (billingBasis.shared && !detected.detected.includes(id));
+  fixedCats.forEach(c => { if (!blockedCategory(c.id) && enabled[c.id] && amounts[c.id] > 0) entries.push({ bonus_type: c.id, total_amount: amounts[c.id], gross_revenue: null, material_cost: null }); });
   if (installInfo?.tier && enabled[installInfo.tier] && amounts[installInfo.tier] > 0)
     entries.push({ bonus_type: installInfo.tier, total_amount: amounts[installInfo.tier], gross_revenue: null, material_cost: null });
   // Jejak asal angka: 'auto' (dipakai apa adanya), 'auto_edited' (auto lalu diubah),
   // 'manual' (diketik dari nol) — supaya rekap bonus bisa diaudit belakangan.
   const matSource = !materialCost ? null
-    : (matAuto && Number(materialCost) === matAuto.total) ? "auto"
+    : (matAuto && !matAuto.error && Number(materialCost) === matAuto.total) ? "auto"
     : pakaiAuto ? "auto_edited" : "manual";
   if (marginOn && marginTier && marginAmount > 0)
     entries.push({ bonus_type: marginTier, total_amount: marginAmount, gross_revenue: grossRevenue || null, material_cost: materialCost || null, material_cost_source: matSource });
@@ -2317,19 +2326,25 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
   const totalTim = entries.reduce((s, e) => s + Number(e.total_amount || 0), 0);
   const marginInvalid = marginOn && marginTier === null;
   // (C) marginInvalid TIDAK lagi memblok simpan — margin sekadar dilewati; bonus lain tetap tersimpan.
-  const canSave = entries.length > 0 && selectedTeam.length > 0;
+  const canSave = entries.length > 0 && selectedTeam.length > 0 && !saving && !matLoading &&
+    !(marginOn && matAuto?.error && !costEdited);
   // (A) material tanpa HPP saat margin disimpan → wajib konfirmasi (profit bisa terlalu tinggi → tier kelebihan).
   const missingHppItems = (marginOn && marginTier && matAuto && !matAuto.error) ? (matAuto.missing || []) : [];
 
   const doSave = () => {
     const finalEntries = entries.map(e => ({ ...e, note: e.note ?? (note || null) }));
-    onSave(orderRow, finalEntries, selectedTeam);
+    if (!canSave) return;
+    try { validateBonusBillingEntries(finalEntries, billingBasis, bonusCategories); }
+    catch (error) { setFormError(error.message); return; }
+    setFormError("");
+    onSave(orderRow, finalEntries, selectedTeam, billingBasis?.signature);
   };
   const handleSubmit = () => {
     if (!canSave) return;
     if (missingHppItems.length > 0 && !confirmMissing) { setConfirmMissing(true); return; }
     doSave();
   };
+  const [formError, setFormError] = useState("");
 
   const rowStyle = (on) => ({ display: "flex", alignItems: "center", gap: 10, padding: "7px 9px", borderRadius: 7, background: on ? "#0c2d4a" : "#1e293b", border: "1px solid " + (on ? "#3b82f6" : "#334155"), marginBottom: 6 });
   const amtInput = (id, on) => (
@@ -2349,6 +2364,11 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
       <div style={{ fontSize: 12, color: "#64748b", marginBottom: isComplain ? 8 : 12 }}>
         {fmtDate(orderRow.date)} · {orderRow.service} · {orderRow.units} unit
       </div>
+      {!billingBasis?.resolved && <div role="alert" style={{ padding: 10, background: "#422006", color: "#fcd34d", borderRadius: 7, marginBottom: 10 }}>
+        ⚠️ {billingBasis?.reason || "Nilai/item pekerjaan belum dapat dipastikan"}. Jangan memakai total invoice bersama.
+        Bonus margin/item dinonaktifkan. Bonus manual tetap bisa dicatat dengan nominal dan alasan yang diverifikasi admin.
+      </div>}
+      {billingBasis?.warnings?.map(warning => <div key={warning} style={{ color: "#fcd34d", fontSize: 11, marginBottom: 8 }}>{warning}</div>)}
 
       {/* Peringatan Complain */}
       {isComplain && (
@@ -2368,11 +2388,11 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
         return (
           <div key={c.id} style={rowStyle(on)}>
             <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", flex: 1, minWidth: 0 }}>
-              <input type="checkbox" checked={on} onChange={() => toggle(c.id)} />
+              <input type="checkbox" checked={on} disabled={blockedCategory(c.id)} onChange={() => toggle(c.id)} />
               <span style={{ fontSize: 12, color: "#e2e8f0", fontWeight: 600 }}>{c.label}</span>
               {isDet && <span style={{ fontSize: 9, background: "#1e3a5f", color: "#93c5fd", borderRadius: 4, padding: "1px 5px" }}>✨ terdeteksi</span>}
             </label>
-            {amtInput(c.id, on)}
+            {amtInput(c.id, on && !blockedCategory(c.id))}
           </div>
         );
       })}
@@ -2397,7 +2417,7 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
       {/* Margin (butuh omset & biaya material) */}
       <div style={rowStyle(marginOn)}>
         <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", flex: 1, minWidth: 0 }}>
-          <input type="checkbox" checked={marginOn} disabled={marginTiers.length === 0} onChange={() => setMarginOn(v => !v)} />
+          <input type="checkbox" checked={marginOn} disabled={!billingBasis?.resolved || marginTiers.length === 0} onChange={() => setMarginOn(v => !v)} />
           <span style={{ fontSize: 12, color: "#e2e8f0", fontWeight: 600 }}>💰 Bonus Margin</span>
         </label>
         {marginOn && marginTier && <span style={{ fontSize: 11, color: "#22c55e", fontWeight: 700 }}>Rp {fmt(marginAmount)}/tim</span>}
@@ -2405,8 +2425,8 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
       {marginOn && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, margin: "0 0 6px", padding: "0 2px" }}>
           <div>
-            <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>Omset / Invoice (Rp) <span style={{ color: "#3b82f6" }}>auto</span></div>
-            <input type="number" value={grossRevenue} onChange={e => setGrossRevenue(e.target.value)}
+            <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>Omset Pekerjaan Ini (Rp) <span style={{ color: "#3b82f6" }}>auto per job</span></div>
+            <input aria-label="Omset pekerjaan ini" type="number" value={grossRevenue} readOnly title="Nilai berasal dari alokasi pekerjaan ini; ubah invoice sumber bila nilai pekerjaan perlu diperbaiki"
               style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid " + (inv?.total ? "#3b82f6" : "#334155"), background: "#1e293b", color: "#e2e8f0", fontSize: 13, boxSizing: "border-box" }} />
           </div>
           <div>
@@ -2414,7 +2434,7 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
               Biaya Material Aktual (Rp)
               {matAuto && !matAuto.error && <span style={{ color: "#3b82f6" }}> · auto dari HPP (bisa diubah)</span>}
             </div>
-            <input type="number" value={materialCost} onChange={e => setMaterialCost(e.target.value)}
+            <input aria-label="Biaya material pekerjaan ini" type="number" min="0" value={materialCost} onChange={e => { setMaterialCost(e.target.value); setCostEdited(true); setConfirmMissing(false); }}
               placeholder="yg AClean bayar ke supplier" style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #334155", background: "#1e293b", color: "#e2e8f0", fontSize: 13, boxSizing: "border-box" }} />
           </div>
 
@@ -2430,7 +2450,7 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
 
             {!matLoading && matAuto && !matAuto.error && matAuto.lines.length === 0 && (
               <div style={{ fontSize: 11, color: "#64748b" }}>
-                ✅ Invoice ini tak menagih material (hanya jasa) → biaya material otomatis <b style={{ color: "#22c55e" }}>Rp 0</b> (seluruh omset jadi margin).
+                ✅ Rincian job ini tak menagih material (hanya jasa) → biaya material otomatis <b style={{ color: "#22c55e" }}>Rp 0</b>.
               </div>
             )}
 
@@ -2441,7 +2461,7 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
                   <span style={{ fontSize: 13, fontWeight: 800, color: "#22c55e", fontFamily: "monospace" }}>
                     Rp {fmt(matAuto.total)}
                   </span>
-                  <button type="button" onClick={() => { setMaterialCost(String(matAuto.total)); setPakaiAuto(true); }}
+                  <button type="button" onClick={() => { setMaterialCost(String(matAuto.total)); setCostEdited(false); setConfirmMissing(false); setPakaiAuto(true); }}
                     style={{ marginLeft: "auto", padding: "4px 10px", borderRadius: 6, border: "1px solid #3b82f6", background: "#3b82f622", color: "#93c5fd", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
                     Pakai angka ini
                   </button>
@@ -2494,7 +2514,7 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
           <input type="number" value={customAmount} onChange={e => setCustomAmount(e.target.value)}
             placeholder="Nominal (Rp)" style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #334155", background: "#1e293b", color: "#e2e8f0", fontSize: 13, boxSizing: "border-box" }} />
           <input value={manualLabel} onChange={e => setManualLabel(e.target.value)}
-            placeholder="Keterangan (opsional)" style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #334155", background: "#1e293b", color: "#e2e8f0", fontSize: 13, boxSizing: "border-box" }} />
+            placeholder="Alasan bonus manual (wajib)" style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #334155", background: "#1e293b", color: "#e2e8f0", fontSize: 13, boxSizing: "border-box" }} />
         </div>
       )}
 
@@ -2561,7 +2581,7 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
             ⚠️ {missingHppItems.length} material tanpa HPP dihitung Rp 0 → profit (Rp {fmt(profit)}) bisa TERLALU TINGGI. Yakin simpan bonus ini?
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={doSave} style={{ padding: "6px 14px", borderRadius: 6, background: "#f59e0b", border: "none", color: "#1a1a1a", cursor: "pointer", fontWeight: 800, fontSize: 12 }}>Ya, tetap simpan</button>
+            <button onClick={doSave} disabled={!canSave} style={{ padding: "6px 14px", borderRadius: 6, background: "#f59e0b", border: "none", color: "#1a1a1a", cursor: "pointer", fontWeight: 800, fontSize: 12 }}>Ya, tetap simpan</button>
             <button onClick={() => setConfirmMissing(false)} style={{ padding: "6px 14px", borderRadius: 6, background: "transparent", border: "1px solid #a16207", color: "#fcd34d", cursor: "pointer", fontWeight: 700, fontSize: 12 }}>Batal, cek dulu</button>
           </div>
         </div>
@@ -2571,12 +2591,13 @@ function BonusInputForm({ orderRow, inv, team, ordersData, onSave, onCancel, bon
           onClick={handleSubmit}
           disabled={!canSave}
           style={{ padding: "8px 18px", borderRadius: 7, background: !canSave ? "#334155" : "#3b82f6", border: "none", color: "#fff", cursor: canSave ? "pointer" : "not-allowed", fontWeight: 700, fontSize: 13 }}>
-          💾 Simpan {entries.length > 0 ? `${entries.length} ` : ""}Bonus
+          {saving ? "⏳ Menyimpan…" : `💾 Simpan ${entries.length > 0 ? `${entries.length} ` : ""}Bonus`}
         </button>
         <button onClick={onCancel} style={{ padding: "8px 16px", borderRadius: 7, background: "transparent", border: "1px solid #334155", color: "#64748b", cursor: "pointer", fontSize: 13 }}>
           Batal
         </button>
       </div>
+      {formError && <div role="alert" style={{ color: "#fca5a5", marginTop: 8 }}>{formError}</div>}
     </div>
   );
 }

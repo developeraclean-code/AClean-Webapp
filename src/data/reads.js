@@ -671,12 +671,23 @@ export const fetchOrderBonuses = (supabase, { status, orderDate, limit = 100 } =
   return q;
 };
 
-export const fetchOrderBonusesByPeriod = (supabase, from, to) =>
+const fetchBonusPeriodPages = async query => {
+  const rows = [];
+  for (let from = 0; from < 20000; from += FULL_FETCH_PAGE) {
+    const { data, error } = await query().range(from, from + FULL_FETCH_PAGE - 1);
+    if (error) return { data: null, error };
+    rows.push(...(data || []));
+    if ((data || []).length < FULL_FETCH_PAGE) return { data: rows, error: null };
+  }
+  return { data: null, error: { message: "Data bonus melebihi batas pembacaan aman; persempit periode" } };
+};
+
+export const fetchOrderBonusesByPeriod = (supabase, from, to) => fetchBonusPeriodPages(() =>
   supabase.from("order_bonuses")
     .select("*")
     .gte("order_date", from)
     .lte("order_date", to)
-    .order("order_date", { ascending: false });
+    .order("order_date", { ascending: false }).order("id"));
 
 // Bonus milik satu user (by name dalam team_members array)
 export const fetchMyBonuses = (supabase, userName, limit = 50) =>
@@ -691,13 +702,13 @@ export const fetchMyBonuses = (supabase, userName, limit = 50) =>
 // kalau cuma COMPLETED/PAID, order di INVOICE_APPROVED/REPORT_SUBMITTED hilang dari review komisi.
 // customer_id + penanda multi-hari WAJIB ikut: bonusCandidateInfo() memakainya untuk
 // menggugurkan job lintas hari dan mencocokkan komplain per pelanggan.
-export const fetchOrdersWithoutBonus = (supabase, periodStart, periodEnd) =>
+export const fetchOrdersWithoutBonus = (supabase, periodStart, periodEnd) => fetchBonusPeriodPages(() =>
   supabase.from("orders")
-    .select("id,date,customer,customer_id,service,units,teknisi,teknisi2,teknisi3,helper,helper2,helper3,invoice_id,status,is_multi_day,parent_job_id,day_number")
+    .select("id,date,customer,customer_id,service,units,teknisi,teknisi2,teknisi3,helper,helper2,helper3,invoice_id,status,is_multi_day,parent_job_id,day_number,is_team_split,job_group_id")
     .gte("date", periodStart)
     .lte("date", periodEnd)
     .in("status", ORDER_DONE_STATUSES)
-    .order("date");
+    .order("date").order("id"));
 
 // Order Complain di sekitar periode — dipakai untuk memperingatkan bonus yang diikuti
 // komplain dalam 30 hari. Jendelanya sengaja melewati periodEnd sebanyak KOMPLAIN_VOID_HARI,
