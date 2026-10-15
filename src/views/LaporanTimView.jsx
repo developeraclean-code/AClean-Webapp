@@ -2,12 +2,13 @@ import { memo, useState, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { normalizePhone } from "../lib/phone.js";
 import { summarize, checkInvoiceConsistency, describeInconsistency, normalizeLines, buildWarrantyDiscountLine, categoryFromCatalog } from "../lib/invoicing.js";
-import { clientCleaningUnitPrice } from "../lib/maintClientPrice.js";
+import { clientCleaningUnitRate } from "../lib/maintClientPrice.js";
 import { fetchServiceReportsPage, probeTeamInvoiceWorkflow } from "../data/reads.js";
 import { finalizeServiceReportAtomic } from "../data/writes.js";
 import { getTeamFinalizationOutcome, isTeamSplitOrder } from "../lib/teamSplitWorkflow.js";
 import { isProjectReportArchive } from "../lib/projectReportArchive.js";
 import { fieldReportAssignedNames, isFieldReportAssigned } from "../lib/fieldReportWorkflow.js";
+import { reportHasVrv, unpricedVrvUnits, vrvInvoiceUnitLabel } from "../lib/vrvBilling.js";
 
 const isMissingFinalizeRpc = (error) => error?.code === "PGRST202" || error?.code === "42883"
   || /finalize_service_report_atomic.*(schema cache|does not exist|not found)/i.test(error?.message || "");
@@ -365,14 +366,14 @@ const [liveActive] = useState(true);
 // ── Harga deal per-klien maintenance (price book) — override biaya cleaning ──
 // per unit di builder verify & badge estimasi. Match STRICT tipe+PK (lihat
 // lib/maintClientPrice.js); tanpa baris cocok → harga global (perilaku lama).
-// Cache per client_id; undefined = belum di-fetch, [] = sudah (termasuk gagal).
+// Cache per client_id; undefined = belum di-fetch, [] = kosong sah, null = fetch gagal.
 const [maintPricesByClient, setMaintPricesByClient] = useState({});
 const fetchMaintPrices = async (clientId) => {
   try {
     const resp = await apiFetch("/api/maintenance", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "list-prices", client_id: clientId }) });
     const j = resp.ok ? await resp.json().catch(() => ({})) : {};
-    return Array.isArray(j.prices) ? j.prices : [];
-  } catch { return []; }
+    return Array.isArray(j.prices) ? j.prices : null;
+  } catch { return null; }
 };
 // Prefetch untuk badge ≈ Invoice (dihitung sinkron saat render kartu)
 useEffect(() => {
@@ -390,9 +391,9 @@ useEffect(() => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [ordersData, apiFetch]);
 // Jaminan saat verify (kalau prefetch belum selesai / client baru muncul)
-const ensureMaintPrices = async (clientId) => {
+const ensureMaintPrices = async (clientId, fresh = false) => {
   if (!clientId || !apiFetch) return null;
-  if (maintPricesByClient[clientId] !== undefined) return maintPricesByClient[clientId];
+  if (!fresh && Array.isArray(maintPricesByClient[clientId])) return maintPricesByClient[clientId];
   const prices = await fetchMaintPrices(clientId);
   setMaintPricesByClient(prev => ({ ...prev, [clientId]: prices }));
   return prices;
@@ -687,16 +688,18 @@ const buildVerifyInvoice = (r, ord, dealPricesOverride) => {
         unitsWithTipe.forEach((u) => {
           // Harga deal per-klien maintenance menang bila match tipe+PK (strict) ATAU
           // baris wildcard tipe (capacity_pk kosong = flat semua PK) — lihat maintClientPrice.js
-          const dealPrice = dealPrices ? clientCleaningUnitPrice(dealPrices, u) : null;
+          const dealRate = clientCleaningUnitRate(dealPrices, u);
+          const dealPrice = dealRate?.unit_price ?? null;
           const svcBesarOpt = { serviceBesar: isServiceBesarPekerjaan(u.pekerjaan) };
           const hargaUnit = dealPrice != null ? dealPrice : hargaPerUnitFromTipe(r.service, u.tipe, priceListData, svcBesarOpt);
-          if (hargaUnit > 0) {
+          if (hargaUnit > 0 || dealRate?.included_in_service === true) {
             const unitLabel = u.label || u.merk || ("Unit " + (u.unit_no || "?"));
             const bracketLabel = getBracketKey(r.service, u.tipe, svcBesarOpt) || u.tipe;
             vMDetail.unshift({
-              nama: (r.service || "") + " " + bracketLabel + " (" + unitLabel + ")" + (dealPrice != null ? " — harga kontrak" : ""),
+              nama: (r.service || "") + " " + vrvInvoiceUnitLabel(u, bracketLabel) + " (" + unitLabel + ")" + (dealRate?.included_in_service ? " — termasuk penawaran (tidak ditagih terpisah)" : dealPrice != null ? " — harga kontrak" : ""),
               jumlah: 1, satuan: "unit",
-              harga_satuan: hargaUnit, subtotal: hargaUnit, keterangan: "jasa"
+              harga_satuan: hargaUnit, subtotal: hargaUnit, keterangan: "jasa", unit_no: u.unit_no ?? null,
+              ...(dealRate?.included_in_service && { included_in_service: true }),
             });
           }
         });
@@ -712,7 +715,7 @@ const buildVerifyInvoice = (r, ord, dealPricesOverride) => {
     // Inject transport fee untuk Cleaning 1 unit (sama seperti logic di App.jsx)
     // Guard: jangan inject kalau materials laporan sudah berisi item transport → cegah double tagih.
     const sudahAdaTransport = vMDetail.some(m => (m.nama || "").toLowerCase().includes("transport"));
-    if (r.service === "Cleaning" && (Array.isArray(r.units) ? r.units.length : parseInt(r.units) || 1) === 1 && !sudahAdaTransport) {
+    if (r.service === "Cleaning" && !reportHasVrv(r.units) && (Array.isArray(r.units) ? r.units.length : parseInt(r.units) || 1) === 1 && !sudahAdaTransport) {
       const transportItem = priceListData.find(p => p.service === "Cleaning" && p.type === "Biaya Transport Bila 1 Unit" && p.is_active !== false);
       if (transportItem && transportItem.price > 0) {
         vMDetail.push({ nama: "Biaya Transport Bila 1 Unit", jumlah: 1, satuan: "unit", harga_satuan: transportItem.price, subtotal: transportItem.price, keterangan: "jasa" });
@@ -775,7 +778,17 @@ const verifyLaporan = async (r) => {
       return;
     }
   }
-  const dealPricesV = _ordDeal?.maintenance_client_id ? await ensureMaintPrices(_ordDeal.maintenance_client_id) : null;
+  const vrvBilling = reportHasVrv(r.units) && ["Cleaning", "Maintenance"].includes(r.service);
+  const dealPricesV = _ordDeal?.maintenance_client_id ? await ensureMaintPrices(_ordDeal.maintenance_client_id, vrvBilling) : null;
+  if (vrvBilling && _ordDeal?.maintenance_client_id && !Array.isArray(dealPricesV)) {
+    showNotif("❌ Harga khusus VRV gagal dimuat. Verifikasi ditahan; coba lagi setelah koneksi pulih. Tidak memakai tarif pengganti secara diam-diam.");
+    return;
+  }
+  const unpricedVrv = unpricedVrvUnits({ service: r.service, units: r.units, clientPrices: dealPricesV, priceListData });
+  if (unpricedVrv.length) {
+    showNotif(`❌ Verifikasi ditahan: ${unpricedVrv.length} unit VRV belum memiliki kapasitas/tarif yang valid. Atur Maintenance → Harga Khusus per tipe Indoor/Outdoor dan PK. Laporan tetap tersimpan, invoice tidak dibuat.`);
+    return;
+  }
 
   const afterVerified = () => {
     setLaporanReports(p => p.map(x => x.id === r.id ? { ...x, status: "VERIFIED" } : x));
@@ -1600,7 +1613,13 @@ return (
             })()}
             {r.status === "SUBMITTED" && !isProjectReportArchive(r) && (<>
               {(currentUser?.role === "Owner" || currentUser?.role === "Admin") && r.service !== "Survey" && (() => {
-                const est = buildVerifyInvoice(r, ordersData.find(o => o.id === r.job_id));
+                const order = ordersData.find(o => o.id === r.job_id);
+                const clientPrices = order?.maintenance_client_id ? maintPricesByClient[order.maintenance_client_id] : [];
+                if (unpricedVrvUnits({ service: r.service, units: r.units, clientPrices, priceListData }).length ||
+                  (reportHasVrv(r.units) && ["Cleaning", "Maintenance"].includes(r.service) && order?.maintenance_client_id && !Array.isArray(clientPrices))) {
+                  return <span style={{ color: cs.yellow, fontSize: 12, padding: "6px 12px" }}>⚠️ Tarif/kapasitas VRV perlu diperiksa — belum ada estimasi invoice.</span>;
+                }
+                const est = buildVerifyInvoice(r, order);
                 return (
                   <span title="Perkiraan total invoice saat diverifikasi (sudah termasuk biaya cuci/pengecekan otomatis). Diskon membership belum dihitung." style={{ background: "#22c55e14", border: "1px solid #22c55e44", color: "#22c55e", padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 800, fontFamily: "monospace", whiteSpace: "nowrap" }}>
                     ≈ Invoice: Rp {Number(est.total || 0).toLocaleString("id-ID")}

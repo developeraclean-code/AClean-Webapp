@@ -1,6 +1,7 @@
 // Price list default — hanya daftar nama item (skeleton), harga semua 0.
 // Harga live selalu dari Supabase price_list via buildPriceListFromDB().
 // Jika item tidak ada di DB, harga = 0 (tidak ada fallback hardcode).
+import { normalizeMaintenanceAcType, MAINT_REPORT_BASE, isVrvType } from "./maintenanceAcTypes.js";
 export const PRICE_LIST_DEFAULT = {
   "Cleaning": {
     "AC Split 0.5-1PK": 0,
@@ -132,6 +133,13 @@ export const isServiceBesarPekerjaan = (pekerjaan) =>
 // Mapping tipe AC → bracket PK di PRICE_LIST. Return null kalau service tak dikenal.
 // opts.serviceBesar = true → override ke bracket "Jasa Service Besar" (Cleaning saja).
 export const getBracketKey = (service, tipe, opts = {}) => {
+  if (isVrvType(tipe)) {
+    const base = MAINT_REPORT_BASE[normalizeMaintenanceAcType(tipe)];
+    if (!base) return null;
+    if (service === "Cleaning" || service === "Maintenance") return opts.serviceBesar ? `Jasa Service Besar ${base.replace(/^AC /, "")}` : base;
+    if (service === "Install") return `Pemasangan ${base}`;
+    return null;
+  }
   const pk = tipeToPkNumber(tipe);
   const t = String(tipe || "").toLowerCase();
   const isCassette = t.includes("cassette");
@@ -186,7 +194,12 @@ export const hargaPerUnitFromTipe = (service, tipe, priceListData = [], priceFal
   if (!bracket) return 0;
   const dbRow = priceListData.find(r =>
     r.is_active !== false && r.service === service && r.type === bracket);
-  if (dbRow && dbRow.price > 0) return Number(dbRow.price);
+  if (dbRow && Number.isFinite(Number(dbRow.price)) && dbRow.price > 0) return Number(dbRow.price);
+  // VRV wajib tarif eksplisit. Default layanan / bracket AC reguler tidak berlaku.
+  if (isVrvType(tipe)) {
+    const explicit = Number(priceFallback[service]?.[bracket]);
+    return Number.isFinite(explicit) && explicit > 0 ? explicit : 0;
+  }
   const fallback = priceFallback[service]?.[bracket] ?? priceFallback[service]?.default ?? 0;
   return fallback;
 };

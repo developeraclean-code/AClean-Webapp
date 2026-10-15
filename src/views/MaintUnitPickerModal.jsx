@@ -13,6 +13,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { cs } from "../theme/cs.js";
 import { daysUntil } from "../lib/dateTime.js";
+import { maintenanceAcLabel } from "../lib/maintenanceAcTypes.js";
 
 // Jenis servis yang default-nya centang SEMUA unit (pekerjaan menyeluruh).
 const SERVICE_ALL_DEFAULT = new Set(["cleaning", "maintenance"]);
@@ -125,7 +126,7 @@ export default function MaintUnitPickerModal({ client, serviceType, apiHeaders, 
                       </div>
                       <div style={{ fontSize: 11, color: cs.muted, marginTop: 4 }}>
                         {u.location && <div>📍 {u.location}</div>}
-                        <div>{u.brand || "—"}{u.capacity_pk ? ` ${u.capacity_pk}PK` : ""}{u.ac_type ? ` · ${u.ac_type}` : ""}</div>
+                        <div>{u.brand || "—"}{u.capacity_pk ? ` ${u.capacity_pk}PK` : ""}{u.ac_type ? ` · ${maintenanceAcLabel(u.ac_type)}` : ""}</div>
                       </div>
                     </div>
                   );

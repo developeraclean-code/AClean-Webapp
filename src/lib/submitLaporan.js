@@ -6,6 +6,8 @@ import { isHarianManagedItem } from "./materialRecon.js";
 import { canOriginalReporterEdit } from "./fieldReportWorkflow.js";
 import { submitServiceReportAtomic } from "../data/writes.js";
 import { isTeamSplitOrder } from "./teamSplitWorkflow.js";
+import { reportHasVrv } from "./vrvBilling.js";
+import { isVrvType, capacityPkNumber } from "./maintenanceAcTypes.js";
 
 export const shouldFallbackAtomicReportSubmit = (error) => {
   const message = error?.message || "";
@@ -196,6 +198,11 @@ export async function submitLaporan({
     }
 
     // ── 2. Validasi unit untuk non-Install ──
+    if (laporanUnits.some(u => isVrvType(u?.tipe) && capacityPkNumber(u?.pk) == null)) {
+      showNotif("❌ Kapasitas VRV belum valid. Isi PK sesuai unit sebelum mengirim laporan.");
+      submitLaporanLock.current = false;
+      return;
+    }
     if (!isInstall && incompleteUnits.length > 0) {
       showNotif(`${incompleteUnits.length} unit belum diisi pekerjaan!`);
       submitLaporanLock.current = false;
@@ -616,6 +623,9 @@ export async function submitLaporan({
         `Laporan ${newReport.id} masuk untuk grup ${laporanModal.job_group_id}; invoice menunggu seluruh tim diverifikasi`,
         "INFO");
       showNotif("✅ Laporan tim tersimpan. Invoice grup dibuat setelah seluruh laporan tim diverifikasi Owner/Admin.");
+    } else if (reportHasVrv(laporanUnits)) {
+      addAgentLog("VRV_REPORT_AWAITING_PRICING", `Laporan ${newReport.id} tersimpan; invoice VRV menunggu verifikasi dan tarif khusus Owner/Admin.`, "INFO");
+      showNotif("✅ Laporan VRV tersimpan. Invoice menunggu verifikasi Owner/Admin dengan tarif Indoor/Outdoor yang sesuai.");
     } else {
     // ── 12. Auto-generate invoice ──
     // Hitung labor & material — harga freon dari inventory DULU, fallback PRICE_LIST

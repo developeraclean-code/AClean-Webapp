@@ -88,9 +88,23 @@ describe("MaintUnitPickerStep — render tanpa crash", () => {
     const rusak = { id: "x", unit_code: "AC-9", location: null, brand: null, ac_type: null, capacity_pk: null, status: "active", next_service_date: null };
     expect(() => render({ maintUnitPool: [rusak] })).not.toThrow();
   });
+  it("VRV Indoor/Outdoor dan kapasitas non-bracket tampil tanpa diminta menjadi Split", () => {
+    const indoor = mu({ ac_type: "vrv_indoor", capacity_pk: "7.63" });
+    const outdoor = mu({ id: "u-outdoor", ac_type: "vrv_outdoor", capacity_pk: "34.20" });
+    const html = render({ maintUnitPool: [indoor, outdoor], laporanUnits: [mkUnit(1, maintUnitToHist(indoor)), mkUnit(2, maintUnitToHist(outdoor))] });
+    expect(html).toContain("VRV / VRF Indoor");
+    expect(html).toContain("VRV / VRF Outdoor");
+    expect(html).toContain("7.63PK");
+    expect(html).not.toContain("Lengkapi:");
+  });
 });
 
 describe("unitKurangLengkap — syarat lanjut", () => {
+  it("kapasitas VRV wajib; tidak mengarang PK saat registry kosong", () => {
+    const u = mkUnit(1, maintUnitToHist(mu({ ac_type: "vrv_indoor", capacity_pk: null })));
+    expect(unitKurangLengkap(u)).toContain("Kapasitas VRV (PK)");
+    expect(unitKurangLengkap({ ...u, pk: "7,63PK" })).toEqual([]);
+  });
   it("merk kosong TIDAK memblokir (registry milik admin, merk tak menentukan tarif)", () => {
     const u = mkUnit(1, maintUnitToHist(mu({ brand: null })));
     expect(unitKurangLengkap(u)).toEqual([]);

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { maintenanceAcLabel } from "../lib/maintenanceAcTypes.js";
 
 // Portal customer korporat (clean view). Dibuka via /m/<token>.
 // Data dari /api/m-portal — gate akses & strip cost sudah di backend.
@@ -234,7 +235,7 @@ export default function MaintenancePortalView({ token }) {
                   {isOpen && (
                     <div style={{ borderTop: "1px solid #e2e8f0", padding: 14, background: "#f8fafc" }}>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 14px", marginBottom: 12, fontSize: 13 }}>
-                        <div><span style={{ color: "#94a3b8" }}>Jenis</span><br />{{ split: "Split Wall", cassette: "Cassette", standing: "Floor Standing", floor: "Split Duct" }[u.ac_type] || u.ac_type || "—"}</div>
+                        <div><span style={{ color: "#94a3b8" }}>Jenis</span><br />{maintenanceAcLabel(u.ac_type)}</div>
                         <div><span style={{ color: "#94a3b8" }}>Servis terakhir</span><br />{fmtDate(u.last_service_date)}</div>
                         {u.next_service_date && (
                           <div style={{ gridColumn: "1/-1" }}>

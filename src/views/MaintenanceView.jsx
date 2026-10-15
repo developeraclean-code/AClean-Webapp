@@ -4,6 +4,7 @@ import { unitHealth, borosRanking, BOROS_LEVEL_GANTI, HEALTH_META } from "../lib
 import { daysUntil } from "../lib/dateTime.js";
 import { checkMaintenanceOrderOverlap, formatOverlapWarning } from "../lib/checkMaintenanceOrderOverlap.js";
 import UnitTrendModal from "./UnitTrendModal.jsx";
+import { MAINT_AC_TYPES, MAINT_AC_TYPE_LABELS, normalizeMaintenanceAcType, isVrvType, capacityPkNumber } from "../lib/maintenanceAcTypes.js";
 
 // Pill styles — didefinisikan di atas karena dirujuk oleh const module-level
 // INV_STATUS_STYLE (TDZ: dev/esbuild eval source-order, beda dari Rollup build).
@@ -150,8 +151,8 @@ const QuotationPDFModule = lazy(() =>
 );
 
 const PORTAL_BASE = "https://status.aclean.id/status/";
-const AC_TYPES = ["split", "cassette", "standing", "floor"];
-const AC_TYPE_LABELS = { split: "Split Wall", cassette: "Cassette", standing: "Floor Standing", floor: "Split Duct" };
+const AC_TYPES = MAINT_AC_TYPES;
+const AC_TYPE_LABELS = MAINT_AC_TYPE_LABELS;
 const REFRIGERANTS = ["R32", "R410A", "R22"];
 const STATUSES = ["active", "baru", "perlu_perbaikan", "dalam_perbaikan", "nonaktif", "rusak", "retired"];
 // Pengelompokan unit di tampilan (SMA/SMK/SMP/SD/Other). NULL/nilai lain → "Other".
@@ -1202,7 +1203,7 @@ function GantiUnitModal({ oldUnit, sel, call, showNotif, setUnits, onClose }) {
   const today = new Date().toISOString().slice(0, 10);
   const [f, setF] = useState({
     unit_code: (oldUnit.unit_code || "") + "-R",
-    brand: "", ac_type: oldUnit.ac_type || "split", capacity_pk: oldUnit.capacity_pk || "",
+    brand: "", ac_type: normalizeMaintenanceAcType(oldUnit.ac_type) || oldUnit.ac_type || "split", capacity_pk: oldUnit.capacity_pk || "",
     refrigerant: oldUnit.refrigerant || "", serial_no: "", year_installed: new Date().getFullYear(),
   });
   const [busy, setBusy] = useState(false);
@@ -1258,7 +1259,7 @@ function GantiUnitModal({ oldUnit, sel, call, showNotif, setUnits, onClose }) {
       <Field l="Kode Unit Baru *"><input value={f.unit_code} onChange={e => set("unit_code", e.target.value)} style={inp} /></Field>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         <Field l="Merk"><input value={f.brand} onChange={e => set("brand", e.target.value)} style={inp} placeholder="mis. Daikin" /></Field>
-        <Field l="Kapasitas (PK)"><input type="number" step="0.25" value={f.capacity_pk} onChange={e => set("capacity_pk", e.target.value)} style={inp} /></Field>
+        <Field l="Kapasitas (PK)"><input type="number" step="any" min="0" value={f.capacity_pk} onChange={e => set("capacity_pk", e.target.value)} style={inp} /></Field>
         <Field l="Refrigerant"><input value={f.refrigerant} onChange={e => set("refrigerant", e.target.value)} style={inp} placeholder="R32" /></Field>
         <Field l="Serial No."><input value={f.serial_no} onChange={e => set("serial_no", e.target.value)} style={inp} placeholder="dari nameplate" /></Field>
         <Field l="Tahun Pasang"><input type="number" value={f.year_installed} onChange={e => set("year_installed", e.target.value)} style={inp} /></Field>
@@ -1276,18 +1277,25 @@ function GantiUnitModal({ oldUnit, sel, call, showNotif, setUnits, onClose }) {
   );
 }
 
-function UnitFormModal({ unit, onClose, onSave }) {
+export function UnitFormModal({ unit, onClose, onSave }) {
   const isEdit = !!unit.id;
   const [f, setF] = useState({
     unit_code: unit.unit_code || "", location: unit.location || "",
-    brand: unit.brand || "", ac_type: unit.ac_type || "split",
+    brand: unit.brand || "", ac_type: normalizeMaintenanceAcType(unit.ac_type) || unit.ac_type || "split",
     capacity_pk: unit.capacity_pk || "", refrigerant: unit.refrigerant || "R32",
     status: unit.status || "active", service_interval_months: unit.service_interval_months ?? 3,
     high_freq: unit.high_freq === true,
+    notes: unit.notes || "", serial_no: unit.serial_no || "", year_installed: unit.year_installed ?? null,
     unit_group: UNIT_GROUPS.includes(unit.unit_group) ? unit.unit_group : "Other",
     id: unit.id,
   });
+  const [error, setError] = useState("");
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const save = () => {
+    if (!f.unit_code.trim()) { setError("Kode unit wajib diisi."); return; }
+    if (isVrvType(f.ac_type) && capacityPkNumber(f.capacity_pk) == null) { setError("Kapasitas VRV wajib angka positif sesuai unit, misalnya 7,63 PK."); return; }
+    onSave({ ...f, unit_code: f.unit_code.trim() });
+  };
   return (
     <Overlay onClose={onClose}>
       <div style={{ fontWeight: 700, color: cs.text, fontSize: 16, marginBottom: 12 }}>
@@ -1298,7 +1306,7 @@ function UnitFormModal({ unit, onClose, onSave }) {
         <Field l="Lokasi"><input value={f.location} onChange={e => set("location", e.target.value)} style={inp} placeholder="Lantai 2 — Ruang Rapat" /></Field>
         <Field l="Brand"><input value={f.brand} onChange={e => set("brand", e.target.value)} style={inp} placeholder="Daikin / Gree / LG…" /></Field>
         <Field l="Jenis AC"><select value={f.ac_type} onChange={e => set("ac_type", e.target.value)} style={inp}>{AC_TYPES.map(t => <option key={t} value={t}>{AC_TYPE_LABELS[t]}</option>)}</select></Field>
-        <Field l="Kapasitas (PK)"><input type="number" value={f.capacity_pk || ""} onChange={e => set("capacity_pk", e.target.value)} style={inp} placeholder="1" step="0.5" /></Field>
+        <Field l="Kapasitas (PK)"><input type="number" value={f.capacity_pk || ""} onChange={e => set("capacity_pk", e.target.value)} style={inp} placeholder="1" min="0" step="any" /></Field>
         <Field l="Refrigerant"><select value={f.refrigerant} onChange={e => set("refrigerant", e.target.value)} style={inp}>{REFRIGERANTS.map(r => <option key={r}>{r}</option>)}</select></Field>
         <Field l="Status"><select value={f.status} onChange={e => set("status", e.target.value)} style={inp}>{STATUSES.map(s => <option key={s}>{s}</option>)}</select></Field>
         <Field l="Grup (view)"><select value={f.unit_group} onChange={e => set("unit_group", e.target.value)} style={inp}>{UNIT_GROUPS.map(g => <option key={g}>{g}</option>)}</select></Field>
@@ -1306,6 +1314,9 @@ function UnitFormModal({ unit, onClose, onSave }) {
           <input type="number" min="0.5" max="24" step="0.5" value={f.service_interval_months} onChange={e => set("service_interval_months", e.target.value === "" ? "" : Number(e.target.value))} style={inp} />
         </Field>
       </div>
+      <Field l="Catatan / model unit"><textarea value={f.notes} onChange={e => set("notes", e.target.value)} style={{ ...inp, minHeight: 60, marginTop: 8 }} /></Field>
+      {isVrvType(f.ac_type) && <div style={{ color: cs.muted, fontSize: 11, marginTop: 8 }}>Indoor dan outdoor dicatat terpisah. Tarif VRV harus diatur khusus; bukan tarif Split Wall.</div>}
+      {error && <div role="alert" style={{ color: cs.red, fontSize: 12, marginTop: 8 }}>{error}</div>}
       <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, cursor: "pointer", color: cs.text, fontSize: 13 }}>
         <input type="checkbox" checked={!!f.high_freq} onChange={e => set("high_freq", e.target.checked)} />
         <span>⚡ Unit intensitas tinggi (cleaning lebih sering, mis. 2-mingguan/bulanan)
@@ -1314,7 +1325,7 @@ function UnitFormModal({ unit, onClose, onSave }) {
       </label>
       <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end" }}>
         <button onClick={onClose} style={btnGhost}>Batal</button>
-        <button onClick={() => onSave(f)} style={btn}>Simpan</button>
+        <button onClick={save} style={btn}>Simpan</button>
       </div>
     </Overlay>
   );
@@ -1356,15 +1367,19 @@ function CsvImportModal({ sel, call, setUnits, showNotif, onClose }) {
       const row = {};
       header.forEach((h, idx) => { row[h] = cols[idx] || ""; });
       if (!row.unit_code) continue;
+      const acType = normalizeMaintenanceAcType(row.ac_type || "split");
+      if (!acType) { setRows(null); setErr(`Baris ${i + 1}: tipe AC "${row.ac_type}" tidak dikenal; tidak diubah otomatis menjadi Split Wall.`); return; }
+      const capacity = capacityPkNumber(row.capacity_pk);
+      if (isVrvType(acType) && capacity == null) { setRows(null); setErr(`Baris ${i + 1}: kapasitas VRV wajib angka positif.`); return; }
       parsed.push({
         unit_code: row.unit_code,
         location: row.location || "",
         brand: row.brand || "",
-        ac_type: AC_TYPES.includes(row.ac_type) ? row.ac_type : "split",
-        capacity_pk: parseFloat(row.capacity_pk) || null,
+        ac_type: acType,
+        capacity_pk: capacity,
         refrigerant: REFRIGERANTS.includes(row.refrigerant) ? row.refrigerant : "R32",
         status: STATUSES.includes(row.status) ? row.status : "active",
-        service_interval_months: parseInt(row.service_interval_months) || 3,
+        service_interval_months: Number(row.service_interval_months) > 0 ? Number(row.service_interval_months) : 3,
         client_id: sel.id,
       });
     }
@@ -1405,7 +1420,7 @@ function CsvImportModal({ sel, call, setUnits, showNotif, onClose }) {
       <div style={{ fontWeight: 700, color: cs.text, fontSize: 16, marginBottom: 10 }}>📥 Import Unit via CSV</div>
       <div style={{ fontSize: 12, color: cs.muted, marginBottom: 10 }}>
         Kolom CSV: <code style={{ color: cs.accent }}>unit_code, location, brand, ac_type, capacity_pk, refrigerant, status, service_interval_months</code><br />
-        ac_type: split (Split Wall) / cassette / standing (Floor Standing) / floor (Split Duct) · status: active/rusak/retired · Kolom opsional boleh kosong
+        ac_type: split / cassette / standing / floor (Split Duct) / vrv_indoor / vrv_outdoor · status: active/rusak/retired · PK desimal memakai titik (7.63)
       </div>
       <input type="file" accept=".csv,text/csv" onChange={onFile} style={{ fontSize: 13, color: cs.text, marginBottom: 8 }} />
       {err && <div style={{ color: cs.red, fontSize: 12, marginBottom: 8 }}>❌ {err}</div>}
@@ -3368,7 +3383,7 @@ function PPMCalendar({ call, showNotif, onBack, onOpenClient }) {
 // ─────────── PRICE BOOK TAB (harga deal khusus per perusahaan) ───────────
 const acLabel = (t) => t ? (AC_TYPE_LABELS[t] || t) : "Semua tipe";
 
-function PriceTab({ sel, call, showNotif, showConfirm, isOwner }) {
+export function PriceTab({ sel, call, showNotif, showConfirm, isOwner }) {
   const [prices, setPrices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState(null);
@@ -3385,11 +3400,14 @@ function PriceTab({ sel, call, showNotif, showConfirm, isOwner }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [sel?.id]);
 
-  const blank = { service_type: "Cuci Rutin", ac_type: "", capacity_pk: "", unit_price: "", notes: "" };
+  const blank = { service_type: "Cuci Rutin", ac_type: "", capacity_pk: "", unit_price: "", included_in_service: false, notes: "" };
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
   const save = async () => {
     if (form.unit_price === "" || form.unit_price == null) { showNotif("❌ Harga wajib"); return; }
+    if (!Number.isFinite(Number(form.unit_price)) || Number(form.unit_price) < 0) { showNotif("❌ Harga tidak valid"); return; }
+    if (Number(form.unit_price) === 0 && !form.included_in_service) { showNotif("❌ Harga Rp0 harus ditandai Termasuk penawaran, bukan dianggap tarif kosong."); return; }
+    if (form.included_in_service && !form.ac_type) { showNotif("❌ Pilih tipe AC untuk layanan yang termasuk penawaran."); return; }
     try {
       await call("save-price", { client_id: sel.id, ...form });
       setForm(null); load(); showNotif("✅ Harga disimpan");
@@ -3409,7 +3427,7 @@ function PriceTab({ sel, call, showNotif, showConfirm, isOwner }) {
         <button onClick={() => setForm({ ...blank })} style={{ ...btn, marginLeft: "auto" }}>+ Harga</button>
       </div>
       <div style={{ color: cs.muted, fontSize: 11, marginBottom: 12 }}>
-        Harga deal per perusahaan. Dipakai mengisi Quotasi & Invoice B2B otomatis. Baris tanpa tipe/kapasitas = berlaku untuk semua (wildcard); baris spesifik diprioritaskan.
+        Harga deal per perusahaan. Tarif cleaning wajib memilih tipe AC; kosongkan PK untuk tarif flat pada tipe tersebut. PK spesifik diprioritaskan. VRV Indoor dan Outdoor memakai tarif terpisah, tidak mengikuti Split Wall.
       </div>
 
       {form && (
@@ -3425,8 +3443,12 @@ function PriceTab({ sel, call, showNotif, showConfirm, isOwner }) {
               {AC_TYPES.map(t => <option key={t} value={t}>{AC_TYPE_LABELS[t]}</option>)}
             </select>
           </Field>
-          <Field l="Kapasitas (PK)"><input type="number" step="0.5" value={form.capacity_pk} onChange={e => setF("capacity_pk", e.target.value)} style={inp} placeholder="kosong = semua" /></Field>
-          <Field l="Harga / unit (Rp) *"><input type="number" value={form.unit_price} onChange={e => setF("unit_price", e.target.value)} style={inp} placeholder="80000" /></Field>
+          <Field l="Kapasitas (PK)"><input type="number" step="any" min="0" value={form.capacity_pk} onChange={e => setF("capacity_pk", e.target.value)} style={inp} placeholder="kosong = semua PK pada tipe ini" /></Field>
+          <Field l="Harga / unit (Rp) *"><input type="number" min="0" value={form.unit_price} disabled={form.included_in_service === true} onChange={e => setF("unit_price", e.target.value)} style={inp} placeholder="80000" /></Field>
+          <label style={{ gridColumn: "1 / -1", display: "flex", gap: 8, alignItems: "center", color: cs.text, fontSize: 12 }}>
+            <input type="checkbox" checked={form.included_in_service === true} onChange={e => setForm(p => ({ ...p, included_in_service: e.target.checked, unit_price: e.target.checked ? 0 : "" }))} />
+            Termasuk penawaran — Rp0, tidak ditagih terpisah
+          </label>
           <div style={{ gridColumn: "1 / -1" }}>
             <Field l="Catatan"><input value={form.notes} onChange={e => setF("notes", e.target.value)} style={inp} placeholder="opsional" /></Field>
           </div>
@@ -3447,9 +3469,9 @@ function PriceTab({ sel, call, showNotif, showConfirm, isOwner }) {
                 <div style={{ color: cs.text, fontWeight: 600, fontSize: 13 }}>{p.service_type}</div>
                 <div style={{ color: cs.muted, fontSize: 11 }}>{acLabel(p.ac_type)}{p.capacity_pk ? " · " + p.capacity_pk + "PK" : ""}{p.notes ? " · " + p.notes : ""}</div>
               </div>
-              <div style={{ color: cs.accent, fontWeight: 700, fontSize: 13 }}>{fmtRp(p.unit_price)}</div>
+              <div style={{ color: cs.accent, fontWeight: 700, fontSize: 13 }}>{p.included_in_service ? "Termasuk penawaran · Rp0" : fmtRp(p.unit_price)}</div>
               <div style={{ display: "flex", gap: 4 }}>
-                <button onClick={() => setForm({ id: p.id, service_type: p.service_type, ac_type: p.ac_type || "", capacity_pk: p.capacity_pk ?? "", unit_price: p.unit_price, notes: p.notes || "" })} style={miniBtn} title="Edit">✏️</button>
+                <button onClick={() => setForm({ id: p.id, service_type: p.service_type, ac_type: p.ac_type || "", capacity_pk: p.capacity_pk ?? "", unit_price: p.unit_price, included_in_service: p.included_in_service === true, notes: p.notes || "" })} style={miniBtn} title="Edit">✏️</button>
                 {isOwner && <button onClick={() => del(p)} style={{ ...miniBtn, color: cs.red }}>🗑</button>}
               </div>
             </div>
@@ -3599,7 +3621,7 @@ function unitMatchScore(rep, reg) {
   if (rpk && gpk && rpk === gpk) s += 20;
   if (rep.merk && reg.brand && rep.merk.toLowerCase() === reg.brand.toLowerCase()) s += 15;
   const tl = (rep.tipe || "").toLowerCase();
-  const acm = { cassette: "cassette", split: "split", standing: "floor standing", ducted: "split duct" };
+  const acm = { cassette: "cassette", split: "split", standing: "floor standing", ducted: "split duct", floor: "split duct", vrv_indoor: "vrv indoor", vrv_outdoor: "vrv outdoor" };
   const want = acm[reg.ac_type];
   if (want && tl.includes(want)) s += 10;
   return s;

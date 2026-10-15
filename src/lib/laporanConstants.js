@@ -1,5 +1,6 @@
 // Constants & utility functions untuk LaporanTeknisiModal dan submitLaporan
 // Exported untuk dipakai oleh App.jsx (openLaporanModal, submitLaporan) dan LaporanTeknisiModal.jsx
+import { MAINT_REPORT_BASE, normalizeMaintenanceAcType, isVrvType, capacityPkNumber } from "./maintenanceAcTypes.js";
 
 export const KONDISI_SBL = [
   "AC Normal",
@@ -148,29 +149,28 @@ export const TIPE_AC_OPT = [
   "AC Floor Standing 5PK",
   "AC Split Duct 2PK", "AC Split Duct 2.5PK", "AC Split Duct 3PK",
   "AC Split Duct 3.5PK", "AC Split Duct 4PK", "AC Split Duct 5PK", "AC Split Duct 6PK",
+  // PK VRV disimpan terpisah: kapasitas riil (mis. 7.63 / 34.20), bukan bracket Split.
+  "AC VRV Indoor", "AC VRV Outdoor",
 ];
 
 export const SATUAN_OPT = ["pcs", "kg", "liter", "meter", "set", "titik", "roll"];
 
 // Map satu unit maintenance → bentuk "hist" untuk mkUnit
 export const maintUnitToHist = (mu) => {
-  const AC_TYPE_BASE = {
-    cassette: "AC Cassette", split: "AC Split",
-    ducted: "AC Split Duct", standing: "AC Floor Standing",
-  };
-  const base = AC_TYPE_BASE[mu.ac_type] || "AC Split";
+  const base = MAINT_REPORT_BASE[normalizeMaintenanceAcType(mu.ac_type)];
+  const vrv = isVrvType(mu.ac_type);
   // Kapasitas datang sebagai TEKS dari PostgREST dgn skala apa adanya ("2", "2.0",
   // "3.00"). Nol di belakang harus dinormalkan, kalau tidak "AC Split 2.0PK" tidak
   // cocok daftar TIPE_AC_OPT → tipe kosong → teknisi dipaksa koreksi manual padahal
   // datanya sudah benar (verifikasi prod 20 Jul 2026: 15 unit gagal HANYA karena ini).
-  const pkRaw = mu.capacity_pk != null && String(mu.capacity_pk).trim() !== "" ? String(mu.capacity_pk).trim() : "1";
+  const pkRaw = vrv ? String(capacityPkNumber(mu.capacity_pk) ?? "") : (mu.capacity_pk != null && String(mu.capacity_pk).trim() !== "" ? String(mu.capacity_pk).trim().replace(",", ".") : "1");
   const pkNum = pkRaw.includes(".") ? pkRaw.replace(/0+$/, "").replace(/\.$/, "") : pkRaw;
-  const candidate = `${base} ${pkNum}PK`;
+  const candidate = vrv ? base : (base ? `${base} ${pkNum}PK` : "");
   return {
     label: `${mu.unit_code} — ${mu.location || ""}`.replace(/— $/, "").trim(),
     tipe: TIPE_AC_OPT.includes(candidate) ? candidate : "",
     merk: mu.brand || "",
-    pk: `${pkNum}PK`,
+    pk: pkNum ? `${pkNum}PK` : "",
     model: mu.serial_no || "",
     from_history_job_id: null,
     maint_unit_id: mu.id,
@@ -196,7 +196,7 @@ export const mkUnit = (no, hist = null) => {
       label: hist.label || "",
       tipe: TIPE_AC_OPT.includes(hist.tipe) ? hist.tipe : "",
       merk: hist.merk || "",
-      pk: hist.pk || "1PK",
+      pk: hist.pk || (isVrvType(hist.tipe) ? "" : "1PK"),
       model: hist.model || "",
       kondisi_sebelum: [],
       kondisi_setelah: [],

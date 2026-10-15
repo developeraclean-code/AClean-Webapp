@@ -1,7 +1,8 @@
 import React from "react";
 import { cs } from "../theme/cs.js";
-import { clientCleaningUnitPrice } from "../lib/maintClientPrice.js";
+import { clientCleaningUnitRate } from "../lib/maintClientPrice.js";
 import { isHarianManagedItem } from "../lib/materialRecon.js";
+import { reportHasVrv, unpricedVrvUnits, vrvInvoiceUnitLabel } from "../lib/vrvBilling.js";
 
 // Detail/Edit Laporan modal — diekstrak dari App.jsx (Tahap 2 refactor, lazy-loaded).
 // Semua dependensi level-komponen dilewatkan via satu prop `ctx` (lihat App.jsx).
@@ -553,6 +554,28 @@ export default function LaporanDetailModal({ ctx }) {
                     ];
 
                 const isSurveyEdit = newService === "Survey";
+                const existInv = invoicesData.find(i => i.job_id === selectedLaporan.job_id);
+                const invoiceLocked = !!existInv && (existInv.status !== "PENDING_APPROVAL" || existInv.sent === true);
+                let dealPricesEdit = null;
+                // Harga/guard diperiksa SEBELUM menyimpan laporan, foto, atau invoice.
+                if (existInv && !invoiceLocked) {
+                  const editOrder = ordersData.find(o => o.id === selectedLaporan.job_id);
+                  if (editOrder?.maintenance_client_id && _apiFetch) {
+                    try {
+                      const rp = await _apiFetch("/api/maintenance", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "list-prices", client_id: editOrder.maintenance_client_id }) });
+                      const jp = rp.ok ? await rp.json().catch(() => ({})) : {};
+                      if (Array.isArray(jp.prices)) dealPricesEdit = jp.prices;
+                    } catch (_) { /* VRV tetap diblokir di bawah bila tidak ada tarif eksplisit. */ }
+                  }
+                  if (editOrder?.maintenance_client_id && reportHasVrv(editLaporanForm.editUnits) && ["Cleaning", "Maintenance"].includes(newService) && !Array.isArray(dealPricesEdit)) {
+                    showNotif("❌ Harga khusus VRV gagal dimuat. Perubahan belum disimpan; coba lagi setelah koneksi pulih.");
+                    return;
+                  }
+                  if (unpricedVrvUnits({ service: newService, units: editLaporanForm.editUnits, clientPrices: dealPricesEdit, priceListData }).length) {
+                    showNotif("❌ Perubahan belum disimpan: kapasitas/tarif VRV belum valid. Atur Harga Khusus Indoor/Outdoor terlebih dahulu agar invoice draft tidak salah hitung.");
+                    return;
+                  }
+                }
                 const updatePayload = { status: newStatus, service: newService, catatan_global: editLaporanForm.catatan_global || "", rekomendasi: editLaporanForm.rekomendasi || "", units_json: JSON.stringify(editLaporanForm.editUnits || []), total_units: (editLaporanForm.editUnits || []).length || selectedLaporan.total_units || 1, materials_json: JSON.stringify(combinedMats), edit_log: JSON.stringify(allLogs), ...(isSurveyEdit && { hasil_survey: editLaporanForm.hasil_survey || "", catatan_rekomendasi: editLaporanForm.catatan_rekomendasi || "" }) };
 
                 // ✨ NEW: Handle photo re-upload option
@@ -614,25 +637,12 @@ export default function LaporanDetailModal({ ctx }) {
                 // Dideklarasikan DI LUAR blok `if (!elErr)` karena dipakai lagi di notifikasi
                 // penutup di bawah — sempat di dalam blok → ReferenceError di setiap simpan,
                 // handler putus sebelum modal ditutup (insiden 22 Agu 2026).
-                const existInv = invoicesData.find(i => i.job_id === selectedLaporan.job_id);
-                const invoiceLocked = !!existInv && (existInv.status !== "PENDING_APPROVAL" || existInv.sent === true);
-
                 if (!elErr) {
                   if (invoiceLocked) {
                     addAgentLog("INVOICE_EDIT_SKIP_LOCKED", `Invoice ${existInv.id} (${existInv.status}${existInv.sent ? ", terkirim" : ""}) TIDAK diubah dari edit laporan — sudah final. Editor: ${currentUser?.name}`, "INFO");
                   }
                   if (existInv && !invoiceLocked) {
                     const ord = ordersData.find(o => o.id === selectedLaporan.job_id);
-                    // Harga deal per-klien maintenance — paritas dgn builder verify LaporanTimView.
-                    // Match STRICT tipe+PK; gagal fetch / tanpa baris cocok → harga global.
-                    let dealPricesEdit = null;
-                    if (ord?.maintenance_client_id && _apiFetch) {
-                      try {
-                        const rp = await _apiFetch("/api/maintenance", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "list-prices", client_id: ord.maintenance_client_id }) });
-                        const jp = rp.ok ? await rp.json().catch(() => ({})) : {};
-                        if (Array.isArray(jp.prices) && jp.prices.length) dealPricesEdit = jp.prices;
-                      } catch (_) { /* fallback harga global */ }
-                    }
                     const vMats = combinedMats.filter(m => m.nama && parseFloat(m.jumlah || 0) > 0);
                     const vMDetail = vMats.map(m => {
                       const nama2 = (m.nama || "").toLowerCase();
@@ -669,16 +679,18 @@ export default function LaporanDetailModal({ ctx }) {
                       if (unitsWithTipe.length > 0) {
                         unitsWithTipe.forEach((u) => {
                           // Harga deal klien maintenance menang bila match STRICT tipe+PK
-                          const dealPrice = dealPricesEdit ? clientCleaningUnitPrice(dealPricesEdit, u) : null;
+                          const dealRate = clientCleaningUnitRate(dealPricesEdit, u);
+                          const dealPrice = dealRate?.unit_price ?? null;
                           const svcBesarOptEdit = { serviceBesar: isServiceBesarPekerjaan(u.pekerjaan) };
                           const hargaUnit = dealPrice != null ? dealPrice : hargaPerUnitFromTipe(selectedLaporan.service, u.tipe, priceListData, svcBesarOptEdit);
-                          if (hargaUnit > 0) {
+                          if (hargaUnit > 0 || dealRate?.included_in_service === true) {
                             const unitLabel = u.label || u.merk || ("Unit " + (u.unit_no || "?"));
                             const bracketLabel = getBracketKey(selectedLaporan.service, u.tipe, svcBesarOptEdit) || u.tipe;
                             vMDetail.unshift({
-                              nama: selectedLaporan.service + " " + bracketLabel + " (" + unitLabel + ")" + (dealPrice != null ? " — harga kontrak" : ""),
+                              nama: selectedLaporan.service + " " + vrvInvoiceUnitLabel(u, bracketLabel) + " (" + unitLabel + ")" + (dealRate?.included_in_service ? " — termasuk penawaran (tidak ditagih terpisah)" : dealPrice != null ? " — harga kontrak" : ""),
                               jumlah: 1, satuan: "unit",
-                              harga_satuan: hargaUnit, subtotal: hargaUnit, keterangan: "jasa"
+                              harga_satuan: hargaUnit, subtotal: hargaUnit, keterangan: "jasa", unit_no: u.unit_no ?? null,
+                              ...(dealRate?.included_in_service && { included_in_service: true }),
                             });
                           }
                         });
@@ -692,7 +704,8 @@ export default function LaporanDetailModal({ ctx }) {
                     }
 
                     // Install: labor = 0, semua item (termasuk jasa pasang) masuk ke material
-                    const laborV = isEditInstall ? 0 : (vMDetail.filter(m => m.keterangan === "jasa").reduce((s, m) => s + m.subtotal, 0) || hitungLabor(selectedLaporan.service, ord?.type, editLaporanForm.editUnits?.length || selectedLaporan.total_units || 1));
+                    const lineLaborV = vMDetail.filter(m => m.keterangan === "jasa").reduce((s, m) => s + m.subtotal, 0);
+                    const laborV = isEditInstall ? 0 : (reportHasVrv(editLaporanForm.editUnits) ? lineLaborV : (lineLaborV || hitungLabor(selectedLaporan.service, ord?.type, editLaporanForm.editUnits?.length || selectedLaporan.total_units || 1)));
                     const matV = isEditInstall
                       ? vMDetail.reduce((s, m) => s + m.subtotal, 0)
                       : vMDetail.filter(m => m.keterangan !== "jasa").reduce((s, m) => s + m.subtotal, 0);

@@ -1,7 +1,20 @@
 # AClean — Modul Maintenance B2B
 
 Dokumen ini berisi rekap fitur, marketing copy, dan cara kerja teknis modul Maintenance korporat AClean.
-Terakhir diperbarui: 2026-06-04 · Commit: c0aaf11
+Terakhir diperbarui: 2026-10-15 · dukungan VRV Indoor/Outdoor dan penanda tarif termasuk penawaran (migrasi 207).
+
+### VRV / VRF dan harga penawaran
+
+- Registry dan Harga Khusus mendukung `vrv_indoor` serta `vrv_outdoor`; keduanya bukan Split Wall.
+- Kapasitas desimal bebas (contoh 7,63 PK dan 34,20 PK) dipertahankan di `capacity_pk`/`pk`, bukan dibulatkan ke bracket AC reguler.
+- Teknisi memilih aset yang dikerjakan dari registry. Indoor/outdoor adalah aset fisik; jumlah aset tidak otomatis menentukan jumlah paket tagihan. Maksimal 30 aset per laporan, bagi ke beberapa pekerjaan/tim bila perlu.
+- Laporan yang mengandung VRV tersimpan dahulu tanpa auto-generate invoice; Owner/Admin memverifikasi setelah tarif khusus tipe/PK tersedia. Tarif flat per **tipe** boleh memakai PK kosong. Tidak ada fallback tarif Split atau default layanan untuk VRV.
+- Verifikasi Cleaning/Maintenance dan regenerasi invoice draft ditahan bila kapasitas atau tarif VRV belum valid. Gagal memuat price book juga menahan proses. Komplain/repair/install tetap mengikuti pemeriksaan item aktual oleh admin; tidak memakai bracket pemasangan Split untuk VRV.
+- Tarif Rp0 hanya sah bila `maintenance_client_prices.included_in_service=true` dan tipe AC ditentukan. Nol lama tanpa penanda tetap dianggap belum diatur. Baris Rp0 yang sah tetap tampil sebagai “termasuk penawaran/tidak ditagih terpisah”, bukan fallback tarif reguler. Laporan VRV tidak mendapat tambahan transport otomatis.
+- Catatan/model, serial dan tahun pemasangan lama dipertahankan saat mengedit unit. Model tidak dimasukkan ke kolom serial pabrik secara asumsi.
+- Tipe/PK memakai kolom lama (`ac_type` text, `capacity_pk` numeric). Migrasi 207 menambah `included_in_service` dengan default false dan constraint bahwa flag true wajib harga nol serta tipe terisi. Tarif dan RLS lama tidak diubah.
+- Preview tanpa koneksi Supabase/WA: `node scripts/preview-maintenance-vrv.mjs` → `http://127.0.0.1:4176`.
+- Onboarding Dupoin memakai dataset di `scripts/data/dupoin-maintenance-20261015.mjs`: 52 aset (40 indoor + 12 outdoor), 7 tarif PK spesifik. Sesuai penawaran `832/09/10/2026/INV`, 24 indoor × Rp450.000 + 16 indoor × Rp300.000 + 12 outdoor Rp0 = **Rp15.600.000**. Ini estimasi pekerjaan lengkap, bukan kontrak tahunan/uang masuk/invoice baru. Import produksi harus atomik, idempotent, memakai customer yang sudah ada, dan memverifikasi bahwa order/invoice/pembayaran lain tidak berubah. Tanggal pekerjaan/servis dan serial pabrik tidak diasumsikan; kode aset internal perlu verifikasi lapangan.
 
 ---
 
@@ -74,8 +87,8 @@ Setiap unit memiliki data:
 | Kode Unit | AC-LT2-01 |
 | Lokasi | Lantai 2 — Ruang Rapat |
 | Brand | Daikin / Gree / LG |
-| Jenis | Split / Cassette / Standing / Floor |
-| Kapasitas | 1 PK, 1.5 PK, 2 PK, dst |
+| Jenis | Split / Cassette / Standing / Floor / VRV Indoor / VRV Outdoor |
+| Kapasitas | 1 PK, 1.5 PK, 7.63 PK, 34.20 PK, dst |
 | Refrigerant | R32 / R410A / R22 |
 | Status | Aktif / Rusak / Retired |
 | Interval PM | 1–24 bulan (default 3 bulan) |
@@ -99,7 +112,7 @@ AC-01, Lantai 1 Lobby, Daikin, split, 1, R32, active, 3
 AC-02, Lantai 2 Ruang Rapat, Gree, cassette, 1.5, R410A, active, 3
 ```
 
-Nilai `ac_type` yang valid: `split` / `cassette` / `standing` / `floor`
+Nilai `ac_type` yang valid: `split` / `cassette` / `standing` / `floor` / `vrv_indoor` / `vrv_outdoor`. Alias lama `ducted` dinormalisasi menjadi `floor`. Tipe tak dikenal ditolak, bukan diam-diam menjadi Split.
 Nilai `status` yang valid: `active` / `rusak` / `retired`
 
 ---

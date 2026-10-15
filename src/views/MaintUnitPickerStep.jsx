@@ -14,15 +14,11 @@ import { mkUnit, maintUnitToHist, TIPE_AC_OPT, remapUnitNo, remapUnitNoList } fr
 import { unitHealth } from "../lib/maintenanceHealth.js";
 import { daysUntil } from "../lib/dateTime.js";
 import { similarity } from "../lib/stringSimilarity.js";
+import { MAINT_AC_TYPES, MAINT_AC_TYPE_LABELS, maintenanceAcLabel, isVrvType, capacityPkNumber } from "../lib/maintenanceAcTypes.js";
 
 const MAX_UNITS = 30; // selaras cap existing (openLaporanModal & tombol tambah reguler)
 
-const AC_TYPE_OPT = [
-  { v: "split", l: "Split Wall" },
-  { v: "cassette", l: "Cassette" },
-  { v: "standing", l: "Floor Standing" },
-  { v: "ducted", l: "Split Duct" },
-];
+const AC_TYPE_OPT = MAINT_AC_TYPES.map(v => ({ v, l: MAINT_AC_TYPE_LABELS[v] }));
 
 // Syarat lolos ke Step 2 untuk jalur maintenance: Tipe AC + Nama ruangan.
 // SENGAJA BEDA dari Step 1 reguler yang juga mewajibkan Merk. Alasannya (verifikasi
@@ -34,6 +30,7 @@ const AC_TYPE_OPT = [
 export function unitKurangLengkap(u) {
   const kurang = [];
   if (!TIPE_AC_OPT.includes(u?.tipe)) kurang.push("Tipe AC");
+  if (isVrvType(u?.tipe) && capacityPkNumber(u?.pk) == null) kurang.push("Kapasitas VRV (PK)");
   if (!u?.label || !u.label.trim()) kurang.push("Nama ruangan");
   return kurang;
 }
@@ -97,7 +94,7 @@ export default function MaintUnitPickerStep({
     if (!s) return maintUnitPool;
     return maintUnitPool.filter(mu =>
       pickedIds.has(mu.id) ||
-      `${mu.unit_code || ""} ${mu.location || ""} ${mu.brand || ""}`.toLowerCase().includes(s));
+      `${mu.unit_code || ""} ${mu.location || ""} ${mu.brand || ""} ${maintenanceAcLabel(mu.ac_type)} ${mu.notes || ""}`.toLowerCase().includes(s));
   }, [maintUnitPool, q, pickedIds]);
 
   // Unit di laporan yang TIDAK berasal dari registry (mis. sisa slot kosong bawaan
@@ -144,6 +141,9 @@ export default function MaintUnitPickerStep({
     }
     if (laporanUnits.length >= MAX_UNITS) {
       showNotif?.(`⚠️ Maksimal ${MAX_UNITS} unit per laporan.`); return;
+    }
+    if (isVrvType(nf.ac_type) && capacityPkNumber(nf.capacity_pk) == null) {
+      showNotif?.("❌ Kapasitas VRV wajib angka positif sesuai label unit."); return;
     }
     setAddBusy(true);
     try {
@@ -251,7 +251,7 @@ export default function MaintUnitPickerStep({
                 </div>
                 <div style={{ fontSize: 11, color: cs.muted, marginTop: 4 }}>
                   {mu.location && <div>📍 {mu.location}</div>}
-                  <div>{mu.brand || "—"}{mu.capacity_pk ? ` ${mu.capacity_pk}PK` : ""}{mu.ac_type ? ` · ${mu.ac_type}` : ""}</div>
+                  <div>{mu.brand || "—"}{mu.capacity_pk ? ` ${mu.capacity_pk}PK` : ""}{mu.ac_type ? ` · ${maintenanceAcLabel(mu.ac_type)}` : ""}</div>
                 </div>
                 {picked && kurang.length > 0 && (
                   <div style={{ marginTop: 6, background: cs.red + "15", border: "1px solid " + cs.red + "44", borderRadius: 6, padding: "4px 8px", fontSize: 10, color: cs.red, fontWeight: 700 }}>
@@ -285,12 +285,15 @@ export default function MaintUnitPickerStep({
                       onChange={e => {
                         const t = e.target.value;
                         const pk = t.match(/(\d[\d.,]*PK)/i);
-                        setLaporanUnits(prev => prev.map((x, i) => i === idx ? { ...x, tipe: t, pk: pk ? pk[1] : x.pk } : x));
+                        setLaporanUnits(prev => prev.map((x, i) => i === idx ? { ...x, tipe: t, pk: pk ? pk[1] : (isVrvType(t) && !isVrvType(x.tipe) ? "" : x.pk) } : x));
                       }}
                       style={{ ...inp, fontSize: 11, padding: "6px 8px" }}>
                       <option value="">-- Tipe AC --</option>
                       {TIPE_AC_OPT.map(t => <option key={t} value={t}>{t}</option>)}
                     </select>
+                    {isVrvType(laporanUnits[idx]?.tipe) && <input aria-label="Kapasitas VRV (PK)" type="number" min="0" step="any"
+                      value={capacityPkNumber(laporanUnits[idx]?.pk) ?? ""} placeholder="Kapasitas VRV (PK), mis. 7.63"
+                      onChange={e => setLaporanUnits(prev => prev.map((x, i) => i === idx ? { ...x, pk: e.target.value ? `${e.target.value}PK` : "" } : x))} style={inp} />}
                     <div style={{ fontSize: 9, color: cs.muted }}>
                       Koreksi hanya untuk laporan ini. Perubahan permanen registry lewat Admin.
                     </div>
@@ -355,7 +358,7 @@ export default function MaintUnitPickerStep({
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
             <input value={nf.brand} onChange={e => setNf(p => ({ ...p, brand: e.target.value }))}
               placeholder="Merk (mis. Daikin)" style={inp} />
-            <input type="number" step="0.25" value={nf.capacity_pk}
+            <input type="number" step="any" min="0" value={nf.capacity_pk}
               onChange={e => setNf(p => ({ ...p, capacity_pk: e.target.value }))}
               placeholder="PK (mis. 1.5)" style={inp} />
           </div>

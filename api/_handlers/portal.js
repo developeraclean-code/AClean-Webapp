@@ -703,13 +703,18 @@ export async function maintenance(req, res) {
           if (!body.client_id) return res.status(400).json({ error: "client_id wajib" });
           if (!body.service_type) return res.status(400).json({ error: "service_type wajib" });
           if (body.unit_price == null || body.unit_price === "") return res.status(400).json({ error: "unit_price wajib" });
+          const price = Number(body.unit_price);
+          if (!Number.isFinite(price) || price < 0) return res.status(400).json({ error: "Harga wajib angka valid, tidak boleh negatif" });
+          if (body.capacity_pk != null && body.capacity_pk !== "" && (!Number.isFinite(Number(body.capacity_pk)) || Number(body.capacity_pk) <= 0)) return res.status(400).json({ error: "Kapasitas PK wajib angka positif atau dikosongkan untuk tarif flat" });
+          if (body.included_in_service === true && (price !== 0 || !String(body.ac_type || "").trim())) return res.status(400).json({ error: "Termasuk penawaran wajib memilih tipe AC dan harga Rp0" });
           const payload = {
             client_id: body.client_id,
             service_type: String(body.service_type).trim(),
             ac_type: body.ac_type ? String(body.ac_type).trim() : null,
             capacity_pk: body.capacity_pk != null && body.capacity_pk !== "" ? Number(body.capacity_pk) : null,
-            unit_price: Math.round(Number(body.unit_price)),
+            unit_price: Math.round(price),
             notes: body.notes || null,
+            ...(body.included_in_service !== undefined || !body.id ? { included_in_service: body.included_in_service === true } : {}),
           };
           let r;
           if (body.id) {

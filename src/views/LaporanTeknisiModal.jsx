@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { cs } from "../theme/cs.js";
 import { getBracketKey, hargaPerUnitFromTipe } from "../lib/pricing.js";
+import { isVrvType, capacityPkNumber } from "../lib/maintenanceAcTypes.js";
 import { categoryFromCatalog } from "../lib/invoicing.js";
 import {
   KONDISI_SBL, KONDISI_SDH, PEKERJAAN_OPT, MATERIAL_PRESET,
@@ -465,7 +466,7 @@ export default function LaporanTeknisiModal({
             {isFieldStaff && laporanModal.service !== "Survey" && (
               <button onClick={() => {
                 setQuickMode(true);
-                const identityReady = laporanUnits.length > 0 && laporanUnits.every(u => TIPE_AC_OPT.includes(u.tipe) && u.label?.trim() && u.merk?.trim());
+                const identityReady = laporanUnits.length > 0 && laporanUnits.every(u => TIPE_AC_OPT.includes(u.tipe) && u.label?.trim() && u.merk?.trim() && (!isVrvType(u.tipe) || capacityPkNumber(u.pk) != null));
                 if (identityReady) {
                   setLaporanStep(isInstallJob ? 3 : 2);
                   showNotif("⚡ Data job & unit sudah terisi. Konfirmasi kondisi aktual lalu submit.");
@@ -738,7 +739,7 @@ export default function LaporanTeknisiModal({
                 </datalist>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(255px,1fr))", gap: 10 }}>
                   {laporanUnits.map((u, idx) => {
-                    const lengkap = TIPE_AC_OPT.includes(u.tipe) && u.label && u.label.trim() && u.merk && u.merk.trim();
+                    const lengkap = TIPE_AC_OPT.includes(u.tipe) && u.label && u.label.trim() && u.merk && u.merk.trim() && (!isVrvType(u.tipe) || capacityPkNumber(u.pk) != null);
                     return (
                     <div key={idx} style={{ background: lengkap ? cs.green + "0c" : cs.surface, borderRadius: 10, border: "2px solid " + (lengkap ? cs.green + "55" : cs.border), padding: 11, display: "grid", gap: 8, alignContent: "start" }}>
                       {/* Header kartu: nomor unit, status lengkap, badge maintenance, tombol hapus */}
@@ -778,12 +779,18 @@ export default function LaporanTeknisiModal({
 
                       <div style={{ display: "grid", gap: 3 }}>
                         <span style={{ fontSize: 10, color: cs.muted, fontWeight: 600 }}>Tipe AC *</span>
-                        <select value={u.tipe} onChange={e => { const newTipe = e.target.value; const pkMatch = newTipe.match(/(\d[\d.,]*PK)/i); updateUnit(idx, { ...u, tipe: newTipe, pk: pkMatch ? pkMatch[1] : u.pk }); }}
+                        <select value={u.tipe} onChange={e => { const newTipe = e.target.value; const pkMatch = newTipe.match(/(\d[\d.,]*PK)/i); updateUnit(idx, { ...u, tipe: newTipe, pk: pkMatch ? pkMatch[1] : (isVrvType(newTipe) && !isVrvType(u.tipe) ? "" : u.pk) }); }}
                           style={{ background: cs.card, border: "1px solid " + (TIPE_AC_OPT.includes(u.tipe) ? cs.green + "44" : "#ef444430"), borderRadius: 6, padding: "8px 10px", color: TIPE_AC_OPT.includes(u.tipe) ? cs.text : cs.muted, fontSize: 11, outline: "none", fontWeight: TIPE_AC_OPT.includes(u.tipe) ? 600 : 400, boxSizing: "border-box", width: "100%" }}>
                           <option value="">-- Pilih Tipe AC --</option>
                           {TIPE_AC_OPT.map(t => <option key={t}>{t}</option>)}
                         </select>
                       </div>
+
+                      {isVrvType(u.tipe) && <label style={{ display: "grid", gap: 3, fontSize: 11, color: cs.muted }}>Kapasitas VRV (PK) *
+                        <input aria-label="Kapasitas VRV (PK)" type="number" step="any" min="0" value={capacityPkNumber(u.pk) ?? ""}
+                          onChange={e => updateUnit(idx, { ...u, pk: e.target.value ? `${e.target.value}PK` : "" })}
+                          placeholder="mis. 7.63" style={{ background: cs.card, color: cs.text, border: "1px solid " + cs.border, padding: 8, borderRadius: 6 }} />
+                      </label>}
 
                       <div style={{ display: "grid", gap: 3 }}>
                         <span style={{ fontSize: 10, color: cs.muted, fontWeight: 600 }}>Merk AC *</span>
@@ -837,20 +844,21 @@ export default function LaporanTeknisiModal({
               {(() => {
                 const incomplete = laporanUnits.filter(u =>
                   !TIPE_AC_OPT.includes(u.tipe) ||
+                  (isVrvType(u.tipe) && capacityPkNumber(u.pk) == null) ||
                   !u.label || !u.label.trim() ||
                   !u.merk || !u.merk.trim()
                 );
                 return incomplete.length > 0 ? (
                   <div style={{ background: "#ef444410", border: "1px solid #ef444430", borderRadius: 9, padding: "10px 13px", fontSize: 11, color: "#ef4444", fontWeight: 600 }}>
-                    ❌ Lengkapi dulu: {incomplete.map(u => `Unit ${u.unit_no}`).join(", ")} — Pastikan Tipe AC dipilih dari daftar, Nama Ruangan & Merk terisi!
+                    ❌ Lengkapi dulu: {incomplete.map(u => `Unit ${u.unit_no}`).join(", ")} — Pastikan Tipe AC, Nama Ruangan & Merk terisi; kapasitas VRV wajib angka positif!
                   </div>
                 ) : null;
               })()}
 
               <button onClick={() => {
-                const incomplete = laporanUnits.filter(u => !TIPE_AC_OPT.includes(u.tipe) || !u.label || !u.label.trim() || !u.merk || !u.merk.trim());
+                const incomplete = laporanUnits.filter(u => !TIPE_AC_OPT.includes(u.tipe) || !u.label || !u.label.trim() || !u.merk || !u.merk.trim() || (isVrvType(u.tipe) && capacityPkNumber(u.pk) == null));
                 if (incomplete.length > 0) {
-                  showNotif(`⚠️ Lengkapi: ${incomplete.map(u => `Unit ${u.unit_no}`).join(", ")} — Tipe AC harus dipilih dari daftar, Nama Ruangan & Merk wajib diisi!`);
+                  showNotif(`⚠️ Lengkapi: ${incomplete.map(u => `Unit ${u.unit_no}`).join(", ")} — Tipe AC, Nama Ruangan & Merk wajib diisi; periksa juga kapasitas VRV.`);
                   return;
                 }
                 setLaporanStep(laporanModal?.service === "Install" ? 3 : 2);
