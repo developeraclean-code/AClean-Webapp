@@ -1,10 +1,11 @@
 import React, { useState, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import MaintUnitPickerStep from "../../src/views/MaintUnitPickerStep.jsx";
-import { UnitFormModal, PriceTab } from "../../src/views/MaintenanceView.jsx";
+import { UnitFormModal, PriceTab, InvoiceTab } from "../../src/views/MaintenanceView.jsx";
 import { mkUnit, maintUnitToHist } from "../../src/lib/laporanConstants.js";
 import { clientCleaningUnitPrice } from "../../src/lib/maintClientPrice.js";
 import { unpricedVrvUnits } from "../../src/lib/vrvBilling.js";
+import { buildMaintenanceInvoiceQuote } from "../../src/lib/maintenanceInvoice.js";
 import { dupoinPreviewUnits, dupoinPreviewPrices } from "./dupoin-fixture.js";
 
 const client = { id: "preview-dupoin", name: "PT. DUPOIN FUTURES INDONESIA" };
@@ -18,6 +19,11 @@ function Demo() {
   const pricesRef = useRef(dupoinPreviewPrices);
   const [page, setPage] = useState("report");
   const [message, setMessage] = useState("");
+  const [b2bLogs, setB2bLogs] = useState(() => [
+    ...dupoinPreviewUnits.map((u, i) => ({ id: `preview-log-${i}`, unit_id: u.id, client_id: client.id, service_type: "Cuci Rutin", service_date: i < 26 ? "2026-09-30" : "2026-10-15", cost: null, invoiced: false })),
+    { id: "preview-already-billed", unit_id: dupoinPreviewUnits[0].id, client_id: client.id, service_type: "Cuci Rutin", service_date: "2026-09-01", cost: 450000, invoiced: true, invoice_id: "INV-DEMO-EXISTING" },
+    { id: "preview-order-based", unit_id: dupoinPreviewUnits[0].id, client_id: client.id, service_type: "Cuci Rutin", service_date: "2026-10-15", cost: null, invoiced: false, order_id: "JOB-DEMO-REPORT" },
+  ]);
   const missing = unpricedVrvUnits({ service: "Cleaning", units: picked, clientPrices: prices });
   const total = picked.reduce((sum, u) => sum + (clientCleaningUnitPrice(prices, u) || 0), 0);
   const fakeApi = async () => { throw new Error("Preview tidak mengakses API. Tambah/edit unit lewat tombol Edit contoh unit."); };
@@ -32,6 +38,20 @@ function Demo() {
     if (action === "delete-price") { pricesRef.current = pricesRef.current.filter(p => p.id !== data.id); setPrices(pricesRef.current); return { ok: true }; }
     throw new Error("Aksi tidak tersedia pada preview");
   };
+  const invoiceCall = async (action, data) => {
+    if (action === "list-prices") return { prices: pricesRef.current };
+    if (action === "list-invoices") return { invoices: [] };
+    if (action === "list-logs") return { logs: b2bLogs };
+    if (["preview-invoice", "create-invoice"].includes(action)) {
+      const logs = b2bLogs.filter(l => data.log_ids.includes(l.id));
+      if (logs.some(l => l.invoiced)) throw new Error("Log sudah ditagih; tidak bisa ditagih ulang");
+      const q = buildMaintenanceInvoiceQuote({ clientId: client.id, logs, units: registry, clientPrices: pricesRef.current, discount: data.discount });
+      if (action === "preview-invoice") return q;
+      if (data.expected_quote !== q.quote_key) throw new Error("Harga berubah; preview kembali");
+      return { total: q.total, invoice: { id: "INV-20261015-LOKALDEMO", status: "PENDING_APPROVAL", total: q.total, materials_detail: JSON.stringify(q.line_items) } };
+    }
+    throw new Error("Aksi tidak tersedia pada preview B2B");
+  };
   return <main>
     <header><h1>Maintenance VRV · Preview lokal</h1><p>Data contoh Dupoin · 52 aset (40 indoor + 12 outdoor) · lantai 27 · zona A–H</p></header>
     <div className="notice">Tidak terhubung ke Supabase/WA dan tidak menyimpan ke produksi. Tarif mengikuti penawaran 832/09/10/2026/INV: 24 indoor × Rp450.000 + 16 indoor × Rp300.000 + 12 outdoor Rp0 = Rp15.600.000. Outdoor tidak ditagih terpisah. Interval PM belum ditentukan.</div>
@@ -39,12 +59,13 @@ function Demo() {
       <button style={button} onClick={() => setPage("report")}>1. Pilih unit laporan</button>
       <button style={button} onClick={() => setPage("prices")}>2. Atur tarif simulasi</button>
       <button style={button} onClick={() => setEdit(registry[0])}>3. Edit contoh unit</button>
+      <button style={button} onClick={() => setPage("invoice")}>4. Invoice B2B simulasi</button>
       <button style={button} onClick={() => { pricesRef.current = dupoinPreviewPrices; setPrices(dupoinPreviewPrices); setMessage("Tarif penawaran Dupoin dimuat ulang di preview saja."); }}>Muat tarif penawaran</button>
       <button style={button} onClick={() => { pricesRef.current = []; setPrices([]); setRegistry(dupoinPreviewUnits); setPicked([]); setPage("report"); setMessage("Demo direset; semua perubahan hanya di memori browser."); }}>Reset demo</button>
     </nav>
     {message && <div role="status" className="notice">{message}</div>}
     <section>
-      {page === "prices" ? <PriceTab sel={client} call={priceCall} showNotif={setMessage} showConfirm={async () => true} isOwner /> : <MaintUnitPickerStep
+      {page === "invoice" ? <InvoiceTab sel={client} units={registry} logs={b2bLogs} setLogs={setB2bLogs} call={invoiceCall} showNotif={setMessage} /> : page === "prices" ? <PriceTab sel={client} call={priceCall} showNotif={setMessage} showConfirm={async () => true} isOwner /> : <MaintUnitPickerStep
         laporanModal={{ id: "JOB-PREVIEW-ONLY", customer: client.name, maintenance_client_id: client.id, units: 2 }}
         laporanUnits={picked} setLaporanUnits={setPicked} setLaporanStep={() => setMessage("Simulasi: lanjut laporan kondisi/foto. Tidak mengirim laporan atau membuat invoice.")}
         maintUnitPool={registry} maintLogsPool={[]} setActiveUnitIdx={noop} setLaporanFotos={noop} setLaporanCleaningInRepair={noop}

@@ -5,6 +5,7 @@ import { daysUntil } from "../lib/dateTime.js";
 import { checkMaintenanceOrderOverlap, formatOverlapWarning } from "../lib/checkMaintenanceOrderOverlap.js";
 import UnitTrendModal from "./UnitTrendModal.jsx";
 import { MAINT_AC_TYPES, MAINT_AC_TYPE_LABELS, normalizeMaintenanceAcType, isVrvType, capacityPkNumber } from "../lib/maintenanceAcTypes.js";
+import { maintenanceLogInvoiceLine, buildMaintenanceInvoiceQuote } from "../lib/maintenanceInvoice.js";
 
 // Pill styles — didefinisikan di atas karena dirujuk oleh const module-level
 // INV_STATUS_STYLE (TDZ: dev/esbuild eval source-order, beda dari Rollup build).
@@ -404,7 +405,7 @@ export default function MaintenanceView({
               />
             )}
             {tab === "price"   && <PriceTab sel={sel} units={units} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} />}
-            {tab === "invoice" && <InvoiceTab sel={sel} units={units} logs={logs} call={call} showNotif={showNotif} />}
+            {tab === "invoice" && <InvoiceTab key={sel.id} sel={sel} units={units} logs={logs} setLogs={setLogs} priceListData={priceListData} call={call} showNotif={showNotif} />}
             {tab === "link"    && <LinkTab sel={sel} units={units} call={call} showNotif={showNotif} showConfirm={showConfirm} focusOrderId={monitorFocus?.orderId} />}
             {tab === "portal" && <PortalTab sel={sel} setSel={setSel} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} onChanged={loadClients} />}
           </>
@@ -1973,17 +1974,7 @@ function KpiCard({ label, value, sub, color }) {
 }
 
 // ─────────── INVOICE B2B TAB ───────────
-// Harga fallback per PK (sinkron dengan price_list DB)
-const MAINT_PRICE = { p1: 95000, p2: 100000, p3: 300000, p4: 400000 };
-function maintPrice(pk) {
-  const n = parseFloat(pk) || 1;
-  if (n <= 1) return MAINT_PRICE.p1;
-  if (n <= 2.5) return MAINT_PRICE.p2;
-  if (n <= 3.5) return MAINT_PRICE.p3;
-  return MAINT_PRICE.p4;
-}
-
-function InvoiceTab({ sel, units, logs, call, showNotif }) {
+export function InvoiceTab({ sel, units, logs, setLogs, priceListData = [], call, showNotif }) {
   const [picked, setPicked] = useState({});
   const [filterDate, setFilterDate] = useState("");
   const [showAll, setShowAll] = useState(false);
@@ -1991,6 +1982,21 @@ function InvoiceTab({ sel, units, logs, call, showNotif }) {
   const [discount, setDiscount] = useState(0);
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const [prices, setPrices] = useState(null);
+  const [pricesError, setPricesError] = useState("");
+  const [reloadPrices, setReloadPrices] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    setPrices(null); setPricesError(""); setPreview(null);
+    call("list-prices", { client_id: sel.id }).then(j => {
+      if (!Array.isArray(j.prices)) throw new Error("Respons harga khusus tidak valid");
+      if (alive) setPrices(j.prices);
+    }).catch(error => { if (alive) setPricesError(error.message || "Gagal memuat harga khusus"); });
+    return () => { alive = false; };
+    // `call` changes on App renders; do not refetch on every keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sel.id, reloadPrices]);
 
   // ── T2: rekap tunggakan klien ini (aging + WA penagihan ke PIC) ──
   const [clientInvs, setClientInvs] = useState(null); // null = loading
@@ -1998,13 +2004,17 @@ function InvoiceTab({ sel, units, logs, call, showNotif }) {
   useEffect(() => {
     let alive = true;
     if (!sel?.id) return;
+    setInvLoadErr(false);
     call("list-invoices", { client_id: sel.id })
-      .then(j => { if (alive) setClientInvs(j.invoices || []); })
+      .then(j => {
+        if (!Array.isArray(j.invoices)) throw new Error("Respons invoice tidak valid");
+        if (alive) setClientInvs(j.invoices);
+      })
       .catch(() => { if (alive) { setClientInvs([]); setInvLoadErr(true); } });
     return () => { alive = false; };
-    // Deps sel?.id saja — `call` tidak stabil antar render App (lihat loadClients)
+    // `call` tidak stabil antar render App; refresh eksplisit melalui reloadPrices.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sel?.id]);
+  }, [sel?.id, reloadPrices]);
 
   const tunggakan = useMemo(() => {
     const outs = (clientInvs || []).filter(i => ["UNPAID", "OVERDUE", "PARTIAL_PAID"].includes(String(i.status || "").toUpperCase()));
@@ -2033,17 +2043,34 @@ function InvoiceTab({ sel, units, logs, call, showNotif }) {
     return `https://wa.me/${ph}?text=${encodeURIComponent(msg)}`;
   }, [sel, tunggakan]);
 
-  const unitById = Object.fromEntries(units.map(u => [u.id, u]));
-  const calcPrice = (l) => Number(l.cost) > 0 ? Number(l.cost) : maintPrice(unitById[l.unit_id]?.capacity_pk);
+  const unitById = useMemo(() => Object.fromEntries(units.map(u => [u.id, u])), [units]);
+  const pricing = useMemo(() => Object.fromEntries(logs.map(l => {
+    if (!prices) return [l.id, { error: pricesError || "Memuat harga khusus…" }];
+    try { return [l.id, { line: maintenanceLogInvoiceLine(l, unitById[l.unit_id], prices, priceListData) }]; }
+    catch (error) { return [l.id, { error: error.message }]; }
+  })), [logs, unitById, prices, pricesError, priceListData]);
+  const calcPrice = l => pricing[l.id]?.line?.harga_satuan ?? null;
 
-  // Semua log belum di-invoice; showAll juga tampilkan yang sudah di-invoice (untuk re-group)
-  const eligible = logs.filter(l => showAll ? true : !l.invoiced);
+  // Billed logs are history only. Re-group existing invoices via Mode Gabung Invoice.
+  const billed = l => l.invoiced === true || !!l.invoice_id;
+  const orderBased = l => !!String(l.order_id || "").trim();
+  const eligible = logs.filter(l => showAll || !billed(l));
   const filtered = filterDate ? eligible.filter(l => l.service_date?.startsWith(filterDate)) : eligible;
-
-  const pickedIds = Object.keys(picked).filter(k => picked[k]);
-  const pickedLogs = filtered.filter(l => picked[l.id]);
-  const subtotal = pickedLogs.reduce((s, l) => s + calcPrice(l), 0);
-  const totalAfterDisc = Math.max(0, subtotal - Number(discount));
+  const selectable = filtered.filter(l => !billed(l) && !orderBased(l) && !pricing[l.id]?.error);
+  // Never submit invisible selections left behind by a date filter.
+  const pickedLogs = selectable.filter(l => picked[l.id]);
+  const pickedIds = pickedLogs.map(l => l.id);
+  let quote = null, quoteError = "";
+  if (prices && pickedIds.length) {
+    try { quote = buildMaintenanceInvoiceQuote({ clientId: sel.id, logs: pickedLogs, units, clientPrices: prices, priceListData, discount }); }
+    catch (error) { quoteError = error.message; }
+  }
+  const selectionKey = JSON.stringify({ ids: [...pickedIds].sort(), discount: Number(discount), quote: quote?.quote_key });
+  const currentSelection = useRef(selectionKey);
+  currentSelection.current = selectionKey;
+  const activePreview = preview?.selection_key === selectionKey ? preview : null;
+  const subtotal = activePreview?.labor ?? quote?.labor;
+  const totalAfterDisc = activePreview?.total ?? quote?.total;
 
   // Group picked logs by service_date untuk preview
   const byDate = {};
@@ -2054,39 +2081,56 @@ function InvoiceTab({ sel, units, logs, call, showNotif }) {
   }
 
   const toggleAll = () => {
-    if (pickedIds.length === filtered.length) {
+    if (pickedIds.length === selectable.length) {
       setPicked({});
     } else {
       const all = {};
-      filtered.forEach(l => { all[l.id] = true; });
+      selectable.forEach(l => { all[l.id] = true; });
       setPicked(all);
     }
   };
 
   const doPreview = async () => {
-    if (!pickedIds.length) { showNotif("❌ Pilih minimal 1 servis"); return; }
+    if (!pickedIds.length || !quote || busyRef.current) return;
+    const requestedSelection = selectionKey;
+    busyRef.current = true; setBusy(true); setPreview(null);
     try {
       const j = await call("preview-invoice", { client_id: sel.id, log_ids: pickedIds, discount: Number(discount) });
-      setPreview(j);
+      if (currentSelection.current === requestedSelection) setPreview({ ...j, selection_key: requestedSelection });
     } catch (e) { showNotif("❌ " + e.message); }
+    finally { busyRef.current = false; setBusy(false); }
   };
 
   const create = async () => {
-    if (!pickedIds.length) { showNotif("❌ Pilih minimal 1 servis"); return; }
-    setBusy(true);
+    if (!pickedIds.length || !activePreview || busyRef.current) return;
+    busyRef.current = true; setBusy(true);
     try {
-      const j = await call("create-invoice", { client_id: sel.id, log_ids: pickedIds, discount: Number(discount), notes: notes || null });
+      const j = await call("create-invoice", { client_id: sel.id, log_ids: pickedIds, discount: Number(discount), notes: notes || null, expected_quote: activePreview.quote_key });
+      setLogs(prev => prev.map(l => pickedIds.includes(l.id) ? { ...l, invoiced: true, invoice_id: j.invoice.id } : l));
+      setClientInvs(prev => [j.invoice, ...(prev || []).filter(i => i.id !== j.invoice.id)]);
       showNotif(`✅ Invoice ${j.invoice.id} dibuat (Rp ${j.total.toLocaleString("id")}) — cek menu Invoice`);
       setPicked({}); setPreview(null); setDiscount(0); setNotes("");
-    } catch (e) { showNotif("❌ " + e.message); }
-    finally { setBusy(false); }
+    } catch (e) { setPreview(null); showNotif("❌ " + e.message); }
+    finally { busyRef.current = false; setBusy(false); }
+  };
+
+  const refreshBilling = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true; setBusy(true); setPreview(null);
+    try {
+      const j = await call("list-logs", { client_id: sel.id });
+      if (!Array.isArray(j.logs)) throw new Error("Respons log tidak valid");
+      setLogs(j.logs);
+      setReloadPrices(n => n + 1);
+    } catch (error) { showNotif("❌ " + error.message); }
+    finally { busyRef.current = false; setBusy(false); }
   };
 
   // Tanggal-tanggal unik untuk quick filter
   const availDates = [...new Set(eligible.map(l => l.service_date?.slice(0, 7)).filter(Boolean))].sort().reverse();
 
   return (
-    <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-start" }}>
+    <div role="region" aria-label="Invoice B2B" style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-start" }}>
       {/* Kiri: daftar log */}
       <div style={{ flex: "1 1 320px", minWidth: 0 }}>
         {/* ── T2: Rekap tunggakan klien (aging + WA penagihan) ── */}
@@ -2095,8 +2139,10 @@ function InvoiceTab({ sel, units, logs, call, showNotif }) {
             <div style={{ fontWeight: 700, color: cs.text, fontSize: 13 }}>💰 Tunggakan Klien</div>
             {clientInvs === null ? (
               <span style={{ fontSize: 12, color: cs.muted }}>Memuat…</span>
+            ) : invLoadErr ? (
+              <span role="alert" style={{ fontSize: 12, color: cs.red }}>Data tunggakan gagal dimuat — klik Refresh data &amp; tarif untuk mencoba lagi.</span>
             ) : tunggakan.rows.length === 0 ? (
-              <span style={{ fontSize: 12, color: cs.green }}>✅ Tidak ada tagihan tertunggak{invLoadErr ? " (data invoice gagal dimuat — coba refresh)" : ""}</span>
+              <span style={{ fontSize: 12, color: cs.green }}>✅ Tidak ada tagihan tertunggak</span>
             ) : (
               <>
                 <span style={{ fontSize: 13, fontWeight: 800, color: tunggakan.tertua > 14 ? cs.red : (cs.yellow || "#eab308") }}>
@@ -2127,20 +2173,25 @@ function InvoiceTab({ sel, units, logs, call, showNotif }) {
           )}
         </div>
 
+        <div style={{ ...card, fontSize: 12, color: cs.muted, marginBottom: 10 }}>
+          Khusus log servis manual tanpa order. Pekerjaan dari Order/Laporan ditagih melalui verifikasi laporan; untuk beberapa invoice yang sudah ada gunakan Mode Gabung Invoice. Harga mengikuti Harga Khusus tipe/PK; outdoor Rp0 tetap termasuk penawaran.
+          <button disabled={busy} onClick={refreshBilling} style={{ ...btnGhost, fontSize: 11, padding: "4px 8px", marginLeft: 8 }}>Refresh data &amp; tarif</button>
+          {!prices && <div role={pricesError ? "alert" : "status"} style={{ marginTop: 6, color: pricesError ? cs.red : cs.muted }}>{pricesError || "Memuat harga khusus…"}</div>}
+        </div>
         {/* Filter bar */}
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10, flexWrap: "wrap" }}>
           <span style={{ color: cs.muted, fontSize: 12 }}>Filter bulan:</span>
-          <select value={filterDate} onChange={e => setFilterDate(e.target.value)}
+          <select disabled={busy} value={filterDate} onChange={e => { setFilterDate(e.target.value); setPicked({}); setPreview(null); }}
             style={{ ...inp, width: "auto", fontSize: 12, padding: "4px 8px" }}>
             <option value="">Semua</option>
             {availDates.map(d => <option key={d} value={d}>{d}</option>)}
           </select>
           <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, color: cs.muted, cursor: "pointer" }}>
-            <input type="checkbox" checked={showAll} onChange={e => setShowAll(e.target.checked)} />
+            <input disabled={busy} type="checkbox" checked={showAll} onChange={e => setShowAll(e.target.checked)} />
             Tampilkan yg sudah di-invoice
           </label>
-          <button onClick={toggleAll} style={{ ...btnGhost, fontSize: 12, padding: "4px 10px", marginLeft: "auto" }}>
-            {pickedIds.length === filtered.length && filtered.length > 0 ? "Batal semua" : `Pilih semua (${filtered.length})`}
+          <button disabled={busy || !selectable.length} onClick={toggleAll} style={{ ...btnGhost, fontSize: 12, padding: "4px 10px", marginLeft: "auto" }}>
+            {pickedIds.length === selectable.length && selectable.length > 0 ? "Batal semua" : `Pilih semua (${selectable.length})`}
           </button>
         </div>
 
@@ -2151,15 +2202,18 @@ function InvoiceTab({ sel, units, logs, call, showNotif }) {
               const u = unitById[l.unit_id] || {};
               const price = calcPrice(l);
               return (
-                <label key={l.id} style={{ display: "flex", gap: 10, alignItems: "center", padding: "9px 14px", borderBottom: "1px solid " + cs.border, cursor: "pointer", opacity: l.invoiced ? 0.6 : 1 }}>
-                  <input type="checkbox" checked={!!picked[l.id]} onChange={e => setPicked(p => ({ ...p, [l.id]: e.target.checked }))} />
+                <label key={l.id} style={{ display: "flex", gap: 10, alignItems: "center", padding: "9px 14px", borderBottom: "1px solid " + cs.border, cursor: billed(l) ? "default" : "pointer", opacity: billed(l) ? 0.6 : 1 }}>
+                  <input aria-label={`Pilih ${u.unit_code || l.id}`} disabled={busy || billed(l) || orderBased(l) || !!pricing[l.id]?.error} type="checkbox" checked={!billed(l) && !orderBased(l) && !!picked[l.id]} onChange={e => setPicked(p => ({ ...p, [l.id]: e.target.checked }))} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ color: cs.text, fontWeight: 600, fontSize: 13 }}>{u.unit_code || "?"}</div>
                     <div style={{ color: cs.muted, fontSize: 11 }}>{u.location} · {u.brand} {u.capacity_pk}PK · {l.service_type} · {l.service_date}</div>
                   </div>
                   <div style={{ textAlign: "right", flexShrink: 0 }}>
-                    <div style={{ color: cs.green, fontWeight: 600, fontSize: 13 }}>{fmtRp(price)}</div>
-                    {l.invoiced && <div style={{ color: cs.muted, fontSize: 10 }}>✓ invoiced</div>}
+                    <div style={{ color: price == null ? cs.red : cs.green, fontWeight: 600, fontSize: 13 }}>{price == null ? "Tarif belum tersedia" : fmtRp(price)}</div>
+                    {pricing[l.id]?.line?.included_in_service && <div style={{ fontSize: 10, color: cs.accent }}>Termasuk penawaran · tidak ditagih terpisah</div>}
+                    {!billed(l) && pricing[l.id]?.error && <div style={{ color: cs.red, fontSize: 10, maxWidth: 190 }}>{pricing[l.id].error}</div>}
+                    {billed(l) && <div style={{ color: cs.muted, fontSize: 10 }}>✓ sudah ditagih {l.invoice_id || ""}</div>}
+                    {orderBased(l) && <div style={{ color: cs.accent, fontSize: 10, maxWidth: 190 }}>Order {l.order_id} · gunakan verifikasi laporan / invoice yang ada</div>}
                   </div>
                 </label>
               );
@@ -2169,7 +2223,7 @@ function InvoiceTab({ sel, units, logs, call, showNotif }) {
       </div>
 
       {/* Kanan: ringkasan & aksi */}
-      <div style={{ width: 260, flexShrink: 0 }}>
+      <div style={{ width: 290, maxWidth: "100%", flexShrink: 0 }}>
         <div style={{ ...card }}>
           <div style={{ fontWeight: 700, color: cs.text, marginBottom: 12 }}>🧾 Ringkasan Invoice</div>
 
@@ -2193,7 +2247,7 @@ function InvoiceTab({ sel, units, logs, call, showNotif }) {
               <div style={{ borderTop: "1px solid " + cs.border, paddingTop: 8, marginTop: 4 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: cs.text }}>
                   <span>Subtotal ({pickedIds.length} unit)</span>
-                  <span style={{ fontWeight: 600 }}>{fmtRp(subtotal)}</span>
+                  <span style={{ fontWeight: 600 }}>{subtotal == null ? "—" : fmtRp(subtotal)}</span>
                 </div>
               </div>
             </>
@@ -2201,43 +2255,45 @@ function InvoiceTab({ sel, units, logs, call, showNotif }) {
 
           <div style={{ marginTop: 12 }}>
             <div style={{ fontSize: 12, color: cs.muted, marginBottom: 4 }}>Diskon (Rp)</div>
-            <input type="number" min="0" value={discount} onChange={e => setDiscount(e.target.value)}
+            <input disabled={busy} aria-label="Diskon invoice B2B" type="number" min="0" step="1" value={discount} onChange={e => setDiscount(e.target.value)}
               style={{ ...inp, fontSize: 13 }} placeholder="0" />
           </div>
           <div style={{ marginTop: 8 }}>
             <div style={{ fontSize: 12, color: cs.muted, marginBottom: 4 }}>Catatan invoice</div>
-            <input type="text" value={notes} onChange={e => setNotes(e.target.value)}
+            <input disabled={busy} type="text" maxLength={2000} value={notes} onChange={e => setNotes(e.target.value)}
               style={{ ...inp, fontSize: 13 }} placeholder="Opsional" />
           </div>
 
           {pickedIds.length > 0 && (
             <div style={{ marginTop: 10, padding: "8px 0", borderTop: "1px solid " + cs.border, display: "flex", justifyContent: "space-between", fontSize: 14 }}>
               <b style={{ color: cs.text }}>Total</b>
-              <b style={{ color: cs.green }}>{fmtRp(totalAfterDisc)}</b>
+              <b style={{ color: cs.green }}>{totalAfterDisc == null ? "—" : fmtRp(totalAfterDisc)}</b>
             </div>
           )}
 
+          {quoteError && <div role="alert" style={{ color: cs.red, fontSize: 12, marginTop: 10 }}>{quoteError}</div>}
+          {!activePreview && pickedIds.length > 0 && <p style={{ color: cs.muted, fontSize: 11 }}>Periksa Preview server terlebih dahulu. Harga terbaru diperiksa ulang saat disimpan.</p>}
           <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
-            <button onClick={doPreview} disabled={!pickedIds.length} style={{ ...btnGhost, opacity: pickedIds.length ? 1 : .4, fontSize: 13 }}>
+            <button onClick={doPreview} disabled={!quote || busy} style={{ ...btnGhost, opacity: quote && !busy ? 1 : .4, fontSize: 13 }}>
               👁 Preview (dari server)
             </button>
-            <button onClick={create} disabled={!pickedIds.length || busy} style={{ ...btn, opacity: (pickedIds.length && !busy) ? 1 : .4, fontSize: 13 }}>
+            <button onClick={create} disabled={!activePreview || !quote || busy} style={{ ...btn, opacity: (activePreview && quote && !busy) ? 1 : .4, fontSize: 13 }}>
               {busy ? "Membuat..." : "🧾 Buat Invoice Grup"}
             </button>
           </div>
 
-          {preview && (
+          {activePreview && (
             <div style={{ marginTop: 14, fontSize: 12, color: cs.muted }}>
               <div style={{ fontWeight: 600, color: cs.text, marginBottom: 6 }}>Preview server:</div>
-              {preview.line_items?.map((i, idx) => (
+              {activePreview.line_items?.map((i, idx) => (
                 <div key={idx} style={{ display: "flex", justifyContent: "space-between", padding: "2px 0" }}>
-                  <span>{i.unit_code} {i.brand} {i.pk}PK</span>
+                  <span>{i.unit_code} {i.brand} {i.pk}PK{i.included_in_service ? " · termasuk penawaran" : ""}</span>
                   <span style={{ color: cs.green }}>{fmtRp(i.price)}</span>
                 </div>
               ))}
               <div style={{ borderTop: "1px solid " + cs.border, marginTop: 6, paddingTop: 6, display: "flex", justifyContent: "space-between", fontWeight: 600 }}>
                 <span style={{ color: cs.text }}>Total</span>
-                <span style={{ color: cs.green }}>{fmtRp(preview.total)}</span>
+                <span style={{ color: cs.green }}>{fmtRp(activePreview.total)}</span>
               </div>
             </div>
           )}

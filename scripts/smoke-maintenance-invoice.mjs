@@ -1,0 +1,60 @@
+// Uses only the isolated preview (no production APIs or credentials).
+import { chromium } from '@playwright/test';
+import assert from 'node:assert/strict';
+const origin = 'http://127.0.0.1:4176';
+const browser = await chromium.launch({ headless: true });
+const results = [];
+try {
+  for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+    const page = await browser.newPage({ viewport });
+    const errors = [], external = [];
+    page.on('pageerror', error => errors.push(error.message));
+    page.on('request', r => { if (!r.url().startsWith(origin + '/')) external.push(r.url()); });
+    await page.goto(origin, { waitUntil: 'networkidle' });
+    await page.getByRole('button', { name: '4. Invoice B2B simulasi' }).click();
+    const panel = page.getByRole('region', { name: 'Invoice B2B', exact: true });
+    const create = panel.getByRole('button', { name: /Buat Invoice Grup/ });
+    const preview = panel.getByRole('button', { name: /Preview \(dari server\)/ });
+    const orderRow = panel.locator('label').filter({ hasText: 'Order JOB-DEMO-REPORT' });
+    assert.equal(await orderRow.getByRole('checkbox').isDisabled(), true, 'Order-backed logs must use report verification');
+    await panel.getByRole('button', { name: 'Pilih semua (52)', exact: true }).click();
+    assert.equal(await create.isDisabled(), true, 'Cannot create without server preview');
+    await preview.click();
+    assert.equal(await create.isEnabled(), true);
+    await panel.getByRole('button', { name: 'Refresh data & tarif', exact: true }).click();
+    assert.equal(await create.isDisabled(), true, 'Refresh invalidates the previous preview');
+    await preview.click();
+    assert.match(await panel.innerText(), /15.600.000/);
+    assert.match(await panel.innerText(), /Termasuk penawaran · tidak ditagih terpisah/);
+    const discount = panel.getByRole('spinbutton', { name: 'Diskon invoice B2B' });
+    await discount.fill('600000');
+    assert.equal(await create.isDisabled(), true, 'Discount invalidates old preview');
+    await preview.click();
+    assert.match(await panel.innerText(), /15.000.000/);
+    await discount.fill('-1');
+    assert.equal(await preview.isDisabled(), true);
+    assert.match(await panel.getByRole('alert').innerText(), /Diskon/);
+    await discount.fill('0');
+    await panel.locator('select').selectOption('2026-09');
+    assert.equal(await create.isDisabled(), true, 'Month filtering clears invisible selections');
+    await panel.getByRole('button', { name: 'Pilih semua (26)', exact: true }).click();
+    await preview.click();
+    assert.match(await panel.innerText(), /7.800.000/);
+    await panel.locator('select').selectOption('');
+    await panel.getByRole('button', { name: 'Pilih semua (52)', exact: true }).click();
+    await preview.click();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'Horizontal overflow');
+    await page.screenshot({ path: `/private/tmp/aclean-maintenance-invoice-${viewport.width}.png`, fullPage: true });
+    await create.dblclick();
+    await page.getByRole('status').filter({ hasText: /Invoice INV-20261015-LOKALDEMO dibuat/ }).waitFor();
+    assert.equal(await panel.getByRole('checkbox').count(), 2, 'Only order history and the history toggle remain; created manual logs disappear');
+    await panel.getByRole('checkbox', { name: /Tampilkan yg sudah di-invoice/ }).check();
+    assert.equal(await panel.getByRole('checkbox', { name: /^Pilih / }).count(), 54);
+    for (const input of await panel.getByRole('checkbox', { name: /^Pilih / }).all()) assert.equal(await input.isDisabled(), true, 'Billed history must be read-only');
+    assert.equal(await panel.getByRole('button', { name: 'Pilih semua (0)', exact: true }).isDisabled(), true);
+    assert.deepEqual(errors, []); assert.deepEqual(external, []);
+    results.push({ viewport, selectable_unbilled: 52, total: 15600000, included_outdoor: 12, stale_preview_blocked: true, hidden_selection_cleared: true, double_click_safe: true, billed_history_read_only: true, runtime_errors: errors.length, external_requests: external.length });
+    await page.close();
+  }
+  console.log(JSON.stringify({ passed: true, cases: results, production_writes: false }));
+} finally { await browser.close(); }

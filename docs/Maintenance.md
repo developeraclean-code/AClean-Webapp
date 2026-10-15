@@ -1,7 +1,7 @@
 # AClean — Modul Maintenance B2B
 
 Dokumen ini berisi rekap fitur, marketing copy, dan cara kerja teknis modul Maintenance korporat AClean.
-Terakhir diperbarui: 2026-10-15 · dukungan VRV Indoor/Outdoor dan penanda tarif termasuk penawaran (migrasi 207).
+Terakhir diperbarui: 2026-10-15 · VRV/harga termasuk penawaran (207), Invoice B2B atomik (208), dan pengaman dua arah billing laporan/B2B (209).
 
 ### VRV / VRF dan harga penawaran
 
@@ -178,9 +178,9 @@ URL format: `https://[domain]/m/mtk_xxxxxxxxxxxxxxxxxx`
 **Alur tagihan:**
 
 ```
-Log servis masuk (manual atau dari order) → tab "Invoice B2B"
+Log servis manual TANPA order → tab "Invoice B2B"
 → Admin centang servis yang mau ditagih
-→ Klik "Buat Invoice B2B"
+→ Preview server (wajib, memakai tarif terbaru) → Buat Invoice Grup
 → Invoice masuk ke menu Invoice (status PENDING_APPROVAL)
 → Approve → UNPAID → terima pembayaran → PAID
 → Log yang sudah diinvoice ditandai ✓ Invoiced (tidak muncul lagi di daftar tagihan)
@@ -190,6 +190,20 @@ Invoice B2B mengikuti alur yang sama dengan invoice reguler AClean:
 - PDF invoice bisa digenerate dan dikirim ke customer
 - Mendukung PARTIAL_PAID dan group payment
 - Tercatat di laporan keuangan
+
+**Tarif dan pengaman (208):**
+
+- Resolver bersama `src/lib/maintenanceInvoice.js` dipakai layar dan API B2B. Cleaning mengutamakan Harga Khusus tipe + PK (spesifik mengalahkan flat per tipe), termasuk outdoor Rp0 dengan flag `included_in_service`. Tanpa deal, biaya log positif non-VRV boleh dipakai; selebihnya harga global memakai tipe AC sebenarnya, bukan bracket PK Split untuk semua aset. Tidak ada fallback rupiah hardcode.
+- VRV wajib kapasitas valid dan tarif khusus atau global VRV eksplisit; biaya log/fallback Split tidak menggantikannya. Nol tanpa flag bukan layanan gratis. Perbaikan/freon/pemasangan memerlukan biaya aktual positif; tidak otomatis ditagih sebagai cleaning.
+- Angka pilihan adalah estimasi lokal; Preview server menjadi acuan sebelum simpan. Server menghitung ulang; perubahan pilihan/diskon/tarif mengharuskan preview ulang. Kegagalan memuat price book, aset, log, atau pemeriksaan invoice menghentikan proses, bukan menebak harga.
+- Item disimpan dengan `nama`, `jumlah`, `harga_satuan`, `subtotal`, `category` serta ID log/aset: kompatibel dengan ringkasan, preview, PPh dan PDF reguler. Baris outdoor termasuk penawaran tetap tercantum Rp0.
+- Log sudah ditagih hanya dapat dilihat. **Semua log dengan `order_id` memakai jalur verifikasi Laporan Tim**, termasuk order yang invoicenya belum terbit. B2B hanya untuk log servis manual tanpa order. Gunakan **Mode Gabung Invoice** untuk menggabungkan invoice yang sudah ada. Satu pilihan dibatasi 200 log unik dari perusahaan yang sama.
+- Migrasi **208** menambahkan `maintenance_logs.invoice_id` dan RPC server-only `create_maintenance_invoice_atomic`. Penguncian sumber, pemeriksaan snapshot log/aset/harga, insert invoice, serta penandaan semua log dilakukan dalam satu transaksi. Retry sumber/isi yang sama mengembalikan invoice pertama; kegagalan menandai log membatalkan insert invoice juga. Tidak ada fallback insert/PATCH terpisah bila migrasi belum tersedia.
+- Migrasi tidak mengubah tarif, status invoice lama, pembayaran, atau total historis; hanya invoice baru yang menggunakan jalur ini. Pembuatan tetap `PENDING_APPROVAL`, tidak otomatis menerima pembayaran atau mengirim WA.
+- Migrasi **209** mempertahankan implementasi finalizer yang sedang terpasang sebagai fungsi privat (bukan menimpa perbaikan workflow/multi-tim lama), lalu menambah wrapper publik yang membaca ulang sumber invoice di bawah lock order/report/log. Finalisasi mengenali `invoices.job_id`, `orders.invoice_id`, dan tautan `maintenance_logs.invoice_id` sekalipun layar admin belum refresh. Invoice tertaut dipakai kembali tanpa mengubah item, harga, PDF atau pembayaran. Kandidat aktif ganda, log sudah ditagih tanpa tautan jelas, perbedaan perusahaan, dan invoice yang hanya mencakup sebagian grup ditahan untuk tinjauan manual. Kelengkapan laporan multi-tim untuk pekerjaan baru tetap memakai workflow asli.
+- Batas jalur B2B juga dipaksakan pada API dan wrapper RPC 209, bukan hanya checkbox di browser. Fungsi dasar privat tidak memiliki EXECUTE bagi `anon`, `authenticated`, maupun `service_role`, sehingga tidak menjadi jalur bypass API. RPC B2B publik tetap server-only; finalisasi laporan tetap Owner/Admin (atau service role).
+- Trigger INSERT khusus invoice B2B dengan ID log mensyaratkan marker transaksi dari wrapper 209. API versi lama yang masih memakai INSERT/PATCH terpisah ditolak selama rollout; invoice reguler/kontrak tanpa ID log dan invoice historis tidak diubah. Marker dipulihkan setelah RPC agar tidak terbawa ke operasi lain dalam transaksi yang sama.
+- Urutan rilis: terapkan **208 lalu 209 dalam transaksi**, verifikasi, lalu deploy kode. Jangan menerapkan ulang 208 sendirian setelah 209 karena akan menimpa wrapper B2B. Uji lokal: `node scripts/test-maintenance-invoice-db.mjs` dan `node scripts/test-maintenance-billing-crosspath-db.mjs` (paket PGlite atau `WA_PGLITE_MODULE`); unit/API/PDF: `vitest run src/lib/__tests__/maintenanceInvoice*`. Preview terisolasi port 4176 → **4. Invoice B2B simulasi**; semua transaksi hanya dalam memori browser.
 
 ---
 

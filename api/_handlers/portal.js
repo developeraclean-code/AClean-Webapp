@@ -5,6 +5,7 @@ import { checkRateLimit } from "../_auth.js";
 import { validateAndNormalizePhone, buildPhoneVariants, sanitizeName } from "../_validate.js";
 import { sentryCatch } from "../_report.js";
 import { resolveMaintenanceReportUnits } from "../../src/lib/maintenanceUnitResolution.js";
+import { maintenanceInvoice } from "../_maintenance-invoice.js";
 
     // ── MANAGE-USER: Create/Update/Deactivate/Reset-Password via Admin API ──
     // ── PROJECT MODULE: hapus baris (Owner only) — RLS anon sengaja tanpa DELETE ──
@@ -931,100 +932,10 @@ export async function maintenance(req, res) {
         }
 
         // ---- INVOICE B2B (GROUP) ----
-        // Buat 1 invoice gabungan dari beberapa log servis yang dipilih.
-        // Harga per unit: l.cost jika ada; fallback ke price_list (Cleaning, PK-based).
-        // preview=true → hitung saja, tidak buat invoice (untuk preview di UI).
+        // Shared maintenance price resolver + atomic write (migration 208).
+        // A preview is read-only; already billed logs cannot become a second invoice.
         if (action === "create-invoice" || action === "preview-invoice") {
-          const isPreview = action === "preview-invoice";
-          if (!body.client_id || !Array.isArray(body.log_ids) || !body.log_ids.length)
-            return res.status(400).json({ error: "client_id & log_ids wajib" });
-
-          // Ambil klien
-          const cRes = await fetch(REST("maintenance_clients?id=eq." + encodeURIComponent(body.client_id) + "&select=*"), { headers });
-          const cRows = await cRes.json();
-          if (!cRows.length) return res.status(404).json({ error: "Klien tidak ditemukan" });
-          const client = cRows[0];
-
-          // Ambil logs terpilih
-          const idFilter = body.log_ids.join(",");
-          const lRes = await fetch(REST(`maintenance_logs?id=in.(${encodeURIComponent(idFilter)})&select=id,service_type,service_date,cost,unit_id,order_id&order=service_date.asc`), { headers });
-          const logs = await lRes.json();
-          if (!Array.isArray(logs) || !logs.length) return res.status(400).json({ error: "Log tidak ditemukan" });
-
-          // Ambil unit details (brand, pk, lokasi) untuk semua log sekaligus
-          const unitIds = [...new Set(logs.map(l => l.unit_id).filter(Boolean))];
-          const uRes = await fetch(REST(`maintenance_units?id=in.(${encodeURIComponent(unitIds.join(","))})&select=id,unit_code,location,brand,capacity_pk`), { headers });
-          const unitRows = uRes.ok ? await uRes.json() : [];
-          const unitById = Object.fromEntries((Array.isArray(unitRows) ? unitRows : []).map(u => [u.id, u]));
-
-          // Ambil price_list Cleaning untuk fallback harga
-          const plRes = await fetch(REST(`price_list?service=eq.Cleaning&is_active=eq.true&select=type,price`), { headers });
-          const plRows = plRes.ok ? await plRes.json() : [];
-          const plMap = Object.fromEntries((Array.isArray(plRows) ? plRows : []).map(r => [r.type, Number(r.price)]));
-          const priceFor = (pk) => {
-            const pkN = parseFloat(pk) || 1;
-            if (pkN <= 1)   return plMap["AC Split 0.5-1PK"]   || 95000;
-            if (pkN <= 2.5) return plMap["AC Split 1.5-2.5PK"] || 100000;
-            if (pkN <= 3.5) return plMap["AC Split Duct 3PK"]  || 300000;
-            return plMap["AC Split Duct 4PK"] || 400000;
-          };
-
-          // Bangun line items: 1 baris per log
-          const lineItems = logs.map(l => {
-            const u = unitById[l.unit_id] || {};
-            const price = Number(l.cost) > 0 ? Number(l.cost) : priceFor(u.capacity_pk);
-            return {
-              unit_code: u.unit_code || "-",
-              location: u.location || "-",
-              brand: u.brand || "-",
-              pk: u.capacity_pk || "-",
-              service_type: l.service_type || "Maintenance",
-              service_date: l.service_date || "-",
-              price,
-              log_id: l.id,
-            };
-          });
-
-          const labor = lineItems.reduce((s, i) => s + i.price, 0);
-          const discount = Number(body.discount) || 0;
-          const total = Math.max(0, labor - discount);
-
-          if (isPreview) return res.status(200).json({ line_items: lineItems, labor, discount, total, count: lineItems.length });
-
-          // Generate invoice id (format: INV-YYYYMMDD-XXXXX)
-          const now = new Date();
-          const ymd = now.toISOString().slice(0, 10).replace(/-/g, "");
-          const seq = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
-          const invId = "INV-" + ymd + "-" + seq;
-
-          // Rentang tanggal servis untuk catatan invoice
-          const dates = [...new Set(lineItems.map(i => i.service_date).filter(d => d !== "-"))].sort();
-          const period = dates.length === 1 ? dates[0] : dates.length > 1 ? `${dates[0]} s/d ${dates[dates.length - 1]}` : "-";
-
-          const invPayload = {
-            id: invId,
-            customer: client.name,
-            phone: client.pic_phone || null,
-            address: client.address || null,
-            service: `Maintenance ${lineItems.length} unit — ${period}`,
-            job_id: null,
-            invoice_type: "service",
-            units: lineItems.length,
-            labor,
-            material: 0,
-            discount,
-            total,
-            status: "PENDING_APPROVAL",
-            maintenance_client_id: client.id,
-            materials_detail: JSON.stringify(lineItems),
-            notes: body.notes || null,
-            created_at: new Date().toISOString(),
-          };
-          const iRes = await fetch(REST("invoices"), { method: "POST", headers: { ...headers, Prefer: "return=representation" }, body: JSON.stringify(invPayload) });
-          if (!iRes.ok) return res.status(400).json({ error: "Gagal buat invoice", detail: await iRes.text() });
-          // Tandai logs sudah di-invoice
-          await fetch(REST(`maintenance_logs?id=in.(${encodeURIComponent(idFilter)})`), { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ invoiced: true }) });
-          return res.status(200).json({ invoice: (await iRes.json())[0], line_items: lineItems, total });
+          return maintenanceInvoice(req, res, SU, SK);
         }
 
         // ---- AUTO-LOG dari order yang laporannya diverifikasi (Opsi B) ----
