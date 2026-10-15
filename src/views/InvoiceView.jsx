@@ -7,6 +7,7 @@ import { categoryOf, LINE_CATEGORY } from "../lib/invoicing.js";
 import { downloadCsv } from "../lib/exportUtils.js";
 import { acknowledgePaidInvoicesWithoutProofAtomic } from "../data/writes.js";
 import { dismissedProofsForInvoice, invoiceProofAction, pendingProofsForInvoice } from "../lib/paymentEvidence.js";
+import { confirmInvoiceWaProof } from "../lib/invoiceWaProof.js";
 import AcUnitInvoiceModal from "./AcUnitInvoiceModal.jsx";
 import QuotationView from "./QuotationView.jsx";
 import { BlobProvider } from "@react-pdf/renderer";
@@ -15,10 +16,9 @@ import QuotationPDF from "../components/QuotationPDF.jsx";
 // ── Modal Lampirkan Bukti Bayar manual ──────────────────────────────────────
 // 3 sumber: (WA) pilih saran PENDING yang belum terhubung atau terhubung ke invoice ini,
 // termasuk saran yang pernah diabaikan untuk invoice yang sama dan diperiksa ulang,
-// (URL) tempel link, (UPLOAD) file. Confirm → markPaid(inv,...,proofUrl) bila belum
-// lunas / update proof saja bila sudah PAID. Bila dari WA monitor → suggestion
-// di-set CONFIRMED (sekalian mengurangi backlog).
-function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInvoicesData, setPaymentSuggestions, onSuggestionResolved, showNotif, currentUser, auditUserName, addAgentLog, fmt, onClose }) {
+// (URL) tempel link, (UPLOAD) file. Sumber WA memakai satu RPC untuk bukti +
+// pelunasan + ledger; URL/upload tetap melalui markPaid atau attach-only.
+export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInvoicesData, setOrdersData, setPaymentSuggestions, onSuggestionResolved, showNotif, currentUser, auditUserName, addAgentLog, fmt, onClose }) {
   const [tab, setTab] = useState("wa");
   const [suggs, setSuggs] = useState([]);
   const [loadingSuggs, setLoadingSuggs] = useState(true);
@@ -30,6 +30,7 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
   const [uploadedUrl, setUploadedUrl] = useState("");
   const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const confirmationRef = useRef({ busy: false, id: null });
 
   const invTail = (inv.phone || "").replace(/\D/g, "").slice(-9);
 
@@ -133,25 +134,40 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
   };
 
   const chosenUrl = tab === "wa" ? (selSugg?.image_url || "") : tab === "url" ? urlInput.trim() : uploadedUrl;
-  const needsManualReview = tab === "wa" && (selSugg?.match_source === "wa_image_review" || selSugg?.status === "DISMISSED");
+  const needsManualReview = tab === "wa" && !!selSugg && (selSugg.match_source === "wa_image_review" || selSugg.status === "DISMISSED"
+    || !Number(selSugg.amount) || !samePhone(selSugg.phone, inv.phone));
   const canConfirm = !!chosenUrl && (!needsManualReview || reviewAcknowledged) && !busy;
   const alreadyPaid = inv.status === "PAID";
 
   const confirm = async () => {
+    if (confirmationRef.current.busy) return;
     if (!chosenUrl) { showNotif("⚠️ Pilih/isi bukti bayar dulu"); return; }
     if (needsManualReview && !reviewAcknowledged) { showNotif("⚠️ Buka dan periksa file sebelum melampirkan bukti yang belum dikenali AI"); return; }
+    confirmationRef.current.busy = true;
     setBusy(true);
     try {
+      if (tab === "wa") {
+        confirmationRef.current.id ||= crypto.randomUUID();
+        const result = await confirmInvoiceWaProof({ supabase, invoiceId: inv.id, suggestion: selSugg,
+          requestId: confirmationRef.current.id, reviewAcknowledged,
+          actorName: auditUserName ? auditUserName() : currentUser?.name });
+        setInvoicesData(prev => prev.map(i => i.id === inv.id ? { ...i, ...result.invoice } : i));
+        const orderMap = new Map(result.orders.map(o => [o.id, o]));
+        setOrdersData?.(prev => prev.map(o => orderMap.get(o.id) || o));
+        setPaymentSuggestions?.(prev => prev.filter(p => p.id !== selSugg.id));
+        onSuggestionResolved?.(selSugg.id);
+        addAgentLog?.("INVOICE_WA_PROOF_VERIFIED", `Bukti ${selSugg.id} diverifikasi atomik untuk ${inv.id}`, "SUCCESS");
+        showNotif(result.attach_only ? "✅ Bukti dilampirkan; pembayaran tidak dicatat ulang" : `✅ Bukti diverifikasi & ${inv.id} lunas`);
+        onClose();
+        return;
+      }
       const { data: freshInv, error: freshError } = await supabase.from("invoices")
         .select("status,payment_proof_url").eq("id", inv.id).single();
       if (freshError || !freshInv) throw freshError || new Error("Invoice tidak ditemukan");
       const action = invoiceProofAction(freshInv);
       if (action === "already_attached") throw new Error("Bukti sudah terpasang pada invoice ini. Muat ulang halaman sebelum melanjutkan.");
       if (action === "unavailable") throw new Error("Status invoice sudah berubah. Muat ulang halaman sebelum melanjutkan.");
-      const beda = tab === "wa" && selSugg && invTail && !(selSugg.phone || "").replace(/\D/g, "").endsWith(invTail);
-      const srcNote = tab === "wa" && selSugg
-        ? `Bukti manual dari ${selSugg.sender_name || selSugg.phone || "WA"}${beda ? " (nomor beda)" : ""}`
-        : tab === "url" ? "Bukti dilampirkan manual (URL)" : "Bukti dilampirkan manual (upload)";
+      const srcNote = tab === "url" ? "Bukti dilampirkan manual (URL)" : "Bukti dilampirkan manual (upload)";
 
       if (action === "attach_only") {
         // Invoice sudah lunas: lampirkan bukti tanpa mencatat pembayaran lagi.
@@ -175,34 +191,11 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
         }
       }
 
-      let suggestionSyncError = null;
-      if (tab === "wa" && selSugg) {
-        const now = new Date().toISOString();
-        const { data: freshSugg, error: suggestionReadError } = await supabase.from("payment_suggestions")
-          .select("status,validation_status,invoice_id,image_url").eq("id", selSugg.id).single();
-        if (suggestionReadError || !freshSugg) suggestionSyncError = suggestionReadError?.message || "saran WA tidak ditemukan";
-        else if (freshSugg.image_url !== chosenUrl || (freshSugg.invoice_id && freshSugg.invoice_id !== inv.id)) {
-          suggestionSyncError = "saran WA sudah tertaut ke invoice atau file lain";
-        } else {
-          const { data: updatedSuggestions, error } = await supabase.from("payment_suggestions").update({
-              invoice_id: inv.id, order_id: inv.job_id || null,
-              status: "CONFIRMED", validation_status: "LINKED", matched_at: now, match_source: "manual",
-              resolved_at: now, resolved_by: currentUser?.name || (auditUserName ? auditUserName() : "Owner"),
-            }).eq("id", selSugg.id).eq("status", freshSugg.status).eq("image_url", chosenUrl).select("id");
-          if (error || !updatedSuggestions?.length) suggestionSyncError = error?.message || "status saran WA sudah berubah";
-          else {
-            setPaymentSuggestions?.(prev => prev.filter(p => p.id !== selSugg.id));
-            onSuggestionResolved?.(selSugg.id);
-          }
-        }
-      }
       addAgentLog?.("INVOICE_PROOF_ATTACHED", `Bukti bayar dilampirkan manual ke ${inv.id} (${tab})${action === "attach_only" ? "" : " + tandai lunas"}`, "SUCCESS");
-      showNotif(suggestionSyncError
-        ? `⚠️ Bukti sudah terpasang, tetapi status saran WA gagal diperbarui: ${suggestionSyncError}`
-        : `✅ Bukti dilampirkan${action === "attach_only" ? "" : ` & ${inv.id} ditandai lunas`}`);
+      showNotif(`✅ Bukti dilampirkan${action === "attach_only" ? "" : ` & ${inv.id} ditandai lunas`}`);
       onClose();
     } catch (err) { showNotif("❌ Gagal: " + (err.message || err)); }
-    finally { setBusy(false); }
+    finally { confirmationRef.current.busy = false; setBusy(false); }
   };
 
   const tabBtn = (k, label) => (
@@ -245,7 +238,7 @@ function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInv
                   const sel = selSugg?.id === s.id;
                   const sameNo = invTail && (s.phone || "").replace(/\D/g, "").endsWith(invTail);
                   return (
-                    <div key={s.id} onClick={() => { setSelSugg(sel ? null : s); setReviewAcknowledged(false); }}
+                    <div key={s.id} onClick={() => { if (confirmationRef.current.busy) return; confirmationRef.current.id = null; setSelSugg(sel ? null : s); setReviewAcknowledged(false); }}
                       style={{ border: "2px solid " + (sel ? cs.green : cs.border), borderRadius: 10, overflow: "hidden", cursor: "pointer", background: cs.card }}>
                       <div style={{ position: "relative", width: "100%", height: 100, background: "#0008" }}>
                         {s.image_url?.toLowerCase().includes(".pdf")
@@ -497,6 +490,7 @@ const [mergeSending, setMergeSending] = useState(false);
 const [mergeApproving, setMergeApproving] = useState(false);
 const [mergePreviewing, setMergePreviewing] = useState(false);
 const [mergeConsolidating, setMergeConsolidating] = useState(false);
+const mergeActionRef = useRef(false);
 // Snapshot invoice list yang terakhir gagal kirim — agar bisa di-retry tanpa hilang state UI
 const [lastFailedMerge, setLastFailedMerge] = useState(null); // { invList, customer, phone, ts }
 
@@ -600,6 +594,7 @@ const handleApproveMerged = async () => {
 
 // Buat 1 invoice baru di DB gabungan dari semua invoice yang dipilih
 const handleConsolidateInvoice = async () => {
+  if (mergeActionRef.current) return;
   const invs = mergeSelectedInvs;
   if (invs.length < 2) { showNotif("⚠️ Pilih minimal 2 invoice"); return; }
   const customer = invs[0].customer || "customer";
@@ -610,10 +605,14 @@ const handleConsolidateInvoice = async () => {
     confirmText: "Ya, Gabungkan",
   });
   if (!ok) return;
+  if (mergeActionRef.current) return;
+  mergeActionRef.current = true;
   setMergeConsolidating(true);
-  const res = await createConsolidatedInvoice(invs);
-  setMergeConsolidating(false);
-  if (res?.ok) exitMergeMode();
+  try {
+    const res = await createConsolidatedInvoice(invs);
+    if (res?.ok) { exitMergeMode(); await loadPendingPayments(); }
+  } catch (error) { showNotif("❌ Konsolidasi belum dapat dipastikan: " + error.message + ". Muat ulang untuk memeriksa hasil."); }
+  finally { mergeActionRef.current = false; setMergeConsolidating(false); }
 };
 
 const handleRetryFailed = async () => {
@@ -644,6 +643,7 @@ const [pendingSelectedInvoice, setPendingSelectedInvoice] = useState({}); // { s
 const [pendingPaymentBusy, setPendingPaymentBusy] = useState(null);
 const [manualPickerOpen, setManualPickerOpen] = useState({}); // { suggestion_id: bool }
 const [manualPickerSearch, setManualPickerSearch] = useState({}); // { suggestion_id: search_string }
+const paymentLinkRef = useRef({ busy: false, ids: new Map() });
 useEffect(() => {
   if (!supabase) return;
   let cancelled = false;
@@ -731,40 +731,46 @@ const findInvoiceCandidates = (sug) => {
 };
 
 const handleLinkPayment = async (sug) => {
+  if (paymentLinkRef.current.busy) return;
   const invId = pendingSelectedInvoice[sug.id];
   if (!invId) { showNotif?.("Pilih invoice dulu", "error"); return; }
-  if (sug.match_source === "wa_image_review") {
+  const selectedInv = (invoicesDataMerged || invoicesData || []).find(i => i.id === invId);
+  let reviewAcknowledged = false;
+  if (sug.match_source === "wa_image_review" || !Number(sug.amount) || !samePhone(sug.phone, selectedInv?.phone)) {
     const confirmed = await showConfirm({
       title: "Pastikan file ini bukti bayar",
       message: `AI belum memastikan media dari ${sug.sender_name || sug.phone || "WA"} adalah bukti pembayaran. Buka file, cocokkan nominal dan rekening, lalu lanjutkan hanya jika benar.\n\n${sug.raw_message || ""}`,
       confirmText: "Sudah diperiksa, lanjut",
     });
     if (!confirmed) return;
+    reviewAcknowledged = true;
   }
+  if (paymentLinkRef.current.busy) return;
+  paymentLinkRef.current.busy = true;
   setPendingPaymentBusy(sug.id);
-  let invoicePaid = false;
+  let committed = false;
   try {
-    const paidAt = getLocalDate ? getLocalDate() : new Date().toISOString().slice(0,10);
-    const { error: payErr } = await markInvoicePaid(supabase, invId, paidAt, auditUserName ? auditUserName() : "AI Validator",
-      { paymentProofUrl: sug.image_url || null });
-    if (payErr) throw payErr;
-    invoicePaid = true;
-    const { data: linked, error: linkErr } = await supabase.from("payment_suggestions")
-      .update({ validation_status: "LINKED", status: "CONFIRMED", invoice_id: invId,
-        resolved_at: new Date().toISOString(), resolved_by: auditUserName ? auditUserName() : "AI Validator" })
-      .eq("id", sug.id).eq("status", "PENDING").select("id");
-    if (linkErr || !linked?.length) throw linkErr || new Error("saran pembayaran tidak lagi PENDING");
+    const key = `${sug.id}:${invId}`;
+    if (!paymentLinkRef.current.ids.has(key)) paymentLinkRef.current.ids.set(key, crypto.randomUUID());
+    const result = await confirmInvoiceWaProof({ supabase, invoiceId: invId, suggestion: sug,
+      requestId: paymentLinkRef.current.ids.get(key), reviewAcknowledged,
+      actorName: auditUserName ? auditUserName() : "Admin" });
+    committed = true;
+    setInvoicesData(prev => prev.map(i => i.id === invId ? { ...i, ...result.invoice } : i));
+    const orderMap = new Map(result.orders.map(o => [o.id, o]));
+    setOrdersData?.(prev => prev.map(o => orderMap.get(o.id) || o));
+    setPaymentSuggestions?.(prev => prev.filter(p => p.id !== sug.id));
     if (sug.ai_extraction_id) {
       const { error: aiErr } = await supabase.from("ai_extractions")
         .update({ status: "approved", linked_table: "invoices", linked_id: invId }).eq("id", sug.ai_extraction_id);
       if (aiErr) showNotif?.("Invoice dan bukti tersimpan, tetapi audit AI gagal diperbarui: " + aiErr.message);
     }
-    showNotif?.("✓ Linked & marked PAID: " + invId, "success");
+    showNotif?.(result.attach_only ? "✓ Bukti dilampirkan tanpa pembayaran ulang: " + invId : "✓ Bukti diverifikasi & invoice lunas: " + invId, "success");
     setPendingPayments(prev => prev.filter(x => x.id !== sug.id));
     setPendingPaymentCount(prev => Math.max(0, prev - 1));
   } catch (e) {
-    showNotif?.((invoicePaid ? "Invoice sudah PAID dengan bukti, tetapi status saran WA belum sinkron: " : "Gagal link: ") + e.message, "error");
-  } finally { setPendingPaymentBusy(null); }
+    showNotif?.((committed ? "Pembayaran dan bukti sudah tercatat; pembaruan tampilan/audit lanjutan gagal: " : "Verifikasi belum dapat dipastikan: ") + e.message + ". Muat ulang untuk memeriksa hasil.", "error");
+  } finally { paymentLinkRef.current.busy = false; setPendingPaymentBusy(null); }
 };
 const handleRejectPayment = async (sug) => {
   showConfirm?.({
@@ -1037,10 +1043,11 @@ return (
       <AttachProofModal
         inv={attachProofInv}
         fotoSrc={fotoSrc} apiHeaders={apiHeaders} supabase={supabase}
-        markPaid={markPaid} setInvoicesData={setInvoicesData} setPaymentSuggestions={setPaymentSuggestions}
+        markPaid={markPaid} setInvoicesData={setInvoicesData} setOrdersData={setOrdersData} setPaymentSuggestions={setPaymentSuggestions}
         onSuggestionResolved={id => {
           setPendingPayments(prev => prev.filter(row => row.id !== id));
           setDismissedPayments(prev => prev.filter(row => row.id !== id));
+          loadPendingPayments();
         }}
         showNotif={showNotif} currentUser={currentUser} auditUserName={auditUserName} addAgentLog={addAgentLog} fmt={fmt}
         onClose={() => setAttachProofInv(null)}

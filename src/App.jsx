@@ -3242,7 +3242,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
   // pindah ke lib/consolidatedInvoice; semua dep dioper via objek ctx. Dioper ke
   // InvoiceView sebagai prop — interface tak berubah.
   const createConsolidatedInvoice = (invList) => createConsolidatedInvoiceLib(invList, {
-    supabase, currentUser, showNotif, addAgentLog, setInvoicesData,
+    supabase, currentUser, showNotif, addAgentLog, setInvoicesData, setOrdersData, setPaymentSuggestions,
     getLocalDate, samePhone, normalizeLines, summarize,
     checkInvoiceConsistency, describeInconsistency,
   });
@@ -3332,7 +3332,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
   // ── Retro-match: cari bukti bayar yang sudah masuk untuk invoice yang baru di-approve ──
   // Dipanggil saat invoice berubah ke UNPAID. Cari payment_suggestions by phone dalam 7 hari.
   // Wrapper (Fase 3, pola ctx): retroMatchPayment pindah ke lib/retroMatch.
-  const retroMatchPayment = (inv) => retroMatchPaymentLib(inv, { addAgentLog, normalizePhone, sendWA, setInvoicesData, supabase, userAccounts });
+  const retroMatchPayment = (inv) => retroMatchPaymentLib(inv, { addAgentLog, supabase });
 
   const approveInvoiceCore = (inv) => approveInvoiceCoreLib(inv, { addAgentLog, auditUserName, currentUser, fmt, getLocalDate, getLocalISOString, ordersData, reportError, retroMatchPayment, setAuditUser, setInvoicesData, setOrdersData, showNotif, supabase, updateInvoice, updateOrderStatus, validatePositiveNumber });
 

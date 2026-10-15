@@ -1,110 +1,85 @@
-// createConsolidatedInvoice — gabung beberapa invoice UNPAID milik 1 customer
-// jadi 1 invoice konsolidasi. Diekstrak dari App.jsx (Fase 2, KALIBRASI pola ctx
-// untuk fungsi stateful). Semua dependency (supabase, state setter, helper) dioper
-// lewat objek ctx → fungsi lepas dari closure App.jsx. Body verbatim (behavior sama).
+// Source cancellation, job links and unreviewed proof links commit together.
+// No non-atomic fallback: a missing RPC must be visible, never a half-merge.
 export async function createConsolidatedInvoice(invList, {
-  supabase, currentUser, showNotif, addAgentLog, setInvoicesData,
-  getLocalDate, samePhone, normalizeLines, summarize,
+  supabase, currentUser, showNotif, addAgentLog, setInvoicesData, setOrdersData,
+  setPaymentSuggestions, getLocalDate, samePhone, normalizeLines, summarize,
   checkInvoiceConsistency, describeInconsistency,
 }) {
-    if (!Array.isArray(invList) || invList.length < 2) {
-      showNotif("⚠️ Pilih minimal 2 invoice"); return { ok: false };
-    }
-    const allSamePhone = invList.every(i => samePhone(i.phone, invList[0].phone));
-    if (!allSamePhone) { showNotif("⚠️ Semua invoice harus dari customer yang sama"); return { ok: false }; }
-
-    const sorted = [...invList].sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
+  try {
+    const ids = [...new Set((invList || []).map(i => i.id))];
+    if (ids.length < 2 || ids.length !== invList.length || ids.length > 20) throw new Error('Pilih 2–20 invoice berbeda');
+    const { data: fresh, error: readError } = await supabase.from('invoices').select('*').in('id', ids);
+    if (readError) throw readError;
+    if (!fresh || fresh.length !== ids.length) throw new Error('Invoice sumber tidak lengkap; muat ulang');
+    const sorted = [...fresh].sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')) || a.id.localeCompare(b.id));
     const first = sorted[0];
-    const sourceIds = sorted.map(i => i.id).join(", ");
-
-    // Gabungkan materials_detail dari semua invoice. Sumber tanpa line item (legacy)
-    // disintesis dari field labor/material agar nilainya tidak hilang saat merge.
-    const mergedMaterials = normalizeLines(sorted.flatMap(inv => {
+    if (!first.phone || !sorted.every(i => samePhone(i.phone, first.phone))) throw new Error('Semua invoice harus dari nomor customer yang sama');
+    // Do not silently use a different quote than the one the user selected.
+    for (const row of fresh) {
+      const shown = invList.find(i => i.id === row.id);
+      for (const field of ['total', 'labor', 'material', 'discount', 'materials_detail', 'phone', 'customer', 'trade_in_amount', 'pph23', 'unit_ac_amount', 'quotation_id']) {
+        if (shown[field] !== undefined && JSON.stringify(shown[field]) !== JSON.stringify(row[field])) throw new Error('Nilai invoice berubah; muat ulang dan periksa sebelum menggabungkan');
+      }
+      if (row.pph23 || Number(row.trade_in_amount) > 0 || Number(row.unit_ac_amount) > 0 || row.quotation_id || row.invoice_type === 'UNIT_AC') {
+        throw new Error('Invoice PPh/trade-in/unit AC/quotation gunakan Gabung & Kirim PDF; konsolidasi ini hanya untuk invoice jasa/material tanpa DP');
+      }
+    }
+    const lines = normalizeLines(sorted.flatMap(inv => {
       let md = inv.materials_detail;
-      if (typeof md === "string") { try { md = JSON.parse(md); } catch { md = null; } }
-      if (Array.isArray(md) && md.length > 0) return md;
-      const synth = [];
-      if (Number(inv.labor) > 0) synth.push({ nama: inv.service || "Jasa", jumlah: 1, satuan: "unit", harga_satuan: Number(inv.labor), subtotal: Number(inv.labor), keterangan: "jasa" });
-      if (Number(inv.material) > 0) synth.push({ nama: "Material", jumlah: 1, satuan: "unit", harga_satuan: Number(inv.material), subtotal: Number(inv.material), keterangan: "barang" });
-      return synth;
+      if (typeof md === 'string') {
+        try { md = JSON.parse(md); } catch { throw new Error(`Item ${inv.id} tidak valid; periksa invoice sumber`); }
+      }
+      if (Array.isArray(md) && md.length) return md;
+      return [
+        ...(Number(inv.labor) > 0 ? [{ nama: inv.service || 'Jasa', jumlah: 1, satuan: 'unit', harga_satuan: Number(inv.labor), subtotal: Number(inv.labor), category: 'LABOR' }] : []),
+        ...(Number(inv.material) > 0 ? [{ nama: 'Material', jumlah: 1, satuan: 'unit', harga_satuan: Number(inv.material), subtotal: Number(inv.material), category: 'PART' }] : []),
+      ];
     }));
-
-    // Ringkasan diturunkan dari line item gabungan (single source of truth via summarize).
-    const totalDiscount = sorted.reduce((s, i) => s + (Number(i.discount) || 0), 0);
-    const _mergedSum    = summarize(mergedMaterials, { discount: totalDiscount });
-    const totalLabor    = _mergedSum.labor;
-    const totalMaterial = _mergedSum.material;
-    const grandTotal    = _mergedSum.total;
-    const dueDates      = sorted.map(i => i.due).filter(Boolean);
-    const dueLatest     = dueDates.length ? dueDates.sort((a, b) => new Date(b) - new Date(a))[0] : null;
-    const serviceNames  = [...new Set(sorted.map(i => i.service).filter(Boolean))].join(" + ");
-    const unitTotal     = sorted.reduce((s, i) => {
-      const u = Array.isArray(i.units) ? i.units.length : (Number(i.units) || 1);
-      return s + u;
-    }, 0);
-
-    // Generate invoice ID — kolom id tabel invoices tidak punya default (format: INV-YYYYMMDD-XXXXX)
-    const todayStr = getLocalDate();
-    const invSeq = Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(-2).toUpperCase();
-    const newId = "INV-" + todayStr.replace(/-/g, "").slice(0, 8) + "-" + invSeq;
-
+    const discount = sorted.reduce((sum, inv) => sum + Number(inv.discount || 0), 0);
+    const sum = summarize(lines, { discount });
+    if (sum.total !== sorted.reduce((n, inv) => n + Number(inv.total || 0), 0)
+      || sum.labor !== sorted.reduce((n, inv) => n + Number(inv.labor || 0), 0)
+      || sum.material !== sorted.reduce((n, inv) => n + Number(inv.material || 0), 0)) {
+      throw new Error('Total/item invoice sumber tidak konsisten; tidak ada invoice yang dibatalkan');
+    }
+    const today = getLocalDate().replace(/-/g, '');
+    const nonce = globalThis.crypto?.randomUUID?.().replace(/-/g, '').slice(0, 12).toUpperCase();
+    if (!nonce) throw new Error('Browser tidak mendukung ID permintaan aman');
     const newInv = {
-      id:              newId,
-      customer:        first.customer,
-      phone:           first.phone,
-      service:         `Invoice Gabungan (${sorted.length} pekerjaan)`,
-      job_id:          null,
-      units:           unitTotal,
-      labor:           totalLabor,
-      material:        totalMaterial,
-      discount:        totalDiscount,
-      total:           grandTotal,
-      status:          "UNPAID",
-      due:             dueLatest,
-      teknisi:         first.teknisi || null,
-      materials_detail: mergedMaterials.length > 0 ? JSON.stringify(mergedMaterials) : null,
-      sent:            false,
-      created_at:      new Date().toISOString(),
+      id: `INV-${today}-${nonce}`, customer: first.customer, phone: first.phone,
+      service: `Invoice Gabungan (${sorted.length} pekerjaan)`, job_id: null,
+      units: sorted.reduce((n, i) => n + (Number(i.units) || 1), 0), labor: sum.labor, material: sum.material,
+      discount, total: sum.total, status: 'UNPAID',
+      due: sorted.map(i => i.due).filter(Boolean).sort().at(-1) || null,
+      teknisi: first.teknisi || null, materials_detail: JSON.stringify(lines), sent: false,
     };
-
-    // Guard invarian (observasional)
-    {
-      const _chk = checkInvoiceConsistency({ ...newInv, lines: mergedMaterials });
-      if (!_chk.ok) addAgentLog("INVOICE_INVARIANT", describeInconsistency(_chk, newInv.id) + " (gabungan)", "WARNING");
-    }
-
-    const { data: created, error } = await supabase.from("invoices").insert([newInv]).select().single();
-    if (error || !created) {
-      showNotif("⚠️ Gagal buat invoice gabungan: " + (error?.message || "unknown"));
-      return { ok: false };
-    }
-
-    // Tandai invoice sumber sebagai CANCELLED dengan keterangan
-    for (const inv of sorted) {
-      await supabase.from("invoices").update({
-        status: "CANCELLED",
-        service: (inv.service || "Servis AC") + ` [Digabung ke ${created.id}]`,
-        pdf_url: null, pdf_generated_at: null,
-      }).eq("id", inv.id);
-    }
-
-    // Update state lokal — dedup created.id supaya tidak dobel di UI kalau subscription
-    // realtime INSERT sudah menambah invoice gabungan duluan (race optimistic vs realtime).
-    setInvoicesData(prev => {
-      const updated = prev
-        .filter(i => i.id !== created.id)
-        .map(i =>
-          sorted.some(s => s.id === i.id)
-            ? { ...i, status: "CANCELLED", service: i.service + ` [Digabung ke ${created.id}]` }
-            : i
-        );
-      return [created, ...updated];
+    const check = checkInvoiceConsistency({ ...newInv, lines });
+    if (!check.ok) throw new Error(describeInconsistency(check, newInv.id));
+    const { data, error } = await supabase.rpc('consolidate_invoices_atomic', {
+      p_sources: sorted, p_invoice: newInv, p_actor_name: currentUser?.name || null,
     });
-
-    addAgentLog("INVOICE_CONSOLIDATED",
-      `${sorted.length} invoice digabung jadi ${created.id} oleh ${currentUser?.name || "—"}: ${sourceIds}`,
-      "SUCCESS"
-    );
-    showNotif(`✅ Invoice gabungan ${created.id} berhasil dibuat — ${sorted.length} invoice sumber di-cancelled`);
-    return { ok: true, newInvoice: created };
+    if (error) throw error;
+    if (!data?.invoice?.id || !Array.isArray(data.sources) || !Array.isArray(data.orders) || !Array.isArray(data.suggestions)) {
+      throw new Error('Respons konsolidasi tidak lengkap; muat ulang untuk memeriksa hasil, jangan membuat invoice manual baru');
+    }
+    const replacements = new Map([...data.sources, data.invoice].map(i => [i.id, i]));
+    setInvoicesData(prev => [data.invoice, ...prev.filter(i => i.id !== data.invoice.id).map(i => replacements.get(i.id) || i)]);
+    const orderMap = new Map(data.orders.map(o => [o.id, o]));
+    setOrdersData?.(prev => prev.map(o => orderMap.get(o.id) || o));
+    const suggestionMap = new Map(data.suggestions.map(s => [s.id, s]));
+    setPaymentSuggestions?.(prev => {
+      const all = new Map(prev.map(s => [s.id, s]));
+      for (const [id, s] of suggestionMap) { if (s.status === 'PENDING') all.set(id, s); else all.delete(id); }
+      return [...all.values()];
+    });
+    addAgentLog?.('INVOICE_CONSOLIDATED', `${ids.join(', ')} → ${data.invoice.id}; bukti tetap menunggu verifikasi`, 'SUCCESS');
+    showNotif(`✅ Invoice ${data.invoice.id} ${data.replayed ? 'sudah tersimpan' : 'berhasil digabung'}; periksa bukti sebelum menandai lunas`);
+    return { ok: true, newInvoice: data.invoice, replayed: !!data.replayed };
+  } catch (error) {
+    const missing = error?.code === 'PGRST202' || /could not find.*function/i.test(error?.message || '');
+    const message = missing ? 'Migrasi 206 belum terpasang; konsolidasi dibatalkan tanpa jalur cadangan' : error?.message || 'Konsolidasi gagal';
+    showNotif(`❌ ${message}`);
+    addAgentLog?.('INVOICE_CONSOLIDATE_FAILED', message, 'WARNING');
+    return { ok: false, error: message };
+  }
 }

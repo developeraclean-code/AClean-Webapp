@@ -1,123 +1,56 @@
-// retroMatchPayment — cari bukti bayar (payment_suggestions) yg cocok utk invoice yg
-// baru di-approve (by phone, 7 hari). Diekstrak dari App.jsx (Fase 3, pola ctx).
-import { findNearPhoneSuggestion } from "./phoneFuzzy.js";
+// A match is a candidate for admin review, never a payment confirmation.
+import { paymentPhoneVariants, matchPaymentInvoices } from './waPaymentMatch.js';
 
-export async function retroMatchPayment(inv, {
-  addAgentLog, normalizePhone, sendWA, setInvoicesData, supabase, userAccounts,
-} = {}) {
-    if (!inv.phone || !supabase) return;
-    const norm = normalizePhone(inv.phone);
-    if (!norm) return;
-
-    try {
-      const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-      // Cari semua payment_suggestions dari nomor ini, belum di-match ke invoice manapun, dalam 30 hari
-      const { data: candidates, error } = await supabase
-        .from("payment_suggestions")
-        .select("id, amount, bank, transfer_date, image_url, source, created_at")
-        .eq("phone", norm)
-        .is("invoice_id", null)
-        .eq("status", "PENDING")
-        .gte("created_at", cutoff)
-        .order("created_at", { ascending: false })
-        .limit(5);
-
-      if (error) return;
-
-      // Kandidat terbaik: yang paling baru dari nomor yang SAMA PERSIS.
-      let best = candidates?.[0] || null;
-      let fuzzy = false;
-
-      // Jaring ke-2: nomor customer di DB salah 1 digit (kasus Bapak Ricky,
-      // 22 Agu 2026). Exact match tidak akan pernah ketemu, jadi cari lewat
-      // nominal yang sama persis lalu saring dgn toleransi 1 digit. Kalau
-      // kandidatnya tidak tepat satu, menyerah — biar Owner cocokkan manual.
-      if (!best) {
-        const { data: nearCands } = await supabase
-          .from("payment_suggestions")
-          .select("id, phone, amount, bank, transfer_date, image_url, source, created_at")
-          .is("invoice_id", null)
-          .eq("status", "PENDING")
-          .eq("amount", Number(inv.total) || 0)
-          .gte("created_at", cutoff)
-          .limit(20);
-        const near = findNearPhoneSuggestion(norm, nearCands || [], inv.total);
-        if (near) { best = near; fuzzy = true; }
-      }
-
-      if (!best) return;
-      const now = new Date().toISOString();
-
-      // Patch payment_suggestion → link ke invoice ini DAN tutup statusnya.
-      // `status` dulu tidak ikut di-set (audit 29 Agu 2026): baris yang sudah berhasil
-      // dicocokkan tetap PENDING selamanya, jadi antrean tinjauan menumpuk sampai 341
-      // baris & bukti baru tenggelam. Menutupnya di sini bukan menghapus — jejaknya utuh.
-      await supabase.from("payment_suggestions").update({
-        invoice_id: inv.id,
-        order_id: inv.job_id || null,
-        matched_at: now,
-        match_source: fuzzy ? "retro_fuzzy_1digit" : "retro",
-        status: "CONFIRMED",
-        resolved_at: now,
-        resolved_by: "retro-match",
-      }).eq("id", best.id);
-
-      // Patch invoice → simpan payment_proof_url jika ada foto
-      if (best.image_url) {
-        await supabase.from("invoices").update({
-          payment_proof_url: best.image_url,
-          updated_at: now,
-        }).eq("id", inv.id);
-        setInvoicesData(prev => prev.map(i =>
-          i.id === inv.id ? { ...i, payment_proof_url: best.image_url } : i
-        ));
-      }
-
-      // Cek selisih nominal
-      const fuzzyNote = fuzzy
-        ? `\n⚠️ *Dicocokkan lewat toleransi 1 digit*\nNomor invoice ${norm} vs nomor pengirim ${best.phone} — beda 1 digit, nominal sama persis.\nMohon betulkan nomor customer setelah verifikasi.\n`
-        : "";
-
-      const invTotal = Number(inv.total) || 0;
-      const paidAmt  = Number(best.amount) || 0;
-      const selisih  = Math.abs(invTotal - paidAmt);
-      const toleransi = 10000; // Rp 10.000 toleransi pembulatan
-
-      // Notif ke owner via WA
-      const ownerAccs = (userAccounts || []).filter(u => u.role === "Owner" && u.phone && u.active !== false);
-      const tglBukti = best.transfer_date || best.created_at?.slice(0, 10) || "?";
-      const tglInvoice = inv.date || inv.created_at?.slice(0, 10) || "?";
-
-      if (paidAmt > 0 && selisih > toleransi) {
-        // Nominal TIDAK sesuai — warning
-        const warnMsg =
-          `⚠️ *Bukti Bayar Ditemukan — Nominal Beda*\n` +
-          `Invoice: ${inv.id}\n` +
-          `Customer: ${inv.customer}\n` +
-          `Tagihan: Rp${invTotal.toLocaleString("id-ID")}\n` +
-          `Bukti Bayar: Rp${paidAmt.toLocaleString("id-ID")}\n` +
-          `Selisih: Rp${selisih.toLocaleString("id-ID")}\n` +
-          `Tgl Bukti: ${tglBukti} · Tgl Invoice: ${tglInvoice}\n` +
-          (best.bank ? `Bank: ${best.bank}\n` : "") +
-          fuzzyNote +
-          `\n🔍 Cek manual di menu Invoice → ${inv.id}`;
-        ownerAccs.forEach(u => sendWA(u.phone, warnMsg));
-        addAgentLog("RETRO_MATCH_WARN", `Retro-match ${inv.id} ← ${best.id} | selisih Rp${selisih.toLocaleString("id-ID")}`, "WARNING");
-      } else {
-        // Nominal sesuai (atau tidak terbaca) — notif biasa
-        const okMsg =
-          `✅ *Bukti Bayar Otomatis Dicocokkan*\n` +
-          `Invoice: ${inv.id}\n` +
-          `Customer: ${inv.customer}\n` +
-          (paidAmt > 0 ? `Nominal: Rp${paidAmt.toLocaleString("id-ID")}\n` : `Nominal: tidak terbaca dari bukti\n`) +
-          `Tgl Bukti: ${tglBukti} · Tgl Invoice: ${tglInvoice}\n` +
-          (best.bank ? `Bank: ${best.bank}\n` : "") +
-          fuzzyNote +
-          `\n📋 Cek & konfirmasi PAID di menu Invoice → ${inv.id}`;
-        ownerAccs.forEach(u => sendWA(u.phone, okMsg));
-        addAgentLog(fuzzy ? "RETRO_MATCH_FUZZY" : "RETRO_MATCH_OK", `Retro-match ${inv.id} ← ${best.id}${paidAmt > 0 ? " | Rp" + paidAmt.toLocaleString("id-ID") : " | nominal ?"}${fuzzy ? " | toleransi 1 digit (" + norm + " vs " + best.phone + ")" : ""}`, fuzzy ? "WARNING" : "SUCCESS");
-      }
-    } catch (e) {
-      console.warn("[RETRO_MATCH] error:", e.message);
+export async function retroMatchPayment(inv, { addAgentLog, supabase } = {}) {
+  if (!supabase || !inv?.id || !paymentPhoneVariants(inv.phone).length) return { matched: false };
+  try {
+    // Never choose the newest proof merely because its phone matches.
+    const { data: fresh, error: freshError } = await supabase.from('invoices').select('*').eq('id', inv.id).single();
+    if (freshError) throw freshError;
+    if (!fresh || !['UNPAID', 'OVERDUE', 'PARTIAL_PAID'].includes(fresh.status)) return { matched: false };
+    const variants = paymentPhoneVariants(fresh.phone);
+    const invoices = [], candidates = [];
+    const cutoff = new Date(Date.now() - 30 * 86400000).toISOString();
+    for (let from = 0; ; from += 200) {
+      if (from >= 10000) throw new Error('Terlalu banyak invoice untuk pencocokan aman; periksa manual');
+      const { data, error } = await supabase.from('invoices')
+        .select('id,phone,total,status,paid_amount,remaining_amount')
+        .in('phone', variants).in('status', ['UNPAID', 'OVERDUE', 'PARTIAL_PAID'])
+        .order('id').range(from, from + 199);
+      if (error) throw error;
+      invoices.push(...(data || []));
+      if ((data || []).length < 200) break;
     }
+    for (let from = 0; ; from += 200) {
+      if (from >= 10000) throw new Error('Terlalu banyak bukti untuk pencocokan aman; periksa manual');
+      const { data, error } = await supabase.from('payment_suggestions')
+        .select('id,phone,amount,image_url,invoice_id,status,validation_status')
+        .in('phone', variants).is('invoice_id', null).eq('status', 'PENDING')
+        .eq('validation_status', 'PENDING').gte('created_at', cutoff)
+        .order('id').range(from, from + 199);
+      if (error) throw error;
+      candidates.push(...(data || []));
+      if ((data || []).length < 200) break;
+    }
+    const matches = candidates.filter(proof => {
+      if (!proof.image_url) return false;
+      const match = matchPaymentInvoices(invoices, fresh.phone, Number(proof.amount));
+      return match.kind === 'single' && match.invoices[0].id === fresh.id;
+    });
+    if (matches.length !== 1) return { matched: false, ambiguous: matches.length > 1 };
+    // Locks invoice -> suggestion and rechecks the match. Cannot attach a proof,
+    // confirm it, or write any payment ledger, including after approval races.
+    const { data, error } = await supabase.rpc('link_payment_suggestion_for_review', {
+      p_invoice_id: fresh.id, p_suggestion_id: matches[0].id,
+    });
+    if (error) throw error;
+    if (!data?.suggestion || data.suggestion.status !== 'PENDING') throw new Error('Hasil pencocokan bukti tidak valid');
+    addAgentLog?.('PAYMENT_REVIEW_MATCHED', `Kandidat bukti ${matches[0].id} → ${fresh.id}; menunggu verifikasi admin`, 'INFO');
+    return { matched: true, suggestion: data.suggestion };
+  } catch (error) {
+    const message = error?.message || 'Pencocokan bukti gagal';
+    console.warn('[PAYMENT_REVIEW_MATCH]', message);
+    addAgentLog?.('PAYMENT_REVIEW_MATCH_FAILED', `${inv.id}: ${message}. Bukti tetap perlu diperiksa manual.`, 'WARNING');
+    return { matched: false, error: message };
+  }
 }
