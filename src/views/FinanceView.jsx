@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { cs } from "../theme/cs.js";
+import { invoiceCashReceived } from "../lib/paymentWithholding.js";
 import { getLocalDate } from "../lib/dateTime.js";
 import { fetchFinanceMonthDetails, fetchFinanceSnapshot, fetchFinanceSummaryV2 } from "../data/reads.js";
 import { flushPerfMetrics, measureAsync } from "../lib/perfMetrics.js";
@@ -34,12 +35,8 @@ const TABS = [
 ];
 
 // Uang yang BENAR-BENAR diterima dari sebuah invoice (basis kas):
-// PAID → total penuh; PARTIAL_PAID → paid_amount (cicilan yang sudah masuk). Selain itu 0.
-const cashReceived = (i) =>
-  i?.cash_amount != null ? Number(i.cash_amount)
-    : i?.status === "PAID" ? Number(i.total || 0)
-    : i?.status === "PARTIAL_PAID" ? Number(i.paid_amount || 0)
-      : 0;
+// Credit potongan PPh melunasi piutang, tetapi bukan uang masuk bank/kas.
+const cashReceived = invoiceCashReceived;
 
 const fmtRp = (n) =>
   n == null || n === "" ? "—" : "Rp " + Number(n).toLocaleString("id-ID");

@@ -99,7 +99,7 @@ export function auditOperationalIntegrity(input) {
       continue;
     }
     if (row.voided_at || row.status === "VOID") continue;
-    paidByInvoice.set(row.invoice_id, money((paidByInvoice.get(row.invoice_id) || 0) + num(row.amount)));
+    paidByInvoice.set(row.invoice_id, money((paidByInvoice.get(row.invoice_id) || 0) + num(row.amount) + num(row.withheld_amount)));
   }
 
   for (const order of state.orders) {

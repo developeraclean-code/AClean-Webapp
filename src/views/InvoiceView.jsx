@@ -10,6 +10,9 @@ import { downloadCsv } from "../lib/exportUtils.js";
 import { acknowledgePaidInvoicesWithoutProofAtomic } from "../data/writes.js";
 import { dismissedProofsForInvoice, invoiceProofAction, pendingProofsForInvoice } from "../lib/paymentEvidence.js";
 import { confirmInvoiceWaProof } from "../lib/invoiceWaProof.js";
+import { confirmInvoiceWaWithholding, invoiceCashReceived, paymentWithholdingReview } from "../lib/paymentWithholding.js";
+import PaymentWithholdingReview from "../components/PaymentWithholdingReview.jsx";
+import { getLocalDate as localDateWIB } from "../lib/dateTime.js";
 import AcUnitInvoiceModal from "./AcUnitInvoiceModal.jsx";
 import QuotationView from "./QuotationView.jsx";
 import { BlobProvider } from "@react-pdf/renderer";
@@ -28,6 +31,9 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
   const [visibleLimit, setVisibleLimit] = useState(60);
   const [selSugg, setSelSugg] = useState(null);
   const [reviewAcknowledged, setReviewAcknowledged] = useState(false);
+  const [acceptWithholding, setAcceptWithholding] = useState(false);
+  const [withholdingNote, setWithholdingNote] = useState("");
+  const [transferDate, setTransferDate] = useState(localDateWIB);
   const [urlInput, setUrlInput] = useState("");
   const [uploadedUrl, setUploadedUrl] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -45,7 +51,7 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
         for (let from = 0; ; from += 200) {
           const { data, error } = await supabase
             .from("payment_suggestions")
-            .select("id, phone, sender_name, amount, bank, transfer_date, image_url, created_at, invoice_id, match_source, raw_message, status")
+            .select("id, phone, sender_name, amount, bank, transfer_date, image_url, created_at, invoice_id, match_source, raw_message, status, ai_extraction_id")
             .eq("status", "PENDING")
             .or(`invoice_id.is.null,invoice_id.eq.${inv.id}`)
             .not("image_url", "is", null)
@@ -59,7 +65,7 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
         // automatic suggestions, but the Owner can deliberately re-review it.
         const { data: dismissed, error: dismissedError } = await supabase
           .from("payment_suggestions")
-          .select("id, phone, sender_name, amount, bank, transfer_date, image_url, created_at, invoice_id, match_source, raw_message, status")
+          .select("id, phone, sender_name, amount, bank, transfer_date, image_url, created_at, invoice_id, match_source, raw_message, status, ai_extraction_id")
           .eq("status", "DISMISSED").eq("validation_status", "PENDING").eq("invoice_id", inv.id)
           .not("image_url", "is", null)
           .order("created_at", { ascending: false }).limit(20);
@@ -67,7 +73,12 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
         rows.push(...(dismissed || []));
         if (!cancelled) {
           setSuggs(rows);
-          if (inv.initialSuggestionId) setSelSugg(rows.find(row => row.id === inv.initialSuggestionId) || null);
+          if (inv.initialSuggestionId) {
+            const selected = rows.find(row => row.id === inv.initialSuggestionId) || null;
+            setSelSugg(selected);
+            const parsed = selected?.transfer_date ? new Date(selected.transfer_date) : null;
+            if (parsed && Number.isFinite(parsed.getTime())) setTransferDate(new Date(parsed.getTime() + 7 * 3600000).toISOString().slice(0, 10));
+          }
         }
       } catch (error) {
         if (!cancelled) {
@@ -138,28 +149,48 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
   const chosenUrl = tab === "wa" ? (selSugg?.image_url || "") : tab === "url" ? urlInput.trim() : uploadedUrl;
   const needsManualReview = tab === "wa" && !!selSugg && (selSugg.match_source === "wa_image_review" || selSugg.status === "DISMISSED"
     || !Number(selSugg.amount) || !samePhone(selSugg.phone, inv.phone));
-  const canConfirm = !!chosenUrl && (!needsManualReview || reviewAcknowledged) && !busy;
   const alreadyPaid = inv.status === "PAID";
+  const hasAmountDifference = tab === "wa" && !alreadyPaid && Number(selSugg?.amount) > 0
+    && Number(selSugg.amount) !== Number(inv.total) - Number(inv.paid_amount || 0);
+  const withholdingReview = paymentWithholdingReview(inv, selSugg);
+  const canConfirm = !!chosenUrl && (!needsManualReview || reviewAcknowledged) && !busy
+    && (!hasAmountDifference || (withholdingReview.eligible && acceptWithholding && withholdingNote.trim().length >= 10 && !!transferDate));
 
   const confirm = async () => {
     if (confirmationRef.current.busy) return;
     if (!chosenUrl) { showNotif("⚠️ Pilih/isi bukti bayar dulu"); return; }
     if (needsManualReview && !reviewAcknowledged) { showNotif("⚠️ Buka dan periksa file sebelum melampirkan bukti yang belum dikenali AI"); return; }
+    if (!canConfirm) { showNotif("⚠️ Periksa selisih, konfirmasi potongan PPh dan isi catatan terlebih dahulu"); return; }
     confirmationRef.current.busy = true;
     setBusy(true);
+    let committed = false;
     try {
       if (tab === "wa") {
         confirmationRef.current.id ||= crypto.randomUUID();
-        const result = await confirmInvoiceWaProof({ supabase, invoiceId: inv.id, suggestion: selSugg,
-          requestId: confirmationRef.current.id, reviewAcknowledged,
-          actorName: auditUserName ? auditUserName() : currentUser?.name });
+        const result = hasAmountDifference
+          ? await confirmInvoiceWaWithholding({ supabase, invoice: inv, suggestion: selSugg, requestId: confirmationRef.current.id,
+            paidAt: transferDate, note: withholdingNote, reviewAcknowledged: acceptWithholding && (!needsManualReview || reviewAcknowledged) })
+          : await confirmInvoiceWaProof({ supabase, invoiceId: inv.id, suggestion: selSugg,
+            requestId: confirmationRef.current.id, reviewAcknowledged,
+            actorName: auditUserName ? auditUserName() : currentUser?.name });
+        committed = true;
         setInvoicesData(prev => prev.map(i => i.id === inv.id ? { ...i, ...result.invoice } : i));
         const orderMap = new Map(result.orders.map(o => [o.id, o]));
         setOrdersData?.(prev => prev.map(o => orderMap.get(o.id) || o));
         setPaymentSuggestions?.(prev => prev.filter(p => p.id !== selSugg.id));
         onSuggestionResolved?.(selSugg.id);
+        if (selSugg.ai_extraction_id) {
+          try {
+            const { error } = await supabase.from("ai_extractions").update({ status: "approved", linked_table: "invoices", linked_id: inv.id }).eq("id", selSugg.ai_extraction_id);
+            if (error) throw error;
+          } catch (error) {
+            addAgentLog?.("PAYMENT_AI_AUDIT_FAILED", `${inv.id} pembayaran tersimpan; audit AI perlu diperbarui: ${error.message}`, "WARNING");
+          }
+        }
         addAgentLog?.("INVOICE_WA_PROOF_VERIFIED", `Bukti ${selSugg.id} diverifikasi atomik untuk ${inv.id}`, "SUCCESS");
-        showNotif(result.attach_only ? "✅ Bukti dilampirkan; pembayaran tidak dicatat ulang" : `✅ Bukti diverifikasi & ${inv.id} lunas`);
+        showNotif(result.attach_only ? "✅ Bukti dilampirkan; pembayaran tidak dicatat ulang" : hasAmountDifference
+          ? `✅ ${inv.id} lunas: kas ${fmt(result.payment.amount)} + potongan PPh estimasi ${fmt(result.payment.withheld_amount)}`
+          : `✅ Bukti diverifikasi & ${inv.id} lunas`);
         onClose();
         return;
       }
@@ -196,7 +227,7 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
       addAgentLog?.("INVOICE_PROOF_ATTACHED", `Bukti bayar dilampirkan manual ke ${inv.id} (${tab})${action === "attach_only" ? "" : " + tandai lunas"}`, "SUCCESS");
       showNotif(`✅ Bukti dilampirkan${action === "attach_only" ? "" : ` & ${inv.id} ditandai lunas`}`);
       onClose();
-    } catch (err) { showNotif("❌ Gagal: " + (err.message || err)); }
+    } catch (err) { showNotif((committed ? "⚠️ Pembayaran sudah tersimpan; pembaruan tampilan gagal. Muat ulang: " : "❌ Verifikasi belum dapat dipastikan; periksa riwayat sebelum mengulang: ") + (err.message || err)); }
     finally { confirmationRef.current.busy = false; setBusy(false); }
   };
 
@@ -215,7 +246,7 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
           <div>
             <div style={{ fontWeight: 800, fontSize: 15, color: cs.text }}>{inv.initialSuggestionId ? "🔎 Periksa & Lampirkan Bukti WA" : inv.alternateProof ? "🔗 Cari / Lampirkan Bukti Lain" : "🔗 Lampirkan Bukti Bayar"}</div>
             <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>{inv.id} · {inv.customer} · {fmt(inv.total)}{alreadyPaid ? " · sudah PAID" : ""}</div>
-            <div style={{ fontSize: 11, color: cs.muted, marginTop: 3 }}>{alreadyPaid ? "Simpan bukti saja; pembayaran tidak dicatat ulang." : "Satu konfirmasi akan menautkan bukti dan mencatat pelunasan."}</div>
+            <div style={{ fontSize: 11, color: cs.muted, marginTop: 3 }}>{alreadyPaid ? "Simpan bukti saja; pembayaran tidak dicatat ulang." : "Periksa pengirim, nominal dan potongan sebelum pelunasan."}</div>
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer", lineHeight: 1 }}>×</button>
         </div>
@@ -240,7 +271,12 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
                   const sel = selSugg?.id === s.id;
                   const sameNo = invTail && (s.phone || "").replace(/\D/g, "").endsWith(invTail);
                   return (
-                    <div key={s.id} onClick={() => { if (confirmationRef.current.busy) return; confirmationRef.current.id = null; setSelSugg(sel ? null : s); setReviewAcknowledged(false); }}
+                    <div key={s.id} onClick={() => {
+                      if (confirmationRef.current.busy) return;
+                      confirmationRef.current.id = null; setSelSugg(sel ? null : s); setReviewAcknowledged(false); setAcceptWithholding(false); setWithholdingNote("");
+                      const parsed = s.transfer_date ? new Date(s.transfer_date) : null;
+                      setTransferDate(parsed && Number.isFinite(parsed.getTime()) ? new Date(parsed.getTime() + 7 * 3600000).toISOString().slice(0, 10) : localDateWIB());
+                    }}
                       style={{ border: "2px solid " + (sel ? cs.green : cs.border), borderRadius: 10, overflow: "hidden", cursor: "pointer", background: cs.card }}>
                       <div style={{ position: "relative", width: "100%", height: 100, background: "#0008" }}>
                         {s.image_url?.toLowerCase().includes(".pdf")
@@ -267,9 +303,13 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
             </button>}
             {selSugg && <a href={fotoSrc(selSugg.image_url)} target="_blank" rel="noreferrer" style={{ display: "inline-block", marginTop: 8, color: cs.accent, fontSize: 11 }}>Buka file terpilih ↗</a>}
             {needsManualReview && <label style={{ display: "block", marginTop: 8, color: cs.yellow, fontSize: 11 }}>
-              <input type="checkbox" checked={reviewAcknowledged} onChange={e => setReviewAcknowledged(e.target.checked)} /> Saya sudah memeriksa file dan memastikan ini bukti pembayaran{selSugg?.status === "DISMISSED" ? " meski sebelumnya diabaikan" : ""}.
+              {!samePhone(selSugg?.phone, inv.phone) && <div style={{ marginBottom: 6 }}>Nomor pengirim {selSugg?.phone || "—"} berbeda dari customer {inv.phone || "—"}. Pastikan pengirim finance membayar untuk {inv.customer}; nomor customer tidak akan diganti.</div>}
+              <input type="checkbox" checked={reviewAcknowledged} disabled={busy} onChange={e => setReviewAcknowledged(e.target.checked)} /> Saya sudah memeriksa file dan memastikan pengirim membayar invoice ini{selSugg?.status === "DISMISSED" ? " meski sebelumnya diabaikan" : ""}.
               {selSugg?.raw_message && <span style={{ display: "block", marginTop: 4 }}>{selSugg.raw_message}</span>}
             </label>}
+            {hasAmountDifference && <PaymentWithholdingReview invoice={inv} suggestion={selSugg}
+              accepted={acceptWithholding} onAccepted={setAcceptWithholding} note={withholdingNote} onNote={setWithholdingNote}
+              paidAt={transferDate} onPaidAt={setTransferDate} disabled={busy} fmt={fmt} />}
           </div>
         )}
 
@@ -297,7 +337,7 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
           <button onClick={onClose} style={{ flex: 1, background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "11px", borderRadius: 10, cursor: "pointer", fontWeight: 600 }}>Batal</button>
           <button onClick={confirm} disabled={!canConfirm}
             style={{ flex: 2, background: canConfirm ? cs.green : cs.surface, border: "none", color: canConfirm ? "#fff" : cs.muted, padding: "11px", borderRadius: 10, cursor: canConfirm ? "pointer" : "not-allowed", fontWeight: 800, fontSize: 13 }}>
-            {busy ? "Proses…" : alreadyPaid ? "✅ Simpan Bukti" : "✅ Simpan Bukti & Tandai Lunas"}
+            {busy ? "Proses…" : alreadyPaid ? "✅ Simpan Bukti" : hasAmountDifference ? "✅ Catat Transfer + Potongan & Lunas" : "✅ Simpan Bukti & Tandai Lunas"}
           </button>
         </div>
       </div>
@@ -316,10 +356,9 @@ const todayDateStr = getLocalDate();
 const exportInvoiceCsv = () => {
   const list = filteredInv || [];
   if (list.length === 0) { showNotif("Tidak ada invoice untuk diekspor."); return; }
-  const cashRec = (i) => i.status === "PAID" ? Number(i.total || 0) : i.status === "PARTIAL_PAID" ? Number(i.paid_amount || 0) : 0;
-  const headers = ["No Invoice", "Tanggal", "Customer", "No HP", "Layanan", "Teknisi", "Status", "Total", "Terbayar", "Sisa (Outstanding)", "Umur (hari)", "Garansi s/d", "Job ID"];
+  const headers = ["No Invoice", "Tanggal", "Customer", "No HP", "Layanan", "Teknisi", "Status", "Total", "Terbayar (kas + potongan)", "Sisa (Outstanding)", "Umur (hari)", "Garansi s/d", "Job ID", "Kas Diterima", "Potongan PPh Estimasi (nonkas)"];
   const rows = list.map(i => {
-    const paid = cashRec(i);
+    const paid = i.status === "PAID" ? Number(i.total || 0) : i.status === "PARTIAL_PAID" ? Number(i.paid_amount || 0) : 0;
     const sisa = Math.max(0, Number(i.total || 0) - paid);
     const isOutstanding = ["UNPAID", "OVERDUE", "PARTIAL_PAID"].includes(i.status);
     const baseDate = (i.sent || i.created_at || "").slice(0, 10);
@@ -328,7 +367,7 @@ const exportInvoiceCsv = () => {
       : "";
     return [
       i.id || "", (i.created_at || "").slice(0, 10), i.customer || "", i.phone || "", i.service || "", i.teknisi || "",
-      i.status || "", Number(i.total || 0), paid, sisa, umur, (i.garansi_expires || "").slice(0, 10), i.job_id || "",
+      i.status || "", Number(i.total || 0), paid, sisa, umur, (i.garansi_expires || "").slice(0, 10), i.job_id || "", invoiceCashReceived(i), Number(i.withheld_amount || 0),
     ];
   });
   downloadCsv(headers, rows, `rekap-invoice_${TODAY}.csv`);
@@ -424,7 +463,7 @@ const openPayPanel = async (inv) => {
   setPayLoading(true);
   try {
     const { data, error } = await supabase.from("invoice_payments")
-      .select("id,amount,method,notes,paid_at,recorded_by_name,created_at")
+      .select("id,amount,withheld_amount,withholding_detail,method,notes,paid_at,recorded_by_name,created_at")
       .eq("invoice_id", inv.id)
       .order("paid_at", { ascending: true });
     if (error) throw error;
@@ -467,7 +506,7 @@ const savePayment = async (inv) => {
     setInvoicesData(prev => prev.map(i => i.id === inv.id ? { ...i, ...savedInvoice } : i));
     // Refresh history
     const { data } = await supabase.from("invoice_payments")
-      .select("id,amount,method,notes,paid_at,recorded_by_name,created_at")
+      .select("id,amount,withheld_amount,withholding_detail,method,notes,paid_at,recorded_by_name,created_at")
       .eq("invoice_id", inv.id).order("paid_at", { ascending: true });
     setPayHistory(data || []);
     setPayForm({ amount: "", method: "transfer", notes: "", paid_at: getLocalDate() });
@@ -645,7 +684,6 @@ const [pendingSelectedInvoice, setPendingSelectedInvoice] = useState({}); // { s
 const [pendingPaymentBusy, setPendingPaymentBusy] = useState(null);
 const [manualPickerOpen, setManualPickerOpen] = useState({}); // { suggestion_id: bool }
 const [manualPickerSearch, setManualPickerSearch] = useState({}); // { suggestion_id: search_string }
-const paymentLinkRef = useRef({ busy: false, ids: new Map() });
 const loadPendingPayments = async ({ refreshInbox = true } = {}) => {
   if (!supabase) return;
   setLoadingPendingPayments(true);
@@ -688,7 +726,7 @@ useEffect(() => {
 const findInvoiceCandidates = (sug) => {
   const target = Number(sug.amount) || 0;
   const phone = (sug.phone || "").replace(/\D/g, "");
-  const unpaid = (invoicesData || []).filter(i => {
+  const unpaid = (invoicesDataMerged || invoicesData || []).filter(i => {
     if (!INVOICE_UNPAID_STATUSES.includes(i.status)) return false;
     if (sug.invoice_id && i.id === sug.invoice_id) return true;
     if (!target) {
@@ -696,58 +734,26 @@ const findInvoiceCandidates = (sug) => {
       const candidatePhone = String(i.phone || cust.phone || "").replace(/\D/g, "");
       return phone && candidatePhone.endsWith(phone.slice(-9));
     }
-    return Math.abs(Number(i.total || 0) - target) < 1000;
+    return Number(i.total || 0) - Number(i.paid_amount || 0) === target || paymentWithholdingReview(i, sug).eligible;
   });
   // ranking: phone exact > nama partial > amount only
   const ranked = unpaid.map(i => {
     let score = sug.invoice_id === i.id ? 20 : 1;
     const cust = (customersData || []).find(c => c.id === i.customer_id) || {};
-    if (phone && (cust.phone || "").replace(/\D/g, "").endsWith(phone.slice(-9))) score += 5;
+    if (Number(i.total || 0) - Number(i.paid_amount || 0) === target) score += 3;
+    if (phone && samePhone(i.phone || cust.phone, phone)) score += 5;
     if (sug.sender_name && (cust.name || "").toLowerCase().includes(String(sug.sender_name).toLowerCase().split(" ")[0])) score += 2;
     return { inv: i, cust, score };
   }).sort((a, b) => b.score - a.score);
   return ranked.slice(0, 3);
 };
 
-const handleLinkPayment = async (sug) => {
-  if (paymentLinkRef.current.busy) return;
+const handleLinkPayment = (sug) => {
   const invId = pendingSelectedInvoice[sug.id];
   if (!invId) { showNotif?.("Pilih invoice dulu", "error"); return; }
   const selectedInv = (invoicesDataMerged || invoicesData || []).find(i => i.id === invId);
-  let reviewAcknowledged = false;
-  if (sug.match_source === "wa_image_review" || !Number(sug.amount) || !samePhone(sug.phone, selectedInv?.phone)) {
-    const confirmed = await showConfirm({
-      title: "Pastikan file ini bukti bayar",
-      message: `AI belum memastikan media dari ${sug.sender_name || sug.phone || "WA"} adalah bukti pembayaran. Buka file, cocokkan nominal dan rekening, lalu lanjutkan hanya jika benar.\n\n${sug.raw_message || ""}`,
-      confirmText: "Sudah diperiksa, lanjut",
-    });
-    if (!confirmed) return;
-    reviewAcknowledged = true;
-  }
-  if (paymentLinkRef.current.busy) return;
-  paymentLinkRef.current.busy = true;
-  setPendingPaymentBusy(sug.id);
-  let committed = false;
-  try {
-    const key = `${sug.id}:${invId}`;
-    if (!paymentLinkRef.current.ids.has(key)) paymentLinkRef.current.ids.set(key, crypto.randomUUID());
-    const result = await confirmInvoiceWaProof({ supabase, invoiceId: invId, suggestion: sug,
-      requestId: paymentLinkRef.current.ids.get(key), reviewAcknowledged,
-      actorName: auditUserName ? auditUserName() : "Admin" });
-    committed = true;
-    setInvoicesData(prev => prev.map(i => i.id === invId ? { ...i, ...result.invoice } : i));
-    const orderMap = new Map(result.orders.map(o => [o.id, o]));
-    setOrdersData?.(prev => prev.map(o => orderMap.get(o.id) || o));
-    setPaymentSuggestions?.(prev => prev.filter(p => p.id !== sug.id));
-    if (sug.ai_extraction_id) {
-      const { error: aiErr } = await supabase.from("ai_extractions")
-        .update({ status: "approved", linked_table: "invoices", linked_id: invId }).eq("id", sug.ai_extraction_id);
-      if (aiErr) showNotif?.("Invoice dan bukti tersimpan, tetapi audit AI gagal diperbarui: " + aiErr.message);
-    }
-    showNotif?.(result.attach_only ? "✓ Bukti dilampirkan tanpa pembayaran ulang: " + invId : "✓ Bukti diverifikasi & invoice lunas: " + invId, "success");
-  } catch (e) {
-    showNotif?.((committed ? "Pembayaran dan bukti sudah tercatat; pembaruan tampilan/audit lanjutan gagal: " : "Verifikasi belum dapat dipastikan: ") + e.message + ". Muat ulang untuk memeriksa hasil.", "error");
-  } finally { paymentLinkRef.current.busy = false; setPendingPaymentBusy(null); }
+  if (!selectedInv) { showNotif?.("Invoice belum dimuat; perbarui daftar invoice dahulu", "error"); return; }
+  setAttachProofInv({ ...selectedInv, initialSuggestionId: sug.id });
 };
 const handleRejectPayment = async (sug) => {
   showConfirm?.({
@@ -1148,7 +1154,8 @@ return (
                       <input type="radio" name={`cand-${sug.id}`}
                         checked={selected === inv.id}
                         onChange={() => setPendingSelectedInvoice(s => ({ ...s, [sug.id]: inv.id }))} />
-                      <span><b>{cust.name || "?"}</b> · {inv.id} · {fmt(inv.total)} · <span style={{ color: cs.muted }}>{inv.status}</span> · <span style={{ color: "#10b981", fontSize: 10 }}>score {score}</span></span>
+                      <span><b>{inv.customer || cust.name || "?"}</b> · {inv.id} · {fmt(inv.total)} · <span style={{ color: cs.muted }}>{inv.status}</span> · <span style={{ color: "#10b981", fontSize: 10 }}>score {score}</span>
+                        {paymentWithholdingReview(inv, sug).eligible && <small style={{ display: "block", color: cs.yellow }}>Kemungkinan potongan PPh · wajib konfirmasi admin, bukan kecocokan pasti</small>}</span>
                     </label>
                   ))}
 
@@ -1164,11 +1171,11 @@ return (
                       {(() => {
                         const q = (manualPickerSearch[sug.id] || "").toLowerCase().trim();
                         if (!q) return <div style={{ fontSize: 11, color: cs.muted }}>Ketik nama/ID untuk cari.</div>;
-                        const results = (invoicesData || [])
+                        const results = (invoicesDataMerged || invoicesData || [])
                           .filter(i => INVOICE_UNPAID_STATUSES.includes(i.status))
                           .filter(i => {
                             const c = (customersData || []).find(x => x.id === i.customer_id) || {};
-                            return (c.name || "").toLowerCase().includes(q) || String(i.id).toLowerCase().includes(q);
+                            return (i.customer || c.name || "").toLowerCase().includes(q) || String(i.id).toLowerCase().includes(q);
                           })
                           .slice(0, 8);
                         if (results.length === 0) return <div style={{ fontSize: 11, color: cs.muted }}>Tidak ada invoice unpaid yang match "{q}".</div>;
@@ -1179,7 +1186,7 @@ return (
                               <input type="radio" name={`cand-${sug.id}`}
                                 checked={selected === inv.id}
                                 onChange={() => setPendingSelectedInvoice(s => ({ ...s, [sug.id]: inv.id }))} />
-                              <span><b>{cust.name || "?"}</b> · {inv.id} · {fmt(inv.total)} · <span style={{ color: cs.muted }}>{inv.status}</span></span>
+                              <span><b>{inv.customer || cust.name || "?"}</b> · {inv.id} · {fmt(inv.total)} · <span style={{ color: cs.muted }}>{inv.status}</span></span>
                             </label>
                           );
                         });
@@ -1191,7 +1198,7 @@ return (
                 <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                   <button disabled={pendingPaymentBusy === sug.id || !selected} onClick={() => handleLinkPayment(sug)}
                     style={{ background: "#10b98122", border: "1px solid #10b98155", color: "#10b981", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: selected ? "pointer" : "not-allowed", opacity: selected ? 1 : 0.5 }}>
-                    ✓ Link & Mark PAID
+                    ✓ Periksa & Link Pembayaran
                   </button>
                   <button disabled={pendingPaymentBusy === sug.id} onClick={() => handleRejectPayment(sug)}
                     style={{ background: "#ef444422", border: "1px solid #ef444455", color: "#ef4444", borderRadius: 8, padding: "6px 14px", fontSize: 12, cursor: "pointer" }}>
@@ -1876,6 +1883,10 @@ return (
               )}
             </div>
           )}
+          {Number(inv.withheld_amount) > 0 && <div style={{ marginBottom: 10, padding: 10, border: `1px solid ${cs.yellow}`, borderRadius: 8, color: cs.text, fontSize: 12 }}>
+            Kas diterima <b>{fmt(invoiceCashReceived(inv))}</b> + potongan PPh estimasi (nonkas) <b>{fmt(Number(inv.withheld_amount))}</b>.
+            <div style={{ color: cs.yellow, marginTop: 4 }}>Bukti potong pajak belum diverifikasi. Lihat rincian di Catat Pembayaran. Koreksi/revert memerlukan pembalikan terverifikasi.</div>
+          </div>}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button onClick={() => { setSelectedInvoice(inv); setModalPDF(true); }} style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>👁 Preview</button>
             {/* Edit Material — khusus invoice AC unit sale (Owner only, kecuali CANCELLED) */}
@@ -2291,7 +2302,8 @@ return (
                     <div key={p.id || pi} style={{ display: "grid", gridTemplateColumns: "auto 1fr auto auto", gap: 8, alignItems: "center", fontSize: 12, background: cs.card, borderRadius: 7, padding: "7px 10px" }}>
                       <span style={{ fontSize: 16 }}>{p.method === "cash" ? "💵" : p.method === "qris" ? "📱" : "🏦"}</span>
                       <div>
-                        <div style={{ fontWeight: 600, color: cs.text }}>{fmt(p.amount)}</div>
+                        <div style={{ fontWeight: 600, color: cs.text }}>{fmt(p.amount)}{Number(p.withheld_amount) > 0 ? " kas" : ""}</div>
+                        {Number(p.withheld_amount) > 0 && <div style={{ color: cs.yellow }}>+ {fmt(p.withheld_amount)} potongan PPh estimasi · nonkas · belum bukti potong</div>}
                         <div style={{ fontSize: 10, color: cs.muted }}>{p.paid_at} · {p.method} {p.notes ? "· " + p.notes : ""}</div>
                       </div>
                       <div style={{ fontSize: 10, color: cs.muted }}>{p.recorded_by_name || "—"}</div>
