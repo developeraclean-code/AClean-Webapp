@@ -28,7 +28,7 @@ export async function loadAllData({
   setAppSettings, setBonusCategories, setBrainMd, setBrainMdCustomer, setCronJobs,
   setCustomersData, setDispatchLogs, setInvTxData, setInvUnitsData, setInventoryData,
   setInvoicesData, setLaporanReports, setLlmApiKey, setLlmModel, setLlmProvider,
-  setOrdersData, setPaymentSuggestions, setPaymentsData, setPriceListData,
+  setOrdersData, setPaymentsData, setPriceListData,
   setPriceListCache, setPriceListSyncedAt, setProjectDailyReports, setTeknisiData, setUserAccounts,
   setWaConversations, setWaProvider, supabase, bootstrapMode = "full",
   onCriticalReady, onSettingsLoadError, onSettingsLoadSuccess, today,
@@ -104,7 +104,6 @@ export async function loadAllData({
         // latency ~1 dtk). Promise.resolve() memaksa request Supabase mulai SEKARANG
         // (builder lazy → tak jalan sampai di-then/await). Blok await di bawah tinggal
         // menunggu yang sudah in-flight — logika proses tiap blok TIDAK diubah. ──
-        const _isOwnerAdmin = ["Owner", "Admin"].includes(currentUser?.role);
         const _pPayDisp = Promise.all([fetchPayments(supabase), fetchDispatchLogs(supabase)]);
         const _pSettings = Promise.resolve(fetchAppSettings(supabase));
         const _pTek = Promise.resolve(fetchUserProfiles(supabase));
@@ -112,9 +111,6 @@ export async function loadAllData({
         const _pWA = criticalBootstrap ? Promise.resolve({ data: null }) : Promise.resolve(fetchWaConversations(supabase, 100)).catch(() => ({ error: true }));
         const _pPL = Promise.resolve(fetchPriceList(supabase));
         const _pBrain = criticalBootstrap ? Promise.resolve({ data: null }) : Promise.resolve(fetchAraBrain(supabase));
-        const _pPS = _isOwnerAdmin
-          ? Promise.resolve(supabase.from("payment_suggestions").select("*").eq("status", "PENDING").order("created_at", { ascending: false }).limit(200))
-          : Promise.resolve({ data: null });
 
         // GAP 3: Load payments summary & dispatch recent (untuk dashboard)
         try {
@@ -308,13 +304,7 @@ export async function loadAllData({
           }
         } catch (e) { console.warn("ara_brain DB load failed, pakai localStorage:", e?.message); }
 
-        // ── Load pending payment suggestions (HANYA Owner/Admin) ──
-        if (_isOwnerAdmin) {
-          try {
-            const { data: psData } = await _pPS;
-            if (psData?.length > 0) setPaymentSuggestions(psData);
-          } catch(_) { /* tabel belum ada, skip */ }
-        }
+        // Payment inbox is loaded independently by usePaymentInbox, including outside work hours.
 
         if (criticalBootstrap) {
           const current = typeof performance !== "undefined" ? performance.now() : Date.now();

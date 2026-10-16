@@ -3,6 +3,7 @@ import { setCorsHeaders, validateInternalToken } from "./_auth.js";
 import * as Sentry from "@sentry/node";
 import { customerVouchers, validateVoucher, claimVoucher, adminVouchers, cancelVoucher } from "./_handlers/voucher.js";
 import { monitor } from "./_handlers/monitor.js";
+import { paymentMediaHealth } from "./_payment-health.js";
 import { customerStatus, submitRating, generateCustomerToken } from "./_handlers/customer.js";
 import { testConnection, health, getLlmConfig, getApiToken, manageUser } from "./_handlers/auth-token.js";
 import { projectDelete, maintenance, mPortal, projectPortal } from "./_handlers/portal.js";
@@ -17,6 +18,7 @@ const PUBLIC_ROUTES = ["receive-wa", "test-connection", "_auth", "foto", "get-ll
 // ── HANDLER MAP: route → modul di api/_handlers/ (pemecahan router bertahap) ──
 const HANDLERS = {
   "monitor": monitor,
+  "payment-media-health": paymentMediaHealth,
   "customer-vouchers": customerVouchers,
   "validate-voucher": validateVoucher,
   "claim-voucher": claimVoucher,

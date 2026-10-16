@@ -15,7 +15,7 @@ import { taskBackupRetention } from "./_tasks/ops.js";
 import { sb, sendWA, log, OWNER_PHONE } from "./_tasks/_shared.js";
 import { taskCleanup, taskR2Cleanup90d, taskExpenseFotoCleanup30d, taskPaymentProofCleanup90d, taskSnapshotCleanup, taskWaCleanup, taskLogCleanup } from "./_tasks/cleanup.js";
 import { taskReminder, taskDaily, taskStock, taskServisReminder, taskVoucherExpiryReminder, taskLaporanStaleAlert, taskMaterialPulangReminder, taskWeeklyReport, taskMorningDispatch, taskRatingPrompt } from "./_tasks/reminders.js";
-import { taskWaSnapshot, taskWaBackfill, taskScanBuktiBayar, taskRetryPaymentMedia } from "./_tasks/wa-ai.js";
+import { taskWaSnapshot, taskWaBackfill, taskScanBuktiBayar, taskRetryPaymentMedia, taskPaymentMediaWatchdog } from "./_tasks/wa-ai.js";
 import { taskProjectAlerts, taskAutoReturnBrought, taskBackupData, taskPayrollWA, taskBonusEligible, taskMaintenanceContractExpiry, taskMaintenanceFollowupAlert, taskMaintenancePmDue, taskMediaGapAlert, taskDataIntegrityAudit, taskInfraUsageAlert } from "./_tasks/ops.js";
 
 // Initialize Sentry
@@ -68,6 +68,8 @@ async function taskTick({ cleanupOnly = false } = {}) {
     { t: "snapshot-cleanup",           fn: taskSnapshotCleanup,            h: 10, cleanup: true },
     { t: "bonus-eligible",           fn: taskBonusEligible,          h: 7 },
     { t: "media-gap-alert",          fn: taskMediaGapAlert,          h: 13 },
+    { t: "payment-media-health",     fn: taskPaymentMediaWatchdog,   h: 9 },
+    { t: "payment-media-health-sore", fn: taskPaymentMediaWatchdog, h: 19 },
     { t: "media-gap-alert-sore",     fn: taskMediaGapAlert,          h: 16 },
     { t: "data-integrity-audit",     fn: taskDataIntegrityAudit,     h: 7,  dow: 1 },
     { t: "infra-usage-alert",        fn: taskInfraUsageAlert,        h: 7 },
@@ -234,6 +236,7 @@ export default async function handler(req, res) {
       "wa-cleanup":       taskWaCleanup,
       "bukti-bayar":      taskScanBuktiBayar,
       "payment-media-retry": taskRetryPaymentMedia,
+      "payment-media-health": taskPaymentMediaWatchdog,
       "backup":           taskBackupData,
       "weekly":           taskWeeklyReport,
       "morning-dispatch": taskMorningDispatch,
@@ -268,7 +271,7 @@ export default async function handler(req, res) {
     const taskKey = taskMap[task] ? task : "reminder";
 
     const result = await runWithCronLogging(sb, taskKey, () => handler(), {
-      timeoutMs: ["tick", "cleanup-tick"].includes(taskKey) ? 45_000 : 25_000,
+      timeoutMs: taskKey === "payment-media-retry" ? 50_000 : ["tick", "cleanup-tick"].includes(taskKey) ? 45_000 : 25_000,
     });
 
     return res.json({ ok:true, task, timestamp:new Date().toISOString(), ...result });

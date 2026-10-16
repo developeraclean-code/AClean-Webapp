@@ -7,11 +7,14 @@ import { parseKasbonText, matchKasbonName, isKasbonApprovalMessage, resolveKasbo
 import { buildExpenseDedupKey } from "../_expense-dedup.js";
 import { retryOnePaymentMediaJob } from "../_payment-media.js";
 import { trustedProofForInvoice } from "../../src/lib/waPaymentMatch.js";
+import { readPaymentMediaHealth } from "../_payment-health.js";
+import { paymentWorkerState } from "../../src/lib/paymentMediaHealth.js";
 
 // Maksimal satu media per invocation agar aman untuk Vercel/Supabase free tier.
 // Job idempoten; kegagalan disimpan dan dicoba lagi maksimal tiga kali.
 export async function taskRetryPaymentMedia() {
-  const { data } = await sb.from("app_settings").select("value").eq("key", "wa_payment_detect").maybeSingle();
+  const { data, error } = await sb.from("app_settings").select("value").eq("key", "wa_payment_detect").maybeSingle();
+  if (error) throw new Error("Toggle deteksi bukti WA gagal dibaca; retry ditunda");
   if (data?.value === "false") return { skipped: true, reason: "wa_payment_detect_off" };
   const result = await retryOnePaymentMediaJob({
     supabaseUrl: process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL,
@@ -20,6 +23,23 @@ export async function taskRetryPaymentMedia() {
   });
   if (result?.error) await log("PAYMENT_MEDIA_RETRY", result.error, result.pendingReview ? "WARNING" : "ERROR");
   return result;
+}
+
+export async function taskPaymentMediaWatchdog() {
+  const health = await readPaymentMediaHealth({ supabaseUrl: process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL,
+    serviceKey: process.env.SUPABASE_SERVICE_KEY });
+  if (!health.enabled) return { skipped: true, reason: "wa_payment_detect_off" };
+  const state = paymentWorkerState(health);
+  if (state.level === "ok" && !health.recent_failed) return { checked: 1, alerts: 0 };
+  const { data, error } = await sb.from("agent_logs").select("id")
+    .eq("action", "PAYMENT_MEDIA_HEALTH_ALERT").gte("created_at", new Date(Date.now() - 6 * 3600_000).toISOString()).limit(1);
+  if (error) throw new Error("Riwayat alarm bukti WA gagal dibaca");
+  if (data?.length) return { checked: 1, alerts: 0, rate_limited: true };
+  const message = `⚠️ *Bukti Bayar WA Perlu Diperiksa*\n${state.label}\nMenunggu: ${health.waiting}, >30 menit: ${health.overdue}, gagal baru: ${health.recent_failed}.\nBuka Invoice → panel Bukti Pembayaran WA. Ini bukan konfirmasi pembayaran; jangan tandai lunas tanpa pemeriksaan.`;
+  const sent = await sendWA(OWNER_PHONE, message);
+  if (!sent) throw new Error("Alarm bukti WA ke Owner gagal dikirim");
+  await log("PAYMENT_MEDIA_HEALTH_ALERT", message, "WARNING");
+  return { checked: 1, alerts: 1 };
 }
 
 // ══════════════════════════════════════════════════

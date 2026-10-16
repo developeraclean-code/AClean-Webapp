@@ -1,5 +1,5 @@
 import { matchPaymentInvoices, paymentPhoneVariants } from "../src/lib/waPaymentMatch.js";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { downloadBufferFromR2, downloadToBuffer, uploadBufferToR2 } from "./_r2-upload.js";
 import { callVision, getVisionProvider } from "./_vision-provider.js";
 
@@ -107,7 +107,7 @@ export async function registerPaymentMediaReference({ supabaseUrl, serviceKey, s
       body: JSON.stringify({
         source_url: sourceUrl, phone, sender_name: senderName || null,
         mime_type: mimeType || null, status: "RECEIVED",
-        next_retry_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        next_retry_at: new Date(Date.now() + 120_000).toISOString(), updated_at: new Date().toISOString(),
       }),
       signal: AbortSignal.timeout(5000),
     });
@@ -125,7 +125,7 @@ export async function registerPaymentMediaReference({ supabaseUrl, serviceKey, s
   }
 }
 
-export async function stagePaymentMedia({ supabaseUrl, serviceKey, sourceUrl, phone, senderName, buffer, mimeType, createdAt }) {
+export async function stagePaymentMedia({ supabaseUrl, serviceKey, sourceUrl, phone, senderName, buffer, mimeType, createdAt, leaseToken }) {
   if (!supabaseUrl || !serviceKey || !sourceUrl || !phone || !buffer?.length) return { ok: false, error: "parameter staging tidak lengkap" };
   try {
   // Webhook provider bisa mengirim event yang sama lebih dari sekali. Cek dulu
@@ -150,7 +150,8 @@ export async function stagePaymentMedia({ supabaseUrl, serviceKey, sourceUrl, ph
     body: JSON.stringify({
       source_url: sourceUrl, phone, sender_name: senderName || null,
       mime_type: mimeType || "image/jpeg", r2_key: key, r2_url: upload.url,
-      status: "STORED", next_retry_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      status: leaseToken ? "PROCESSING" : "STORED",
+      next_retry_at: new Date(Date.now() + 120_000).toISOString(), updated_at: new Date().toISOString(),
     }),
     signal: AbortSignal.timeout(5000),
   });
@@ -162,15 +163,18 @@ export async function stagePaymentMedia({ supabaseUrl, serviceKey, sourceUrl, ph
   }
 }
 
-export async function updatePaymentMediaJob({ supabaseUrl, serviceKey, id, patch }) {
+export async function updatePaymentMediaJob({ supabaseUrl, serviceKey, id, patch, leaseToken }) {
   if (!id) return { ok: false, error: "job id kosong" };
   try {
-    const response = await fetch(`${supabaseUrl}/rest/v1/wa_payment_media_jobs?id=eq.${encodeURIComponent(id)}`, {
-      method: "PATCH", headers: restHeaders(serviceKey, "return=minimal"),
-      body: JSON.stringify({ ...patch, updated_at: new Date().toISOString() }),
+    const filter = leaseToken ? `&lease_token=eq.${encodeURIComponent(leaseToken)}` : "";
+    const response = await fetch(`${supabaseUrl}/rest/v1/wa_payment_media_jobs?id=eq.${encodeURIComponent(id)}${filter}`, {
+      method: "PATCH", headers: restHeaders(serviceKey, leaseToken ? "return=representation" : "return=minimal"),
+      body: JSON.stringify({ ...patch, ...(leaseToken ? { lease_token: null, lease_expires_at: null } : {}), updated_at: new Date().toISOString() }),
       signal: AbortSignal.timeout(5000),
     });
-    return response.ok ? { ok: true } : { ok: false, error: `queue patch ${response.status}` };
+    if (!response.ok) return { ok: false, error: `queue patch ${response.status}` };
+    if (leaseToken && !(await response.json())?.length) return { ok: false, error: "Lease antrean berubah; hasil worker lama tidak ditimpa" };
+    return { ok: true };
   } catch (error) {
     return { ok: false, error: `queue patch gagal: ${error?.message || error}` };
   }
@@ -274,38 +278,28 @@ export async function ensurePaymentSuggestion({ supabaseUrl, serviceKey, job, cl
 }
 
 export async function retryOnePaymentMediaJob({ supabaseUrl, serviceKey, apiKey }) {
-  const due = encodeURIComponent(new Date().toISOString());
   let job;
+  const leaseToken = randomUUID();
   try {
-    // Referensi yang belum sempat tersalin ke R2 didahulukan: URL Fonnte bisa
-    // kedaluwarsa, sedangkan job STORED sudah aman di R2 untuk retry berikutnya.
-    const urgentResponse = await fetch(`${supabaseUrl}/rest/v1/wa_payment_media_jobs?select=*&status=in.(RECEIVED,FAILED_RETRYABLE)&r2_key=is.null&next_retry_at=lte.${due}&attempts=lt.3&order=created_at.asc&limit=1`, {
-      headers: restHeaders(serviceKey),
+    // Atomic SKIP LOCKED claim, no fail-open fallback to unleased SELECT/PATCH.
+    const response = await fetch(`${supabaseUrl}/rest/v1/rpc/claim_wa_payment_media`, {
+      method: "POST", headers: restHeaders(serviceKey), body: JSON.stringify({ p_lease_token: leaseToken }),
       signal: AbortSignal.timeout(5000),
     });
-    if (!urgentResponse.ok) return { error: `queue fetch ${urgentResponse.status}` };
-    job = (await urgentResponse.json())?.[0];
-    if (!job) {
-      const storedResponse = await fetch(`${supabaseUrl}/rest/v1/wa_payment_media_jobs?select=*&status=in.(STORED,FAILED_RETRYABLE)&r2_key=not.is.null&next_retry_at=lte.${due}&attempts=lt.3&order=created_at.asc&limit=1`, {
-        headers: restHeaders(serviceKey), signal: AbortSignal.timeout(5000),
-      });
-      if (!storedResponse.ok) return { error: `queue fetch ${storedResponse.status}` };
-      job = (await storedResponse.json())?.[0];
-    }
+    if (!response.ok) return { error: `queue claim ${response.status}; periksa migrasi 210` };
+    job = await response.json();
   } catch (error) {
     return { error: `queue fetch gagal: ${error?.message || error}` };
   }
   if (!job) return { checked: 0, retried: 0 };
-  const attempt = Number(job.attempts || 0) + 1;
-  // Tetap berstatus retryable saat proses berjalan. Jika serverless diputus paksa,
-  // invocation berikutnya masih dapat mengambil job ini (upsert suggestion tetap idempoten).
-  const started = await updatePaymentMediaJob({ supabaseUrl, serviceKey, id: job.id, patch: { attempts: attempt, last_error: null } });
-  if (!started.ok) return { ok: false, error: started.error };
+  const attempt = Number(job.attempts || 1);
+  const finish = patch => updatePaymentMediaJob({ supabaseUrl, serviceKey, id: job.id, leaseToken, patch });
   let activeJob = job;
   const cached = job.category === "bukti_transfer" && job.r2_url && Number(job.transfer_amount) > 0
     ? normalizePaymentClassification(job) : null;
   let ai;
   if (cached) ai = { ok: true, classification: cached };
+  else if (job.retry_exhausted) ai = { ok: false, error: "Retry AI habis setelah worker terputus; periksa media secara manual" };
   else {
     let media = job.r2_key
       ? await downloadBufferFromR2(job.r2_key, { timeoutMs: 7000 })
@@ -314,26 +308,27 @@ export async function retryOnePaymentMediaJob({ supabaseUrl, serviceKey, apiKey 
       const staged = await stagePaymentMedia({
         supabaseUrl, serviceKey, sourceUrl: job.source_url, phone: job.phone,
         senderName: job.sender_name, buffer: media.buffer,
-        mimeType: media.mimeType || job.mime_type, createdAt: job.created_at,
+        mimeType: media.mimeType || job.mime_type, createdAt: job.created_at, leaseToken,
       });
       if (!staged.ok) media = { ok: false, err: staged.error };
       else activeJob = staged.job;
     }
     if (!media.ok) {
-      await updatePaymentMediaJob({ supabaseUrl, serviceKey, id: job.id, patch: { status: attempt >= 3 ? "FAILED_PERMANENT" : "FAILED_RETRYABLE", last_error: media.err, next_retry_at: new Date(Date.now() + attempt * 3600000).toISOString() } });
-      return { checked: 1, retried: 0, failed: 1, error: media.err };
+      const saved = await finish({ status: attempt >= 3 ? "FAILED_PERMANENT" : "FAILED_RETRYABLE", last_error: media.err,
+        next_retry_at: attempt >= 3 ? null : new Date(Date.now() + 15 * 60_000 * 2 ** (attempt - 1)).toISOString() });
+      return { ok: saved.ok, checked: 1, retried: 0, failed: 1, error: saved.error || media.err };
     }
     ai = await classifyPaymentMedia({ buffer: media.buffer, mimeType: activeJob.mime_type || media.mimeType, apiKey, timeoutMs: 9000 });
   }
   if (!ai.ok) {
     const fallback = await ensurePaymentSuggestion({ supabaseUrl, serviceKey, job: activeJob, pendingReason: ai.error, forceReview: true });
     const exhaustedStatus = fallback?.suggestion ? "PENDING_REVIEW" : "FAILED_PERMANENT";
-    await updatePaymentMediaJob({ supabaseUrl, serviceKey, id: job.id, patch: {
+    const saved = await finish({
       status: attempt >= 3 ? exhaustedStatus : "FAILED_RETRYABLE",
       last_error: fallback.error || ai.error,
-      next_retry_at: attempt >= 3 ? null : new Date(Date.now() + attempt * 3600000).toISOString(),
-    } });
-    return { checked: 1, retried: 1, pendingReview: fallback?.suggestion ? 1 : 0, error: fallback.error || ai.error };
+      next_retry_at: attempt >= 3 ? null : new Date(Date.now() + 15 * 60_000 * 2 ** (attempt - 1)).toISOString(),
+    });
+    return { ok: fallback.ok && saved.ok, checked: 1, retried: 1, pendingReview: fallback?.suggestion ? 1 : 0, error: saved.error || fallback.error || ai.error };
   }
   const c = ai.classification;
   if (c.category !== "bukti_transfer") {
@@ -350,25 +345,24 @@ export async function retryOnePaymentMediaJob({ supabaseUrl, serviceKey, apiKey 
         pendingReason: reason, forceReview: true, invoiceMatch: match });
       const status = review.ok ? (review.alreadySettled || review.suggestion?.status !== "PENDING" ? "DONE" : "PENDING_REVIEW")
         : attempt >= 3 ? "FAILED_PERMANENT" : "FAILED_RETRYABLE";
-      const saved = await updatePaymentMediaJob({ supabaseUrl, serviceKey, id: job.id, patch: {
+      const saved = await finish({
         status, category: c.category, last_error: review.ok ? null : review.error,
-        next_retry_at: review.ok || attempt >= 3 ? null : new Date(Date.now() + attempt * 3600000).toISOString(),
-      } });
+        next_retry_at: review.ok || attempt >= 3 ? null : new Date(Date.now() + 15 * 60_000 * 2 ** (attempt - 1)).toISOString(),
+      });
       return { ok: review.ok && saved.ok, checked: 1, retried: 1,
         pendingReview: review.suggestion?.status === "PENDING" ? 1 : 0,
         error: review.error || saved.error || null };
     }
-    const ignored = await updatePaymentMediaJob({ supabaseUrl, serviceKey, id: job.id,
-      patch: { status: "IGNORED", category: c.category, next_retry_at: null } });
+    const ignored = await finish({ status: "IGNORED", category: c.category, next_retry_at: null });
     return { ok: ignored.ok, checked: 1, retried: 1, ignored: 1, error: ignored.error || null };
   }
   const suggestion = await ensurePaymentSuggestion({ supabaseUrl, serviceKey, job: activeJob, classification: c });
-  const saved = await updatePaymentMediaJob({ supabaseUrl, serviceKey, id: job.id, patch: {
+  const saved = await finish({
     status: suggestion.ok ? "DONE" : attempt >= 3 ? "FAILED_PERMANENT" : "FAILED_RETRYABLE", category: c.category,
     transfer_amount: c.amount, fee_amount: c.fee_amount, total_debit: c.total_debit,
     bank: c.bank, transfer_date: c.transfer_date, invoice_id: suggestion.invoice?.id || null,
     last_error: suggestion.ok ? null : suggestion.error,
-    next_retry_at: suggestion.ok || attempt >= 3 ? null : new Date(Date.now() + attempt * 3600000).toISOString(),
-  } });
+    next_retry_at: suggestion.ok || attempt >= 3 ? null : new Date(Date.now() + 15 * 60_000 * 2 ** (attempt - 1)).toISOString(),
+  });
   return { ok: suggestion.ok && saved.ok, checked: 1, retried: 1, suggestion: suggestion.suggestion ? 1 : 0, alreadySettled: suggestion.alreadySettled === true, invoiceId: suggestion.invoice?.id || null, error: suggestion.error || saved.error || null };
 }

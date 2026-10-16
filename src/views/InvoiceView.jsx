@@ -1,4 +1,6 @@
 import { memo, useState, useMemo, useEffect, useRef } from "react";
+import PaymentInboxHealthPanel from "../components/PaymentInboxHealthPanel.jsx";
+import { fetchPendingPaymentSuggestions } from "../lib/paymentInbox.js";
 import { cs } from "../theme/cs.js";
 import { statusColor, INVOICE_UNPAID_STATUSES } from "../constants/status.js";
 import { smartSearchNormalize, samePhone, formatPhone } from "../lib/phone.js";
@@ -303,7 +305,7 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
   );
 }
 
-function InvoiceView({ invoiceFilterMemo, invoicesData, invoicesDataMerged, setInvoicesData, invoicePage, setInvoicePage, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, mergedInvoiceWA, createConsolidatedInvoice, previewMergedInvoicePDF, approveInvoice, approveSaveOnly, markPaid, markInvoicePaid, revertInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, parseMD, jasaSvcNames, downloadRekapHarian, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendDocumentWA, sendWAFn, apiHeaders, setGroupPaymentCtx, paymentSuggestions, setPaymentSuggestions, fotoSrc, customersData, priceListData, quotationsData, setQuotationsData, uploadQuotationPDFFn, appSettings, searchLoading }) {
+function InvoiceView({ invoiceFilterMemo, invoicesData, invoicesDataMerged, setInvoicesData, invoicePage, setInvoicePage, invoiceFilter, setInvoiceFilter, searchInvoice, invoiceDateFrom, setInvoiceDateFrom, invoiceDateTo, setInvoiceDateTo, setSearchInvoice, setSelectedInvoice, setModalPDF, setEditInvoiceData, setEditInvoiceForm, setEditJasaItems, setEditInvoiceItems, setModalEditInvoice, ordersData, setOrdersData, setActiveMenu, setAuditModal, invoiceReminderWA, mergedInvoiceWA, createConsolidatedInvoice, previewMergedInvoicePDF, approveInvoice, approveSaveOnly, markPaid, markInvoicePaid, revertInvoicePaid, updateOrderStatus, deleteInvoice, updateInvoice, getLocalDate, parseMD, jasaSvcNames, downloadRekapHarian, INV_PAGE_SIZE, laporanReports, uploadServiceReportPDFForWA, sendDocumentWA, sendWAFn, apiHeaders, setGroupPaymentCtx, paymentSuggestions, setPaymentSuggestions, paymentInbox, fotoSrc, customersData, priceListData, quotationsData, setQuotationsData, uploadQuotationPDFFn, appSettings, searchLoading }) {
   // Fase 1: primitif global dari AppContext.
   const { currentUser, isMobile, showConfirm, showNotif, addAgentLog, auditUserName, fmt, supabase, TODAY } = useAppContext();
 const { filteredInv, garansiAktif, garansiKritis, unpaidCnt } = invoiceFilterMemo;
@@ -635,44 +637,23 @@ const [invoiceSubTab, setInvoiceSubTab] = useState("invoice"); // "invoice" | "q
 
 // Pending AI: semua saran pembayaran yang menunggu validasi, termasuk foto
 // WA yang sudah punya kandidat invoice dan entri lama tanpa media_job_id.
-const [pendingPayments, setPendingPayments] = useState([]);
+const pendingPayments = useMemo(() => (paymentSuggestions || []).filter(row => row.status === "PENDING" && row.validation_status === "PENDING"), [paymentSuggestions]);
 const [dismissedPayments, setDismissedPayments] = useState([]);
-const [pendingPaymentCount, setPendingPaymentCount] = useState(0);
+const pendingPaymentCount = pendingPayments.length;
 const [loadingPendingPayments, setLoadingPendingPayments] = useState(false);
 const [pendingSelectedInvoice, setPendingSelectedInvoice] = useState({}); // { suggestion_id: invoice_id }
 const [pendingPaymentBusy, setPendingPaymentBusy] = useState(null);
 const [manualPickerOpen, setManualPickerOpen] = useState({}); // { suggestion_id: bool }
 const [manualPickerSearch, setManualPickerSearch] = useState({}); // { suggestion_id: search_string }
 const paymentLinkRef = useRef({ busy: false, ids: new Map() });
-useEffect(() => {
-  if (!supabase) return;
-  let cancelled = false;
-  (async () => {
-    try {
-      const { count, error } = await supabase.from("payment_suggestions")
-        .select("id", { count: "exact", head: true })
-        .eq("validation_status", "PENDING").eq("status", "PENDING");
-      if (!cancelled && !error) setPendingPaymentCount(count || 0);
-    } catch { /* Daftar lengkap tetap bisa dibuka dan menampilkan errornya. */ }
-  })();
-  return () => { cancelled = true; };
-}, [supabase]);
-const loadPendingPayments = async () => {
+const loadPendingPayments = async ({ refreshInbox = true } = {}) => {
   if (!supabase) return;
   setLoadingPendingPayments(true);
   try {
-    const rows = [];
-    for (let from = 0; ; from += 200) {
-      const { data, error } = await supabase
-        .from("payment_suggestions")
-        .select("*, ai_extractions:ai_extraction_id(*)")
-        .eq("validation_status", "PENDING")
-        .eq("status", "PENDING")
-        .order("created_at", { ascending: false })
-        .range(from, from + 199);
-      if (error) throw error;
-      rows.push(...(data || []));
-      if ((data || []).length < 200) break;
+    if (refreshInbox) {
+      const snapshot = paymentInbox?.enabled ? await paymentInbox.refresh() : await fetchPendingPaymentSuggestions(supabase);
+      if (!snapshot) throw new Error("Pembaruan bukti WA gagal; data terakhir dipertahankan");
+      setPaymentSuggestions?.(snapshot);
     }
     const dismissedRows = [];
     const recent = new Date(Date.now() - 14 * 86400000).toISOString();
@@ -687,9 +668,7 @@ const loadPendingPayments = async () => {
       dismissedRows.push(...(data || []));
       if ((data || []).length < 200) break;
     }
-    setPendingPayments(rows);
     setDismissedPayments(dismissedRows);
-    setPendingPaymentCount(rows.length);
   } catch (e) {
     showNotif?.("Gagal load Pending AI: " + e.message, "error");
   } finally {
@@ -700,7 +679,7 @@ const loadPendingPayments = async () => {
 // cards. A manual refresh is available; no additional background polling.
 useEffect(() => {
   if (supabase && ["Owner", "Admin"].includes(currentUser?.role) && (invoiceSubTab === "invoice" || invoiceSubTab === "pending_ai")) {
-    loadPendingPayments();
+    loadPendingPayments({ refreshInbox: false });
   }
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [supabase, invoiceSubTab, currentUser?.role]);
@@ -766,8 +745,6 @@ const handleLinkPayment = async (sug) => {
       if (aiErr) showNotif?.("Invoice dan bukti tersimpan, tetapi audit AI gagal diperbarui: " + aiErr.message);
     }
     showNotif?.(result.attach_only ? "✓ Bukti dilampirkan tanpa pembayaran ulang: " + invId : "✓ Bukti diverifikasi & invoice lunas: " + invId, "success");
-    setPendingPayments(prev => prev.filter(x => x.id !== sug.id));
-    setPendingPaymentCount(prev => Math.max(0, prev - 1));
   } catch (e) {
     showNotif?.((committed ? "Pembayaran dan bukti sudah tercatat; pembaruan tampilan/audit lanjutan gagal: " : "Verifikasi belum dapat dipastikan: ") + e.message + ". Muat ulang untuk memeriksa hasil.", "error");
   } finally { paymentLinkRef.current.busy = false; setPendingPaymentBusy(null); }
@@ -789,8 +766,7 @@ const handleRejectPayment = async (sug) => {
           if (aiErr) showNotif?.("Saran ditolak, tetapi audit AI gagal diperbarui: " + aiErr.message);
         }
         showNotif?.("✕ Rejected", "info");
-        setPendingPayments(prev => prev.filter(x => x.id !== sug.id));
-        setPendingPaymentCount(prev => Math.max(0, prev - 1));
+        setPaymentSuggestions?.(prev => prev.filter(x => x.id !== sug.id));
       } catch (e) {
         showNotif?.("Gagal: " + e.message, "error");
       } finally { setPendingPaymentBusy(null); }
@@ -1016,6 +992,10 @@ return (
     </div>
 
     {/* Quotation sub-view */}
+    {["Owner", "Admin"].includes(currentUser?.role) && ["invoice", "pending_ai"].includes(invoiceSubTab) && (
+      <PaymentInboxHealthPanel apiHeaders={apiHeaders} inbox={paymentInbox} onOpenPending={() => setInvoiceSubTab("pending_ai")} />
+    )}
+
     {invoiceSubTab === "quotation" && (
       <QuotationView
         quotationsData={quotationsData || []}
@@ -1045,7 +1025,7 @@ return (
         fotoSrc={fotoSrc} apiHeaders={apiHeaders} supabase={supabase}
         markPaid={markPaid} setInvoicesData={setInvoicesData} setOrdersData={setOrdersData} setPaymentSuggestions={setPaymentSuggestions}
         onSuggestionResolved={id => {
-          setPendingPayments(prev => prev.filter(row => row.id !== id));
+          setPaymentSuggestions?.(prev => prev.filter(row => row.id !== id));
           setDismissedPayments(prev => prev.filter(row => row.id !== id));
           loadPendingPayments();
         }}

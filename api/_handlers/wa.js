@@ -2069,7 +2069,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                       status: "FAILED_RETRYABLE",
                       attempts: Number(stagedMedia.job.attempts || 0) + 1,
                       last_error: classifyResult.error,
-                      next_retry_at: new Date(Date.now() + 3600000).toISOString(),
+                      next_retry_at: new Date(Date.now() + 15 * 60000).toISOString(),
                     },
                   });
                 }
@@ -2125,7 +2125,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                         : "FAILED_RETRYABLE";
                       const saved = await updatePaymentMediaJob({ supabaseUrl: SU, serviceKey: SK, id: stagedMedia.job.id,
                         patch: { status, last_error: review.ok ? null : review.error,
-                          next_retry_at: review.ok ? null : new Date(Date.now() + 3600000).toISOString() },
+                          next_retry_at: review.ok ? null : new Date(Date.now() + 15 * 60000).toISOString() },
                       });
                       if (!review.ok || !saved.ok) console.warn("[WA_IMG_REVIEW_SAVE]", review.error || saved.error);
                     } else {

@@ -70,6 +70,8 @@ import ExpenseInputWidget from "./views/ExpenseInputWidget.jsx";
 import ViewErrorBoundary from "./components/ViewErrorBoundary.jsx";
 import { AppContext } from "./context/AppContext.js";
 import { useSettings } from "./hooks/useSettings.js";
+import { usePaymentInbox } from "./hooks/usePaymentInbox.js";
+import PaymentSuggestionBanner from "./components/PaymentSuggestionBanner.jsx";
 import { buildServiceReportHTML } from "./lib/serviceReportHtml.js";
 import { downloadRekapHarian as downloadRekapHarianLib } from "./lib/reports.js";
 import { createConsolidatedInvoice as createConsolidatedInvoiceLib } from "./lib/consolidatedInvoice.js";
@@ -1544,7 +1546,21 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
   const [waMessages, setWaMessages] = useState([]);  // chat history conv aktif
   const [waSearch, setWaSearch] = useState("");
   const [paymentSuggestions, setPaymentSuggestions] = useState([]);
+  const paymentInbox = usePaymentInbox({
+    supabase, userId: currentUser?.id || currentUser?.name,
+    enabled: isLoggedIn && ["Owner", "Admin"].includes(currentUser?.role) && appSettings?.wa_payment_detect !== "false",
+    onData: setPaymentSuggestions,
+    onNew: rows => {
+      setPaymentSuggestBanner(rows[0]);
+      showNotif(`💳 ${rows.length} bukti/media WA baru perlu diperiksa`, true);
+    },
+    onFailure: error => {
+      addAgentLog("PAYMENT_INBOX_STALE", error, "WARNING");
+      showNotif("⚠️ Pembaruan bukti WA bermasalah. Data terakhir dipertahankan; klik Perbarui bukti WA.", true);
+    },
+  });
   const [paymentSuggestBanner, setPaymentSuggestBanner] = useState(null);
+  useEffect(() => { setPaymentSuggestBanner(null); }, [isLoggedIn, currentUser?.id, currentUser?.role]);
   const [groupPaymentCtx, setGroupPaymentCtx] = useState(null); // { phone, invoices, suggestedAmount, proofUrl }
 
   // ── Statistik periode filter ──
@@ -2920,34 +2936,13 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
       }).catch(() => { _reportPollHealth("wa", false); });
     }, POLL_MS) : null;
 
-    // Payment suggestions — HANYA Owner/Admin, hanya jam kerja, 5 menit polling (Opsi-C)
-    const _isFinanceRole = ["Owner", "Admin"].includes(currentUser?.role);
-    const _payDetectOn = appSettings?.wa_payment_detect !== "false";
-    const _payPoll = (_isFinanceRole && _payDetectOn && isWorkingHours()) ? setInterval(() => {
-      supabase.from("payment_suggestions").select("*").eq("status", "PENDING")
-        .order("created_at", { ascending: false }).limit(20)
-        .then(({ data, error }) => {
-          if (error) { _reportPollHealth("bukti-bayar", false); return; }
-          _reportPollHealth("bukti-bayar", true);
-          if (!data) return;
-          setPaymentSuggestions(data);
-          const newest = data[0];
-          if (newest) {
-            const age = Date.now() - new Date(newest.created_at).getTime();
-            if (age < 125000) {
-              setPaymentSuggestBanner(newest);
-              showNotif("💳 Bukti bayar masuk dari " + (newest.sender_name || newest.phone), true);
-            }
-          }
-        }).catch(() => { _reportPollHealth("bukti-bayar", false); });
-    }, 5 * 60 * 1000) : null;
+    // Payment inbox has its own role/settings-aware, visible-tab-only 24h hook.
 
     return () => {
       clearInterval(_pollOrders);
       clearInterval(_pollInvoices);
       clearInterval(_pollReports);
       if (_pollWa) clearInterval(_pollWa);
-      if (_payPoll) clearInterval(_payPoll);
 
       clearTimeout(autoVerifyTimer);
       clearInterval(_statsTimer);
@@ -3821,7 +3816,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
       INV_PAGE_SIZE={INV_PAGE_SIZE}
       laporanReports={laporanReports} uploadServiceReportPDFForWA={uploadServiceReportPDFForWA} sendDocumentWA={sendDocumentWA} sendWAFn={sendWA}
       apiHeaders={_apiHeaders} setGroupPaymentCtx={setGroupPaymentCtx}
-      paymentSuggestions={paymentSuggestions} setPaymentSuggestions={setPaymentSuggestions} fotoSrc={fotoSrc}
+      paymentSuggestions={paymentSuggestions} setPaymentSuggestions={setPaymentSuggestions} paymentInbox={paymentInbox} fotoSrc={fotoSrc}
       customersData={customersData} priceListData={priceListData}
       quotationsData={quotationsData} setQuotationsData={setQuotationsData}
       uploadQuotationPDFFn={uploadQuotationPDFForWA}
@@ -5328,97 +5323,12 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
 
       {/* Payment Suggestion Banner — hanya Owner/Admin */}
       {paymentSuggestBanner && ["Owner","Admin"].includes(currentUser?.role) && (
-        <div style={{ position:"fixed", bottom: 80, right: 20, zIndex: 9500,
-          background: cs.surface, border: "2px solid #22c55e", borderRadius: 16,
-          padding: 18, maxWidth: 340, boxShadow: "0 8px 32px #0008", minWidth: 280 }}>
-          <div style={{ fontWeight: 800, color: "#22c55e", marginBottom: 8, fontSize: 14 }}>
-            💳 Bukti Pembayaran Masuk
-          </div>
-          <div style={{ fontSize: 12, color: cs.muted, marginBottom: 2 }}>
-            Dari: <span style={{color:cs.text, fontWeight:600}}>{paymentSuggestBanner.sender_name}</span>
-            {" "}({paymentSuggestBanner.phone})
-          </div>
-          {paymentSuggestBanner.amount && (
-            <div style={{ fontSize: 15, fontWeight: 800, color: cs.text, marginTop: 4 }}>
-              Rp {Number(paymentSuggestBanner.amount).toLocaleString("id-ID")}
-              {paymentSuggestBanner.bank ? <span style={{fontWeight:400, fontSize:12, color:cs.muted}}> via {paymentSuggestBanner.bank}</span> : null}
-            </div>
-          )}
-          {paymentSuggestBanner.invoice_id && (
-            <div style={{ fontSize: 12, color: cs.muted, marginTop: 4 }}>
-              Invoice cocok: <strong style={{color:cs.accent}}>{paymentSuggestBanner.invoice_id}</strong>
-            </div>
-          )}
-          {paymentSuggestBanner.raw_message && (
-            <div style={{ fontSize: 11, color: cs.muted, marginTop: 4, fontStyle:"italic",
-              background: cs.card, borderRadius: 6, padding: "4px 8px" }}>
-              "{paymentSuggestBanner.raw_message.slice(0,100)}"
-            </div>
-          )}
-          <div style={{ display:"flex", gap: 8, marginTop: 12 }}>
-            <button onClick={async () => {
-              const sugg = paymentSuggestBanner;
-              const bankNote = sugg.bank ? "transfer_" + sugg.bank.toLowerCase().replace(/\s/g,"_") : "transfer";
-              // Cari semua invoice UNPAID/OVERDUE/PARTIAL_PAID dari nomor ini
-              const unpaidByPhone = invoicesData.filter(i =>
-                (i.phone === sugg.phone || (sugg.phone && i.phone && samePhone(i.phone, sugg.phone))) &&
-                ["UNPAID","OVERDUE","PARTIAL_PAID"].includes(i.status)
-              );
-              if (!unpaidByPhone.length) {
-                // Coba match by invoice_id langsung
-                const byId = sugg.invoice_id ? invoicesData.find(i => i.id === sugg.invoice_id) : null;
-                if (!byId) {
-                  showNotif("⚠️ Invoice tidak ditemukan untuk nomor ini. Cari manual di halaman Invoice.");
-                  setActiveMenu("invoice");
-                  setSearchInvoice(sugg.phone || "");
-                } else {
-                  await markPaid(byId, bankNote, "Auto-detect WA: " + (sugg.raw_message||"").slice(0,100), true, sugg.image_url || null);
-                  supabase.from("payment_suggestions").update({
-                    status:"CONFIRMED", resolved_at: new Date(Date.now()+7*3600000).toISOString(), resolved_by: currentUser?.name||"Admin"
-                  }).eq("id", sugg.id).then(() => {});
-                  setPaymentSuggestions(prev => prev.filter(p => p.id !== sugg.id));
-                  setActiveMenu("invoice");
-                  setSearchInvoice(byId.id);
-                  setInvoiceFilter("Semua");
-                }
-              } else if (unpaidByPhone.length === 1) {
-                // Normal flow — 1 invoice saja
-                await markPaid(unpaidByPhone[0], bankNote, "Auto-detect WA: " + (sugg.raw_message||"").slice(0,100), true, sugg.image_url || null);
-                supabase.from("payment_suggestions").update({
-                  status:"CONFIRMED", resolved_at: new Date(Date.now()+7*3600000).toISOString(), resolved_by: currentUser?.name||"Admin"
-                }).eq("id", sugg.id).then(() => {});
-                setPaymentSuggestions(prev => prev.filter(p => p.id !== sugg.id));
-                setActiveMenu("invoice");
-                setSearchInvoice(unpaidByPhone[0].id);
-                setInvoiceFilter("Semua");
-              } else {
-                // Multi-invoice → buka Group Payment modal
-                setGroupPaymentCtx({
-                  phone: sugg.phone,
-                  invoices: unpaidByPhone,
-                  suggestedAmount: sugg.amount ? Number(sugg.amount) : unpaidByPhone.reduce((s,i) => s + (i.total||0), 0),
-                  proofUrl: sugg.image_url || null,
-                  method: bankNote,
-                  suggId: sugg.id,
-                });
-              }
-              setPaymentSuggestBanner(null);
-            }} style={{ flex:1, background:"#22c55e", border:"none", color:"#fff",
-              padding:"10px 6px", borderRadius:8, fontWeight:800, cursor:"pointer", fontSize:13 }}>
-              ✅ Konfirmasi Lunas
-            </button>
-            <button onClick={async () => {
-              supabase.from("payment_suggestions").update({
-                status:"DISMISSED", resolved_at: new Date(Date.now()+7*3600000).toISOString()
-              }).eq("id", paymentSuggestBanner.id).then(() => {});
-              setPaymentSuggestions(prev => prev.filter(p => p.id !== paymentSuggestBanner.id));
-              setPaymentSuggestBanner(null);
-            }} style={{ background: cs.card, border:"1px solid "+cs.border, color:cs.muted,
-              padding:"10px 14px", borderRadius:8, cursor:"pointer", fontSize:13 }}>
-              Abaikan
-            </button>
-          </div>
-        </div>
+        <PaymentSuggestionBanner suggestion={paymentSuggestBanner}
+          onReview={() => {
+            setActiveMenu("invoice"); setInvoiceFilter("Semua");
+            setSearchInvoice(paymentSuggestBanner.invoice_id || paymentSuggestBanner.phone || "");
+            setPaymentSuggestBanner(null);
+          }} onClose={() => setPaymentSuggestBanner(null)} />
       )}
 
       {/* Audit History Modal (Stabilisasi #2B) */}

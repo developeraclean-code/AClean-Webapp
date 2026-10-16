@@ -1,0 +1,25 @@
+name: Payment Media Retry (fallback)
+on:
+  schedule:
+    - cron: "11,26,41,56 * * * *"
+  workflow_dispatch: {}
+concurrency:
+  group: payment-media-retry
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  retry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Retry one durable payment media (no invoice payment changes)
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          code=$(curl -sS --max-time 65 -o /tmp/payment-media.json -w "%{http_code}" \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "https://a-clean-webapp.vercel.app/api/cron-reminder?task=payment-media-retry")
+          test "$code" = "200"
+          jq -e '.ok == true' /tmp/payment-media.json > /dev/null
+          jq '{ok,task,checked,retried,pendingReview,failed,error}' /tmp/payment-media.json

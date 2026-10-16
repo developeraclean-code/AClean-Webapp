@@ -16,6 +16,7 @@ export function cronResultError(result) {
 export function cronItemsProcessed(result) {
   if (!result || result.skipped) return 0;
   if (Number.isFinite(result.items_processed)) return result.items_processed;
+  if (Number.isFinite(result.retried)) return result.retried;
   if (Number.isFinite(result.purged)) return result.purged;
   if (result.deleted && typeof result.deleted === 'object' && !Array.isArray(result.deleted)) {
     return Object.values(result.deleted).reduce((n, v) => n + (Number(v) || 0), 0);

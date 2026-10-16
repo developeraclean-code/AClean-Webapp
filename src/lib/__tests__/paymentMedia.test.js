@@ -203,11 +203,21 @@ describe("durable payment retry", () => {
   const job = { id: "j1", phone: "6281234567890", r2_url: "/api/foto?key=proof.jpg", category: "bukti_transfer", transfer_amount: 950000, attempts: 2 };
   const invoices = [500000,450000].map((total,n)=>({id:`I${n}`,phone:job.phone,status:"UNPAID",total}));
   const response = data => ({ok:true,json:async()=>data});
+  it("does not fall back to unleased work if migration or database access fails", async () => {
+    const mock=vi.fn().mockResolvedValue({ok:false,status:404});vi.stubGlobal("fetch",mock);
+    expect(await retryOnePaymentMediaJob({supabaseUrl:"https://db.test",serviceKey:"key"})).toMatchObject({error:expect.stringContaining("migrasi 210")});
+    expect(mock).toHaveBeenCalledTimes(1);
+  });
+  it("ignores an empty queue without downloading media or calling AI", async () => {
+    const mock=vi.fn().mockResolvedValue(response(null));vi.stubGlobal("fetch",mock);
+    expect(await retryOnePaymentMediaJob({supabaseUrl:"https://db.test",serviceKey:"key"})).toMatchObject({checked:0,retried:0});
+    expect(mock).toHaveBeenCalledTimes(1);
+  });
   it("memprioritaskan referensi Fonnte yang belum aman di R2", async () => {
-    const urgent = { id: "urgent", phone: job.phone, source_url: "https://fonnte.test/expired.jpg", attempts: 2 };
+    const urgent = { id: "urgent", phone: job.phone, source_url: "https://fonnte.test/expired.jpg", attempts: 3 };
     const mock = vi.fn(async (url, options) => {
-      if (url.includes("r2_key=is.null")) return response([urgent]);
-      if (options?.method === "PATCH") return response([]);
+      if (url.includes("/rpc/claim_wa_payment_media")) return response(urgent);
+      if (options?.method === "PATCH") return response([{ id: urgent.id }]);
       if (url === urgent.source_url) return { ok: false, status: 404 };
       throw new Error("Unexpected call: " + url);
     });
@@ -219,8 +229,8 @@ describe("durable payment retry", () => {
   });
   it("reuses OCR without AI/download and propagates database errors to cron", async () => {
     const mock = vi.fn(async (url, options) => {
-      if (url.includes("wa_payment_media_jobs?select")) return response([job]);
-      if (options?.method === "PATCH") return response([]);
+      if (url.includes("/rpc/claim_wa_payment_media")) return response({ ...job, attempts: 3 });
+      if (options?.method === "PATCH") return response([{ id: job.id }]);
       if (url.includes("status=eq.PAID")) return response([]);
       if (url.includes("/invoices?")) return response(invoices);
       if (url.includes("payment_suggestions?on_conflict")) return {ok:false,status:400,text:async()=>"42P10"};
