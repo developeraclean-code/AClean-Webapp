@@ -2,9 +2,9 @@ import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AttachProofModal } from '../../src/views/InvoiceView.jsx';
 import { paymentWithholdingReview } from '../../src/lib/paymentWithholding.js';
+import { sampleInvoice, sampleProof } from './fixture.js';
 
-const sampleInvoice = { id: 'INV-DEMO-ONE3', customer: 'Perusahaan Contoh (simulasi)', phone: '628000000001', total: 2950000, labor: 2350000, material: 600000, paid_amount: 0, remaining_amount: 2950000, withheld_amount: 0, status: 'UNPAID', pph23: false, pph23_amount: 0 };
-const sampleProof = { id: 'PROOF-DEMO', sender_name: 'Finance Contoh', phone: '628000000002', amount: 2902500, transfer_date: '2026-10-15T00:00:00Z', status: 'PENDING', validation_status: 'PENDING', image_url: 'demo-proof.svg', match_source: 'wa_image_ai', invoice_id: null };
+const isolatedDatabase = new URLSearchParams(location.search).get('database') === 'isolated';
 const fmt = n => `Rp ${Number(n || 0).toLocaleString('id-ID')}`;
 const demoImage = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="240"><rect width="400" height="240" fill="white"/><text x="24" y="45" font-size="22" fill="#143253">BUKTI SIMULASI</text><text x="24" y="90" font-size="25">Rp 2.902.500</text><text x="24" y="130" font-size="16">Finance perusahaan contoh</text><text x="24" y="180" font-size="16">Bukan bukti bayar asli</text></svg>');
 
@@ -22,6 +22,12 @@ function Demo() {
      setCalls(n => n + 1);
      if (failure) return { error: { code: 'PGRST202' } };
      if (name !== 'confirm_invoice_wa_withholding_atomic' || !args.p_review_ack) throw new Error('Preview menolak jalur pembayaran lain');
+     // Only the browser smoke test intercepts this local-only path and connects
+     // it to an isolated PGlite database running the real migration/RPC.
+     if (isolatedDatabase) {
+       const response = await fetch('/__test__/payment-rpc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, args }) });
+       return response.json();
+     }
      const review = paymentWithholdingReview(invoice, proof);
      if (!review.eligible) throw new Error(review.reason);
      return { data: { invoice: { ...invoice, status: 'PAID', paid_amount: invoice.total, remaining_amount: 0, withheld_amount: review.deduction, payment_proof_url: proof.image_url },

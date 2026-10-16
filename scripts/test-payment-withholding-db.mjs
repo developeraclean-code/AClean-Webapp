@@ -2,8 +2,8 @@
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { withholdingSnapshot } from '../src/lib/paymentWithholding.js';
-const { PGlite } = await import(process.env.WA_PGLITE_MODULE || '@electric-sql/pglite');
-const db = new PGlite(); let passed = 0;
+import { createPaymentWithholdingDb } from './lib/payment-withholding-db.mjs';
+const db = await createPaymentWithholdingDb({ applyWithholding: false }); let passed = 0;
 const q = async (sql, args = []) => (await db.query(sql, args)).rows;
 const one = async (sql, args = []) => (await q(sql, args))[0];
 const id = n => `30000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -25,25 +25,6 @@ async function confirm(n, overrides = {}) {
 }
 const snapshot = async () => (await q(`SELECT * FROM (SELECT 'invoice' kind,to_jsonb(i) value FROM invoices i UNION ALL SELECT 'payment',to_jsonb(p) FROM invoice_payments p UNION ALL SELECT 'proof',to_jsonb(s) FROM payment_suggestions s UNION ALL SELECT 'order',to_jsonb(o) FROM orders o) snapshots ORDER BY kind,value::text`));
 try {
- await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role; CREATE SCHEMA auth;
- CREATE FUNCTION auth.role() RETURNS text LANGUAGE sql AS $$ SELECT 'authenticated'::text $$;
- CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql AS $$ SELECT NULL::uuid $$;
- CREATE FUNCTION get_my_role() RETURNS text LANGUAGE sql AS $$ SELECT nullif(current_setting('test.role',true),'') $$;
- SET test.role='Owner'; CREATE TABLE user_profiles(id uuid,name text,role text); CREATE TABLE customers(phone text,last_service date);
- CREATE TABLE invoices(id text PRIMARY KEY,customer text,phone text,service text,job_id text,units int,labor bigint,material bigint,discount bigint,total bigint,status text,due date,teknisi text,materials_detail text,sent boolean,
- paid_amount numeric,remaining_amount numeric,paid_at timestamptz,paid_method text,paid_notes text,payment_proof_url text,last_changed_by text,pdf_url text,pdf_generated_at timestamptz,created_at timestamptz DEFAULT now(),updated_at timestamptz DEFAULT now(),
- pph23 boolean DEFAULT false,pph23_amount numeric DEFAULT 0,trade_in_amount numeric DEFAULT 0,unit_ac_amount bigint DEFAULT 0,quotation_id text,invoice_type text);
- CREATE TABLE orders(id text PRIMARY KEY,invoice_id text,status text,last_changed_by text);
- CREATE TABLE invoice_payments(id uuid PRIMARY KEY,invoice_id text REFERENCES invoices(id),amount numeric CHECK(amount>0),method text,notes text,paid_at date,recorded_by text,recorded_by_name text,created_at timestamptz DEFAULT now(),quotation_payment_id uuid);
- CREATE TABLE operational_mutations(mutation_key text PRIMARY KEY,operation text,actor_id uuid,actor_name text,result jsonb DEFAULT '{}',completed_at timestamptz);
- CREATE TABLE payment_suggestions(id uuid PRIMARY KEY,phone text,sender_name text,amount numeric,image_url text,invoice_id text,status text,validation_status text DEFAULT 'PENDING',order_id text,matched_at timestamptz,match_source text,resolved_at timestamptz,resolved_by text,created_at timestamptz DEFAULT now());
- CREATE TABLE wa_payment_receipts(id uuid PRIMARY KEY,suggestion_id uuid UNIQUE,payload jsonb,result jsonb,actor text);
- CREATE TABLE quotations(id text PRIMARY KEY,job_id text,customer text,total bigint);
- CREATE TABLE quotation_payments(id uuid PRIMARY KEY,quotation_id text,amount numeric,paid_at date,created_at timestamptz);`);
- await db.exec(readFileSync(new URL('../migrations/173_invoice_payment_idempotency.sql',import.meta.url),'utf8'));
- const workflow=readFileSync(new URL('../migrations/177_atomic_invoice_report_order_workflows.sql',import.meta.url),'utf8');
- await db.exec(workflow.slice(workflow.indexOf('CREATE OR REPLACE FUNCTION public.settle_invoice_atomic'),workflow.indexOf('CREATE OR REPLACE FUNCTION public.submit_service_report_atomic')));
- await db.exec(readFileSync(new URL('../migrations/206_invoice_merge_payment_review.sql',import.meta.url),'utf8'));
  const migration=readFileSync(new URL('../migrations/212_reviewed_payment_withholding.sql',import.meta.url),'utf8');
  await seed(1);
  await check('migration is idempotent and never approves historical invoices or proofs', async () => {
@@ -51,6 +32,45 @@ try {
    const after=await inv(1); delete after.withheld_amount; assert.deepEqual(after,before);
    assert.equal((await one('SELECT count(*)::int n FROM invoice_payments')).n,0);
    assert.equal((await one('SELECT status FROM payment_suggestions')).status,'PENDING');
+ });
+ let legacyRequest;
+ await check('reproduces 212 browser-array versus stored-text failure before applying the fix', async () => {
+   await seed(30);await db.query("UPDATE invoices SET materials_detail=$1 WHERE id='I30'",[JSON.stringify([{nama:'Example labor',subtotal:2350000,category:'LABOR'},{nama:'Example material',subtotal:600000,category:'PART'}],null,2)]);
+   const before=await snapshot();await assert.rejects(()=>confirm(30),/Invoice berubah sejak pratinjau/);assert.deepEqual(await snapshot(),before);
+   await seed(31);legacyRequest={...withholdingSnapshot(await inv(31)),materials_detail:'[]'};
+   await confirm(31,{snapshot:legacyRequest});
+ });
+ await check('migration 213 is idempotent, preserves money/history and changes only the two comparisons', async () => {
+   const before=await snapshot(),fn="public.confirm_invoice_wa_withholding_atomic(uuid,text,uuid,text,jsonb,date,text,boolean)";
+   const original=(await one('SELECT pg_get_functiondef($1::regprocedure) source',[fn])).source;
+   const fix=readFileSync(new URL('../migrations/213_payment_withholding_snapshot.sql',import.meta.url),'utf8');await db.exec(fix);await db.exec(fix);
+   assert.deepEqual(await snapshot(),before);
+   const current=(await one('SELECT pg_get_functiondef($1::regprocedure) source',[fn])).source;
+   assert.equal(current,original.replace('IF snapshot IS DISTINCT FROM p_expected_invoice THEN','IF public.payment_review_snapshot_213(snapshot) IS DISTINCT FROM public.payment_review_snapshot_213(p_expected_invoice) THEN')
+     .replace("OR payment.withholding_detail->'request' IS DISTINCT FROM payload","OR public.payment_review_request_213(payment.withholding_detail->'request') IS DISTINCT FROM public.payment_review_request_213(payload)"));
+ });
+ await check('same browser-array invoice now settles; retries accept legacy text/JSON formatting without a second payment', async () => {
+   const expected=withholdingSnapshot(await inv(30));const result=await confirm(30,{snapshot:expected});assert.equal(result.invoice.status,'PAID');
+   const legacy={...expected,materials_detail:JSON.stringify([...expected.materials_detail].map(item=>Object.fromEntries(Object.entries(item).reverse())))};
+   assert.equal((await confirm(30,{snapshot:legacy})).replayed,true);
+   assert.equal((await confirm(31,{snapshot:{...legacyRequest,materials_detail:[]}})).replayed,true);
+   assert.equal((await one("SELECT count(*)::int n FROM invoice_payments WHERE invoice_id='I30'")).n,1);
+ });
+ await check('normalized comparison still blocks genuine item edits and malformed JSON, with no partial writes', async () => {
+   await seed(32);const stale=withholdingSnapshot(await inv(32));
+   await db.query("UPDATE invoices SET materials_detail=$1 WHERE id='I32'",[JSON.stringify([{nama:'New item',subtotal:1}])]);
+   const before=await snapshot();await assert.rejects(()=>confirm(32,{snapshot:stale}),/Invoice berubah/);assert.deepEqual(await snapshot(),before);
+   for(const raw of ['{broken','{}','false','1','"[]"']){
+     await db.query("UPDATE invoices SET materials_detail=$1 WHERE id='I32'",[raw]);
+     await assert.rejects(()=>confirm(32,{snapshot:{...stale,materials_detail:[]}}),/Rincian item/);
+   }
+   assert.equal((await one("SELECT count(*)::int n FROM invoice_payments WHERE invoice_id='I32'")).n,0);
+ });
+ await check('null/empty legacy details match browser empty arrays, without discarding real item changes', async () => {
+   for(const [n,raw] of [[33,null],[34,''],[35,'null'],[36,'  ']]){
+     await seed(n);await db.query('UPDATE invoices SET materials_detail=$1 WHERE id=$2',[raw,'I'+n]);
+     assert.equal((await confirm(n,{snapshot:withholdingSnapshot(await inv(n))})).invoice.status,'PAID');
+   }
  });
  const firstSnapshot=withholdingSnapshot(await inv(1));
  await check('PT ONE 3 scenario: finance phone, 2.021% deduction, cash not inflated, jobs and proof atomic', async () => {

@@ -2,13 +2,24 @@
 // the existing gross-up invoice calculation. No automatic matching/approval.
 import { samePhone } from './phone.js';
 
+export function withholdingMaterials(value) {
+  let items = value;
+  if (typeof items === 'string') {
+    try { items = items.trim() ? JSON.parse(items) : []; }
+    catch { throw new Error('Rincian item invoice bukan JSON yang valid; periksa invoice sebelum pembayaran.'); }
+  }
+  if (items == null) return [];
+  if (!Array.isArray(items)) throw new Error('Rincian item invoice harus berupa daftar; periksa invoice sebelum pembayaran.');
+  return items;
+}
+
 export function withholdingSnapshot(invoice) {
   return {
     total: Number(invoice.total || 0), labor: Number(invoice.labor || 0),
     paid_amount: Number(invoice.paid_amount || 0), withheld_amount: Number(invoice.withheld_amount || 0),
     pph23: !!invoice.pph23, pph23_amount: Number(invoice.pph23_amount || 0),
     status: invoice.status, phone: invoice.phone || '',
-    materials_detail: invoice.materials_detail ?? null,
+    materials_detail: withholdingMaterials(invoice.materials_detail),
   };
 }
 

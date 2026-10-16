@@ -1,9 +1,31 @@
 import { describe, expect, it, vi } from 'vitest';
-import { confirmInvoiceWaWithholding, invoiceCashReceived, paymentWithholdingReview, withholdingSnapshot } from '../paymentWithholding.js';
+import { confirmInvoiceWaWithholding, invoiceCashReceived, paymentWithholdingReview, withholdingMaterials, withholdingSnapshot } from '../paymentWithholding.js';
 import { auditOperationalIntegrity } from '../sfmIntegrity.js';
 
 const invoice = { id: 'INV-DEMO', customer: 'Perusahaan contoh', phone: '628000000001', status: 'UNPAID', total: 2950000, labor: 2350000, material: 600000, paid_amount: 0, pph23: false };
 const proof = { id: 'PROOF', phone: '628000000002', amount: 2902500, image_url: '/demo.jpg' };
+
+describe('browser/database materials snapshot regression', () => {
+  const items = [{ nama: 'Jasa contoh', subtotal: 2350000, category: 'LABOR' }, { nama: 'Material contoh', subtotal: 600000, category: 'PART' }];
+  it('raw database JSON text and the parsed App invoice produce identical snapshots', () => {
+    const raw = { ...invoice, materials_detail: JSON.stringify(items, null, 2) };
+    const parsed = { ...raw, materials_detail: JSON.parse(raw.materials_detail) };
+    expect(withholdingSnapshot(raw)).toEqual(withholdingSnapshot(parsed));
+    expect(Array.isArray(withholdingSnapshot(parsed).materials_detail)).toBe(true);
+  });
+  it.each([undefined, null, '', '  ', 'null', '[]', []])('normalizes the empty storage format %j without a false stale warning', value => {
+    expect(withholdingMaterials(value)).toEqual([]);
+  });
+  it.each(['{broken', '{}', 'false', '1', '"[]"', {}, false, 1])('fails closed for malformed/non-array details %j', value => {
+    expect(() => withholdingMaterials(value)).toThrow(/Rincian item/);
+  });
+  it('keeps real item quantity/price changes visible and never removes/reorders duplicates', () => {
+    const source = [...items, { ...items[0] }], before = structuredClone(source);
+    expect(withholdingSnapshot({ ...invoice, materials_detail: source }).materials_detail).toEqual(before);
+    expect(source).toEqual(before);
+    expect(withholdingSnapshot({ ...invoice, materials_detail: source })).not.toEqual(withholdingSnapshot({ ...invoice, materials_detail: [{ ...source[0], subtotal: 2350001 }, ...source.slice(1)] }));
+  });
+});
 
 describe('reviewed PPh tolerance, never automatic tax approval', () => {
   it('uses labor, not material or invoice total, for the admin 2–3% tolerance', () => {

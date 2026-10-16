@@ -1,6 +1,7 @@
 # Pembayaran finance dan potongan PPh estimasi
 
 Deployment memerlukan migrasi `212_reviewed_payment_withholding.sql`
+dan koreksi format snapshot `213_payment_withholding_snapshot.sql`
 sebelum kode ini di-deploy. Tidak ada persetujuan otomatis, perubahan harga,
 atau pelunasan invoice produksi saat migrasi diterapkan.
 
@@ -57,3 +58,21 @@ Contoh sintetis berdasarkan skenario PT ONE 3:
 - Preview sintetis: `/preview/payment-withholding/index.html` pada Vite lokal.
 - Browser desktop/mobile: `node scripts/smoke-payment-withholding.mjs`.
 - Preview dan simulasi tidak memakai data produksi, AI berbayar atau Fonnte.
+- Smoke browser memakai enam item yang tersimpan sebagai teks JSON di
+  PostgreSQL dan sudah menjadi array di model baca browser, seperti alur App.
+  RPC yang dijalankan adalah fungsi SQL asli pada database PGlite terisolasi,
+  bukan mock respons sukses. Test mereproduksi penolakan versi 212, menerapkan
+  migrasi 213, memastikan perubahan isi tetap ditolak, lalu memverifikasi satu
+  pencatatan kas + kredit yang benar serta retry tanpa pembayaran ganda.
+
+## Koreksi snapshot (migrasi 213)
+
+`materials_detail` dibandingkan sebagai isi JSON yang sama, baik input berupa
+teks dari database maupun array hasil parser browser. Spasi dan urutan key
+objek tidak dianggap perubahan; urutan item, item duplikat, harga, jumlah,
+tipe nilai, nominal, status dan identitas bukti tidak diabaikan. Nilai kosong
+dinormalisasi ke daftar kosong; JSON rusak/non-array ditolak secara eksplisit.
+
+Normalisasi juga berlaku pada pembandingan request retry dari browser lama,
+tanpa menulis ulang data permintaan yang telah tercatat. Migrasi 212 yang sudah
+diterapkan tidak diubah; migrasi 213 hanya memperbaiki dua pembandingan di RPC.
