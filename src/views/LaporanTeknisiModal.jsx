@@ -3,6 +3,7 @@ import { cs } from "../theme/cs.js";
 import { getBracketKey, hargaPerUnitFromTipe } from "../lib/pricing.js";
 import { isVrvType, capacityPkNumber } from "../lib/maintenanceAcTypes.js";
 import { categoryFromCatalog } from "../lib/invoicing.js";
+import { upgradeComplainToRepair } from "../lib/complainRepairUpgrade.js";
 import {
   KONDISI_SBL, KONDISI_SDH, PEKERJAAN_OPT, MATERIAL_PRESET,
   INSTALL_ITEMS, TIPE_AC_OPT, mkUnit, isUnitDone, maintUnitToHist, acUnitToHist,
@@ -70,7 +71,7 @@ export default function LaporanTeknisiModal({
   priceListData, inventoryData, invUnitsData, userAccounts,
   // callbacks
   submitLaporan, handleFotoUpload, buildCustomerHistory, fotoSrc,
-  showNotif, addAgentLog, sendWA, findCustomer, insertOrder,
+  showNotif, addAgentLog, sendWA,
   setOrdersData, supabase,
   _apiFetch, _apiHeaders, currentUser, isMobile, onFieldQueued,
   onQueueOfflineReport, autoSubmitRequested = false, onAutoSubmitStarted,
@@ -89,6 +90,41 @@ export default function LaporanTeknisiModal({
   const [quickMode, setQuickMode] = useState(false);
   const [draftState, setDraftState] = useState("menyiapkan");
   const draftReadyJob = useRef(null);
+  const upgradeInFlight = useRef(false);
+  const [upgradePending, setUpgradePending] = useState(false);
+
+  const handleComplainUpgrade = async () => {
+    if (upgradeInFlight.current || !laporanModal?.id) return;
+    upgradeInFlight.current = true;
+    setUpgradePending(true);
+    try {
+      const result = await upgradeComplainToRepair(supabase, laporanModal, currentUser?.name);
+      if (result.order) {
+        setOrdersData(prev => prev.map(o => o.id === result.order.id ? result.order : o));
+        setLaporanModal(prev => prev?.id === result.order.id ? { ...prev, ...result.order } : prev);
+      }
+      if (result.status === "upgraded") {
+        setLaporanStep(3);
+        addAgentLog("COMPLAIN_UPGRADED", `Complain ${result.order.id} → Repair pada job yang sama`, "SUCCESS");
+        showNotif(`✅ Job ${result.order.id} menjadi Repair. Periksa detail pekerjaan sebelum submit; garansi diperiksa otomatis.`);
+        userAccounts.filter(u => (u.role === "Admin" || u.role === "Owner") && u.active !== false)
+          .forEach(a => {
+            if (a?.phone) sendWA(a.phone,
+              `Upgrade Complain ke Repair\nJob: ${result.order.id}\nCustomer: ${result.order.customer}`
+              + `\nTeknisi: ${result.order.teknisi}\n\nMohon periksa laporan dan status garansi. — ARA`);
+          });
+      } else if (result.status === "already-upgraded") {
+        showNotif(`ℹ️ Job ${result.order.id} sudah menjadi Repair; tidak ada job tambahan.`);
+      } else {
+        showNotif("⚠️ " + result.reason);
+      }
+    } catch (error) {
+      showNotif("❌ Gagal upgrade Complain: " + (error?.message || "kesalahan database"));
+    } finally {
+      upgradeInFlight.current = false;
+      setUpgradePending(false);
+    }
+  };
 
   // Draft disimpan di perangkat teknisi, bukan ke Supabase per ketikan. Ini menjaga
   // form tetap pulih setelah refresh/tutup tidak sengaja tanpa menghabiskan kuota DB.
@@ -1926,39 +1962,13 @@ export default function LaporanTeknisiModal({
               {laporanModal?.service === "Complain" && (
                 <div style={{ background: cs.yellow + "0d", border: "1px solid " + cs.yellow + "33", borderRadius: 10, padding: "12px 14px" }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: cs.yellow, marginBottom: 5 }}>⚠️ Perlu Perbaikan Tambahan?</div>
-                  <div style={{ fontSize: 11, color: cs.muted, marginBottom: 8 }}>Jika AC ternyata butuh repair (bukan sekadar komplain garansi), buat job Repair terpisah agar ada invoice perbaikan.</div>
-                  <button onClick={async () => {
-                    const rId = "JOB" + Date.now().toString(36).slice(-5).toUpperCase();
-                    const rJob = {
-                      id: rId, customer: laporanModal.customer,
-                      phone: laporanModal.phone || customersData.find(c => c.name === laporanModal.customer)?.phone || "",
-                      address: laporanModal.address || "", service: "Repair", type: "Pengecekan AC",
-                      units: laporanModal.units || 1, teknisi: laporanModal.teknisi, helper: laporanModal.helper || null,
-                      date: laporanModal.date, time: laporanModal.time || "09:00", status: "CONFIRMED",
-                      parent_job_id: laporanModal.id, dispatch: true,
-                      notes: "Upgrade dari Complain " + laporanModal.id
-                    };
-                    const rCust = findCustomer(customersData, rJob.phone, rJob.customer);
-                    if (rCust?.id) rJob.customer_id = rCust.id;
-                    setOrdersData(prev => prev.some(o => o.id === rJob.id) ? prev : [...prev, rJob]);
-                    const { error: rErr } = await insertOrder(supabase, rJob);
-                    if (!rErr) {
-                      addAgentLog("COMPLAIN_UPGRADED", `Complain ${laporanModal.id} → Repair ${rId}`, "SUCCESS");
-                      showNotif(`✅ Job Repair ${rId} dibuat! Admin dinotifikasi.`);
-                      const admR = userAccounts.filter(u => (u.role === "Admin" || u.role === "Owner") && u.active !== false);
-                      admR.forEach(a => {
-                        if (a?.phone) sendWA(a.phone,
-                          "Upgrade Complain Repair\nComplain: " + laporanModal.id
-                          + "\nRepair Baru: " + rId + "\nCustomer: " + laporanModal.customer
-                          + "\nTeknisi: " + laporanModal.teknisi
-                          + "\n\nSilakan approve. — ARA");
-                      });
-                    } else showNotif("❌ Gagal buat Repair: " + rErr.message);
-                  }} style={{
+                  <div style={{ fontSize: 11, color: cs.muted, marginBottom: 8 }}>Ubah job ini menjadi Repair tanpa membuat job baru. Laporan dan pemeriksaan garansi tetap memakai ID yang sama.</div>
+                  <button onClick={handleComplainUpgrade} disabled={upgradePending} style={{
                     background: cs.yellow + "22", border: "1px solid " + cs.yellow + "44", color: cs.yellow,
-                    padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", width: "100%"
+                    padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: upgradePending ? "wait" : "pointer", width: "100%",
+                    opacity: upgradePending ? 0.6 : 1,
                   }}>
-                    🔧 Upgrade ke Job Repair (Buat Invoice Perbaikan Terpisah)
+                    {upgradePending ? "⏳ Mengubah job..." : "🔧 Upgrade job ini ke Repair"}
                   </button>
                 </div>
               )}

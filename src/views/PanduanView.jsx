@@ -220,7 +220,7 @@ function LaporanGuide() {
         </div>
         <div style={cardBody}>
           <Bullet icon="📋">Cek ringkasan: jumlah unit, kondisi &amp; pekerjaan per unit, material, rekomendasi.</Bullet>
-          <Bullet icon="🔧">Job Complain ternyata perlu perbaikan? Tombol "Upgrade ke Job Repair" bikin job Repair baru terpisah = ada invoice perbaikan sendiri (bukan gratis garansi).</Bullet>
+          <Bullet icon="🔧">Job Complain ternyata perlu perbaikan? Tombol "Upgrade job ini ke Repair" mengubah jenis layanan pada ID job yang sama. Laporan dan pemeriksaan garansi tetap satu alur; jasa dalam garansi aktif tidak otomatis ditagihkan.</Bullet>
           <Bullet icon="✓">Tekan "✓ Submit Laporan." Muncul peringatan (bukan blokir keras) kalau: unit AC kosong · Repair tanpa jasa/barang · Install tanpa detail instalasi.</Bullet>
         </div>
       </div>

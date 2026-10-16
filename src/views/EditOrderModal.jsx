@@ -3,6 +3,7 @@ import { supabase } from "../supabaseClient.js";
 import { cs } from "../theme/cs.js";
 import { statusColor, statusLabel } from "../constants/status.js";
 import { updateOrder, updateOrderWorkflowAtomic } from "../data/writes.js";
+import { preserveComplainRepairNotes } from "../lib/complainRepairUpgrade.js";
 
 const isMissingUpdateWorkflowRpc = (error) => error?.code === "PGRST202" || error?.code === "42883"
   || /update_order_workflow_atomic.*(schema cache|does not exist|not found)/i.test(error?.message || "");
@@ -102,7 +103,7 @@ export default function EditOrderModal({
         teknisi2: form.teknisi2 || null, helper2: form.helper2 || null,
         teknisi3: form.teknisi3 || null, helper3: form.helper3 || null,
         date: form.date, time: form.time, time_end: timeEnd,
-        status: form.status, notes: form.notes || "",
+        status: form.status, notes: preserveComplainRepairNotes(editOrderItem, form.notes),
       };
       const auditName = auditUserName ? auditUserName() : "Admin";
 

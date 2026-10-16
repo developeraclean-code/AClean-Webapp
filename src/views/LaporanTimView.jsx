@@ -1,7 +1,8 @@
 import { memo, useState, useEffect } from "react";
 import { cs } from "../theme/cs.js";
 import { normalizePhone } from "../lib/phone.js";
-import { summarize, checkInvoiceConsistency, describeInconsistency, normalizeLines, buildWarrantyDiscountLine, categoryFromCatalog } from "../lib/invoicing.js";
+import { summarize, checkInvoiceConsistency, describeInconsistency, normalizeLines, buildWarrantyDiscountLine, categoryFromCatalog, lineCategory } from "../lib/invoicing.js";
+import { isComplainWarrantyFlow } from "../lib/complainRepairUpgrade.js";
 import { clientCleaningUnitRate } from "../lib/maintClientPrice.js";
 import { fetchServiceReportsPage, probeTeamInvoiceWorkflow } from "../data/reads.js";
 import { finalizeServiceReportAtomic } from "../data/writes.js";
@@ -656,10 +657,15 @@ const buildVerifyInvoice = (r, ord, dealPricesOverride) => {
       // WAJIB diteruskan: objek ini dibangun field-by-field, tanpa baris ini atribusi
       // unit hilang begitu Owner verify — padahal jalur submit sudah menyimpannya
       // (2 builder invoice ini wajib paritas). Tidak memengaruhi angka apa pun.
-      return { nama: m.nama, jumlah: qty, satuan: m.satuan || "pcs", harga_satuan: hSat, subtotal: hSat * qty, keterangan: ket, unit_no: m.unit_no ?? null, category: categoryFromCatalog(m.nama, priceListData) };
+      const explicitSection = ["jasa", "repair", "barang"].includes(String(m.keterangan || "").toLowerCase());
+      const category = explicitSection
+        ? lineCategory({ nama: m.nama, keterangan: ket, subtotal: hSat * qty })
+        : categoryFromCatalog(m.nama, priceListData);
+      return { nama: m.nama, jumlah: qty, satuan: m.satuan || "pcs", harga_satuan: hSat, subtotal: hSat * qty, keterangan: ket, unit_no: m.unit_no ?? null, category };
     });
 
     const isRepairSvcV = r.service === "Repair";
+    const isComplainSvc2 = r.service === "Complain" || isComplainWarrantyFlow(ord);
     const isCleaningMaintV = r.service === "Cleaning" || r.service === "Maintenance";
     const card34Empty = !vMDetail.some(m => m.keterangan === "jasa" || m.keterangan === "repair");
     // Biaya cleaning per-unit sudah ada? Cek HANYA baris jasa ber-nama cleaning/maintenance/cuci
@@ -671,7 +677,7 @@ const buildVerifyInvoice = (r, ord, dealPricesOverride) => {
       return n.includes("cleaning") || n.includes("maintenance") || n.includes("cuci");
     });
 
-    if (isRepairSvcV) {
+    if (isRepairSvcV && !isComplainSvc2) {
       // Repair: inject Biaya Pengecekan hanya jika card 3/4 kosong (tidak ada jasa maupun repair item)
       if (card34Empty) {
         const biayaCekItem = priceListData.find(p => p.service === "Repair" && p.type === "Biaya Pengecekan AC");
@@ -728,7 +734,6 @@ const buildVerifyInvoice = (r, ord, dealPricesOverride) => {
     const _sumV = summarize(vMDetail);
 
     const todayInv2 = new Date().toISOString().slice(0, 10);
-    const isComplainSvc2 = r.service === "Complain";
     const prevGaransiActive2 = isComplainSvc2
       ? invoicesData.filter(inv =>
         (inv.customer || "").trim() === (r.customer || "").trim() && inv.service !== "Complain" &&
@@ -742,7 +747,7 @@ const buildVerifyInvoice = (r, ord, dealPricesOverride) => {
     if (isComplainSvc2 && prevGaransiActive2 && _sumV.labor > 0) {
       // Jasa ditanggung garansi → baris DISKON negatif (transparan di invoice, total konsisten)
       vMDetail.push(buildWarrantyDiscountLine(_sumV.labor, prevGaransiActive2.id));
-    } else if (isComplainSvc2 && _sumV.lineTotal === 0) {
+    } else if (isComplainSvc2 && !prevGaransiActive2 && _sumV.lineTotal === 0) {
       const BIAYA_CEK2 = (() => {
         const pl = priceListData.find(r2 => r2.service === "Repair" && r2.type === "Biaya Pengecekan AC");
         return (pl && pl.price > 0) ? pl.price : 100000;
@@ -953,7 +958,13 @@ const verifyLaporan = async (r) => {
     }
     showNotif("✅ Laporan Survey terverifikasi — tidak ada invoice");
   } else {
-    const ord = ordersData.find(o => o.id === r.job_id);
+    // Verifikasi adalah batas finansial: baca order terbaru agar penanda asal
+    // Complain tidak hilang saat order berada di luar cache atau baru di-upgrade.
+    const { data: ord, error: ordError } = await supabase.from("orders").select("*").eq("id", r.job_id).maybeSingle();
+    if (ordError || !ord) {
+      showNotif("❌ Order asli gagal dimuat. Verifikasi ditahan agar invoice tidak salah hitung.");
+      return;
+    }
     const invId = "INV" + Date.now().toString().slice(-7) + Math.floor(Math.random() * 100).toString().padStart(2, "0");
 
     // Bangun detail invoice via fungsi bersama (satu sumber dgn badge estimasi di kartu).

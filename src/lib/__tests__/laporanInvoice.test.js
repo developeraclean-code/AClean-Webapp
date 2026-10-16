@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { buildInvoiceDetail } from "../laporanInvoice.js";
 import { summarize } from "../invoicing.js";
+import { COMPLAIN_REPAIR_MARKER } from "../complainRepairUpgrade.js";
 
 // Fixture price list — minimal, cukup untuk jalur Cleaning/Repair/Install.
 const priceList = [
@@ -130,5 +131,26 @@ describe("buildInvoiceDetail — Complain garansi", () => {
     expect(mDetail.some(r => r.subtotal < 0)).toBe(true); // baris diskon garansi
     expect(s.lineDiscount).toBe(100000); // diskon garansi tercatat
     expect(s.total).toBe(0);             // net setelah diskon = 0 (jasa ditanggung garansi)
+  });
+
+  it("Repair hasil upgrade Complain tidak membuat biaya cek pada garansi aktif", () => {
+    const { mDetail } = buildInvoiceDetail({
+      ...base,
+      order: { id: "WA-1", service: "Repair", notes: COMPLAIN_REPAIR_MARKER },
+      units: [unit(1)], prevGaransiActive: { id: "INV-LAMA" },
+    });
+    expect(mDetail.find(r => r.nama === "Biaya Pengecekan AC")).toBeFalsy();
+    expect(summarize(mDetail).total).toBe(0);
+  });
+
+  it("Repair hasil upgrade Complain mendiskon jasa garansi tetapi tetap menghitung material", () => {
+    const { mDetail } = buildInvoiceDetail({
+      ...base,
+      order: { id: "WA-1", service: "Repair", notes: COMPLAIN_REPAIR_MARKER },
+      units: [unit(1)], prevGaransiActive: { id: "INV-LAMA" },
+      jasaItems: [{ nama: "Perbaikan kebocoran", jumlah: 1, satuan: "unit", harga_satuan: 150000 }],
+      barangItems: [{ nama: "Pipa AC", jumlah: 1, satuan: "pcs", harga_satuan: 50000 }],
+    });
+    expect(summarize(mDetail).total).toBe(50000);
   });
 });

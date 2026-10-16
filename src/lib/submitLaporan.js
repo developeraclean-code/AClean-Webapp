@@ -8,6 +8,7 @@ import { submitServiceReportAtomic } from "../data/writes.js";
 import { isTeamSplitOrder } from "./teamSplitWorkflow.js";
 import { reportHasVrv } from "./vrvBilling.js";
 import { isVrvType, capacityPkNumber } from "./maintenanceAcTypes.js";
+import { isComplainWarrantyFlow } from "./complainRepairUpgrade.js";
 
 export const shouldFallbackAtomicReportSubmit = (error) => {
   const message = error?.message || "";
@@ -685,7 +686,9 @@ export async function submitLaporan({
       : barangTotalInv; // gunakan barangTotal, bukan material total
     const invoiceTotal = laborTotalInv + matTotalInv;
     const todayInv = new Date().toISOString().slice(0, 10);
-    const isComplainSvc = laporanModal.service === "Complain";
+    // Repair hasil upgrade tetap satu kunjungan Complain: garansi jasa berlaku,
+    // dan kunjungan gratis tidak boleh memunculkan biaya cek otomatis.
+    const isComplainSvc = isComplainWarrantyFlow(laporanModal);
     const isZeroTotal = invoiceTotal === 0;
 
     // ── GARANSI CHECK: selalu cek untuk Complain, terlepas dari total ──
@@ -730,7 +733,7 @@ export async function submitLaporan({
     let finalTotal = invoiceTotal;
 
     // ✨ FIX #1 (CORRECTED): Repair service tanpa items → conditional BIAYA_CEK based on repair type
-    const isRepairServiceNoItems = laporanModal?.service === "Repair" &&
+    const isRepairServiceNoItems = laporanModal?.service === "Repair" && !isComplainSvc &&
       laporanBarangItems.filter(b => b.nama).length === 0 &&
       laporanJasaItems.filter(j => j.nama).length === 0 &&
       laporanMaterials.filter(m => m.nama).length === 0 &&

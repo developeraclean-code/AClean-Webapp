@@ -11,6 +11,7 @@ import { planningTeams } from "../lib/teamPlanning.js";
 import { scheduleEndDate, scheduleMinutes, scheduleRange, schedulesOverlap } from "../lib/scheduleTime.js";
 import { shiftDateStr } from "../lib/dateTime.js";
 import { createWaPlanningForm } from "../lib/waWorkspace.js";
+import { preserveComplainRepairNotes } from "../lib/complainRepairUpgrade.js";
 import {
   ORDER_TEKNISI_FIELDS,
   ORDER_HELPER_FIELDS,
@@ -1878,6 +1879,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         // ikut tertaut. Hormati tautan yang sudah ada (withMaintenanceLink tak
         // menimpa). form.customer_id perlu ada di payload agar bisa di-resolve.
         const _prevOrder = ordersData.find(o => o.id === editId);
+        payload.notes = preserveComplainRepairNotes(_prevOrder, payload.notes);
         const { payload: editPayload, linked } = withMaintenanceLink(
           { ...payload, customer_id: form.customer_id, maintenance_client_id: _prevOrder?.maintenance_client_id || null },
           maintClients,

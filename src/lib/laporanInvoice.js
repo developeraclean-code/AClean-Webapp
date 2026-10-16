@@ -5,7 +5,8 @@
 // mDetail = "single source of truth" baris invoice. Ringkasan (labor/material/total) diturunkan
 // dari mDetail via summarize() di lib/invoicing.js.
 import { hargaPerUnitFromTipe, getBracketKey } from "./pricing.js";
-import { categoryFromCatalog, summarize, buildWarrantyDiscountLine } from "./invoicing.js";
+import { categoryFromCatalog, lineCategory, summarize, buildWarrantyDiscountLine } from "./invoicing.js";
+import { isComplainWarrantyFlow } from "./complainRepairUpgrade.js";
 
 const FREON_KEYS = ["freon", "r-22", "r-32", "r-410", "r22", "r32", "r410"];
 
@@ -45,7 +46,7 @@ export function buildInvoiceDetail({
 }) {
   const svc = order?.service;
   const isInstallSvc = svc === "Install";
-  const isComplainSvc = svc === "Complain";
+  const isComplainSvc = isComplainWarrantyFlow(order);
 
   const lookupHarga = (nama, satuanHint) => (lookupHargaGlobal ? lookupHargaGlobal(nama, satuanHint) : 0);
   const mkRow = (nama, jumlah, satuan, hSat, ket) => {
@@ -55,7 +56,12 @@ export function buildInvoiceDetail({
     const qty = isF ? Math.max(1, Math.ceil(rawQ)) : rawQ;
     const h = parseFloat(hSat) || 0 || lookupHarga(nama, satuan);
     const ketFin = ket || (isF && rawQ !== qty ? `Aktual: ${rawQ} kg → dibulatkan ${qty} kg` : "");
-    return { nama, jumlah: qty, satuan: satuan || (isF ? "kg" : "pcs"), harga_satuan: h, subtotal: h * qty, keterangan: ketFin, category: categoryFromCatalog(nama, priceListData) };
+    // Bagian form yang dipilih teknisi (jasa/repair/barang) lebih pasti daripada
+    // tebakan nama katalog, terutama untuk jasa manual pada klaim garansi.
+    const category = ["jasa", "repair", "barang"].includes(ket)
+      ? lineCategory({ nama, keterangan: ket, subtotal: h * qty })
+      : categoryFromCatalog(nama, priceListData);
+    return { nama, jumlah: qty, satuan: satuan || (isF ? "kg" : "pcs"), harga_satuan: h, subtotal: h * qty, keterangan: ketFin, category };
   };
 
   const mDetail = [];
@@ -92,7 +98,7 @@ export function buildInvoiceDetail({
   if (!isInstallSvc) {
     const hasRepairItems = mDetail.some(m => m.keterangan === "repair");
     const isRepairSvc = svc === "Repair";
-    const isComplainSvc2 = svc === "Complain";
+    const isComplainSvc2 = isComplainSvc;
     const isCleaningOrMaint = svc === "Cleaning" || svc === "Maintenance";
 
     // ── Cleaning & Maintenance: per-unit base labor dari Card 1/4 tipe ──
@@ -162,7 +168,7 @@ export function buildInvoiceDetail({
     }
 
     // ── Repair card 3/4 kosong: inject "Biaya Pengecekan" ──
-    if (isRepairSvc && !isRepairGratis && !hasRepairItems && !mDetail.some(m => m.keterangan === "jasa")) {
+    if (isRepairSvc && !isComplainSvc && !isRepairGratis && !hasRepairItems && !mDetail.some(m => m.keterangan === "jasa")) {
       const biayaCekItem = priceListData.find(r2 => r2.service === "Repair" && r2.type === "Biaya Pengecekan AC");
       const biayaCek = (biayaCekItem && biayaCekItem.price > 0) ? biayaCekItem.price : 0;
       const cekQty = Math.max(1, (units || []).length || 1); // biaya pengecekan PER UNIT
