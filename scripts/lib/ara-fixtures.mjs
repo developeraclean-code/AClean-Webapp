@@ -1,5 +1,22 @@
 // Synthetic fixtures only. No customer phone, name, payment or credentials from production.
-export const prices = [{ service: "Cleaning", type: "Split 0.5–1PK", harga: 95000 }, { service: "Install", type: "Pemasangan 0.5–1PK", harga: 350000 }];
+export const priceListRows = [
+  { service: "Cleaning", type: "Split 0.5–1PK", price: 95000, is_active: true },
+  { service: "Install", type: "Pemasangan 0.5–1PK", price: 350000, is_active: null },
+  { service: "Archived", type: "Inactive service", price: 987654, is_active: false },
+];
+export const prices = priceListRows.filter(row => row.is_active !== false)
+  .map(({ service, type, price }) => ({ service, type, harga: price }));
+
+// Model the real table columns and PostgREST alias instead of returning pre-shaped
+// prices regardless of the query. A wrong table/column/filter must fail a test.
+export function readPriceListFixture({ columns, anyFilter, priceRows = priceListRows }) {
+  const fields = columns.split(",").map(field => field.split(":"));
+  const allowed = new Set(["service", "type", "price", "is_active"]);
+  if (fields.some(parts => !allowed.has(parts.at(-1)))) return { error: { message: "Unknown price_list column" } };
+  const rows = anyFilter === "is_active.is.null,is_active.eq.true"
+    ? priceRows.filter(row => row.is_active === null || row.is_active === true) : priceRows;
+  return { data: rows.map(row => Object.fromEntries(fields.map(parts => [parts[0], row[parts.at(-1)]]))) };
+}
 export const training = {
   auto_reply_rules: [{ id: "R1", active: true, trigger: "harga|tarif", response: "Tanyakan kapasitas dan jumlah AC, gunakan harga aktif." }],
   ara_training_scenarios: [{ id: "S1", customer_says: "Bisa servis malam?", ideal_response: "Terima permintaan jam malam dan minta Admin memeriksa tim." }],
@@ -27,18 +44,18 @@ export const customerCases = [
   ["other", "Saya cuma punya foto AC dan tidak tahu kapasitasnya"],
 ];
 
-export function createAraMemoryDb({ mode = "review", settings = {}, failTable = null, failSave = false, duplicate = false } = {}) {
+export function createAraMemoryDb({ mode = "review", settings = {}, failTable = null, failSave = false, duplicate = false, priceRows = priceListRows } = {}) {
   const reviews = new Map(), outbox = new Map(), calls = [];
   const cfg = { llm_provider: "claude", wa_ara_mode: mode, wa_chatbot_enabled: "true", wa_autoreply_enabled: "false", ara_training_rules: JSON.stringify(training), ...settings };
   return {
     reviews, outbox, calls, cfg,
     from(table) {
-      if (!["wa_ara_reviews", "app_settings", "ara_brain", "harga_layanan", "wa_messages"].includes(table)) throw new Error("Unexpected table: " + table);
+      if (!["wa_ara_reviews", "app_settings", "ara_brain", "price_list", "wa_messages"].includes(table)) throw new Error("Unexpected table: " + table);
       const q = { action: "read", payload: null, filters: {},
-        select(){ return this; }, in(){ return this; }, order(){ return this; }, limit(){ return this; }, maybeSingle(){ this.single=true; return this; },
+        select(columns){ this.columns=columns; return this; }, or(filter){this.anyFilter=filter; return this;}, in(){ return this; }, order(){ return this; }, limit(){ return this; }, maybeSingle(){ this.single=true; return this; },
         eq(k,v){ this.filters[k]=v; return this; }, insert(payload){ this.action="insert"; this.payload=payload; return this; }, update(payload){ this.action="update"; this.payload=payload; return this; },
         then(resolve,reject) {
-          calls.push({ table, action:this.action, payload:this.payload });
+          calls.push({ table, action:this.action, payload:this.payload, columns:this.columns, anyFilter:this.anyFilter });
           let result;
           if (failTable===table || (failSave && this.action==="update")) result={ error:{message:"database unavailable"} };
           else if (this.action==="insert") {
@@ -47,7 +64,7 @@ export function createAraMemoryDb({ mode = "review", settings = {}, failTable = 
           } else if (this.action==="update") { Object.assign(reviews.get(this.filters.id),this.payload); result={data:null}; }
           else if(table==="app_settings") result={data:Object.entries(cfg).map(([key,value])=>({key,value}))};
           else if(table==="ara_brain") result={data:{value:"# ARA CUSTOMER"}};
-          else if(table==="harga_layanan") result={data:prices};
+          else if(table==="price_list") result=readPriceListFixture({columns:this.columns,anyFilter:this.anyFilter,priceRows});
           else result={data:[]};
           return Promise.resolve(result).then(resolve,reject);
         },

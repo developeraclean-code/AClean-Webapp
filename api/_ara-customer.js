@@ -49,7 +49,7 @@ export async function processAraCustomer({ db, phone, message, sourceKey, chatbo
     const [settings, brains, prices, history] = await Promise.all([
       db.from("app_settings").select("key,value").in("key", ["llm_provider", "wa_ara_mode", "ara_training_rules", "wa_chatbot_enabled", "wa_autoreply_enabled"]),
       db.from("ara_brain").select("value").eq("key", "brain_customer").maybeSingle(),
-      db.from("harga_layanan").select("service,type,harga").order("service").limit(250),
+      db.from("price_list").select("service,type,harga:price").or("is_active.is.null,is_active.eq.true").order("service").limit(250),
       db.from("wa_messages").select("role,content").eq("phone", phone).order("created_at", { ascending: false }).limit(12),
     ]);
     if (settings.error || brains.error || prices.error || history.error) throw new Error("Data SOP/training/harga/riwayat belum dapat dimuat");

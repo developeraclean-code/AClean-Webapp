@@ -54,6 +54,16 @@ describe("ARA review and delivery integration",()=>{
     const db=createAraMemoryDb(),generate=vi.fn().mockResolvedValue("Boleh informasikan kapasitas AC?");
     await processAraCustomer({...base,message:"Berapa harga servis?",db,generate});
     expect(generate.mock.calls[0][0].system).toContain("Permintaan refund");expect(generate.mock.calls[0][0].system).toContain("95000");
+    expect(generate.mock.calls[0][0].system).toContain("350000");expect(generate.mock.calls[0][0].system).not.toContain("987654");
+    expect(db.calls.find(c=>c.table==="price_list")).toMatchObject({columns:"service,type,harga:price",anyFilter:"is_active.is.null,is_active.eq.true"});
+  });
+  it("does not fabricate a tariff when the active price list is empty",async()=>{
+    const db=createAraMemoryDb({priceRows:[]}),deliver=vi.fn();
+    const generate=vi.fn().mockResolvedValue("Harga Rp95.000");
+    const result=await processAraCustomer({...base,message:"Harga cleaning?",db,generate,deliver});
+    expect(generate.mock.calls[0][0].system).toContain("BELUM TERSEDIA");
+    expect(db.reviews.get(result.review_id)).toMatchObject({status:"PENDING",reasons:expect.arrayContaining(["Nominal tidak ditemukan pada price list aktif"])});
+    expect(db.reviews.get(result.review_id).reply).not.toContain("95.000");expect(deliver).not.toHaveBeenCalled();
   });
   it("uses review fallback after quota failure, invalid price or empty reply",async()=>{
     for(const generate of [vi.fn().mockRejectedValue(new Error("quota")),vi.fn().mockResolvedValue("Harga Rp 999.000"),vi.fn().mockResolvedValue("")]){
@@ -63,7 +73,7 @@ describe("ARA review and delivery integration",()=>{
     }
   });
   it("fails visibly without sending when queue, config or final persistence is unavailable",async()=>{
-    for(const opts of [{failTable:"wa_ara_reviews"},{failTable:"app_settings"},{failTable:"harga_layanan"},{failSave:true}]){
+    for(const opts of [{failTable:"wa_ara_reviews"},{failTable:"app_settings"},{failTable:"price_list"},{failSave:true}]){
       const deliver=vi.fn();await expect(processAraCustomer({...base,db:createAraMemoryDb({mode:"auto_safe",...opts}),deliver})).rejects.toThrow();expect(deliver).not.toHaveBeenCalled();
     }
   });

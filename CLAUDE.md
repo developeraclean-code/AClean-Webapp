@@ -257,6 +257,7 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
 198       # Applied 9 Okt 2026 — tabel katalog WA, RLS Owner/Admin, pengiriman media CATALOG; transaksi dan akses role diuji dengan rollback
 201       # Applied 10 Okt 2026 — satu laporan/job untuk seluruh anggota; pengirim pertama dapat edit sebelum Verified, dijaga trigger dan RPC; role diuji dengan rollback
 202       # Applied 10 Okt 2026 — cegah laporan baru/ulang pada job CANCELLED/RESCHEDULED; uji transaksi rollback: job batal ditolak, job aktif diterima
+214       # Applied 17 Okt 2026 — durable WA ingress; riwayat dan hash SQL sama dengan produksi. Sinkronisasi sumber harga ARA tidak memerlukan migrasi 215.
 ```
 
 > Daftar di atas pernah tertinggal jauh (berhenti di 126 padahal file sudah 132).
@@ -274,9 +275,9 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
 
 **Theme/styling:** No CSS framework — all styles are inline JS objects via `cs` object (`src/theme/cs.js`). Dark mode default.
 
-**WhatsApp/ARA (perubahan lokal 7 Okt 2026):** Inbound → `/api/receive-wa` → `api/_ara-customer.js`. Default `wa_ara_mode=review`: draf ditinjau Owner/Admin, bukan dikirim. `auto_safe` hanya sapaan/terima kasih sederhana; jawaban model/harga/booking/pembayaran/komplain tetap review. Pengiriman otomatis menggunakan outbox idempoten. Seluruh draf/balasan customer ARA diakhiri `- Auto Reply by ARA -`; bukan penanda chat manual, cron atau internal. Migrasi 196 wajib sebelum aktivasi jalur baru. Lihat [ARA_READINESS](docs/ARA_READINESS.md).
+**WhatsApp/ARA (aturan 7 Okt, sinkronisasi 17 Okt 2026):** Inbound → `/api/receive-wa` → `api/_ara-customer.js`. Default `wa_ara_mode=review`: draf ditinjau Owner/Admin, bukan dikirim. `auto_safe` hanya sapaan/terima kasih sederhana; jawaban model/harga/booking/pembayaran/komplain tetap review. Pengiriman otomatis menggunakan outbox idempoten. Seluruh draf/balasan customer ARA diakhiri `- Auto Reply by ARA -`; bukan penanda chat manual, cron atau internal. Migrasi 196 wajib sebelum aktivasi jalur baru. Lihat [ARA_READINESS](docs/ARA_READINESS.md).
 
-**AI (ARA):** Aturan utama `src/lib/araPolicy.js`; server memuat `ara_brain` (`brain_md` internal, `brain_customer` customer), `app_settings.ara_training_rules`, dan `harga_layanan`. Training adalah konteks terpilih, bukan fine-tuning. Brain lama tidak mengungguli aturan wajib. `[ACTION]` hanya usulan navigasi, tidak melakukan mutasi atau kirim WA. Provider ARA dan AI Vision terpisah; API key di environment server. Perubahan lokal tidak otomatis menimpa Brain produksi.
+**AI (ARA):** Aturan utama `src/lib/araPolicy.js`; server memuat `ara_brain` (`brain_md` internal, `brain_customer` customer), `app_settings.ara_training_rules`, dan `price_list` aktif (`price` dialias `harga`, `is_active` true/null). Sumber harga diverifikasi read-only ke produksi 17 Okt; tabel `harga_layanan` tidak ada. Sinkronisasi ini tidak memerlukan migrasi baru (terakhir 214; berikutnya 215). Training adalah konteks terpilih, bukan fine-tuning. Brain lama tidak mengungguli aturan wajib. `[ACTION]` hanya usulan navigasi, tidak melakukan mutasi atau kirim WA. Provider ARA dan AI Vision terpisah; API key di environment server. Deploy tidak menimpa Brain atau mengaktifkan chatbot/auto-reply.
 
 **Image storage:** Cloudflare R2 via AWS Sig V4 in `/api/upload-foto`. Render URL SELALU lewat `fotoUrl()` (`src/lib/fotoUrl.js`): langsung ke CDN kalau `VITE_R2_CDN_URL` di-set (hemat kuota Vercel), kalau tidak jatuh ke proxy `/api/foto`; `.pdf`/`.html` selalu proxy. Simpan bentuk key/proxy di DB, bukan URL CDN.
 

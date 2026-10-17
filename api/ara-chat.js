@@ -130,7 +130,7 @@ export default async function handler(req, res) {
     const [brains, rules, prices] = await Promise.all([
       sb.from("ara_brain").select("key,value").in("key", ["brain_md", "brain_customer"]),
       sb.from("app_settings").select("value").eq("key", "ara_training_rules").maybeSingle(),
-      sb.from("harga_layanan").select("service,type,harga").order("service").limit(250),
+      sb.from("price_list").select("service,type,harga:price").or("is_active.is.null,is_active.eq.true").order("service").limit(250),
     ]);
     if (brains.error || rules.error || prices.error) throw new Error("SOP/training/price list belum dapat dimuat. Coba lagi.");
     const saved = Object.fromEntries((brains.data || []).map(x => [x.key, x.value]));

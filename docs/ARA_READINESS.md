@@ -1,10 +1,10 @@
 # ARA: review-first rollout
 
-Local changes and validation, 7 October 2026 (WIB).
+Review-first policy: 7 October 2026. Price-source synchronization: 17 October 2026 (WIB).
 
 ## Sumber aturan dan sinkronisasi
 
-Aturan runtime utama ada di `src/lib/araPolicy.js` (versi 2026-10-07). Dokumen ini, SOP Admin, panduan WhatsApp dan CLAUDE.md menjelaskan aturan yang sama. File Markdown repo tidak dimuat otomatis sebagai Brain: `ara_brain.brain_md`/`brain_customer` serta `app_settings.ara_training_rules` tetap merupakan konfigurasi tambahan. Isinya tidak ditimpa pada perubahan lokal ini; aturan wajib server mengungguli contoh/Brain lama.
+Aturan runtime utama ada di `src/lib/araPolicy.js` (versi 2026-10-07). Dokumen ini, SOP Admin, panduan WhatsApp dan CLAUDE.md menjelaskan aturan yang sama. File Markdown repo tidak dimuat otomatis sebagai Brain: `ara_brain.brain_md`/`brain_customer` serta `app_settings.ara_training_rules` tetap merupakan konfigurasi tambahan. Isinya tidak ditimpa pada sinkronisasi ini; aturan wajib server mengungguli contoh/Brain lama.
 
 Setiap draf dan balasan customer ARA (template, hasil model maupun fallback) diakhiri penanda persis **`- Auto Reply by ARA -`**. Sistem menambahkannya sekali di batas keluaran sebelum disimpan/dikirim. Draf lama juga diberi penanda ketika ditampilkan/disalin. Balasan admin manual murni, chat internal ARA, invoice dan cron tidak dilabeli otomatis. Admin tetap dapat menyunting composer; pertahankan penanda bila mengirim draf ARA. Penanda bukan bukti pengiriman, pembacaan atau verifikasi pembayaran.
 
@@ -31,11 +31,21 @@ Kedua template tidak mengonfirmasi lunas, gratis garansi, jadwal kunjungan, atau
 ## Behavior
 
 - Uploaded `ara_training_rules` is validated and used as bounded, relevant examples in internal ARA and customer drafts. This is prompt context, not model fine-tuning or automatic learning from all WhatsApp history.
-- Server loads saved brain, training and live `harga_layanan`; client-provided brain/prices cannot override them. Missing configuration produces a visible error/review record.
+- Server loads saved brain, training and active `price_list` (`price` mapped to `harga`); client-provided brain/prices cannot override them. Missing configuration produces a visible error/review record.
 - Internal ARA uses internal SOP when the saved brain is accidentally a customer SOP. Existing stored text is preserved. Built-in default no longer embeds old prices or automatic payment instructions.
 - Regular scheduling ends at 18:00. Night requests require confirmation of available technician/helper assignments. ARA cannot confirm a slot from partial browser data.
 - Internal `[ACTION]` output becomes proposals linking to the established modules. Chat never directly changes invoices, payments, stock, orders or expenses, and never sends WhatsApp. Invoice proposals go to Laporan Tim for actual verified reports including multi-team work.
 - Aggregate internal context is explicitly partial; use Finance/Statistics for final business totals.
+
+## Price-source synchronization — 17 October 2026
+
+Both customer drafts (`api/_ara-customer.js`) and internal chat (`api/ara-chat.js`) now read `price_list`, selecting `service,type,harga:price` and including only rows whose `is_active` is true or null. The previous `harga_layanan` table does not exist in production and caused configuration loading to fail before the AI call. Schema-aware fixtures now reject unknown tables/columns and test aliasing, inactive-price exclusion, legacy null-active rows and visible failures without provider calls.
+
+Read-only production verification found 97 active prices, valid saved training, and the existing review table/RPC from migration 196. Latest applied migration is **214_durable_wa_ingress** (`20261017000000214`), identical to the repo source. **No new migration is needed for this correction; 215 remains unused.** Brain, training, provider, review mode, customer data and financial records are not rewritten. Chatbot and auto-reply remain OFF; deploying code is not permission to enable either switch.
+
+## Interactive local customer chat
+
+With Node 24 and `.env.local` configured, run `node scripts/preview-ara-chat.mjs`, then open `http://127.0.0.1:4176`. This script is a localhost-only developer tool, not a deployed public endpoint. The lab reads only Brain/training/provider and active prices at startup, keeps conversation in the browser tab, and reuses `processAraCustomer` with an in-memory database and simulated delivery. AI calls use real provider keys and incur API cost; usage logging is disabled in this lab. No WhatsApp, order, payment, review or production-setting writes occur. Restart to refresh the configuration snapshot. Only text is supported; uploaded payment/photo analysis is not simulated. Drafts are displayed as responses for testing and used as conversation history as though admin had approved them, not evidence of actual delivery.
 
 ## Customer replies
 
@@ -53,8 +63,8 @@ Review records are separate from `wa_messages`; drafts never become conversation
 
 - Unit/integration tests cover training failures, policy, internal role checks, API failures, duplicate clicks, no direct business mutations, current-message history duplication, kill switch, review-only behavior, 200 concurrent webhook replays, and 200 simulated customer workflows (20 scenario types × 10).
 - Browser tests use real AraView/AraReviewPanel components with isolated synthetic data on desktop/mobile. No production connection or customer messages.
-- Live Claude: 20 synthetic customer scenarios returned successfully. Initial output guards flagged a correct two-unit total and a refusal mentioning API keys; guards were corrected and regression-tested.
-- Live OpenAI: 15 successful scenarios, then HTTP 429 `rate_limit_exceeded`; remaining five succeeded on a later invocation. This was a rate limit, not proof of exhausted billing credit. One conservative warranty-refusal guard was corrected and regression-tested.
+- Earlier live evaluation (7 October): Claude returned 20 synthetic customer scenarios successfully. Initial output guards flagged a correct two-unit total and a refusal mentioning API keys; guards were corrected and regression-tested.
+- Earlier live evaluation (7 October): OpenAI returned 15 successful scenarios, then HTTP 429 `rate_limit_exceeded`; remaining five succeeded on a later invocation. This was a rate limit, not proof of exhausted billing credit. One conservative warranty-refusal guard was corrected and regression-tested.
 - These model calls do not prove real-customer accuracy or WhatsApp delivery. No customer was contacted and production toggles/data were unchanged.
 
 Commands:
@@ -70,6 +80,7 @@ node scripts/evaluate-ara.mjs --live --provider=openai
 node scripts/evaluate-ara.mjs --live --provider=openai --from=15
 node node_modules/@playwright/test/cli.js test --config=e2e/ara-review.config.js
 npm run preview:ara
+node scripts/preview-ara-chat.mjs
 ```
 
 Live evaluation reads only provider keys from `.env.local`, uses synthetic data and disables production usage logging. It has API cost; it never calls Fonnte or writes Supabase.
@@ -82,6 +93,6 @@ Live evaluation reads only provider keys from `.env.local`, uses synthetic data 
 
 Migration 196 was applied to production on 7 October 2026, recorded as `20261007043032196`. Before commit, the DDL and review RPC were rehearsed in a rolled-back transaction on the production schema: Owner/Admin could read/resolve, Helper/Teknisi could not. No synthetic rows remain. `wa_ara_mode=review`; both chatbot/auto-reply toggles remain OFF. End-to-end webhook and real gateway delivery still need a designated test number after deployment. Failures in draft storage block automatic sending and are logged for Monitoring.
 
-Latest local validation: 895 tests passed in 94 files; 200 simulated workflows with zero real WhatsApp sends; desktop/mobile review-and-signature tests passed; lint and production build passed. Twenty synthetic live scenarios per provider measure successful responses, not a statistically validated customer-answer accuracy percentage. Review-first is ready for controlled rollout; autonomous prices, booking, payments and warranty decisions remain out of scope.
+Synchronization validation (17 October): all 1,345 unit tests in 121 files pass, including 75 focused ARA tests; 200 simulated workflows, lint, typecheck and the production build pass. Desktop/mobile review-component tests and localhost chat smoke tests pass (configuration loads, payment template, signature, reset and no horizontal overflow or browser errors). No real WhatsApp sends or paid AI calls were made. The production configuration/price query is verified separately using read-only Supabase access; this does not establish current provider billing/availability. Twenty earlier synthetic live scenarios per provider measure successful responses, not a statistically validated customer-answer accuracy percentage. Review-first is ready for controlled rollout; autonomous prices, booking, payments and warranty decisions remain out of scope.
 
 This release deliberately does not enable broad autonomous customer replies or restore the removed bespoke ARA transaction mutations. Continued evaluation should measure factual accuracy, admin edits, handoff completion, queue latency and provider failures. No statistically measured 90% real-customer accuracy is claimed from 20 synthetic scenarios.
