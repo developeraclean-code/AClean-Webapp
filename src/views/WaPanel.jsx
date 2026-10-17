@@ -2,13 +2,13 @@ import { fetchWaPaymentContext, waMediaUrl } from "../lib/waPaymentContext.js";
 import AraReviewPanel from "./AraReviewPanel.jsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { normalizePhone, samePhone, formatPhone } from "../lib/phone.js";
-import { fetchWaConversations } from "../data/reads.js";
 import { createWaOrderDraft, customerRecords, fetchWaCustomers, waCustomerTitle, fetchWaHistory, invoiceBalance, matchesConversation, paymentReminder, waMoney } from "../lib/waWorkspace.js";
 import "./WaPanel.css";
 import WaOperationsPanel from "./WaOperationsPanel.jsx";
 import { WA_STATES, SEND_STATES, isDue } from "../lib/waOperations.js";
 import { catalogCaption, catalogPrice } from "../lib/waCatalog.js";
 import { fotoUrl } from "../lib/fotoUrl.js";
+import { useWaConversations } from "../hooks/useWaConversations.js";
 
 const timeLabel = value => value ? new Date(value).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" }) : "";
 const dateLabel = value => value ? new Date(value.length === 10 ? `${value}T12:00:00+07:00` : value).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Jakarta" }) : "Belum dijadwalkan";
@@ -59,6 +59,7 @@ export default function WaPanel({
   const messageScroll = useRef(null);
   const stickToBottom = useRef(true);
   const isOwnerAdmin = ["Owner", "Admin"].includes(currentUser?.role);
+  const conversationFeed = useWaConversations({ supabase, enabled: open && isOwnerAdmin, onData: setWaConversations });
   useEffect(() => {
     if (!open || !isOwnerAdmin || !catalogPickerOpen) return;
     let cancelled = false;
@@ -227,9 +228,8 @@ export default function WaPanel({
     if (refreshing) return;
     setRefreshing(true);
     try {
-      const { data, error } = await fetchWaConversations(supabase, 100);
-      if (error) throw error;
-      if (data) setWaConversations(data);
+      const result = await conversationFeed.refresh();
+      if (result.ok === false) throw new Error(result.error || "Percakapan gagal dimuat");
       setCustomerRefresh(k=>k+1);
       setRefreshKey(k => k + 1);
     } catch (error) { showNotif("⚠️ Percakapan gagal dimuat: " + error.message); }
@@ -337,7 +337,7 @@ export default function WaPanel({
         onClick={e => e.stopPropagation()}>
         <header className="wa-topbar">
           <div className="wa-brand-icon">◉</div>
-          <div className="wa-grow"><h2 id="wa-workspace-title">WhatsApp <span>Workspace</span></h2><p>AClean · {waProvider === "fonnte" ? "Fonnte" : waProvider === "wa_cloud" ? "WA Cloud API" : "Twilio"} · {waConversations.length} percakapan dimuat</p></div>
+          <div className="wa-grow"><h2 id="wa-workspace-title">WhatsApp <span>Workspace</span></h2><p>AClean · {waProvider === "fonnte" ? "Fonnte" : waProvider === "wa_cloud" ? "WA Cloud API" : "Twilio"} · {waConversations.length} percakapan dimuat</p><p style={{ color: conversationFeed.error ? "#fbbf24" : undefined }} role={conversationFeed.error ? "alert" : undefined}>{conversationFeed.error ? `Daftar belum diperbarui: ${conversationFeed.error}. Data terakhir tetap ditampilkan.` : "Refresh daftar aktif saat panel terlihat · termasuk malam hari"}</p></div>
           <span className="wa-top-note">Percakapan & operasional</span>
           <button className="wa-icon-button" onClick={refresh} disabled={refreshing} aria-label="Muat ulang percakapan" title="Muat ulang percakapan">{refreshing ? "…" : "↻"}</button>
           <button className="wa-icon-button wa-expand" onClick={() => setExpanded(v => !v)} aria-label={expanded ? "Perkecil panel" : "Perbesar panel"} title={expanded ? "Perkecil panel" : "Perbesar panel"}>{expanded ? "↙" : "↗"}</button>

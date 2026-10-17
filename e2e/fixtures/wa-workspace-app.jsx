@@ -151,7 +151,8 @@ const db = {
             const rows=table==="orders"?demoOrders:table==="daily_team_slots"?rosters:table==="technician_availability"?absences:presets;
             resolve(window.waTest.scheduleError?{error:{message:"Jadwal gagal dimuat"}}:{data:rows.filter(o=>(!this.date||o.date===this.date)&&(!this.from||o.date>=this.from)&&(!this.to||o.date<=this.to))});
           }
-          else resolve({ data: table === "wa_conversations" ? conversations : [] });
+          else if(table==="wa_conversations") { window.waTest.calls.push({type:"conversation-load"});resolve(window.waTest.conversationError?{error:{message:"Daftar WA terputus"}}:{data:[...conversations]}); }
+          else resolve({ data: [] });
         } catch (error) { reject(error); }
       },
     };

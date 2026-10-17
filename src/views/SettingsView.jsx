@@ -719,7 +719,8 @@ function SettingsView({
           {/* Webhook info */}
           <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "10px 14px", marginBottom: 12, fontSize: 11, color: cs.muted }}>
             📥 Webhook URL untuk bot ARA (butuh paket berbayar Fonnte):<br />
-            <span style={{ color: cs.accent, fontFamily: "monospace", fontSize: 12 }}>https://a-clean-webapp.vercel.app/api/fonnte-webhook</span>
+            <span style={{ color: cs.accent, fontFamily: "monospace", fontSize: 12 }}>https://a-clean-webapp.vercel.app/api/receive-wa</span>
+            <div style={{ marginTop: 6 }}>Fonnte → Device → Edit: pastikan Autoread aktif dan URL webhook benar. Jika memakai secret webhook, pertahankan token rahasia pada URL; jangan dibagikan. Penerimaan bukti bayar berjalan 24 jam, terpisah dari auto-reply ARA dan refresh tampilan WA Monitor.</div>
           </div>
 
           <div style={{ display: "flex", gap: 8 }}>

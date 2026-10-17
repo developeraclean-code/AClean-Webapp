@@ -19,6 +19,32 @@ test.beforeEach(async ({ page }) => {
 const chooseAndi = page => page.locator('.wa-conversation[data-phone="6281234567890"]').click();
 const chooseMaya = page => page.locator('.wa-conversation[data-phone="6281234567891"]').click();
 
+test("Workspace refreshes on Sunday night while visible and stops when closed",async({page})=>{
+  await page.clock.install({time:new Date('2026-10-18T16:00:00Z')});
+  await page.goto('https://wa-workspace.test/');
+  await expect(page.getByText('Refresh daftar aktif saat panel terlihat · termasuk malam hari',{exact:true})).toBeVisible();
+  const before=await page.evaluate(()=>window.waTest.calls.filter(call=>call.type==='conversation-load').length);
+  await page.evaluate(()=>{window.waTest.conversations[0]={...window.waTest.conversations[0],last_message:'Pesan masuk malam hari (simulasi)'};});
+  await page.clock.fastForward(61000);
+  await expect(page.locator('.wa-conversation').filter({hasText:'Pesan masuk malam hari (simulasi)'})).toBeVisible();
+  expect(await page.evaluate(()=>window.waTest.calls.filter(call=>call.type==='conversation-load').length)).toBeGreaterThan(before);
+  await page.getByRole('button',{name:'Tutup WhatsApp',exact:true}).click();
+  const afterClose=await page.evaluate(()=>window.waTest.calls.filter(call=>call.type==='conversation-load').length);
+  await page.clock.fastForward(61000);
+  expect(await page.evaluate(()=>window.waTest.calls.filter(call=>call.type==='conversation-load').length)).toBe(afterClose);
+});
+
+test("conversation refresh errors keep the last inbox and can recover visibly",async({page})=>{
+  await expect(page.locator('.wa-conversation')).toHaveCount(3);
+  await page.evaluate(()=>{window.waTest.conversationError=true;});
+  await page.getByRole('button',{name:'Muat ulang percakapan',exact:true}).click();
+  await expect(page.getByRole('alert').filter({hasText:'Daftar belum diperbarui'})).toBeVisible();
+  await expect(page.locator('.wa-conversation')).toHaveCount(3);
+  await page.evaluate(()=>{window.waTest.conversationError=false;});
+  await page.getByRole('button',{name:'Muat ulang percakapan',exact:true}).click();
+  await expect(page.getByRole('alert').filter({hasText:'Daftar belum diperbarui'})).toHaveCount(0);
+});
+
 test("catalog quick reply previews a saved image and sends it as catalog media", async ({ page }) => {
   await chooseAndi(page);
   await page.getByRole("button", { name: "🖼️ Katalog" }).click();

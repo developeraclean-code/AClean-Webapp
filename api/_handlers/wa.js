@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { processAraCustomer } from "../_ara-customer.js";
+import { captureWaIngress, downloadIngressMedia, normalizeWaIngress, safeFonnteMediaUrl } from "../_wa-ingress.js";
 // api/_handlers/wa.js — Handler grup WhatsApp (Batch 4 pemecahan router, Jul 2026).
 // Isi blok dipindah APA ADANYA (ekstraksi programatik) dari api/[route].js.
 // receive-wa = webhook Fonnte (jalur paling panas) — di-dispatch oleh router,
@@ -231,7 +232,7 @@ export async function receiveWa(req, res) {
         const rb = req.body || {};
         const isDeliveryReceipt =
           (rb.state !== undefined || (rb.status !== undefined && !rb.message)) &&
-          !rb.message && !rb.sender && !rb.from && !rb.member && !rb.participant;
+          !rb.message && !rb.sender && !rb.from && !rb.member && !rb.participant && !rb.url && !rb.type;
         if (isDeliveryReceipt) {
           return res.status(200).json({ ok: true, ignored: "delivery_receipt" });
         }
@@ -268,14 +269,14 @@ export async function receiveWa(req, res) {
         }
       }
 
-      const wb = req.body || {};
+      const wb = { ...(req.body || {}) };
 
       // ── DELIVERY STATUS CALLBACK (Fonnte "Webhook Message Status") ──
       // Status payload format Fonnte (status update untuk outgoing msg):
       //   { device: "62...", target: "62...", id: "msgId", status: "delivered|read|sent|failed", ... }
       // Bedanya dgn inbound: tidak ada wb.message konten + ada wb.status.
       // Sebelumnya callback ini di-reject 400 → sekarang detect & log untuk observability.
-      const isStatusCallback = wb.status && (wb.target || wb.id || wb.device) && !wb.message && !wb.sender;
+      const isStatusCallback = wb.status && (wb.target || wb.id || wb.device) && !wb.message && !wb.sender && !wb.from && !wb.url && !wb.type;
       if (isStatusCallback) {
         const SU_s = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
         const SK_s = process.env.SUPABASE_SERVICE_KEY;
@@ -334,66 +335,37 @@ export async function receiveWa(req, res) {
         return res.status(200).json({ ok: true, type: "status_callback", processed: true });
       }
 
-      // ── DEBUG: Save raw payload (last N) untuk diagnose ──
-      // Insert async, jangan await — biar tidak slow webhook
-      try {
-        const SU_dbg = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-        const SK_dbg = process.env.SUPABASE_SERVICE_KEY;
-        if (SU_dbg && SK_dbg) {
-          const dbgSenderRaw = String(wb.sender || wb.from || "");
-          const dbgMemberRaw = String(wb.member || wb.participant || "");
-          fetch(SU_dbg + "/rest/v1/wa_webhook_raw", {
-            method: "POST",
-            headers: { apikey: SK_dbg, Authorization: "Bearer " + SK_dbg, "Content-Type": "application/json", Prefer: "return=minimal" },
-            body: JSON.stringify({
-              payload: wb,
-              has_member: !!dbgMemberRaw,
-              sender: dbgSenderRaw.slice(0, 100),
-              member: dbgMemberRaw.slice(0, 100),
-              msg_type: wb.type || null,
-              has_message: !!wb.message,
-            })
-          }).catch(() => {});
-          // Trim ke 100 row terbaru — jangan biarkan grow infinite
-          // Pakai cron untuk cleanup, di sini cuma insert
-        }
-      } catch (_) {}
-
-      // ── DETEKSI GRUP DULU sebelum validasi phone ──
-      // Penting: kalau pesan grup, "sender" = group_id (format xxx@g.us) → bukan phone valid.
-      // Phone validation dipakai untuk PERSONAL chat. Grup validate "member" instead.
-      const senderRaw = String(wb.sender || wb.from || wb.group || "");
-      const memberRaw = String(wb.member || wb.participant || "");
-      const looksLikeGroup =
-        !!memberRaw ||
-        wb.isGroup === true || wb.isGroup === "true" ||
-        senderRaw.includes("@g.us") ||
-        (senderRaw.includes("-") && /^\d+-\d+/.test(senderRaw));
-
-      // ── VALIDATION: Phone number (skip untuk grup — sender=group_id, bukan phone) ──
-      let sender = null;
-      if (!looksLikeGroup) {
-        sender = validateAndNormalizePhone(wb.sender);
-        if (!sender) return res.status(400).json({ error: "Invalid phone number format", reason: "invalid_sender_format", raw_sender: senderRaw.slice(0,50) });
+      // Acknowledge only after the receipt, personal message/conversation and
+      // recoverable media reference commit together. Never silently swallow a
+      // failed save: non-200 lets the provider retry, while a replay is idempotent.
+      const inboundEvent = normalizeWaIngress(wb);
+      let inboundCapture;
+      try { inboundCapture = await captureWaIngress(inboundEvent); }
+      catch (error) {
+        console.error("[WA_INGRESS_SAVE_FAILED]", error.message);
+        res.setHeader("Retry-After", "60");
+        return res.status(503).json({ error: "Penerimaan belum tersimpan; perlu retry", code: "WA_INGRESS_NOT_DURABLE" });
       }
-
-      // ── VALIDATION: Message length & content ──
-      // Saat Fonnte kirim gambar, message bisa berupa URL atau kosong (ada di wb.url)
-      const isMediaType = wb.type === "image" || wb.type === "document";
-      const rawMessage = wb.message || (isMediaType && wb.url ? wb.url : "");
-      // Grup boleh empty message (sistem pesan, sticker, dll) → tetap proses
-      const message = validateMessage(rawMessage, 4096) || (looksLikeGroup ? "(empty/system message)" : null);
-      if (!message) return res.status(400).json({ error: "Message is required and must be 1-4096 characters" });
-
-      // ── SSRF safety: hanya izinkan URL dari domain Fonnte ──
-      // (hoisted ke sini supaya bisa dipakai DI DALAM grup flow yang dieksekusi sebelum personal flow)
-      const isSafeFonnteUrl = (url) => {
-        if (!url || typeof url !== "string") return false;
-        try {
-          const u = new URL(url);
-          return u.protocol === "https:" && (u.hostname === "api.fonnte.com" || u.hostname.endsWith(".fonnte.com"));
-        } catch { return false; }
-      };
+      console.info("[WA_INGRESS_CAPTURED]", JSON.stringify({ event_key: inboundEvent.event_key, receipt_id: inboundCapture.receipt_id,
+        type: inboundEvent.type, status: inboundCapture.intake_status, duplicate: inboundCapture.duplicate, queued: !!inboundCapture.media_job?.id }));
+      const senderRaw = inboundEvent.sender, memberRaw = inboundEvent.member;
+      const looksLikeGroup = inboundEvent.is_group, sender = inboundEvent.phone;
+      const message = inboundEvent.message;
+      wb.type = inboundEvent.type;
+      wb.sender = sender || senderRaw;
+      wb.name = inboundEvent.name;
+      if (inboundEvent.media_url) wb.url = inboundEvent.media_url;
+      if (!looksLikeGroup && !inboundEvent.processable) {
+        return res.status(200).json({ ok: true, status: inboundCapture.intake_status, receipt_id: inboundCapture.receipt_id,
+          needs_review: !!inboundEvent.review_reason, automated_reply: false });
+      }
+      if (!looksLikeGroup && inboundCapture.duplicate && (inboundCapture.intake_status === "MEDIA_QUEUED" || wb.type === "text")) {
+        return res.status(200).json({ ok: true, skipped: "duplicate-webhook", receipt_id: inboundCapture.receipt_id });
+      }
+      if (!looksLikeGroup && ["PROCESSING", "DONE", "IGNORED", "PENDING_REVIEW", "FAILED_PERMANENT"].includes(inboundCapture.media_job?.status)) {
+        return res.status(200).json({ ok: true, skipped: "media-already-recorded", receipt_id: inboundCapture.receipt_id });
+      }
+      const isSafeFonnteUrl = url => !!safeFonnteMediaUrl(url);
       // Debug log: setiap webhook hit untuk monitoring (akan ke-log di Vercel runtime logs)
       try { console.log("[WA_WEBHOOK]", JSON.stringify({ sender: senderRaw, member: memberRaw, isGroup: wb.isGroup, type: wb.type, hasMsg: !!wb.message, looksLikeGroup })); } catch (_) {}
       if (looksLikeGroup) {
@@ -1326,12 +1298,12 @@ export async function receiveWa(req, res) {
       let autoOn     = process.env.AUTOREPLY_ENABLED === "true";
       let fwdOn      = process.env.FORWARD_TO_OWNER !== "false";
       let chatbotOn  = false;
-      let payDetectOn = true;
+      let payDetectOn = inboundCapture.payment_detect_enabled !== false;
       if (SU && SK) {
         try {
           const sR = await fetch(
             SU + "/rest/v1/app_settings?select=key,value&key=in.(wa_autoreply_enabled,wa_forward_to_owner,wa_chatbot_enabled,wa_payment_detect)",
-            { headers: { apikey: SK, Authorization: "Bearer " + SK } }
+            { headers: { apikey: SK, Authorization: "Bearer " + SK }, signal: AbortSignal.timeout(5000) }
           );
           if (sR.ok) {
             const sArr = await sR.json();
@@ -1346,7 +1318,7 @@ export async function receiveWa(req, res) {
         }
       }
 
-      const nowIso = new Date().toISOString();
+      const nowIso = inboundCapture.received_at;
       const senderName = sanitizeName(wb.name || ("+" + sender));
 
       // ── Pengirim nomor internal (admin/teknisi/helper)? ──
@@ -1355,41 +1327,12 @@ export async function receiveWa(req, res) {
       // nomor internal (Yola 7x dengan nominal 20.605/40.000/45.000/50.000, dll) dan
       // NOL di antaranya pernah tertaut ke invoice. Semuanya hanya menyumbat antrean.
       // Dihitung sekali di sini supaya tidak menambah query di tiap cabang.
-      let senderIsInternal = false;
-      try {
-        const iv = buildPhoneVariants(sender);
-        const ivFilter = iv.map((p2) => "phone.eq." + encodeURIComponent(p2)).join(",");
-        const ipRes = await fetch(
-          SU + "/rest/v1/user_profiles?select=id,name,role&or=(" + ivFilter + ")&limit=1",
-          { headers: { apikey: SK, Authorization: "Bearer " + SK } });
-        if (ipRes.ok) {
-          const rows = await ipRes.json();
-          if (rows && rows.length > 0) senderIsInternal = true;
-        }
-      } catch (_) {
-        // Gagal cek = anggap BUKAN internal. Lebih baik satu baris kebisingan lolos
-        // daripada bukti bayar customer yang asli ikut terbuang karena query gagal.
-      }
+      const senderIsInternal = inboundCapture.sender_is_internal === true;
 
       // ── Save inbound message ke wa_messages (schema: phone,name,content,role,created_at) ──
       // Simpan created_at sebagai anchor agar image classifier bisa PATCH record yang tepat
       const msgCreatedAt = nowIso;
-      const mayContainMedia = wb.type === "image" || wb.type === "document"
-        || /^https?:\/\/.+\.(jpg|jpeg|png|gif|webp|pdf)(\?|$)/i.test(message);
-      let savedWaMessageId = null;
-      if (SU && SK) {
-        try {
-          const saved = await fetch(SU + "/rest/v1/wa_messages", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK,
-              Prefer: mayContainMedia ? "return=representation" : "return=minimal" },
-            body: JSON.stringify({ phone: sender, name: senderName, content: message, role: "customer", created_at: msgCreatedAt }),
-            signal: AbortSignal.timeout(5000),
-          });
-          if (!saved.ok) throw new Error(`HTTP ${saved.status}`);
-          if (mayContainMedia) savedWaMessageId = (await saved.json())?.[0]?.id || null;
-        } catch (error) { console.error("[WA_MSG_SAVE]", error.message); }
-      }
+      const savedWaMessageId = inboundCapture.message_id;
       const patchWaMessageImage = async imageUrl => {
         const filter = savedWaMessageId
           ? "id=eq." + encodeURIComponent(savedWaMessageId)
@@ -1404,20 +1347,7 @@ export async function receiveWa(req, res) {
         } catch (error) { console.warn("[WA_IMG_PATCH_FAIL]", error.message); }
       };
 
-      // ── Upsert wa_conversations (phone unik, increment unread, update last) ──
-      if (SU && SK) {
-        fetch(SU + "/rest/v1/wa_conversations?phone=eq." + encodeURIComponent(sender) + "&select=unread", {
-          headers: { apikey: SK, Authorization: "Bearer " + SK }
-        }).then(r => r.json()).then(rows => {
-          const prevUnread = (rows?.[0]?.unread) || 0;
-          return fetch(SU + "/rest/v1/wa_conversations?on_conflict=phone", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "resolution=merge-duplicates,return=minimal" },
-            body: JSON.stringify({ phone: sender, name: senderName, last_message: message.slice(0, 80), updated_at: nowIso, unread: prevUnread + 1 })
-          });
-        }).then(r => { if (r && !r.ok) r.text().then(t => console.error("[WA_CONV_UPSERT] error:", r.status, t)); })
-         .catch(err => console.error("[WA_CONV_UPSERT]", err.message));
-      }
+      // Conversation/unread was committed atomically with this message above.
 
       // ── DETECT MEDIA MESSAGE (Fonnte image/document webhook) ──
       // isSafeFonnteUrl sudah di-hoist ke atas (sebelum grup flow)
@@ -1455,7 +1385,7 @@ export async function receiveWa(req, res) {
 
       // ── PAYMENT DETECTION (TEXT) ──
       // Hanya trigger jika ADA keyword bayar DAN ada nominal angka sekaligus (bukan salah satu)
-      if (payDetectOn && SU && SK) {
+      if (payDetectOn && SU && SK && !isMediaMessage) {
         const BAYAR_KW_DETECT = ["bayar","transfer","lunas","pembayaran","invoice","tagihan","dp","uang"];
         const mlCheck = message.toLowerCase();
         const looksLikePayment = BAYAR_KW_DETECT.some(k => mlCheck.includes(k));
@@ -1988,53 +1918,24 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
         } catch (mcErr) { console.warn("[MAT_CHECKOUT]", mcErr.message); }
       }
 
-      // ── IMAGE CLASSIFIER + SELECTIVE R2 UPLOAD (Opsi C) ──
-      // Optimasi: cek Content-Length dulu via HEAD request — skip gambar < 10 KB (sticker/icon)
-      // Download gambar hanya dilakukan setelah lolos size check
+      // ── IMAGE CLASSIFIER + DURABLE R2 UPLOAD ──
+      // A small receipt is still a receipt. Sticker type is handled separately;
+      // never discard a photo just because compression made it smaller than 10KB.
       // PENTING: skip jika ini tool bag photo (sudah diproses di branch di atas)
       console.log("[WA_IMG_GATE]", JSON.stringify({ sender, isMediaMessage, hasMediaUrl: !!mediaUrl, hasSU: !!SU, hasSK: !!SK, isToolBagPhoto }));
       if (isMediaMessage && mediaUrl && SU && SK && !isToolBagPhoto) {
         const AK = (process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY || "").trim();
         console.log("[WA_IMG_ENTRY]", { sender, hasAK: !!AK });
+        let stagedMedia = inboundCapture.media_job ? { ok: true, job: inboundCapture.media_job } : null;
         try {
-            let stagedMedia = payDetectOn && !senderIsInternal
+            stagedMedia ||= payDetectOn && !senderIsInternal
               ? await registerPaymentMediaReference({
                   supabaseUrl: SU, serviceKey: SK, sourceUrl: mediaUrl, phone: sender, senderName,
                 })
               : null;
-            if (stagedMedia && !stagedMedia.ok) console.warn("[WA_IMG_QUEUE_REGISTER_FAIL]", stagedMedia.error);
-            // HEAD request dulu untuk cek ukuran — tidak download isi gambar
-            let skipDueToSize = false;
-            try {
-              const headRes = await fetch(mediaUrl, { method: "HEAD", signal: AbortSignal.timeout(5000) });
-              if (headRes.ok) {
-                const contentLength = parseInt(headRes.headers.get("content-length") || "0");
-                if (contentLength > 0 && contentLength < 10240) skipDueToSize = true; // < 10 KB = sticker/icon
-              }
-            } catch (_) {}
-
-            if (skipDueToSize) {
-              console.log("[WA_IMG] Skip: ukuran < 10 KB (sticker/icon), tidak diproses");
-              if (stagedMedia?.job) await updatePaymentMediaJob({
-                supabaseUrl: SU, serviceKey: SK, id: stagedMedia.job.id,
-                patch: { status: "IGNORED", category: "sticker", last_error: "media <10KB", next_retry_at: null },
-              });
-            } else {
-            console.log("[WA_IMG_STEP1] downloading from Fonnte:", mediaUrl);
-            const imgFetch = await fetch(mediaUrl, { signal: AbortSignal.timeout(10000) });
-            console.log("[WA_IMG_STEP2] fetch result:", { ok: imgFetch.ok, status: imgFetch.status });
-            if (imgFetch.ok) {
-              const imgBuf = await imgFetch.arrayBuffer();
-              console.log("[WA_IMG_STEP3] buffer bytes:", imgBuf.byteLength);
-              // Double-check ukuran setelah download — buang jika < 10 KB
-              if (imgBuf.byteLength < 10240) {
-                console.log("[WA_IMG] Skip setelah download: ukuran < 10 KB");
-                if (stagedMedia?.job) await updatePaymentMediaJob({
-                  supabaseUrl: SU, serviceKey: SK, id: stagedMedia.job.id,
-                  patch: { status: "IGNORED", category: "sticker", last_error: "media <10KB", next_retry_at: null },
-                });
-              } else {
-              const mimeType = (imgFetch.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
+            if (stagedMedia && !stagedMedia.ok) throw new Error(stagedMedia.error);
+              const media = await downloadIngressMedia(mediaUrl);
+              const imgBuf = media.buffer, mimeType = media.mimeType;
               // Durability invariant: mirror ke R2 + tulis retry job SEBELUM memanggil AI.
               // URL Fonnte bersifat sementara; tanpa urutan ini timeout AI membuat bukti hilang.
               stagedMedia = payDetectOn && !senderIsInternal
@@ -2043,11 +1944,12 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                     senderName, buffer: Buffer.from(imgBuf), mimeType, createdAt: msgCreatedAt,
                   })
                 : null;
-              if (stagedMedia?.ok && stagedMedia.url) {
+              if (stagedMedia?.ok && stagedMedia.url && String(stagedMedia.job?.wa_message_id || "") !== String(savedWaMessageId || "")) {
                 await patchWaMessageImage(stagedMedia.url);
               } else if (stagedMedia && !stagedMedia.ok) {
                 console.warn("[WA_IMG_STAGE_FAIL]", stagedMedia.error);
                 try { Sentry.captureMessage(`WA payment media staging gagal: ${stagedMedia.error}`, "warning"); } catch (_) {}
+                throw new Error(stagedMedia.error || "Media belum aman di R2; AI ditunda");
               }
 
               console.log("[WA_IMG_STEP4] calling Anthropic", { mimeType, staged: !!stagedMedia?.ok });
@@ -2368,17 +2270,11 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                   }
                 }
               }
-              } // end: double-check size setelah download
-            } else if (stagedMedia?.job) {
-              await updatePaymentMediaJob({
-                supabaseUrl: SU, serviceKey: SK, id: stagedMedia.job.id,
-                patch: { status: "FAILED_RETRYABLE", last_error: `Fonnte media HTTP ${imgFetch.status}`,
-                  next_retry_at: new Date(Date.now() + 5 * 60000).toISOString() },
-              });
-            }
-            } // end: skipDueToSize else
         } catch(imgErr) {
           console.warn("[receive-wa] Image classifier failed:", imgErr.message);
+          const queuedJob = stagedMedia?.job || inboundCapture.media_job;
+          if (queuedJob?.id) await updatePaymentMediaJob({ supabaseUrl: SU, serviceKey: SK, id: queuedJob.id,
+            patch: { status: "FAILED_RETRYABLE", last_error: String(imgErr.message || "Media pipeline gagal").slice(0,500), next_retry_at: new Date(Date.now()+120000).toISOString() } });
           try { Sentry.captureException(imgErr, { tags: { op: "wa_personal_media_pipeline" }, extra: { phone: sender } }); } catch (_) {}
         }
       }
