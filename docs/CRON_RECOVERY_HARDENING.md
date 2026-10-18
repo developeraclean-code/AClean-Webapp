@@ -1,6 +1,6 @@
 # Scheduler, audit data dan pemulihan — rilis 18 Oktober 2026
 
-Status: migrasi **216 diterapkan 18 Oktober 2026**, sesudah uji transaksi rollback
+Status: migrasi **216–217 diterapkan 18 Oktober 2026**, sesudah uji transaksi rollback
 dan validasi lima role di produksi. Kunci backup dipasang sebagai secret production
 Vercel dan disimpan pada `.env.local` terabaikan Git (0600), tanpa dicetak.
 Aktivasi pemicu 10 menit dilakukan terpisah hanya sesudah deployment READY terverifikasi.
@@ -53,6 +53,12 @@ tetap tercantum di snapshot, bukan otomatis dibuatkan jadwal.
 ## 3. Backup
 
 - Snapshot konsisten satu statement database, bukan 51 SELECT terpisah pada waktu berbeda.
+- Migrasi 217 menghindari penggabungan/konversi JSONB besar berulang: agregasi memakai
+  JSON tekstual, respons RPC tetap object dengan schema yang sama. Uji rollback data
+  produksi sekitar 29 MB selesai 10,7 detik (2,38 detik pada uji ulang); JSONB penuh
+  sebelumnya mencapai timeout. Riwayat 216 tidak ditulis ulang; optimasi ada di 217.
+  Batas fetch snapshot 20 detik, worker 35 detik, dan dispatcher menyisakan waktu
+  pencatatan di bawah batas function Vercel 60 detik. Timeout/checkpoint tetap nyata.
 - **51 tabel** termasuk order, laporan, invoice/item/pembayaran, DP quotation, stok dan
   transaksi material, biaya/payroll/bonus, maintenance dan project.
 - Bundle memuat tipe kolom, primary key, unique key biasa dan foreign key untuk drill.
@@ -95,7 +101,7 @@ Arsip plaintext lama tidak dienkripsi ulang/dihapus oleh perubahan lokal ini.
    Simpan sebagai **server-only** `BACKUP_ENCRYPTION_KEY` di lingkungan lokal/Vercel.
    `BACKUP_KEY_ID=v1`. Simpan salinan kunci di tempat aman terpisah dari Supabase/R2.
    Jangan kirim kunci melalui chat atau commit ke Git. Simpan kunci lama saat rotasi.
-2. Terapkan migrasi 216 setelah pengujian; verifikasi grant service-only dan Owner-only.
+2. Terapkan migrasi 216 lalu 217 setelah pengujian; verifikasi grant service-only dan Owner-only.
    Ia tidak mengubah jadwal aktif atau feature toggle produksi.
 3. Commit/push dan tunggu Vercel READY; cocokkan `/api/health.version` dengan commit.
    Kode baru membutuhkan RPC 216, jadi migrasi harus tersedia sebelum kode dirilis.

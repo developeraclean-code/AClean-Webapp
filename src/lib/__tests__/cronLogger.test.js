@@ -27,8 +27,8 @@ function fakeCronDb({ failFinish = false } = {}) {
 describe("cron logger hardening", () => {
   it('keeps logging/response headroom and defers late work instead of starting a one-second task', () => {
     expect(cronTaskBudget(0, 18_000, 3_000)).toBe(18_000);
-    expect(cronTaskBudget(0, 6_500, 22_000)).toBe(5_000);
-    expect(cronTaskBudget(0, 6_500, 25_000)).toBe(0);
+    expect(cronTaskBudget(0, 6_500, 37_000)).toBe(5_000);
+    expect(cronTaskBudget(0, 6_500, 40_000)).toBe(0);
     expect(cronTaskBudget(0, 6_500, 45_000)).toBe(0);
   });
   it('records partial cleanup as failed, preserving successful deletions and retry context', async () => {

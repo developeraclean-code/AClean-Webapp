@@ -39,9 +39,10 @@ try {
     INSERT INTO inventory(code,stock) VALUES('PIPA-SIMULASI',100);
     INSERT INTO inventory_units VALUES('00000000-0000-0000-0000-000000000001','PIPA-SIMULASI',30);`);
   const before = JSON.stringify((await db.query('SELECT jsonb_agg(to_jsonb(t)) rows FROM invoices t')).rows);
-  const source = readFileSync(new URL('../migrations/216_cron_reliability_and_recovery.sql', import.meta.url), 'utf8');
-  await check('migration 216 compiles, is idempotent, and preserves feature toggles', async () => {
-    await sql(source); await sql(source);
+  const [base, optimized] = ['216_cron_reliability_and_recovery','217_backup_snapshot_aggregation_budget'].map(name => readFileSync(new URL('../migrations/' + name + '.sql', import.meta.url), 'utf8'));
+  await check('migrations 216-217 compile, are idempotent, and preserve feature toggles', async () => {
+    await sql(base); await sql(base); await sql(optimized); await sql(optimized);
+    assert.equal((await row("SELECT pg_get_function_result('export_operational_backup_216()'::regprocedure) result")).result, 'json');
     assert.equal((await row("SELECT value FROM app_settings WHERE key='data_integrity_audit_enabled'")).value, 'true');
     assert.equal(JSON.stringify((await db.query('SELECT jsonb_agg(to_jsonb(t)) rows FROM invoices t')).rows), before);
   });
@@ -87,7 +88,7 @@ try {
     assert.ok(bundle.schema.orders.foreign_keys.some(f => f.target === 'customers'));
     assert.deepEqual(bundle.schema.inventory.unique_keys, [['code']]);
     await sql("INSERT INTO orders SELECT 'EXTRA-'||i,'CUSTOMER-SIMULASI',NULL,NULL FROM generate_series(1,1001) i");
-    assert.equal((await row('SELECT jsonb_array_length(export_operational_backup_216()->\'tables\'->\'orders\') n')).n, 1201);
+    assert.equal((await row('SELECT json_array_length(export_operational_backup_216()->\'tables\'->\'orders\') n')).n, 1201);
     await sql("DELETE FROM orders WHERE id LIKE 'EXTRA-%'");
   });
   await check('encrypted gzip snapshot restores 200 jobs into isolated typed PostgreSQL with PK/FK checks', async () => {

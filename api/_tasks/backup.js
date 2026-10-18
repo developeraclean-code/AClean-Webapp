@@ -7,7 +7,7 @@ export async function taskBackupData({ db = sb, upload = uploadBufferToR2, downl
   configured = hasR2Config, encryptionKey = process.env.BACKUP_ENCRYPTION_KEY, keyId = process.env.BACKUP_KEY_ID || 'v1', now = Date.now } = {}) {
   const started = Date.now();
   const budget = cap => {
-    const available = Math.min(cap, 21_000 - (Date.now() - started));
+    const available = Math.min(cap, 35_000 - (Date.now() - started));
     if (available < 500) throw new Error('Backup mencapai batas waktu; checkpoint akan dilanjutkan invocation berikutnya');
     return available;
   };
@@ -33,7 +33,7 @@ export async function taskBackupData({ db = sb, upload = uploadBufferToR2, downl
     else throw new Error('Arsip tertunda belum dapat dibaca; tidak membuat salinan baru');
   }
   if (needExport) {
-    const snapshot = await db.rpc('export_operational_backup_216').abortSignal(AbortSignal.timeout(budget(6500)));
+    const snapshot = await db.rpc('export_operational_backup_216').abortSignal(AbortSignal.timeout(budget(20_000)));
     if (snapshot.error) throw new Error('Snapshot backup gagal: ' + snapshot.error.message);
     const { buffer, manifest } = packBackup(snapshot.data, encryptionKey, keyId);
     const date = metadata?.date || new Date(now() + 7 * 3600_000).toISOString().slice(0, 10), id = metadata?.id || randomUUID();

@@ -97,7 +97,7 @@ describe('reliable bounded cron scheduling', () => {
     expect(result).toMatchObject({ ran: ['broken','audit','daily'], pending: 2, ok: false }); expect(run).toHaveBeenCalledTimes(3);
   });
   it('does not start a heavy backup with insufficient budget, but can run a short task', async () => {
-    const result = await runCronQueue([{t:'backup',minimumMs:23000,budgetMs:24000},{t:'short'}], { startedAt:0,now:()=>10000,run:async()=>({}) });
+    const result = await runCronQueue([{t:'backup',minimumMs:36000,budgetMs:38000},{t:'short'}], { startedAt:0,now:()=>10000,run:async()=>({}) });
     expect(result.ran).toEqual(['short']); expect(result.pending).toBe(1);
   });
   it('stops on an actual timeout; preserves lease to avoid overlapping legacy work', async () => {

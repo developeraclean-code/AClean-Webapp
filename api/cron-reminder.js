@@ -60,7 +60,7 @@ async function taskTickWithLease({ cleanupOnly = false } = {}) {
     { t: "servis-reminder",          fn: taskServisReminder,         h: 8,  dow: 1 },
     { t: "weekly",                   fn: taskWeeklyReport,           h: 8,  dow: 0 },
     // Backup cukup berat; jam 11 memisahkannya dari task stok/weekly jam 8.
-    { t: "backup", fn: taskBackupData, h: 11, dow: 1, catchUpWeekly: true, continuable: true, priority: 1, budgetMs: 24_000, minimumMs: 23_000 },
+    { t: "backup", fn: taskBackupData, h: 11, dow: 1, catchUpWeekly: true, continuable: true, priority: 1, budgetMs: 38_000, minimumMs: 36_000 },
     { t: "wa-cleanup",               fn: taskWaCleanup,              h: 9, cleanup: true },
     { t: "rating-prompt",            fn: taskRatingPrompt,           h: 9 },
     { t: "project-alerts",           fn: taskProjectAlerts,          h: 9 },
@@ -227,7 +227,7 @@ export default async function handler(req, res) {
     const guardedHandler = ['backup', 'infra-usage-alert', 'data-integrity-audit'].includes(taskKey)
       ? () => withDispatcherLease(sb, handler) : handler;
     const result = await runWithCronLogging(sb, taskKey, guardedHandler, {
-      timeoutMs: taskKey === "payment-media-retry" ? 50_000 : ["tick", "cleanup-tick"].includes(taskKey) ? 45_000 : 25_000,
+      timeoutMs: taskKey === "payment-media-retry" || ["tick", "cleanup-tick"].includes(taskKey) ? 50_000 : taskKey === 'backup' ? 40_000 : 25_000,
       requireAudit: true,
     });
 

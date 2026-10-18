@@ -40,7 +40,7 @@ Views are split into dedicated files under `src/views/`. Heavy views are lazy-lo
 - [`api/cron-reminder.js`](api/cron-reminder.js) — Dispatcher cron (~220 baris), task di modul [api/_tasks/](api/_tasks/) (reminders, ops, cleanup, wa-ai, _shared). Task baru = tambah di _tasks/, BUKAN cron entry vercel.json
 - [`api/_auth.js`](api/_auth.js) — Shared middleware: CORS, rate limiting, internal token validation
 **Database:** Supabase (PostgreSQL). Frontend connects via `@supabase/supabase-js` (anon key). Backend uses `SUPABASE_SERVICE_KEY`. No ORM — raw Supabase query builder throughout.
-**Deployment:** Vercel: dua pemicu native di [`vercel.json`](vercel.json); jadwal task di dispatcher, dengan pemicu GitHub/Supabase. Panduan hardening lokal 216: [CRON_RECOVERY_HARDENING](docs/CRON_RECOVERY_HARDENING.md).
+**Deployment:** Vercel: dua pemicu native di [`vercel.json`](vercel.json); jadwal task di dispatcher, dengan pemicu GitHub/Supabase. Panduan hardening 216–217: [CRON_RECOVERY_HARDENING](docs/CRON_RECOVERY_HARDENING.md).
 
 ## Role Access Control (ENFORCE THIS — see also docs/SOP_ADMIN_ROLE.md)
 
@@ -250,7 +250,7 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
 202       # Applied 10 Okt 2026 — cegah laporan baru/ulang pada job CANCELLED/RESCHEDULED; uji transaksi rollback: job batal ditolak, job aktif diterima
 214       # Applied 17 Okt 2026 — durable WA ingress; riwayat dan hash SQL sama dengan produksi. Sinkronisasi sumber harga ARA tidak memerlukan migrasi tambahan.
 215       # Applied 18 Okt 2026 — verifikasi manual-only, hentikan auto-return, reminder staf setelah 20.00; aktivasi scheduler wajib setelah deploy terverifikasi.
-216       # Applied 18 Okt 2026 — lease/catch-up scheduler, audit read-only, snapshot 51 tabel terenkripsi; kunci server disiapkan, aktivasi pemicu 10 menit setelah deploy READY.
+216–217   # Applied 18 Okt 2026 — lease/catch-up, audit read-only, snapshot 51 tabel terenkripsi + agregasi JSON ringan; kunci server disiapkan, aktivasi pemicu 10 menit setelah deploy READY.
 ```
 
 > Daftar di atas pernah tertinggal jauh (berhenti di 126 padahal file sudah 132).
