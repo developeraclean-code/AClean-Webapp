@@ -266,13 +266,13 @@ export default function MaintenanceView({
   const openedMonitorFocus = useRef("");
   useEffect(() => {
     const id = monitorFocus?.clientId;
-    const key = `${id || ""}:${monitorFocus?.orderId || ""}`;
+    const key = `${id || ""}:${monitorFocus?.orderId || ""}:${monitorFocus?.tab || ''}:${monitorFocus?.unitCode || ''}`;
     if (!id || !clients.length || openedMonitorFocus.current === key) return;
     const client = clients.find(c => String(c.id) === String(id));
     if (!client) return;
     openedMonitorFocus.current = key;
     openClient(client);
-    setTab("link");
+    setTab(monitorFocus?.tab === 'unit' ? 'unit' : 'link');
   }, [clients, monitorFocus, openClient]);
 
   const [clientModal, setClientModal] = useState(null);
@@ -382,7 +382,7 @@ export default function MaintenanceView({
                 <button key={k} onClick={() => setTab(k)} style={tab === k ? tabActive : tabBtn}>{l}</button>
               ))}
             </div>
-            {tab === "unit"     && <UnitsTab sel={sel} units={units} setUnits={setUnits} logs={logs} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} apiFetch={apiFetch} supabase={supabase} setOrdersData={setOrdersData} getLocalDate={getLocalDate} teknisiData={teknisiData} createOrderFn={createOrderFn} createTeamSplitFn={createTeamSplitFn} />}
+            {tab === "unit"     && <UnitsTab focusCode={monitorFocus?.clientId === sel.id ? monitorFocus?.unitCode : ''} sel={sel} units={units} setUnits={setUnits} logs={logs} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} apiFetch={apiFetch} supabase={supabase} setOrdersData={setOrdersData} getLocalDate={getLocalDate} teknisiData={teknisiData} createOrderFn={createOrderFn} createTeamSplitFn={createTeamSplitFn} />}
             {tab === "history"  && <HistoryTab units={units} logs={logs} setLogs={setLogs} sel={sel} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} apiFetch={apiFetch} />}
             {tab === "followup" && <FollowupTab sel={sel} units={units} logs={logs} call={call} showNotif={showNotif} showConfirm={showConfirm} isOwner={isOwner} currentUser={currentUser} supabase={supabase} setOrdersData={setOrdersData} getLocalDate={getLocalDate} />}
             {tab === "manifest"  && <ManifestTab sel={sel} units={units} call={call} showNotif={showNotif} showConfirm={showConfirm} teknisiData={teknisiData} supabase={supabase} setOrdersData={setOrdersData} getLocalDate={getLocalDate} createOrderFn={createOrderFn} createTeamSplitFn={createTeamSplitFn} />}
@@ -759,8 +759,9 @@ function Kpi({ n, l, c }) {
 }
 
 // ─────────── UNITS TAB ───────────
-function UnitsTab({ sel, units, setUnits, logs = [], call, showNotif, showConfirm, isOwner, apiFetch, supabase, setOrdersData, getLocalDate, teknisiData, createOrderFn, createTeamSplitFn }) {
-  const [q, setQ] = useState("");
+function UnitsTab({ focusCode = '', sel, units, setUnits, logs = [], call, showNotif, showConfirm, isOwner, apiFetch, supabase, setOrdersData, getLocalDate, teknisiData, createOrderFn, createTeamSplitFn }) {
+  const [q, setQ] = useState(focusCode);
+  useEffect(() => { setQ(focusCode || ''); }, [focusCode]);
   const [filter, setFilter] = useState("");
   const [healthFilter, setHealthFilter] = useState(""); // "" | SEHAT | PERHATIAN | BERMASALAH | NO_DATA
   const [trendUnit, setTrendUnit] = useState(null);     // unit yang dibuka grafik trennya
@@ -794,7 +795,7 @@ function UnitsTab({ sel, units, setUnits, logs = [], call, showNotif, showConfir
   }, [healthByUnit]);
 
   const filtered = units.filter(u =>
-    (u.unit_code + (u.location || "") + (u.brand || "")).toLowerCase().includes(q.toLowerCase()) &&
+    (focusCode && q === focusCode ? u.unit_code === focusCode : (u.unit_code + (u.location || "") + (u.brand || "")).toLowerCase().includes(q.toLowerCase())) &&
     (!filter || u.ac_type === filter) &&
     (!healthFilter || healthByUnit[u.id]?.key === healthFilter));
   const highFreqUnits = units.filter(u => u.high_freq);

@@ -33,7 +33,10 @@ export async function getR2BucketUsage({ maxPages = 100, requestTimeoutMs = 8000
   let objects = Number(checkpoint.objects) || 0;
   let requests = Number(checkpoint.requests) || 0;
   const startedAt = Date.now();
+  let confirmed = checkpoint.continuationToken ? { bytes, objects, requests, continuationToken } : null;
   const partial = () => ({ ok: resumable, complete: false, partial: true, bytes, objects, requests, continuationToken });
+  const failed = err => ({ ok: false, err, bytes, objects, requests,
+    ...(resumable && confirmed ? { checkpoint: confirmed } : {}) });
 
   try {
     for (let page = 0; page < maxPages; page++) {
@@ -71,8 +74,10 @@ export async function getR2BucketUsage({ maxPages = 100, requestTimeoutMs = 8000
       } finally {
         clearTimeout(timer);
       }
-      if (!response.ok) return { ok: false, err: `R2 LIST ${response.status}`, bytes, objects, requests };
-      if (!xml?.includes('<ListBucketResult') || !xml.includes('</ListBucketResult>') || !/<IsTruncated>(true|false)<\/IsTruncated>/.test(xml)) return { ...partial(), ok: false, err: 'R2 LIST response invalid' };
+      if (!response.ok) return failed(`R2 LIST ${response.status}`);
+      if (!xml?.includes('<ListBucketResult') || !xml.includes('</ListBucketResult>') || !/<IsTruncated>(true|false)<\/IsTruncated>/.test(xml)) return failed('R2 LIST response invalid');
+      const next = decodeXml(xml.match(/<NextContinuationToken>([^<]+)<\/NextContinuationToken>/)?.[1]);
+      if (/<IsTruncated>true<\/IsTruncated>/.test(xml) && !next) return failed('R2 pagination token missing');
       if (onPage) await onPage([...xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)].map(([, entry]) => ({
         key: decodeXml(entry.match(/<Key>([\s\S]*?)<\/Key>/)?.[1]),
         size: Number(entry.match(/<Size>(\d+)<\/Size>/)?.[1]) || 0,
@@ -84,12 +89,12 @@ export async function getR2BucketUsage({ maxPages = 100, requestTimeoutMs = 8000
       if (!/<IsTruncated>true<\/IsTruncated>/.test(xml)) {
         return { ok: true, complete: true, bucket, bytes, objects, requests, measuredAt: new Date().toISOString() };
       }
-      continuationToken = decodeXml(xml.match(/<NextContinuationToken>([^<]+)<\/NextContinuationToken>/)?.[1]);
-      if (!continuationToken) return { ok: false, err: "R2 pagination token missing", bytes, objects, requests };
+      continuationToken = next;
+      confirmed = { bytes, objects, requests, continuationToken };
     }
     return { ...partial(), err: resumable ? undefined : `R2 listing melewati ${maxPages} halaman` };
   } catch (err) {
-    return { ok: false, err: err.message, bytes, objects, requests };
+    return failed(err.message);
   }
 }
 

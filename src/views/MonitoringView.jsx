@@ -14,6 +14,7 @@ import {
 import { applyOrderInvoiceReconciliation } from "../data/writes.js";
 import { auditInvoices, auditQuoteDeviation } from "../lib/invoicing.js";
 import RecoveryStatusPanel from './RecoveryStatusPanel.jsx';
+import { normalizeInfraSnapshot } from '../lib/infraHealth.js';
 
 // ─────────────────────────────────────────────
 // Helpers
@@ -112,13 +113,13 @@ function FieldSyncPanel({ supabase }) {
   );
 }
 
-function TabOverview({ data, onRefresh, supabase, currentUser }) {
+function TabOverview({ data, onRefresh, supabase, currentUser, onNavigate }) {
   const metrics = data?.metrics || {};
   const errorRate = metrics.errorRate || 0;
   const cron = metrics.cron || {};
   const ai = metrics.ai || {};
   const expenses = metrics.expenses || null;
-  const infra = metrics.infra || null;
+  const infra = normalizeInfraSnapshot(metrics.infra);
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
@@ -148,7 +149,7 @@ function TabOverview({ data, onRefresh, supabase, currentUser }) {
       </div>
 
       <FieldSyncPanel supabase={supabase} />
-      <RecoveryStatusPanel currentUser={currentUser} supabase={supabase} refreshKey={data?.timestamp} />
+      <RecoveryStatusPanel currentUser={currentUser} supabase={supabase} refreshKey={data?.timestamp} onNavigate={onNavigate} />
 
       {(cron.staleRunning > 0 || expenses) && (
         <div style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 14, padding: 16 }}>
@@ -177,6 +178,7 @@ function TabOverview({ data, onRefresh, supabase, currentUser }) {
             color={infra?.r2_storage?.percent == null ? cs.muted : (infra.r2_storage.percent || 0) >= (infra?.critical_percent || 85) ? cs.red : (infra.r2_storage.percent || 0) >= (infra?.warn_percent || 70) ? cs.yellow : cs.green} />
           <Card label="Objek R2" value={infra?.r2_storage?.objects?.toLocaleString?.("id-ID") || "—"} color={cs.accent} />
         </div>
+        {infra?.stale && <p style={{ color: cs.yellow, fontSize: 12 }}>Snapshot kuota sudah lama/tanggal tidak valid. Jangan gunakan sebagai status terbaru.</p>}
         {infra?.r2_storage?.scanning && <p style={{ color: cs.yellow, fontSize: 12 }}>Pemindaian R2 bertahap: {infra.r2_storage.scanned_objects || 0} objek diperiksa. Angka total belum final.</p>}
         {infra?.r2_storage?.error && <p style={{ color: cs.yellow, fontSize: 12 }}>Pengukuran R2 belum berhasil: {infra.r2_storage.error}</p>}
         <div style={{ marginTop: 10, fontSize: 11, color: cs.muted, lineHeight: 1.5 }}>
@@ -1153,14 +1155,14 @@ function TabMaintLink({ apiHeaders, onNavigate }) {
             hint="Autolog baru jalan saat laporan diverifikasi. Verifikasi di Laporan Tim agar history terisi."
             color="#eab308"
             rows={data.unverified || []}
-            render={(r) => card(r.order_id, r.customer, `${r.order_id} · ${r.service} · ${r.date}`, "SUBMITTED", "#eab308", "laporantim")}
+            render={(r) => card(r.order_id, r.customer, `${r.order_id} · ${r.service} · ${r.date}`, "SUBMITTED", "#eab308", "laporantim", { reference: r.order_id })}
           />
           <Section
             title="🟠 Invoice belum ter-link ke perusahaan"
             hint="Invoice order maintenance tapi maintenance_client_id kosong — tak muncul di tagihan B2B perusahaan."
             color="#f59e0b"
             rows={data.invoice_unlinked || []}
-            render={(r) => card(r.invoice_id, r.customer, `${r.invoice_id} · ${r.order_id} · ${r.status}`, fmtIDR(r.total), "#f59e0b", "invoice")}
+            render={(r) => card(r.invoice_id, r.customer, `${r.invoice_id} · ${r.order_id} · ${r.status}`, fmtIDR(r.total), "#f59e0b", "invoice", { reference: r.invoice_id })}
           />
           <Section
             title="🔵 Link lemah (tercatat via posisi, bukan ID unit)"
@@ -1388,7 +1390,7 @@ function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHe
 
       {activeTab === "overview" && (monitorData?.status === "error"
         ? <Empty msg={`❌ Monitoring gagal: ${monitorData.message || "unknown error"}`} />
-        : monitorData ? <TabOverview data={monitorData} onRefresh={refreshOverview} supabase={supabase} currentUser={currentUser} /> : <Empty msg="⏳ Loading monitoring data..." />)}
+        : monitorData ? <TabOverview data={monitorData} onRefresh={refreshOverview} supabase={supabase} currentUser={currentUser} onNavigate={onNavigate} /> : <Empty msg="⏳ Loading monitoring data..." />)}
       {activeTab === "cron"  && <TabCron supabase={supabase} />}
       {activeTab === "ai"    && <TabAiCost supabase={supabase} />}
       {activeTab === "wa"        && <TabWa supabase={supabase} />}

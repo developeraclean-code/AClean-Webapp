@@ -3,7 +3,7 @@ import { getR2BucketUsage } from '../_r2-upload.js';
 import { sendOpsOwnerAlert } from '../_ops-alert.js';
 import { strictCronEnabled } from '../_cron-toggle.js';
 
-const parse = value => { try { return JSON.parse(value || '{}'); } catch { return {}; } };
+const parse = value => { try { const parsed=JSON.parse(value || '{}'); return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}; } catch { return {}; } };
 export async function taskInfraUsageAlert({ db = sb, measureR2 = getR2BucketUsage, ownerPhone = OWNER_PHONE,
   alert = sendOpsOwnerAlert, now = Date.now } = {}) {
   const input = await db.from('app_settings').select('key,value').in('key', ['infra_usage_alert_enabled', 'cron_jobs',
@@ -17,7 +17,7 @@ export async function taskInfraUsageAlert({ db = sb, measureR2 = getR2BucketUsag
     && ['bytes','objects','requests'].every(k => Number.isSafeInteger(saved[k]) && saved[k] >= 0) ? saved : {};
   const [database, r2] = await Promise.all([
     db.rpc('get_infra_database_size').abortSignal(AbortSignal.timeout(3000)),
-    measureR2({ checkpoint, resumable: true, maxPages: 2, requestTimeoutMs: 2500, totalTimeoutMs: 4000 }),
+    measureR2({ checkpoint, resumable: true, maxPages: 2, requestTimeoutMs: 3000, totalTimeoutMs: 5000 }),
   ]);
   const warn = Math.max(1, Number(settings.infra_usage_warn_percent) || 70), critical = Math.max(warn, Number(settings.infra_usage_critical_percent) || 85);
   const bytes = Number(database.data?.bytes), dbBytes = !database.error && Number.isFinite(bytes) && bytes >= 0 ? bytes : null;
@@ -35,6 +35,9 @@ export async function taskInfraUsageAlert({ db = sb, measureR2 = getR2BucketUsag
   const writes = [{ key: 'infra_usage_snapshot', value: JSON.stringify(snapshot) }];
   if (r2.ok) writes.push({ key: 'infra_usage_scan_checkpoint', value: complete ? '{}' : JSON.stringify({ date,
     continuationToken: r2.continuationToken, bytes: r2.bytes, objects: r2.objects, requests: r2.requests }) });
+  else if (r2.checkpoint?.continuationToken && ['bytes','objects','requests'].every(k => Number.isSafeInteger(r2.checkpoint[k]) && r2.checkpoint[k] >= 0)) {
+    writes.push({ key: 'infra_usage_scan_checkpoint', value: JSON.stringify({ date, ...r2.checkpoint }) });
+  }
   const persisted = await db.from('app_settings').upsert(writes, { onConflict: 'key' });
   if (persisted.error) throw new Error('Snapshot kuota gagal disimpan: ' + persisted.error.message);
   let alerted = false;

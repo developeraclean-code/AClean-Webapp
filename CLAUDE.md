@@ -180,7 +180,6 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
 ```
 
 ## Migrations Status (status per baris; jangan anggap semua sudah diterapkan)
-
 ```
 001–014   # Applied — constraint, audit trail, freon qty actual
 015       # Applied — trade_in support di invoices
@@ -251,6 +250,7 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
 214       # Applied 17 Okt 2026 — durable WA ingress; riwayat dan hash SQL sama dengan produksi. Sinkronisasi sumber harga ARA tidak memerlukan migrasi tambahan.
 215       # Applied 18 Okt 2026 — verifikasi manual-only, hentikan auto-return, reminder staf setelah 20.00; aktivasi scheduler wajib setelah deploy terverifikasi.
 216–217   # Applied 18 Okt 2026 — lease/catch-up, audit read-only, snapshot 51 tabel terenkripsi + agregasi JSON ringan; kunci server disiapkan, aktivasi pemicu 10 menit setelah deploy READY.
+218       # Applied 18 Okt 2026 — rincian 16 temuan Owner-only + pengaman kontak/tujuan alert; audit/kuota memakai profil Owner aktif sesuai persetujuan. Tanpa koreksi transaksi/aset otomatis.
 ```
 
 > Daftar di atas pernah tertinggal jauh (berhenti di 126 padahal file sudah 132).

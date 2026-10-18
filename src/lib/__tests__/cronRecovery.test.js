@@ -39,7 +39,7 @@ function database(options = {}) {
           if (table === 'backup_log' && ['insert','write'].includes(query.action)) {
             for (const row of query.rows) { const existing=logs.find(r=>r.id===row.id); if(existing)Object.assign(existing,row);else logs.push(row); }
           }
-          let data = table === 'user_profiles' ? options.inactiveOwner ? [] : [{ phone: OWNER }]
+          let data = table === 'user_profiles' ? options.inactiveOwner ? [] : options.profiles || [{ id: '00000000-0000-4000-a000-000000000001', phone: OWNER, role: 'Owner', active: true }]
             : table === 'app_settings' ? [...settings].filter(([key]) => !query.keys || query.keys.includes(key)).map(([key,value]) => ({ key,value })) : [...(options.backupRows || [])];
           if (query.cutoff) data=data.filter(r=>r[query.cutoff[0]]<query.cutoff[1]);
           if (query.sort) data.sort((a,b)=>String(a[query.sort[0]]).localeCompare(String(b[query.sort[0]]))*(query.sort[1]?1:-1));
@@ -258,6 +258,29 @@ describe('bounded infra scan and read-only integrity audit', () => {
     await sendOpsOwnerAlert(db,args,deliver); await sendOpsOwnerAlert(db,args,deliver); expect(deliver).toHaveBeenCalledTimes(1);
     await expect(sendOpsOwnerAlert(database({inactiveOwner:true}).db,args,deliver)).rejects.toThrow('Owner aktif');
   });
+  it('scoped Owner selection overrides only ops alerts, still rejects unknown/inactive/non-Owner recipients', async () => {
+    const ownerId='00000000-0000-4000-a000-000000000001', deliver=vi.fn(async()=>({status:'ACCEPTED'}));
+    const args={key:'scoped-test',phone:'628999999999',message:'Synthetic test',toggleKey:'data_integrity_audit_enabled'};
+    const {db}=database({settings:{ops_alert_owner_id:ownerId}});
+    await sendOpsOwnerAlert(db,args,deliver);expect(deliver.mock.calls[0][0].phone).toBe(OWNER);
+    for(const profiles of [[{id:ownerId,role:'Admin',active:true,phone:OWNER}],[{id:ownerId,role:'Owner',active:false,phone:OWNER}],[]]) {
+      await expect(sendOpsOwnerAlert(database({settings:{ops_alert_owner_id:ownerId},profiles}).db,args,deliver)).rejects.toThrow('Owner aktif');
+    }
+    await expect(sendOpsOwnerAlert(database().db,args,deliver)).rejects.toThrow('Owner aktif');
+    expect(deliver).toHaveBeenCalledTimes(1);
+  });
+  it('failed delivery remains FAILED while the saved audit findings stay available', async () => {
+    const {db,settings}=database({findings:[{check:'inventory_negative',severity:'critical',n:1}]});
+    await expect(taskDataIntegrityAudit({db,now,alert:async()=>{throw Error('Target mismatch');}})).rejects.toThrow('Target mismatch');
+    expect(JSON.parse(settings.get('data_integrity_snapshot'))).toMatchObject({critical:1,alert:{status:'FAILED',error:'Target mismatch'}});
+  });
+  it('persists only confirmed R2 progress after a later page fails, keeping the failure visible', async () => {
+    const {db,settings}=database();
+    const r2={ok:false,err:'timeout',checkpoint:{bytes:100,objects:1,requests:1,continuationToken:'NEXT'}};
+    expect(await taskInfraUsageAlert({db,now,measureR2:async()=>r2})).toMatchObject({level:'unknown',error:'timeout'});
+    expect(JSON.parse(settings.get('infra_usage_scan_checkpoint'))).toMatchObject({bytes:100,continuationToken:'NEXT'});
+    expect(JSON.parse(settings.get('infra_usage_snapshot')).r2_storage.percent).toBeNull();
+  });
   it('a toggle changed OFF before dispatch blocks the Owner alert', async () => {
     const {db}=database({flags:{data_integrity_audit_enabled:'false'}}), deliver=vi.fn();
     expect(await sendOpsOwnerAlert(db,{key:'test',phone:OWNER,toggleKey:'data_integrity_audit_enabled'},deliver)).toMatchObject({status:'SKIPPED'}); expect(deliver).not.toHaveBeenCalled();
@@ -277,6 +300,16 @@ describe('R2 resumable listing transport', () => {
   it('keeps the abort timer active while reading the response body', async () => {
     env(); const fetchImpl=async(_url,{signal})=>({ok:true,text:()=>new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(new Error('aborted'))))});
     expect(await getR2BucketUsage({fetchImpl,requestTimeoutMs:5,totalTimeoutMs:10})).toMatchObject({ok:false,err:'aborted'});
+  });
+  it('keeps a successful page checkpoint across HTTP or transport failure without double-counting', async () => {
+    env();
+    for(const fail of [async()=>new Response('unavailable',{status:503}),async()=>{throw Error('timeout');}]) {
+      const fetchImpl=vi.fn().mockResolvedValueOnce(new Response(xml(true,10,'NEXT'))).mockImplementationOnce(fail);
+      const first=await getR2BucketUsage({resumable:true,maxPages:2,fetchImpl});
+      expect(first).toMatchObject({ok:false,checkpoint:{bytes:10,objects:1,continuationToken:'NEXT'}});
+      const resumed=await getR2BucketUsage({resumable:true,checkpoint:first.checkpoint,fetchImpl:async()=>new Response(xml(false,20))});
+      expect(resumed).toMatchObject({ok:true,complete:true,bytes:30,objects:2});
+    }
   });
   it('rejects malformed XML and missing continuation token', async () => {
     env(); expect(await getR2BucketUsage({fetchImpl:async()=>new Response('<html>error</html>')})).toMatchObject({ok:false});

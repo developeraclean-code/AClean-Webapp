@@ -4178,7 +4178,15 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
 
   const renderMonitoring = () => (
     <MonitoringView currentUser={currentUser} monitorData={monitorData} setMonitorLoading={setMonitorLoading} setMonitorData={setMonitorData} _apiHeaders={_apiHeaders} supabase={supabase}
-      onNavigate={(menu, focus) => { if (menu === "maintenance") setMaintenanceMonitorFocus(focus || null); setActiveMenu(menu); }} />
+      onNavigate={(menu, focus) => {
+        if (currentUser?.role !== 'Owner' || !['maintenance','invoice','orders','inventory','laporantim'].includes(menu)) return;
+        if (menu === 'maintenance') setMaintenanceMonitorFocus(focus || null);
+        if (menu === 'invoice') { setSearchInvoice(focus?.reference || ''); setInvoiceFilter('Semua'); setInvoiceDateFrom(''); setInvoiceDateTo(''); setInvoicePage(1); }
+        if (menu === 'orders') { setSearchOrder(focus?.reference || ''); setOrderFilter('Semua'); setOrderDateFrom(''); setOrderDateTo(''); setOrderTekFilter('Semua'); setOrderServiceFilter('Semua'); setOrderPage(1); }
+        if (menu === 'inventory') { setSearchInventory(focus?.reference || ''); setInventoryPage(1); }
+        if (menu === 'laporantim') { setSearchLaporan(focus?.reference || ''); setLaporanDateFilter('Semua'); setLaporanDateFrom(''); setLaporanDateTo(''); setLaporanSvcFilter('Semua'); setLaporanStatusFilter('Semua'); setLaporanTeamFilter('Semua'); setLaporanPage(1); }
+        setActiveMenu(menu);
+      }} />
   );
 
   const renderWaGroupMonitor = () => (

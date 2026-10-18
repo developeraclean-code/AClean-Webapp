@@ -12,14 +12,21 @@ export async function taskDataIntegrityAudit({ db = sb, ownerPhone = OWNER_PHONE
   const findings = result.data;
   if (findings.some(f => !f.check || !['info','warn','critical'].includes(f.severity) || !Number.isFinite(f.n))) throw new Error('Format temuan audit tidak valid');
   const actionable = findings.filter(f => f.n > 0 && f.severity !== 'info'), critical = actionable.filter(f => f.severity === 'critical').length;
-  const snapshot = { checked_at: new Date(now()).toISOString(), findings, actionable: actionable.length, critical, read_only: true };
+  const snapshot = { checked_at: new Date(now()).toISOString(), findings, actionable: actionable.length, critical, read_only: true,
+    alert: { status: actionable.length ? 'PENDING' : 'NOT_REQUIRED' } };
   const stored = await db.from('app_settings').upsert({ key: 'data_integrity_snapshot', value: JSON.stringify(snapshot) }, { onConflict: 'key' });
   if (stored.error) throw new Error('Hasil audit tidak dapat disimpan: ' + stored.error.message);
   if (actionable.length) {
     const date = new Date(now() + 7 * 3600_000).toISOString().slice(0, 10);
-    await alert(db, { key: 'integrity:' + date, phone: ownerPhone, toggleKey: 'data_integrity_audit_enabled', message: `🧭 *AUDIT INTEGRITAS DATA ACLEAN*\n${critical} jenis critical, ${actionable.length - critical} jenis peringatan.\n\n`
+    let failure;
+    try { const sent = await alert(db, { key: 'integrity:' + date, phone: ownerPhone, toggleKey: 'data_integrity_audit_enabled', message: `🧭 *AUDIT INTEGRITAS DATA ACLEAN*\n${critical} jenis critical, ${actionable.length - critical} jenis peringatan.\n\n`
       + actionable.slice(0, 15).map(f => `${f.severity === 'critical' ? '🔴' : '⚠️'} ${f.check}: ${f.n}`).join('\n')
       + '\n\nTemuan hanya dicatat, tidak diperbaiki otomatis. Periksa snapshot audit di Monitoring atau minta penelusuran Admin/Owner.' });
+      snapshot.alert = { status: sent?.status || 'UNKNOWN' };
+    } catch (error) { failure = error; snapshot.alert = { status: 'FAILED', error: error.message }; }
+    const recorded = await db.from('app_settings').upsert({ key: 'data_integrity_snapshot', value: JSON.stringify(snapshot) }, { onConflict: 'key' });
+    if (recorded.error) throw new Error('Status alert audit gagal dicatat');
+    if (failure) throw failure;
   }
   return { checked: true, anomalies: actionable.length, critical, clean: !actionable.length, items_processed: findings.length };
 }

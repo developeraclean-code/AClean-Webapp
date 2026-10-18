@@ -1,5 +1,6 @@
 // api/_handlers/monitor.js — Handler monitoring (Batch 1 pemecahan router, Jul 2026).
 // Isi dipindah APA ADANYA dari api/[route].js — di-dispatch oleh api/[route].js.
+import { normalizeInfraSnapshot } from '../../src/lib/infraHealth.js';
 
 // ── MONITOR (GET, private — MonitoringView) ──
 export async function monitor(req, res) {
@@ -27,6 +28,7 @@ export async function monitor(req, res) {
       const expense = snap?.expenses || {};
       let infra = null;
       try { infra = typeof snap?.infra_raw === "string" ? JSON.parse(snap.infra_raw) : snap?.infra_raw; } catch (_) { infra = null; }
+      infra = normalizeInfraSnapshot(infra);
       const errorCount = Number(logs.errors_24h) || 0;
       const warningCount = Number(logs.warnings_24h) || 0;
       const staleRunning = Number(cron.stale_running) || 0;
@@ -34,7 +36,7 @@ export async function monitor(req, res) {
       let health = (errorCount === 0 && failed === 0 && staleRunning === 0) ? "healthy"
         : (errorCount < 3 && failed < 3 && staleRunning < 3) ? "degraded" : "unhealthy";
       if (infra?.level === "critical") health = "unhealthy";
-      else if (["warning", "unknown"].includes(infra?.level) && health === "healthy") health = "degraded";
+      else if ((!infra || ["warning", "unknown"].includes(infra.level)) && health === "healthy") health = "degraded";
 
       return res.status(200).json({
         status: "ok",
@@ -101,6 +103,7 @@ export async function monitor(req, res) {
     const infraRows = infraResponse.ok ? await infraResponse.json() : [];
     let infra = null;
     try { infra = JSON.parse(infraRows?.[0]?.value || "null"); } catch (_) { infra = null; }
+    infra = normalizeInfraSnapshot(infra);
 
     const logsArray = Array.isArray(logs) ? logs : [];
     const cronArray = Array.isArray(crons) ? crons : [];
@@ -168,7 +171,7 @@ export async function monitor(req, res) {
       ? "healthy"
       : (metrics.errorRate < 0.1 && cronFailed < 3) ? "degraded" : "unhealthy";
     if (infra?.level === "critical") health = "unhealthy";
-    else if (infra?.level === "warning" && health === "healthy") health = "degraded";
+    else if ((!infra || ["warning", "unknown"].includes(infra.level)) && health === "healthy") health = "degraded";
 
     return res.status(200).json({
       status: "ok",
