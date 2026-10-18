@@ -32,12 +32,12 @@ export function pendingCronTasks(due, runs, now = Date.now()) {
     if (!latest.has(run.task_name) || new Date(run.started_at) > new Date(latest.get(run.task_name).started_at)) latest.set(run.task_name, run);
   }
   return due.filter(task => {
-    if (!task.cleanup && runs.some(r => r.task_name === task.t && ['SUCCESS', 'SKIPPED'].includes(r.status))) return false;
+    if (!task.cleanup && !task.repeatable && runs.some(r => r.task_name === task.t && ['SUCCESS', 'SKIPPED'].includes(r.status))) return false;
     const run = latest.get(task.t);
     if (!run) return true;
     if (run.status === 'RUNNING' && new Date(run.started_at).getTime() > now - 20 * 60_000) return false;
-    if (run.status === 'SKIPPED') return false;
-    if (run.status === 'SUCCESS') return task.cleanup === true && run.metadata?.has_more === true;
+    if (run.status === 'SKIPPED') return task.repeatable === true;
+    if (run.status === 'SUCCESS') return task.repeatable === true || task.cleanup === true && run.metadata?.has_more === true;
     return true;
   }).sort((a, b) => {
     // A completed batch must not starve tasks that have not run yet.

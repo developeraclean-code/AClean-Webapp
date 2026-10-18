@@ -64,6 +64,11 @@ describe("cron logger hardening", () => {
     )).rejects.toMatchObject({ code: "CRON_TIMEOUT" });
     expect(updates.some(update => update.status === "TIMEOUT" && update.finished_at)).toBe(true);
   });
+  it('keeps staff reminders repeatable after success without changing existing once-daily tasks', () => {
+    const tasks = [{ t: 'staff', repeatable: true }, { t: 'daily' }];
+    const runs = tasks.map(t => ({ task_name: t.t, status: 'SUCCESS', metadata: {}, started_at: new Date().toISOString() }));
+    expect(pendingCronTasks(tasks, runs).map(t => t.t)).toEqual(['staff']);
+  });
 
   it("closes stale runs globally with a bounded cutoff", async () => {
     const { db, updates } = fakeCronDb();

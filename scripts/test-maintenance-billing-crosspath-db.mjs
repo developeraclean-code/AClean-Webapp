@@ -31,7 +31,12 @@ async function b2bRequest(logs) {
   const quote=buildMaintenanceInvoiceQuote({clientId:cid,logs,units,clientPrices:prices});
   return {invoice:{...payload('B2B'+(++seq),quote.total),units:quote.count,materials_detail:JSON.stringify(quote.line_items)},ids:logs.map(l=>l.id),snapshot:{logs,units,prices,catalog:[]}};
 }
-const b2b = async r => (await one('SELECT create_maintenance_invoice_atomic($1,$2,$3,$4) result',[JSON.stringify(r.invoice),r.ids,JSON.stringify(r.snapshot),'Owner fixture'])).result;
+const b2b = async r => {
+  const previous=(await one("SELECT current_setting('test.authrole',true) AS role")).role;
+  if(process.argv.includes('--manual-215'))await db.exec("SET test.authrole='service_role'");
+  try{return (await one('SELECT create_maintenance_invoice_atomic($1,$2,$3,$4) result',[JSON.stringify(r.invoice),r.ids,JSON.stringify(r.snapshot),'Owner fixture'])).result;}
+  finally{if(process.argv.includes('--manual-215'))await db.query("SELECT set_config('test.authrole',$1,false)",[previous]);}
+};
 const verify = async (jid,invoice=payload('AUTO'+(++seq)),key='finalize:'+jid) => (await one('SELECT finalize_service_report_atomic($1,$2,$3,$4) result',['R-'+jid,invoice?JSON.stringify(invoice):null,'Owner fixture',key])).result;
 const money = async () => q('SELECT * FROM invoice_payments ORDER BY id');
 try {
@@ -73,6 +78,20 @@ try {
     for(const role of ['anon','authenticated','service_role']) for(const fn of ['finalize_service_report_atomic_base_209(text,jsonb,text,text)','create_maintenance_invoice_atomic_base_209(jsonb,uuid[],jsonb,text)'])
       assert.equal((await one('SELECT has_function_privilege($1,$2,$3) ok',[role,fn,'EXECUTE'])).ok,false);
   });
+  if(process.argv.includes('--manual-215')) {
+    await db.exec(`CREATE TABLE app_settings(key text PRIMARY KEY,value text);
+      CREATE TABLE job_materials_brought(id text PRIMARY KEY,status text,notes text);
+      SET test.authrole='authenticated';SET test.role='Owner';`);
+    await db.exec(readFileSync(new URL('../migrations/215_manual_report_verification_and_reminder.sql',import.meta.url),'utf8'));
+    await check('manual-only guard 215 coexists with the actual 179/209 invoice finalization RPCs',async()=>{
+      await job('AUTO-215');
+      await db.exec("SET test.authrole='service_role'");
+      await assert.rejects(()=>verify('AUTO-215'),/manual/);
+      assert.equal((await one("SELECT status FROM service_reports WHERE id='R-AUTO-215'")).status,'SUBMITTED');
+      await db.exec("SET test.authrole='authenticated';SET test.role='Owner'");
+      assert.equal((await verify('AUTO-215')).report.status,'VERIFIED');
+    });
+  }
   await check('B2B first + stale verification reuses one invoice: Rp450.000, not Rp900.000',async()=>{
     const before=digest(await q('SELECT * FROM invoices WHERE id=$1',[legacy.invoice.id]));
     const out=await verify('LEGACY-B2B',payload('STALE-BROWSER'));

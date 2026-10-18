@@ -1,7 +1,5 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## ⚡ Protokol Eksekusi (WAJIB — sebelum menulis kode apa pun)
 **Baca [docs/AGENT_PLAYBOOK.md](docs/AGENT_PLAYBOOK.md) section yang sesuai tipe tugasmu** sebelum
 edit pertama. Ringkasnya:
@@ -23,7 +21,7 @@ npm run build        # Production build → dist/
 npm run preview      # Preview production build locally
 ```
 
-There are no tests in this project (except `src/lib/__tests__/` unit tests via Vitest).
+Tests: Vitest (`src/lib/__tests__/`), SQL contracts (`scripts/test-*-db.mjs`) and Playwright (`e2e/`).
 
 ## Environment Setup
 
@@ -88,6 +86,7 @@ Role hierarchy: **Owner > Admin > Teknisi > Helper**. Enforced in `canAccess()` 
 - Max unit per laporan: **30 unit** (naik dari 10 per commit 92e3936)
 - Status: PENDING → SUBMITTED → VERIFIED / REVISION / REJECTED
 - Laporan >3 hari belum VERIFIED → alert WA ke Owner (cron `laporan-stale`, 10:00 WIB)
+- Verifikasi manual Owner/Admin saja; timer browser dan cron auto-verifikasi 48 jam dihentikan. Reminder laporan setelah 20.00 WIB maksimal satu WA per nomor staf/hari; lihat `docs/FIELD_REPORT_REMINDERS.md`.
 
 **WhatsApp (Cron):**
 - Toggle cron selalu pakai AND-logic: `isCronJobEnabled(togMap, key)` DAN standalone key `=== "true"`
@@ -133,18 +132,14 @@ src/
   main.jsx                 # React entry point
   theme/cs.js              # Color scheme object (dark mode default)
   context/AppContext.js    # React context for shared state
-  constants/
-    services.js            # SERVICE_TYPES list
-    status.js              # statusColor, statusLabel maps
+  constants/               # services.js: SERVICE_TYPES; status.js: statusColor/statusLabel
   lib/
     customers.js           # sameCustomer, findCustomer, buildCustomerHistory
     dateTime.js            # getLocalDate, getLocalISOString, isWorkingHours
     inventory.js           # isFreonItem, displayStock, computeStockStatus
     phone.js               # normalizePhone, samePhone
     pricing.js             # PRICE_LIST_DEFAULT, hitungLabor, hargaPerUnit...
-    safeJson.js            # safeJsonParse
-    techColor.js           # TECH_PALETTE, getTechColor
-    validators.js          # validateEmail, validatePhone, validateDate...
+    safeJson.js, techColor.js, validators.js # Parsing, technician colors, validation
     __tests__/             # Unit tests (vitest)
   data/
     reads.js               # All Supabase SELECT helpers (fetchOrders, fetchInvoices...)
@@ -154,7 +149,6 @@ src/
     ServiceReportPDF.jsx   # @react-pdf/renderer service report PDF (6 photos/page)
     ViewErrorBoundary.jsx  # Per-view error boundary
   views/
-    AgentLogView.jsx       # ARA agent log viewer
     AraView.jsx            # AI chat assistant (ARA)
     CustomersView.jsx      # Customer management
     DashboardView.jsx      # Main dashboard — stats, team grid, chart
@@ -174,7 +168,6 @@ src/
     SettingsView.jsx       # App settings (Owner only — blocked for Admin)
     TeknisiAdminView.jsx   # Technician & user management
     ToolBagView.jsx        # Tas Teknisi (Tool Bag) — checklist 24 alat/tas + history check WA
-
 api/
   [route].js              # Unified API router (delegasi ke _handlers/)
   _handlers/              # Modul route: auth-token, customer, foto, misc, monitor, portal, voucher, wa
@@ -183,7 +176,6 @@ api/
   ara-chat.js             # AI proxy
   _auth.js                # Auth middleware
   _*.js                   # Shared util backend (logger, r2-upload, ai-text, ai-vision, validate, dll)
-
 docs/                     # Dokumentasi: SOP_ADMIN_ROLE.md (role/access), SENTRY_*, IMPLEMENTATION_DETAILS, dll
 migrations/               # SQL migration files (run manually in Supabase SQL Editor)
 ```
@@ -257,7 +249,8 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
 198       # Applied 9 Okt 2026 — tabel katalog WA, RLS Owner/Admin, pengiriman media CATALOG; transaksi dan akses role diuji dengan rollback
 201       # Applied 10 Okt 2026 — satu laporan/job untuk seluruh anggota; pengirim pertama dapat edit sebelum Verified, dijaga trigger dan RPC; role diuji dengan rollback
 202       # Applied 10 Okt 2026 — cegah laporan baru/ulang pada job CANCELLED/RESCHEDULED; uji transaksi rollback: job batal ditolak, job aktif diterima
-214       # Applied 17 Okt 2026 — durable WA ingress; riwayat dan hash SQL sama dengan produksi. Sinkronisasi sumber harga ARA tidak memerlukan migrasi 215.
+214       # Applied 17 Okt 2026 — durable WA ingress; riwayat dan hash SQL sama dengan produksi. Sinkronisasi sumber harga ARA tidak memerlukan migrasi tambahan.
+215       # Applied 18 Okt 2026 — verifikasi manual-only, hentikan auto-return, reminder staf setelah 20.00; aktivasi scheduler wajib setelah deploy terverifikasi.
 ```
 
 > Daftar di atas pernah tertinggal jauh (berhenti di 126 padahal file sudah 132).
@@ -277,7 +270,7 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
 
 **WhatsApp/ARA (aturan 7 Okt, sinkronisasi 17 Okt 2026):** Inbound → `/api/receive-wa` → `api/_ara-customer.js`. Default `wa_ara_mode=review`: draf ditinjau Owner/Admin, bukan dikirim. `auto_safe` hanya sapaan/terima kasih sederhana; jawaban model/harga/booking/pembayaran/komplain tetap review. Pengiriman otomatis menggunakan outbox idempoten. Seluruh draf/balasan customer ARA diakhiri `- Auto Reply by ARA -`; bukan penanda chat manual, cron atau internal. Migrasi 196 wajib sebelum aktivasi jalur baru. Lihat [ARA_READINESS](docs/ARA_READINESS.md).
 
-**AI (ARA):** Aturan utama `src/lib/araPolicy.js`; server memuat `ara_brain` (`brain_md` internal, `brain_customer` customer), `app_settings.ara_training_rules`, dan `price_list` aktif (`price` dialias `harga`, `is_active` true/null). Sumber harga diverifikasi read-only ke produksi 17 Okt; tabel `harga_layanan` tidak ada. Sinkronisasi ini tidak memerlukan migrasi baru (terakhir 214; berikutnya 215). Training adalah konteks terpilih, bukan fine-tuning. Brain lama tidak mengungguli aturan wajib. `[ACTION]` hanya usulan navigasi, tidak melakukan mutasi atau kirim WA. Provider ARA dan AI Vision terpisah; API key di environment server. Deploy tidak menimpa Brain atau mengaktifkan chatbot/auto-reply.
+**AI (ARA):** Aturan utama `src/lib/araPolicy.js`; server memuat `ara_brain` (`brain_md` internal, `brain_customer` customer), `app_settings.ara_training_rules`, dan `price_list` aktif (`price` dialias `harga`, `is_active` true/null). Sumber harga diverifikasi read-only ke produksi 17 Okt; tabel `harga_layanan` tidak ada. Sinkronisasi harga ini tidak memerlukan migrasi baru. Training adalah konteks terpilih, bukan fine-tuning. Brain lama tidak mengungguli aturan wajib. `[ACTION]` hanya usulan navigasi, tidak melakukan mutasi atau kirim WA. Provider ARA dan AI Vision terpisah; API key di environment server. Deploy tidak menimpa Brain atau mengaktifkan chatbot/auto-reply.
 
 **Image storage:** Cloudflare R2 via AWS Sig V4 in `/api/upload-foto`. Render URL SELALU lewat `fotoUrl()` (`src/lib/fotoUrl.js`): langsung ke CDN kalau `VITE_R2_CDN_URL` di-set (hemat kuota Vercel), kalau tidak jatuh ke proxy `/api/foto`; `.pdf`/`.html` selalu proxy. Simpan bentuk key/proxy di DB, bukan URL CDN.
 

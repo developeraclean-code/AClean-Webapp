@@ -2765,57 +2765,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
 
     initLoadAll();
 
-    // ── AUTO-VERIFY CLIENT: Cek laporan SUBMITTED > 48 jam saat data selesai load ──
-    const autoVerifyTimer = setTimeout(async () => {
-      try {
-        const now = Date.now();
-        const LIMIT_MS = 48 * 60 * 60 * 1000; // 48 jam
-        const cutoffTime = new Date(now - LIMIT_MS).toISOString();
-
-        // Simplify query - use select(*) to avoid field name issues
-        const { data: staleLaporan, error: qErr } = await supabase
-          .from("service_reports")
-          .select("*")
-          .eq("status", "SUBMITTED")
-          .lt("submitted_at", cutoffTime);
-
-        if (qErr) {
-          console.warn("❌ Auto-verify query error:", qErr.message);
-          addAgentLog("AUTO_VERIFY_ERROR", `Query error: ${qErr.message}`, "WARNING");
-          return;
-        }
-
-        if (staleLaporan && staleLaporan.length > 0) {
-          console.log(`⏱️ Auto-verify: ${staleLaporan.length} laporan > 48 jam ditemukan`);
-          for (const r of staleLaporan) {
-            try {
-              await updateServiceReport(supabase, r.id, { status: "VERIFIED" }, "system_auto_verify");
-              setLaporanReports(prev => prev.map(x =>
-                x.id === r.id ? { ...x, status: "VERIFIED", verified_at: new Date().toISOString() } : x
-              ));
-              // Sync order status → COMPLETED jika masih DISPATCHED/ON_SITE
-              if (r.job_id) {
-                const ord = ordersData.find(o => o.id === r.job_id);
-                if (ord && ["DISPATCHED", "ON_SITE"].includes(ord.status)) {
-                  await supabase.from("orders").update({ status: "COMPLETED" }).eq("id", r.job_id);
-                  setOrdersData(prev => prev.map(o => o.id === r.job_id ? { ...o, status: "COMPLETED" } : o));
-                  updateCustomerTierAfterOrder(ord).catch(() => {});
-                }
-              }
-              addAgentLog("AUTO_VERIFIED",
-                `Laporan ${r.job_id || r.id} auto-verified setelah 48 jam — ${r.teknisi || ""}`,
-                "INFO"
-              );
-            } catch (uErr) {
-              console.warn(`⚠️ Update laporan ${r.id} gagal:`, uErr);
-            }
-          }
-          showNotif(`⏱️ ${staleLaporan.length} laporan otomatis terverifikasi (>48 jam)`);
-        }
-      } catch (e) { console.warn("Auto-verify check skip:", e?.message); }
-    }, 8000); // jalankan 8 detik setelah data selesai load
-
-
+    // Report verification is manual-only through Laporan Tim; never age-based.
     // Polling incremental sudah menjaga perubahan harian. Full reconciliation cukup
     // 6 jam sekali saat tab terlihat, atau saat kembali ke tab setelah minimal 4 jam.
     const FULL_REFRESH_MS = 6 * 60 * 60 * 1000;
@@ -2944,7 +2894,6 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
       clearInterval(_pollReports);
       if (_pollWa) clearInterval(_pollWa);
 
-      clearTimeout(autoVerifyTimer);
       clearInterval(_statsTimer);
       document.removeEventListener("visibilitychange", _onVisibilityRefresh);
       if (stuckCheckTimer.current) clearInterval(stuckCheckTimer.current);

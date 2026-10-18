@@ -2,6 +2,7 @@ import { parseAraTraining, resolveAraBrain } from "../lib/araPolicy.js";
 import { memo, useState } from "react";
 import { cs } from "../theme/cs.js";
 import { saveAutomationToggle } from "../lib/settingsPersistence.js";
+import FieldReportReminderSettings from './FieldReportReminderSettings.jsx';
 
 const settingsInputStyle = {
   width: "100%", background: cs.surface, border: "1px solid " + cs.border,
@@ -1316,6 +1317,14 @@ function SettingsView({
           </Card>
         )}
 
+        <FieldReportReminderSettings currentUser={currentUser} enabled={appSettings.field_report_reminder_enabled === 'true'}
+          onToggle={async enabled => {
+            await persistAutomationToggle({ key: 'field_report_reminder_enabled', enabled,
+              job: { id: 215001, name: 'Pengingat Laporan Tim', icon: '📝', time: '20:00–23:59', days: 'Setiap Hari',
+                task: 'Satu WA per nomor teknisi/helper per hari untuk laporan hari ini yang belum diterima' },
+              successMessage: enabled ? '✅ Pengingat laporan tim diaktifkan' : '⛔ Pengingat laporan tim dimatikan' });
+          }} />
+
         {/* Follow-up Maintenance — kontrol backend + cron_jobs atomik */}
         {isOwner && (
         <Card>
@@ -1390,7 +1399,7 @@ function SettingsView({
 
           <div style={{ display: "grid", gap: 8 }}>
             {cronJobs.map((job, idx) => ({ job, idx }))
-              .filter(({ job }) => job.backendKey !== "maintenance_followup_alert_enabled")
+              .filter(({ job }) => !["maintenance_followup_alert_enabled", "field_report_reminder_enabled", "auto_return_brought_enabled", "auto_verify_reports_enabled"].includes(job.backendKey))
               .map(({ job, idx }) => (
               <div key={job.id} style={{ background: cs.surface, border: "1px solid " + (job.active ? cs.green + "66" : cs.border), borderRadius: 10, padding: "12px 14px", display: "flex", gap: 12, alignItems: "center", opacity: job.active ? 1 : 0.65, transition: "all .2s" }}>
                 <span style={{ fontSize: 20, minWidth: 28, textAlign: "center" }}>{job.icon || "⚙️"}</span>

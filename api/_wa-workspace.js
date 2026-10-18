@@ -59,10 +59,10 @@ export async function dispatchWorkspaceMessage(db, id, payload, actor, deliver) 
   return row;
 }
 
-export async function deliverWorkspaceMessage(payload, { token = process.env.FONNTE_TOKEN, fetchImpl = fetch } = {}) {
+export async function deliverWorkspaceMessage(payload, { token = process.env.FONNTE_TOKEN, fetchImpl = fetch, timeoutMs = 20000 } = {}) {
   if (!token) return { status: "FAILED", error: "Gateway WhatsApp belum dikonfigurasi" };
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 20000);
+  const timer = setTimeout(() => controller.abort(), Math.max(1000, Math.min(20000, Number(timeoutMs) || 20000)));
   try {
     // Exactly one attempt. A timeout must not trigger a fallback text or duplicate document.
     const response = await fetchImpl("https://api.fonnte.com/send", {

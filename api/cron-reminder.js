@@ -12,11 +12,12 @@ import { closeStaleCronRuns, runWithCronLogging } from "./_logger.js";
 import { verifyAppToken } from "./_auth.js";
 import { cronTaskBudget, pendingCronTasks } from "./_cron-result.js";
 import { taskBackupRetention } from "./_tasks/ops.js";
+import { taskFieldReportReminder } from "./_tasks/field-reports.js";
 import { sb, sendWA, log, OWNER_PHONE } from "./_tasks/_shared.js";
 import { taskCleanup, taskR2Cleanup90d, taskExpenseFotoCleanup30d, taskPaymentProofCleanup90d, taskSnapshotCleanup, taskWaCleanup, taskLogCleanup } from "./_tasks/cleanup.js";
 import { taskReminder, taskDaily, taskStock, taskServisReminder, taskVoucherExpiryReminder, taskLaporanStaleAlert, taskMaterialPulangReminder, taskWeeklyReport, taskMorningDispatch, taskRatingPrompt } from "./_tasks/reminders.js";
 import { taskWaSnapshot, taskWaBackfill, taskScanBuktiBayar, taskRetryPaymentMedia, taskPaymentMediaWatchdog } from "./_tasks/wa-ai.js";
-import { taskProjectAlerts, taskAutoReturnBrought, taskBackupData, taskPayrollWA, taskBonusEligible, taskMaintenanceContractExpiry, taskMaintenanceFollowupAlert, taskMaintenancePmDue, taskMediaGapAlert, taskDataIntegrityAudit, taskInfraUsageAlert } from "./_tasks/ops.js";
+import { taskProjectAlerts, taskBackupData, taskPayrollWA, taskBonusEligible, taskMaintenanceContractExpiry, taskMaintenanceFollowupAlert, taskMaintenancePmDue, taskMediaGapAlert, taskDataIntegrityAudit, taskInfraUsageAlert } from "./_tasks/ops.js";
 
 // Initialize Sentry
 initSentry();
@@ -43,6 +44,8 @@ async function taskTick({ cleanupOnly = false } = {}) {
 
   // Jadwal: jam WIB tiap task (konversi dari skema lama UTC+7). dow/dom opsional.
   const schedule = [
+    // Time-sensitive: before slow quota/cleanup work, durable dedup per person/day.
+    { t: "field-report-reminder", fn: taskFieldReportReminder, h: 20, repeatable: true },
     { t: "cleanup",                  fn: taskCleanup,                h: 2, dom: 1, cleanup: true },
     { t: "r2-cleanup-90d",           fn: taskR2Cleanup90d,           h: 3, cleanup: true },
     { t: "expense-foto-cleanup",     fn: taskExpenseFotoCleanup30d,  h: 3, cleanup: true },
@@ -79,7 +82,6 @@ async function taskTick({ cleanupOnly = false } = {}) {
     // taskWaSnapshot tetap ada utk manual: /api/cron-reminder?task=wa-snapshot.
     // Data lama wa_daily_snapshots ter-purge otomatis oleh snapshot-cleanup (60h).
     { t: "daily",                    fn: taskDaily,                  h: 21 },
-    { t: "auto-return-brought",      fn: taskAutoReturnBrought,      h: 22 },
     { t: "material-pulang-reminder", fn: taskMaterialPulangReminder, h: 22 },
   ];
 
@@ -138,12 +140,12 @@ async function taskTick({ cleanupOnly = false } = {}) {
 
   let count = 0, pending = 0;
   for (const s of outstanding) {
-    const taskTimeoutMs = cronTaskBudget(tickStartedAt, s.t === "backup" ? 18_000 : 6_500);
+    const taskTimeoutMs = cronTaskBudget(tickStartedAt, ["backup", "field-report-reminder"].includes(s.t) ? 18_000 : 6_500);
     if (count >= CAP || !taskTimeoutMs) { pending++; continue; }
     try {
       const result = await runWithCronLogging(sb, s.t, () => s.fn(), { timeoutMs: taskTimeoutMs });
       ran.push(s.t); count++;
-      if (s.cleanup && result?.has_more) pending++;
+      if ((s.cleanup || s.repeatable) && result?.has_more) pending++;
     }
     catch (e) {
       console.error("[TICK]", s.t, e.message);
@@ -223,6 +225,10 @@ export default async function handler(req, res) {
   }
 
   const task = req.query.task || "reminder";
+  // Never fall back to invoice reminders when an obsolete URL is invoked.
+  if (["auto-return-brought", "auto-verify-laporan", "auto-verify-laporan-48jam"].includes(task)) {
+    return res.status(410).json({ ok: false, task, retired: true, error: "Otomasi dihentikan. Material dikelola Admin; verifikasi laporan wajib manual melalui modul." });
+  }
 
   try {
     // Set Sentry context for cron job
@@ -251,7 +257,7 @@ export default async function handler(req, res) {
       "payroll-wa":       taskPayrollWA,
       "bonus-eligible":   taskBonusEligible,
       "log-cleanup":      taskLogCleanup,
-      "auto-return-brought": taskAutoReturnBrought,
+      "field-report-reminder": taskFieldReportReminder,
       "r2-cleanup-90d":   taskR2Cleanup90d,
       "expense-foto-cleanup": taskExpenseFotoCleanup30d,
       "payment-proof-cleanup": taskPaymentProofCleanup90d,
