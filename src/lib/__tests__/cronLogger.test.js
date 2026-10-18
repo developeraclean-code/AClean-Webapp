@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { closeStaleCronRuns, runWithCronLogging } from "../../../api/_logger.js";
 import { cronTaskBudget, pendingCronTasks } from '../../../api/_cron-result.js';
 
-function fakeCronDb() {
+function fakeCronDb({ failFinish = false } = {}) {
   const updates = [];
   const makeQuery = () => {
     let isInsert = false;
@@ -15,6 +15,7 @@ function fakeCronDb() {
       select() { wantsRows = true; return query; },
       single: async () => ({ data: { id: "run-1" }, error: null }),
       then(resolve) {
+        if (failFinish && updates.at(-1)?.status === 'SUCCESS') return resolve({ data: null, error: { message: 'audit write unavailable' } });
         resolve({ data: wantsRows ? [{ id: isInsert ? "run-1" : "stale-1" }] : null, error: null });
       },
     };
@@ -49,8 +50,8 @@ describe("cron logger hardening", () => {
     const now = Date.now();
     const run = (task_name, status, metadata = {}, age = 1000) => ({ task_name, status, metadata, started_at: new Date(now - age).toISOString() });
     const due = ['r2', 'wa', 'log', 'off', 'busy', 'broken', 'completed'].map(t => ({ t, cleanup: true }));
-    const runs = [run('r2', 'SUCCESS', { has_more: true }), run('log', 'SUCCESS'), run('off', 'SKIPPED'), run('busy', 'RUNNING'), run('broken', 'FAILED'), run('completed', 'SUCCESS', { has_more: true }, 10000), run('completed', 'SUCCESS', { has_more: false })];
-    expect(pendingCronTasks(due, runs, now).map(t => t.t)).toEqual(['wa', 'broken', 'r2']);
+    const runs = [run('r2', 'SUCCESS', { has_more: true }), run('log', 'SUCCESS'), run('off', 'SKIPPED'), run('busy', 'RUNNING'), run('broken', 'FAILED', {}, 6 * 60_000), run('completed', 'SUCCESS', { has_more: true }, 10000), run('completed', 'SUCCESS', { has_more: false })];
+    expect(pendingCronTasks(due, runs, now).map(t => t.t)).toEqual(['wa', 'r2', 'broken']);
     expect(pendingCronTasks([{ t: 'busy' }], [run('busy', 'RUNNING', {}, 21 * 60_000)], now)).toHaveLength(1);
     expect(pendingCronTasks([{ t: 'r2' }], runs, now)).toHaveLength(0);
   });
@@ -63,6 +64,19 @@ describe("cron logger hardening", () => {
       { timeoutMs: 5 },
     )).rejects.toMatchObject({ code: "CRON_TIMEOUT" });
     expect(updates.some(update => update.status === "TIMEOUT" && update.finished_at)).toBe(true);
+  });
+  it('does not execute a task if required start audit cannot be written', async () => {
+    let executed = false;
+    const db = { from: () => ({ update: () => ({ eq: () => ({ eq: () => ({ lt: async () => ({}) }) }) }),
+      insert: () => ({ select: () => ({ single: async () => ({ error: { message: 'audit offline' } }) }) }) }) };
+    await expect(runWithCronLogging(db, 'guarded', () => { executed = true; }, { requireAudit: true })).rejects.toThrow('tidak dijalankan');
+    expect(executed).toBe(false);
+  });
+  it('required finish audit failure is visible instead of returning success', async () => {
+    const { db, updates } = fakeCronDb({ failFinish: true });
+    await expect(runWithCronLogging(db, 'guarded', async () => ({}), { requireAudit: true }))
+      .rejects.toMatchObject({ code: 'CRON_AUDIT_WRITE_FAILED' });
+    expect(updates.at(-1).status).toBe('FAILED');
   });
   it('keeps staff reminders repeatable after success without changing existing once-daily tasks', () => {
     const tasks = [{ t: 'staff', repeatable: true }, { t: 'daily' }];

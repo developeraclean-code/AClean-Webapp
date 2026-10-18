@@ -2,12 +2,8 @@
 // api/cron-reminder.js, pemecahan _tasks/ Jul 2026). Entry & jadwal tetap di cron-reminder.js.
 import { sb, sendWA, sendWAWithResult, isCronJobEnabled, fmt, log, deleteR2Object, OWNER_PHONE } from "./_shared.js";
 import * as Sentry from "@sentry/node";
-import { getR2BucketUsage, hasR2Config, uploadBufferToR2 } from "../_r2-upload.js";
 import { backupFolder, mapWithConcurrency } from "../_r2-key.js";
-import { gzip } from "node:zlib";
-import { promisify } from "node:util";
-
-const gzipAsync = promisify(gzip);
+import { BACKUP_TABLES } from '../_backup.js';
 
 // ══════════════════════════════════════════════════
 // TASK: Project Alerts — WA ke Owner untuk modul Project
@@ -67,132 +63,47 @@ export async function taskProjectAlerts() {
   return { late: late.length, stale: stale.length, overBudget: overBudget.length };
 }
 
-// ══════════════════════════════════════════════════
-// TASK 7: Backup Data Mingguan ke R2
-// Jalan tiap Senin 11:00 WIB (jadwal di taskTick dispatcher)
-// Export invoices, orders, customers, service_reports ke R2
-// ══════════════════════════════════════════════════
-export async function taskBackupData() {
-  // Gate FAIL-OPEN — sengaja BEDA dari SOP strict (=== "true") milik task WA-customer:
-  // backup wajib default JALAN; key hilang tidak boleh mematikan backup diam-diam.
-  // Berhenti hanya kalau eksplisit dimatikan (standalone "false" / cron_jobs active:false).
-  const { data: togData, error: toggleError } = await sb.from("app_settings").select("key,value").in("key", ["backup_data_enabled", "cron_jobs"]);
-  if (toggleError) {
-    await log("BACKUP_DATA", "Gagal membaca toggle: " + toggleError.message, "ERROR");
-    throw new Error("Backup toggle: " + toggleError.message);
-  }
-  const togMap = Object.fromEntries((togData || []).map(s => [s.key, s.value]));
-  if (!isCronJobEnabled(togMap, "backup_data_enabled") || togMap["backup_data_enabled"] === "false") {
-    await log("BACKUP_DATA", "Dilewati — toggle OFF", "INFO");
-    return { skipped: true };
-  }
-
-  if (!hasR2Config()) {
-    await log("BACKUP_DATA", "R2 credentials tidak lengkap — skip", "ERROR");
-    return { skipped: true };
-  }
-
-  const now = new Date(Date.now() + 7 * 3600000); // WIB
-  const dateStr = now.toISOString().slice(0, 10); // "2026-06-16" — folder ber-tanggal (riwayat point-in-time)
-  const tables = ["invoices", "orders", "customers", "service_reports"];
-  const results = {};
-
-  // PostgREST membatasi 1000 baris/response → .limit(5000) TIDAK berlaku. Paginate via .range()
-  // agar backup LENGKAP (sebelumnya tabel >1000 baris terpotong diam-diam).
-  async function fetchAllRows(table) {
-    const PAGE = 1000;
-    const all = [];
-    for (let from = 0; ; from += PAGE) {
-      const { data, error } = await sb.from(table).select("*").order("created_at", { ascending: false }).range(from, from + PAGE - 1);
-      if (error) return { error };
-      all.push(...(data || []));
-      if (!data || data.length < PAGE) break;
-    }
-    return { data: all };
-  }
-
-  // Empat tabel diambil paralel. Masing-masing tetap paginate berurutan supaya tidak
-  // membanjiri Supabase Nano dengan burst request yang besar.
-  const exports = await Promise.all(tables.map(async table => {
-    try {
-      const { data, error } = await fetchAllRows(table);
-      if (error) return { table, error: "ERROR: " + error.message };
-      const body = JSON.stringify({ exported_at: new Date().toISOString(), table, count: data.length, data });
-      return { table, data, body };
-    } catch(e) {
-      return { table, error: "EXCEPTION: " + e.message };
-    }
-  }));
-
-  await mapWithConcurrency(exports, 2, async item => {
-    if (item.error) { results[item.table] = item.error; return; }
-    try {
-      const key = `backup/${dateStr}/${item.table}.json.gz`;
-      const compressed = await gzipAsync(Buffer.from(item.body), { level: 6 });
-      const uploaded = await uploadBufferToR2({
-        buffer: compressed,
-        key,
-        mimeType: "application/gzip",
-      });
-      results[item.table] = uploaded.ok
-        ? `${item.data.length} rows (${compressed.length} bytes gzip)`
-        : `PUT_FAIL:${uploaded.err || "unknown"}`;
-    } catch (error) {
-      results[item.table] = `EXCEPTION:${error?.message || error}`;
-    }
-  });
-
-  // Catat ke backup_log (notes = path folder, dipakai untuk retensi di bawah)
-  const successTables = tables.filter(t => results[t] && !results[t].startsWith("ERROR") && !results[t].startsWith("PUT_FAIL") && !results[t].startsWith("EXCEPTION"));
-  let backupLogError = null;
-  try {
-    const { error } = await sb.from("backup_log").insert({
-      type: "auto-r2-weekly",
-      tables: successTables,           // ARRAY column — jangan join
-      row_counts: results,             // jsonb column — pass object langsung
-      exported_by: "CRON",
-      notes: "backup/" + dateStr + "/"
-    });
-    if (error) throw error;
-  } catch(e) {
-    backupLogError = e.message;
-    console.error("[BACKUP_LOG]", e.message);
-  }
-
-  const retention = await taskBackupRetention();
-  const purgedBackups = retention.purgedBackups;
-  const errors = retention.errors + (backupLogError ? 1 : 0) + tables.length - successTables.length;
-
-  const summary = "Backup " + dateStr + ": " + Object.entries(results).map(([t, r]) => t + "=" + r).join(", ")
-    + (backupLogError ? ` | backup_log GAGAL: ${backupLogError}` : "")
-    + (purgedBackups ? ` | retensi: hapus ${purgedBackups} backup >60h` : "");
-  await log("BACKUP_DATA", summary, errors ? "WARNING" : "SUCCESS");
-  return { dateStr, results, purgedBackups, backupLogError, errors };
-}
+// Encrypted transactional export; shared with the explicit manual CLI.
+export { taskBackupData } from './backup.js';
 
 // Independent cleanup: does not create a backup or send messages.
-export async function taskBackupRetention() {
-  const { data: settings, error: settingsError } = await sb.from("app_settings").select("key,value").in("key", ["backup_data_enabled", "cron_jobs"]);
+export async function taskBackupRetention({ db = sb, remove = deleteR2Object } = {}) {
+  const { data: settings, error: settingsError } = await db.from("app_settings").select("key,value").in("key", ["backup_data_enabled", "cron_jobs"]);
   if (settingsError) throw new Error(settingsError.message);
   const toggles = Object.fromEntries((settings || []).map(row => [row.key, row.value]));
   if (!isCronJobEnabled(toggles, "backup_data_enabled") || toggles.backup_data_enabled !== "true") return { skipped: true, purgedBackups: 0, errors: 0 };
-  const { data: oldLogs, error } = await sb.from("backup_log").select("id,tables,notes")
+  // Fail closed if the last known complete backup cannot be identified. A prolonged
+  // backup failure must never make retention delete the final recovery copy.
+  const recent = await db.from('backup_log').select('id,tables,notes,row_counts').order('created_at', { ascending: false }).range(0, 19);
+  if (recent.error) throw new Error('Backup pelindung belum dapat dibaca');
+  const latestComplete = (recent.data || []).find(row => Array.isArray(row.tables) &&
+    (row.row_counts?.format === 2 ? BACKUP_TABLES.every(t => row.tables.includes(t)) && row.row_counts.sha256
+      : ['invoices','orders','customers','service_reports'].every(t => row.tables.includes(t))));
+  const protectedFolder = backupFolder(latestComplete?.notes);
+  if (!protectedFolder) throw new Error('Tidak ada backup lengkap teridentifikasi; retensi dihentikan agar salinan terakhir tidak terhapus');
+  const { data: oldLogs, error } = await db.from("backup_log").select("id,tables,notes,row_counts")
     .lt("created_at", new Date(Date.now() - 60 * 86400000).toISOString())
     .or('notes.like."backup/%",notes.like."Backup bulanan ke R2: backup/%"')
     .order("created_at", { ascending: true }).limit(5);
   if (error) throw new Error(error.message);
-  const outcomes = await mapWithConcurrency(oldLogs || [], 2, async row => {
+  const eligible = (oldLogs || []).filter(row => backupFolder(row.notes) !== protectedFolder);
+  const outcomes = await mapWithConcurrency(eligible, 2, async row => {
     const folder = backupFolder(row.notes);
     const tables = row.tables;
     if (!folder || !Array.isArray(tables) || !tables.length || tables.some(t => !/^[a-z_]+$/.test(t))) return false;
-    const keys = tables.flatMap(t => [`backup/${folder}/${t}.json`, `backup/${folder}/${t}.json.gz`]);
-    const deleted = await mapWithConcurrency(keys, 4, deleteR2Object);
+    let keys;
+    if (row.row_counts?.format === 2) {
+      keys = [row.row_counts.bundle_key, row.row_counts.manifest_key];
+      const prefix = `backup/${folder}/`;
+      if (keys.some(k => typeof k !== 'string' || !k.startsWith(prefix) || !/^(bundle-[a-f0-9-]{36}\.json\.gz\.enc|manifest-[a-f0-9-]{36}\.json)$/.test(k.slice(prefix.length)))) return false;
+    } else keys = tables.flatMap(t => [`backup/${folder}/${t}.json`, `backup/${folder}/${t}.json.gz`]);
+    const deleted = await mapWithConcurrency(keys, 4, remove);
     if (!deleted.every(item => item.status === "fulfilled" && item.value === true)) return false;
-    const { error: deleteError } = await sb.from("backup_log").delete().eq("id", row.id);
+    const { error: deleteError } = await db.from("backup_log").delete().eq("id", row.id);
     return !deleteError;
   });
   const purgedBackups = outcomes.filter(r => r.status === "fulfilled" && r.value === true).length;
-  const result = { purgedBackups, items_processed: purgedBackups, errors: outcomes.length - purgedBackups, has_more: outcomes.length === 5 };
+  const result = { purgedBackups, protectedFolder, items_processed: purgedBackups, errors: outcomes.length - purgedBackups, has_more: oldLogs?.length === 5 && eligible.length > 0 };
   await log("BACKUP_RETENTION", JSON.stringify(result), result.errors ? "WARNING" : "SUCCESS");
   return result;
 }
@@ -529,120 +440,5 @@ export async function taskMediaGapAlert() {
   return { alerted: true, inbound: inbound || 0, media: 0 };
 }
 
-// ══════════════════════════════════════════════════
-// TASK: data-integrity-audit — mingguan (Senin 07:00 WIB)
-// Jadikan audit integritas data yang dulu manual (invoice yatim, FK dangling,
-// unit_id salah link) sebagai pemeriksaan TERJADWAL. Panggil fungsi SQL
-// audit_maintenance_integrity() (migrasi 132) → alert Owner kalau ada anomali
-// critical/warn. Bersih = senyap (cuma log). Owner-only, tak pernah WA customer.
-// Toggle: data_integrity_audit_enabled. Mengubah kelemahan "bug senyap" jadi
-// deteksi dini (assessment SFM 20 Agu 2026).
-// ══════════════════════════════════════════════════
-const INTEGRITY_LABELS = {
-  invoice_maint_yatim: "Invoice maintenance tanpa client_id (yatim)",
-  log_client_mismatch: "Log servis nyasar ke klien salah",
-  log_unit_dangling: "Log menunjuk unit tak ada",
-  unit_client_dangling: "Unit menunjuk klien tak ada",
-  followup_unit_dangling: "Temuan menunjuk unit tak ada",
-  unit_code_dup: "Kode unit dobel dalam 1 klien",
-  unit_ids_missing: "Order menunjuk unit tak ada",
-  unit_ids_other_client: "Order menunjuk unit milik klien lain",
-  unit_active_no_interval: "Unit aktif tanpa interval servis",
-  followup_log_dangling: "Temuan menunjuk log tak ada",
-  log_order_dangling: "Log menunjuk order sudah dihapus (jinak)",
-};
-
-export async function taskDataIntegrityAudit() {
-  const { data: togData } = await sb.from("app_settings").select("key,value")
-    .in("key", ["data_integrity_audit_enabled", "cron_jobs"]);
-  const togMap = Object.fromEntries((togData || []).map(s => [s.key, s.value]));
-  if (!isCronJobEnabled(togMap, "data_integrity_audit_enabled") || togMap["data_integrity_audit_enabled"] !== "true") {
-    await log("DATA_INTEGRITY_AUDIT", "Dilewati — data_integrity_audit_enabled OFF", "INFO");
-    return { skipped: true };
-  }
-
-  const { data, error } = await sb.rpc("audit_maintenance_integrity");
-  if (error) {
-    await log("DATA_INTEGRITY_AUDIT", "RPC gagal: " + error.message, "ERROR");
-    Sentry.captureException(error, { tags: { task: "data-integrity-audit" } });
-    return { error: error.message };
-  }
-  const findings = Array.isArray(data) ? data : [];
-  // Hanya critical/warn yang di-alert; 'info' (mis. log yatim jinak) cukup dicatat.
-  const actionable = findings.filter(f => f.severity === "critical" || f.severity === "warn");
-  if (!actionable.length) {
-    await log("DATA_INTEGRITY_AUDIT", `Bersih ✓ (${findings.length} info)`, "INFO");
-    return { ok: true, clean: true };
-  }
-
-  const lines = actionable.map(f => {
-    const icon = f.severity === "critical" ? "🔴" : "⚠️";
-    const label = INTEGRITY_LABELS[f.check] || f.check;
-    const sample = f.sample ? `\n   ${String(f.sample).slice(0, 120)}` : "";
-    return `${icon} ${label}: *${f.n}*${sample}`;
-  });
-  const nCrit = actionable.filter(f => f.severity === "critical").length;
-  const msg = `🧭 *AUDIT INTEGRITAS DATA MAINTENANCE*\n\nDitemukan ${actionable.length} jenis anomali${nCrit ? ` (${nCrit} critical)` : ""}:\n\n${lines.join("\n\n")}\n\nPerbaiki via menu terkait / minta bantuan agent audit.`;
-  if (OWNER_PHONE) await sendWA(OWNER_PHONE, msg);
-  await log("DATA_INTEGRITY_AUDIT", `Alert ${actionable.length} anomali: ${actionable.map(f => f.check + "=" + f.n).join(", ")}`, nCrit ? "ERROR" : "WARNING");
-  return { ok: true, anomalies: actionable.length, critical: nCrit };
-}
-
-// ══════════════════════════════════════════════════
-// TASK: infra-usage-alert — harian 07:00 WIB
-// Ukur database Supabase + bucket R2. Egress Supabase/Vercel tidak tersedia dari
-// runtime aplikasi tanpa Management API token, sehingga sengaja tidak ditebak.
-// ══════════════════════════════════════════════════
-export async function taskInfraUsageAlert() {
-  const { data: rows } = await sb.from("app_settings").select("key,value")
-    .in("key", ["infra_usage_alert_enabled", "infra_usage_warn_percent", "infra_usage_critical_percent", "infra_usage_last_alert", "cron_jobs"]);
-  const settings = Object.fromEntries((rows || []).map(r => [r.key, r.value]));
-  if (!isCronJobEnabled(settings, "infra_usage_alert_enabled") || settings.infra_usage_alert_enabled !== "true") {
-    await log("INFRA_USAGE", "Dilewati — infra_usage_alert_enabled OFF", "INFO");
-    return { skipped: true };
-  }
-
-  const warnAt = Math.max(1, Number(settings.infra_usage_warn_percent) || 70);
-  const criticalAt = Math.max(warnAt, Number(settings.infra_usage_critical_percent) || 85);
-  const DB_FREE_BYTES = 500 * 1024 * 1024;
-  const R2_FREE_BYTES = 10 * 1024 * 1024 * 1024;
-  const [dbResult, r2] = await Promise.all([
-    sb.rpc("get_infra_database_size"),
-    getR2BucketUsage(),
-  ]);
-  const dbBytes = Number(dbResult?.data?.bytes) || null;
-  const r2Bytes = r2.ok ? Number(r2.bytes) : null;
-  const percent = (value, limit) => value == null ? null : Number((value / limit * 100).toFixed(1));
-  const dbPercent = percent(dbBytes, DB_FREE_BYTES);
-  const r2Percent = percent(r2Bytes, R2_FREE_BYTES);
-  const levelOf = (p) => p == null ? "unknown" : p >= criticalAt ? "critical" : p >= warnAt ? "warning" : "ok";
-  const levels = [levelOf(dbPercent), levelOf(r2Percent)];
-  const level = levels.includes("critical") ? "critical" : levels.includes("warning") ? "warning" : levels.every(x => x === "unknown") ? "unknown" : "ok";
-  const snapshot = {
-    measured_at: new Date().toISOString(), level, warn_percent: warnAt, critical_percent: criticalAt,
-    supabase_database: { bytes: dbBytes, limit_bytes: DB_FREE_BYTES, percent: dbPercent, error: dbResult?.error?.message || null },
-    r2_storage: { bytes: r2Bytes, objects: r2.objects || null, limit_bytes: R2_FREE_BYTES, percent: r2Percent, requests: r2.requests || 0, error: r2.ok ? null : r2.err },
-    external_dashboards: { supabase_egress: "unavailable", vercel_usage: "unavailable" },
-  };
-  await sb.from("app_settings").upsert({ key: "infra_usage_snapshot", value: JSON.stringify(snapshot) }, { onConflict: "key" });
-
-  let previous = {};
-  try { previous = JSON.parse(settings.infra_usage_last_alert || "{}"); } catch (_) {}
-  const lastAlertAge = previous.at ? Date.now() - new Date(previous.at).getTime() : Infinity;
-  const shouldAlert = ["warning", "critical"].includes(level)
-    && (previous.level !== level || lastAlertAge >= 7 * 86400000);
-  if (shouldAlert && OWNER_PHONE) {
-    const fmtSize = b => b == null ? "tidak tersedia" : b >= 1024 ** 3
-      ? `${(b / 1024 ** 3).toFixed(2)} GB`
-      : `${(b / 1024 ** 2).toFixed(1)} MB`;
-    const icon = level === "critical" ? "🔴" : "⚠️";
-    const message = `${icon} *ALARM KUOTA INFRASTRUKTUR*\n\nSupabase DB: *${dbPercent ?? "?"}%* (${fmtSize(dbBytes)} / 500 MB)\nCloudflare R2: *${r2Percent ?? "?"}%* (${fmtSize(r2Bytes)} / 10 GB, ${r2.objects || 0} file)\n\nBatas peringatan ${warnAt}% · kritis ${criticalAt}%\nCek menu Monitoring dan dashboard provider.`;
-    await sendWA(OWNER_PHONE, message);
-    await sb.from("app_settings").upsert({ key: "infra_usage_last_alert", value: JSON.stringify({ level, at: new Date().toISOString() }) }, { onConflict: "key" });
-  } else if (level === "ok" && previous.level && previous.level !== "ok") {
-    await sb.from("app_settings").upsert({ key: "infra_usage_last_alert", value: JSON.stringify({ level: "ok", at: new Date().toISOString() }) }, { onConflict: "key" });
-  }
-
-  await log("INFRA_USAGE", `DB=${dbPercent ?? "?"}% R2=${r2Percent ?? "?"}% level=${level}`, level === "critical" ? "WARNING" : "INFO");
-  return { snapshot, alerted: shouldAlert && !!OWNER_PHONE };
-}
+export { taskDataIntegrityAudit } from './integrity.js';
+export { taskInfraUsageAlert } from './infra.js';

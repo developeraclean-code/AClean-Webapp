@@ -19,7 +19,8 @@ export function hasR2Config() {
 
 // Hitung pemakaian bucket dengan ListObjectsV2. Dipanggil maksimal sekali sehari
 // oleh alarm infrastruktur; tidak dipakai pada setiap render Monitoring.
-export async function getR2BucketUsage({ maxPages = 100, requestTimeoutMs = 8000, totalTimeoutMs = 20000, onPage } = {}) {
+export async function getR2BucketUsage({ maxPages = 100, requestTimeoutMs = 8000, totalTimeoutMs = 20000, onPage,
+  checkpoint = {}, resumable = false, fetchImpl = fetch } = {}) {
   const { accessKeyId, secretAccessKey, accountId, bucket } = R2_ENV();
   if (!accessKeyId || !secretAccessKey || !accountId) {
     return { ok: false, err: "R2 env not configured" };
@@ -27,16 +28,17 @@ export async function getR2BucketUsage({ maxPages = 100, requestTimeoutMs = 8000
   const enc = (v) => encodeURIComponent(String(v)).replace(/[!'()*]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase());
   const decodeXml = (v) => String(v || "")
     .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
-  let continuationToken = "";
-  let bytes = 0;
-  let objects = 0;
-  let requests = 0;
+  let continuationToken = checkpoint.continuationToken || "";
+  let bytes = Number(checkpoint.bytes) || 0;
+  let objects = Number(checkpoint.objects) || 0;
+  let requests = Number(checkpoint.requests) || 0;
   const startedAt = Date.now();
+  const partial = () => ({ ok: resumable, complete: false, partial: true, bytes, objects, requests, continuationToken });
 
   try {
     for (let page = 0; page < maxPages; page++) {
       if (Date.now() - startedAt >= totalTimeoutMs) {
-        return { ok: false, err: `R2 listing timeout >${totalTimeoutMs}ms`, bytes, objects, requests, partial: true };
+        return { ...partial(), err: resumable ? undefined : `R2 listing timeout >${totalTimeoutMs}ms` };
       }
       const host = accountId + ".r2.cloudflarestorage.com";
       const now = new Date();
@@ -57,19 +59,20 @@ export async function getR2BucketUsage({ maxPages = 100, requestTimeoutMs = 8000
       const signature = createHmac("sha256", signingKey).update(strToSign).digest("hex");
       const authorization = `AWS4-HMAC-SHA256 Credential=${accessKeyId}/${credScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), Math.max(1000, Number(requestTimeoutMs) || 8000));
-      let response;
+      const timer = setTimeout(() => controller.abort(), Math.max(1, Math.min(Number(requestTimeoutMs) || 8000, totalTimeoutMs - (Date.now() - startedAt))));
+      let response, xml;
       try {
-        response = await fetch(`https://${host}${canonicalUri}?${canonicalQuery}`, {
+        requests++;
+        response = await fetchImpl(`https://${host}${canonicalUri}?${canonicalQuery}`, {
           headers: { Authorization: authorization, "x-amz-date": amzDate, "x-amz-content-sha256": payloadHash },
           signal: controller.signal,
         });
+        if (response.ok) xml = await response.text();
       } finally {
         clearTimeout(timer);
       }
-      requests++;
       if (!response.ok) return { ok: false, err: `R2 LIST ${response.status}`, bytes, objects, requests };
-      const xml = await response.text();
+      if (!xml?.includes('<ListBucketResult') || !xml.includes('</ListBucketResult>') || !/<IsTruncated>(true|false)<\/IsTruncated>/.test(xml)) return { ...partial(), ok: false, err: 'R2 LIST response invalid' };
       if (onPage) await onPage([...xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)].map(([, entry]) => ({
         key: decodeXml(entry.match(/<Key>([\s\S]*?)<\/Key>/)?.[1]),
         size: Number(entry.match(/<Size>(\d+)<\/Size>/)?.[1]) || 0,
@@ -79,12 +82,12 @@ export async function getR2BucketUsage({ maxPages = 100, requestTimeoutMs = 8000
       objects += sizes.length;
       sizes.forEach(match => { bytes += Number(match[1]) || 0; });
       if (!/<IsTruncated>true<\/IsTruncated>/.test(xml)) {
-        return { ok: true, bucket, bytes, objects, requests, measuredAt: new Date().toISOString() };
+        return { ok: true, complete: true, bucket, bytes, objects, requests, measuredAt: new Date().toISOString() };
       }
       continuationToken = decodeXml(xml.match(/<NextContinuationToken>([^<]+)<\/NextContinuationToken>/)?.[1]);
       if (!continuationToken) return { ok: false, err: "R2 pagination token missing", bytes, objects, requests };
     }
-    return { ok: false, err: `R2 listing melewati ${maxPages} halaman`, bytes, objects, requests };
+    return { ...partial(), err: resumable ? undefined : `R2 listing melewati ${maxPages} halaman` };
   } catch (err) {
     return { ok: false, err: err.message, bytes, objects, requests };
   }
@@ -98,7 +101,7 @@ export async function getR2BucketUsage({ maxPages = 100, requestTimeoutMs = 8000
  * @param {string} args.mimeType - "image/jpeg" | "image/png" | ...
  * @returns {Promise<{ok: boolean, key?: string, url?: string, err?: string}>}
  */
-export async function uploadBufferToR2({ buffer, key, mimeType }) {
+export async function uploadBufferToR2({ buffer, key, mimeType, timeoutMs = 10000 }) {
   const { accessKeyId, secretAccessKey, accountId, bucket } = R2_ENV();
   if (!accessKeyId || !secretAccessKey || !accountId) {
     return { ok: false, err: "R2 env not configured" };
@@ -136,7 +139,7 @@ export async function uploadBufferToR2({ buffer, key, mimeType }) {
         "Content-Length": String(buffer.length),
       },
       body: buffer,
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!r2res.ok) {
       const errTxt = await r2res.text().catch(() => "");

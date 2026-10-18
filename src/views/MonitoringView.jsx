@@ -13,6 +13,7 @@ import {
 } from "../data/reads.js";
 import { applyOrderInvoiceReconciliation } from "../data/writes.js";
 import { auditInvoices, auditQuoteDeviation } from "../lib/invoicing.js";
+import RecoveryStatusPanel from './RecoveryStatusPanel.jsx';
 
 // ─────────────────────────────────────────────
 // Helpers
@@ -111,7 +112,7 @@ function FieldSyncPanel({ supabase }) {
   );
 }
 
-function TabOverview({ data, onRefresh, supabase }) {
+function TabOverview({ data, onRefresh, supabase, currentUser }) {
   const metrics = data?.metrics || {};
   const errorRate = metrics.errorRate || 0;
   const cron = metrics.cron || {};
@@ -147,6 +148,7 @@ function TabOverview({ data, onRefresh, supabase }) {
       </div>
 
       <FieldSyncPanel supabase={supabase} />
+      <RecoveryStatusPanel currentUser={currentUser} supabase={supabase} refreshKey={data?.timestamp} />
 
       {(cron.staleRunning > 0 || expenses) && (
         <div style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 14, padding: 16 }}>
@@ -170,11 +172,13 @@ function TabOverview({ data, onRefresh, supabase }) {
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 12 }}>
           <Card label="Supabase Database" value={infra?.supabase_database?.percent != null ? `${infra.supabase_database.percent}% · ${fmtBytes(infra.supabase_database.bytes)}` : "Belum tersedia"}
-            color={(infra?.supabase_database?.percent || 0) >= (infra?.critical_percent || 85) ? cs.red : (infra?.supabase_database?.percent || 0) >= (infra?.warn_percent || 70) ? cs.yellow : cs.green} />
+            color={infra?.supabase_database?.percent == null ? cs.muted : (infra.supabase_database.percent || 0) >= (infra?.critical_percent || 85) ? cs.red : (infra.supabase_database.percent || 0) >= (infra?.warn_percent || 70) ? cs.yellow : cs.green} />
           <Card label="Cloudflare R2" value={infra?.r2_storage?.percent != null ? `${infra.r2_storage.percent}% · ${fmtBytes(infra.r2_storage.bytes)}` : "Belum tersedia"}
-            color={(infra?.r2_storage?.percent || 0) >= (infra?.critical_percent || 85) ? cs.red : (infra?.r2_storage?.percent || 0) >= (infra?.warn_percent || 70) ? cs.yellow : cs.green} />
+            color={infra?.r2_storage?.percent == null ? cs.muted : (infra.r2_storage.percent || 0) >= (infra?.critical_percent || 85) ? cs.red : (infra.r2_storage.percent || 0) >= (infra?.warn_percent || 70) ? cs.yellow : cs.green} />
           <Card label="Objek R2" value={infra?.r2_storage?.objects?.toLocaleString?.("id-ID") || "—"} color={cs.accent} />
         </div>
+        {infra?.r2_storage?.scanning && <p style={{ color: cs.yellow, fontSize: 12 }}>Pemindaian R2 bertahap: {infra.r2_storage.scanned_objects || 0} objek diperiksa. Angka total belum final.</p>}
+        {infra?.r2_storage?.error && <p style={{ color: cs.yellow, fontSize: 12 }}>Pengukuran R2 belum berhasil: {infra.r2_storage.error}</p>}
         <div style={{ marginTop: 10, fontSize: 11, color: cs.muted, lineHeight: 1.5 }}>
           Alarm WA: peringatan {infra?.warn_percent || 70}% · kritis {infra?.critical_percent || 85}%. Egress Supabase dan pemakaian Vercel tetap diperiksa di dashboard provider karena tidak tersedia dari runtime aplikasi.
         </div>
@@ -1324,8 +1328,9 @@ function TabDataHealth({ supabase }) {
   );
 }
 
-function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHeaders, supabase, onNavigate }) {
+function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHeaders, supabase, onNavigate, currentUser }) {
   const [activeTab, setActiveTab] = useState("overview");
+  if (currentUser?.role !== 'Owner') return null;
 
   const refreshOverview = async () => {
     try {
@@ -1383,7 +1388,7 @@ function MonitoringView({ monitorData, setMonitorLoading, setMonitorData, _apiHe
 
       {activeTab === "overview" && (monitorData?.status === "error"
         ? <Empty msg={`❌ Monitoring gagal: ${monitorData.message || "unknown error"}`} />
-        : monitorData ? <TabOverview data={monitorData} onRefresh={refreshOverview} supabase={supabase} /> : <Empty msg="⏳ Loading monitoring data..." />)}
+        : monitorData ? <TabOverview data={monitorData} onRefresh={refreshOverview} supabase={supabase} currentUser={currentUser} /> : <Empty msg="⏳ Loading monitoring data..." />)}
       {activeTab === "cron"  && <TabCron supabase={supabase} />}
       {activeTab === "ai"    && <TabAiCost supabase={supabase} />}
       {activeTab === "wa"        && <TabWa supabase={supabase} />}

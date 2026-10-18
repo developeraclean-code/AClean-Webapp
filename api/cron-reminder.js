@@ -10,7 +10,8 @@ import { timingSafeEqual } from "crypto";
 import { initSentry, setCronContext } from "./sentry-init.js";
 import { closeStaleCronRuns, runWithCronLogging } from "./_logger.js";
 import { verifyAppToken } from "./_auth.js";
-import { cronTaskBudget, pendingCronTasks } from "./_cron-result.js";
+import { dueCronTasks, pendingCronTasks } from "./_cron-result.js";
+import { runCronQueue, withDispatcherLease } from './_cron-dispatch.js';
 import { taskBackupRetention } from "./_tasks/ops.js";
 import { taskFieldReportReminder } from "./_tasks/field-reports.js";
 import { sb, sendWA, log, OWNER_PHONE } from "./_tasks/_shared.js";
@@ -29,13 +30,13 @@ initSentry();
 // Cap per-invocation agar tidak timeout; sisa task tertangani tick berikutnya.
 // bukti-bayar: jalan tiap tick jam kerja (idempoten internal, tak perlu guard harian).
 // ══════════════════════════════════════════════════
-async function taskTick({ cleanupOnly = false } = {}) {
+export async function taskTick(options = {}) {
+  return withDispatcherLease(sb, () => taskTickWithLease(options));
+}
+async function taskTickWithLease({ cleanupOnly = false } = {}) {
   const tickStartedAt = Date.now();
   const nowWib = new Date(Date.now() + 7 * 3600000);
   const hour = nowWib.getUTCHours();   // jam WIB
-  const dow  = nowWib.getUTCDay();     // 0=Min..6=Sab (WIB)
-  const dom  = nowWib.getUTCDate();    // tanggal WIB
-  const CAP  = 3;                       // jaga durasi aman pada Vercel Hobby
   // Vercel membatasi endpoint ini 60 detik. Sisakan waktu untuk menutup
   // cron_runs, menulis log, dan mengirim response sebelum platform mematikan proses.
   // Tutup semua run basi, bukan hanya task yang kebetulan sedang dimulai lagi.
@@ -45,7 +46,9 @@ async function taskTick({ cleanupOnly = false } = {}) {
   // Jadwal: jam WIB tiap task (konversi dari skema lama UTC+7). dow/dom opsional.
   const schedule = [
     // Time-sensitive: before slow quota/cleanup work, durable dedup per person/day.
-    { t: "field-report-reminder", fn: taskFieldReportReminder, h: 20, repeatable: true },
+    { t: "field-report-reminder", fn: taskFieldReportReminder, h: 20, repeatable: true, priority: 2, budgetMs: 18_000 },
+    { t: "payment-media-retry", fn: taskRetryPaymentMedia, h: 0, repeatable: true, intervalMs: 15 * 60_000, priority: 3, budgetMs: 11_000 },
+    { t: "bukti-bayar", fn: taskScanBuktiBayar, h: 9, untilHour: 18, repeatable: true, intervalMs: 60 * 60_000 },
     { t: "cleanup",                  fn: taskCleanup,                h: 2, dom: 1, cleanup: true },
     { t: "r2-cleanup-90d",           fn: taskR2Cleanup90d,           h: 3, cleanup: true },
     { t: "expense-foto-cleanup",     fn: taskExpenseFotoCleanup30d,  h: 3, cleanup: true },
@@ -57,7 +60,7 @@ async function taskTick({ cleanupOnly = false } = {}) {
     { t: "servis-reminder",          fn: taskServisReminder,         h: 8,  dow: 1 },
     { t: "weekly",                   fn: taskWeeklyReport,           h: 8,  dow: 0 },
     // Backup cukup berat; jam 11 memisahkannya dari task stok/weekly jam 8.
-    { t: "backup",                   fn: taskBackupData,             h: 11, dow: 1 },
+    { t: "backup", fn: taskBackupData, h: 11, dow: 1, catchUpWeekly: true, continuable: true, priority: 1, budgetMs: 24_000, minimumMs: 23_000 },
     { t: "wa-cleanup",               fn: taskWaCleanup,              h: 9, cleanup: true },
     { t: "rating-prompt",            fn: taskRatingPrompt,           h: 9 },
     { t: "project-alerts",           fn: taskProjectAlerts,          h: 9 },
@@ -74,8 +77,8 @@ async function taskTick({ cleanupOnly = false } = {}) {
     { t: "payment-media-health",     fn: taskPaymentMediaWatchdog,   h: 9 },
     { t: "payment-media-health-sore", fn: taskPaymentMediaWatchdog, h: 19 },
     { t: "media-gap-alert-sore",     fn: taskMediaGapAlert,          h: 16 },
-    { t: "data-integrity-audit",     fn: taskDataIntegrityAudit,     h: 7,  dow: 1 },
-    { t: "infra-usage-alert",        fn: taskInfraUsageAlert,        h: 7 },
+    { t: "data-integrity-audit", fn: taskDataIntegrityAudit, h: 7, dow: 1, catchUpWeekly: true, priority: 0, budgetMs: 15_000 },
+    { t: "infra-usage-alert", fn: taskInfraUsageAlert, h: 7, continuable: true, budgetMs: 15_000, minimumMs: 12_000 },
     { t: "payroll-wa",               fn: taskPayrollWA,              h: 18, dow: 6 },
     // wa-snapshot DIMATIKAN dari jadwal (4 Jul 2026) — window review pattern WA
     // selesai 12 Jun; dump harian percakapan grup tak lagi diperlukan. Fungsi
@@ -85,81 +88,26 @@ async function taskTick({ cleanupOnly = false } = {}) {
     { t: "material-pulang-reminder", fn: taskMaterialPulangReminder, h: 22 },
   ];
 
-  const ran = [];
-  const failures = [];
-  // Retry media berjalan pada setiap tick, termasuk malam hari: URL Fonnte
-  // sementara tidak boleh menunggu sampai jam kerja berikutnya.
-  if (!cleanupOnly) {
-    const retryBudget = cronTaskBudget(tickStartedAt, 11_000);
-    if (!retryBudget) return { hourWib: hour, ran, pending: 1, items_processed: ran.length };
-    try { await runWithCronLogging(sb, "payment-media-retry", () => taskRetryPaymentMedia(), { timeoutMs: retryBudget }); ran.push("payment-media-retry"); }
-    catch (e) {
-      console.error("[TICK] payment-media-retry", e.message);
-      failures.push({ task: 'payment-media-retry', error: e.message });
-      if (e?.code === "CRON_TIMEOUT") {
-        await log("TICK", `${hour}:00 WIB — retry media timeout; task lain ditunda ke tick berikutnya`, "WARNING");
-        return { ok: false, error: e.message, hourWib: hour, ran, pending: 1, timedOut: "payment-media-retry", items_processed: ran.length };
-      }
-    }
-  }
-  // Scan invoice PAID tanpa bukti tetap dibatasi jam kerja.
-  if (!cleanupOnly && hour >= 9 && hour <= 18) {
-    const scanBudget = cronTaskBudget(tickStartedAt, 6_500);
-    if (!scanBudget) return { ok: failures.length === 0, hourWib: hour, ran, pending: 1, failures, items_processed: ran.length };
-    try { await runWithCronLogging(sb, "bukti-bayar", () => taskScanBuktiBayar(), { timeoutMs: scanBudget }); ran.push("bukti-bayar"); }
-    catch (e) {
-      console.error("[TICK] bukti-bayar", e.message);
-      failures.push({ task: 'bukti-bayar', error: e.message });
-      // Promise yang timeout tidak dapat dibatalkan secara paksa. Jangan mulai task
-      // lain pada invocation yang sama agar tidak terjadi overlap mutasi.
-      if (e?.code === "CRON_TIMEOUT") {
-        await log("TICK", `${hour}:00 WIB — scan bukti timeout; task lain ditunda ke tick berikutnya`, "WARNING");
-        return { ok: false, error: e.message, hourWib: hour, ran, pending: 1, timedOut: "bukti-bayar", items_processed: ran.length };
-      }
-    }
-  }
-
-  // Task due hari ini (jamnya sudah tiba) & cocok dow/dom
-  const due = schedule.filter(s =>
-    (!cleanupOnly || s.cleanup) &&
-    hour >= s.h &&
-    (s.dow === undefined || s.dow === dow) &&
-    (s.dom === undefined || s.dom === dom)
-  );
+  const due = dueCronTasks(schedule, Date.now(), cleanupOnly).filter(s => s.untilHour === undefined || hour <= s.untilHour);
 
   // Mana yang BELUM jalan hari ini (cron_runs since WIB-midnight) → catch-up idempoten
   const midnightWibUtc = new Date(Date.UTC(nowWib.getUTCFullYear(), nowWib.getUTCMonth(), nowWib.getUTCDate()) - 7 * 3600000).toISOString();
   const todayRuns = [];
+  const weekStart = new Date(new Date(midnightWibUtc).getTime() - 7 * 86400_000).toISOString();
   for (let from = 0; ; from += 500) {
-    const { data, error } = await sb.from("cron_runs").select("task_name,status,started_at,metadata").gte("started_at", midnightWibUtc).order('started_at', { ascending: false }).order('id', { ascending: false }).range(from, from + 499);
+    const { data, error } = await sb.from("cron_runs").select("task_name,status,started_at,metadata")
+      .in('task_name', due.map(t => t.t)).gte("started_at", weekStart)
+      .order('started_at', { ascending: false }).order('id', { ascending: false }).range(from, from + 499);
     if (error) throw new Error('Riwayat cron gagal dibaca: ' + error.message);
     todayRuns.push(...(data || []));
     if ((data || []).length < 500) break;
   }
-  const outstanding = pendingCronTasks(due, todayRuns);
-
-  let count = 0, pending = 0;
-  for (const s of outstanding) {
-    const taskTimeoutMs = cronTaskBudget(tickStartedAt, ["backup", "field-report-reminder"].includes(s.t) ? 18_000 : 6_500);
-    if (count >= CAP || !taskTimeoutMs) { pending++; continue; }
-    try {
-      const result = await runWithCronLogging(sb, s.t, () => s.fn(), { timeoutMs: taskTimeoutMs });
-      ran.push(s.t); count++;
-      if ((s.cleanup || s.repeatable) && result?.has_more) pending++;
-    }
-    catch (e) {
-      console.error("[TICK]", s.t, e.message);
-      failures.push({ task: s.t, error: e.message });
-      if (e?.code === "CRON_TIMEOUT") {
-        pending += Math.max(1, outstanding.length - outstanding.indexOf(s));
-        break;
-      }
-      pending++;
-    }
-  }
-
-  await log("TICK", `${hour}:00 WIB — jalan: ${ran.join(", ") || "(tidak ada/selesai)"}${pending ? ` | sisa ${pending} (tick berikutnya)` : ""}`, "INFO");
-  return { ok: failures.length === 0, hourWib: hour, ran, pending, failures, items_processed: ran.length };
+  const outstanding = pendingCronTasks(due, todayRuns).filter(task => !task.intervalMs || !todayRuns.some(r =>
+    r.task_name === task.t && r.status === 'SUCCESS' && Date.now() - new Date(r.started_at).getTime() < task.intervalMs));
+  const result = await runCronQueue(outstanding, { startedAt: tickStartedAt,
+    run: (name, fn, options) => runWithCronLogging(sb, name, fn, options) });
+  await log("TICK", `${hour}:00 WIB — jalan: ${result.ran.join(", ") || "(tidak ada/selesai)"} | sisa ${result.pending}`, "INFO");
+  return { ...result, hourWib: hour };
 }
 
 
@@ -276,8 +224,11 @@ export default async function handler(req, res) {
     const handler = taskMap[task] || taskReminder;
     const taskKey = taskMap[task] ? task : "reminder";
 
-    const result = await runWithCronLogging(sb, taskKey, () => handler(), {
+    const guardedHandler = ['backup', 'infra-usage-alert', 'data-integrity-audit'].includes(taskKey)
+      ? () => withDispatcherLease(sb, handler) : handler;
+    const result = await runWithCronLogging(sb, taskKey, guardedHandler, {
       timeoutMs: taskKey === "payment-media-retry" ? 50_000 : ["tick", "cleanup-tick"].includes(taskKey) ? 45_000 : 25_000,
+      requireAudit: true,
     });
 
     return res.json({ ok:true, task, timestamp:new Date().toISOString(), ...result });

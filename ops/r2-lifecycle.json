@@ -38,7 +38,7 @@
     },
     {
       "id": "aclean-backup-60d",
-      "enabled": true,
+      "enabled": false,
       "conditions": { "prefix": "backup/" },
       "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 5184000 } }
     },

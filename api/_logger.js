@@ -135,6 +135,7 @@ export async function finishCronRun(sb, runId, {
   error_message = null,
   metadata = null,
   startedAtMs = null,     // optional: untuk compute duration kalau startCronRun gagal return id
+  strict = false,
 }) {
   if (!sb || !runId) return;
   try {
@@ -148,9 +149,10 @@ export async function finishCronRun(sb, runId, {
     if (startedAtMs) update.duration_ms = Date.now() - startedAtMs;
     if (metadata) update.metadata = metadata;
     const { error } = await sb.from("cron_runs").update(update).eq("id", runId);
-    if (error) console.warn("[LOGGER] cron_runs finish failed:", error.message);
+    if (error) throw error;
   } catch (err) {
     console.warn("[LOGGER] cron_runs finish failed:", err.message);
+    if (strict) throw Object.assign(new Error('Hasil cron belum tersimpan: ' + err.message), { code: 'CRON_AUDIT_WRITE_FAILED' });
   }
 }
 
@@ -159,6 +161,7 @@ export async function finishCronRun(sb, runId, {
 //   await runWithCronLogging(sb, "daily", async () => taskDaily(), { onResult: r => r.orders });
 export async function runWithCronLogging(sb, taskName, fn, opts = {}) {
   const runId = await startCronRun(sb, taskName, opts.metadata || null);
+  if (opts.requireAudit && !runId) throw new Error('Audit cron tidak tersimpan; task tidak dijalankan: ' + taskName);
   const startedAtMs = Date.now();
   let timer = null;
   try {
@@ -191,6 +194,7 @@ export async function runWithCronLogging(sb, taskName, fn, opts = {}) {
       status: wasSkipped ? "SKIPPED" : "SUCCESS",
       items_processed: items,
       startedAtMs,
+      strict: opts.requireAudit === true,
       metadata: result && typeof result === "object"
         ? Object.fromEntries(Object.entries(result).filter(([_, v]) => v !== null && v !== undefined).slice(0, 20))
         : null,

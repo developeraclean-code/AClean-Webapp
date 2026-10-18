@@ -28,20 +28,42 @@ export function cronItemsProcessed(result) {
 
 export function pendingCronTasks(due, runs, now = Date.now()) {
   const latest = new Map();
-  for (const run of runs) {
+  const relevant = runs.filter(run => {
+    const task = due.find(t => t.t === run.task_name);
+    return task && (!task.dueSince || new Date(run.started_at).getTime() >= task.dueSince);
+  });
+  for (const run of relevant) {
     if (!latest.has(run.task_name) || new Date(run.started_at) > new Date(latest.get(run.task_name).started_at)) latest.set(run.task_name, run);
   }
   return due.filter(task => {
-    if (!task.cleanup && !task.repeatable && runs.some(r => r.task_name === task.t && ['SUCCESS', 'SKIPPED'].includes(r.status))) return false;
+    if (!task.cleanup && !task.continuable && !task.repeatable && relevant.some(r => r.task_name === task.t && ['SUCCESS', 'SKIPPED'].includes(r.status))) return false;
     const run = latest.get(task.t);
     if (!run) return true;
     if (run.status === 'RUNNING' && new Date(run.started_at).getTime() > now - 20 * 60_000) return false;
     if (run.status === 'SKIPPED') return task.repeatable === true;
-    if (run.status === 'SUCCESS') return task.repeatable === true || task.cleanup === true && run.metadata?.has_more === true;
+    if (run.status === 'SUCCESS') return task.repeatable === true || (task.cleanup === true || task.continuable === true) && run.metadata?.has_more === true;
+    if (['FAILED', 'TIMEOUT'].includes(run.status) && new Date(run.started_at).getTime() > now - 5 * 60_000) return false;
     return true;
   }).sort((a, b) => {
     // A completed batch must not starve tasks that have not run yet.
-    const rank = t => latest.get(t.t)?.metadata?.has_more === true ? 1 : 0;
-    return rank(a) - rank(b);
+    const rank = t => !latest.has(t.t) ? 0 : ['FAILED', 'TIMEOUT'].includes(latest.get(t.t).status) ? 2 : 1;
+    return rank(a) - rank(b) || (a.priority ?? 10) - (b.priority ?? 10)
+      || new Date(latest.get(a.t)?.started_at || 0) - new Date(latest.get(b.t)?.started_at || 0);
+  });
+}
+
+export function dueCronTasks(schedule, now = Date.now(), cleanupOnly = false) {
+  const wib = new Date(now + 7 * 3600_000), hour = wib.getUTCHours();
+  const midnight = Date.UTC(wib.getUTCFullYear(), wib.getUTCMonth(), wib.getUTCDate()) - 7 * 3600_000;
+  return schedule.flatMap(task => {
+    if (cleanupOnly && !task.cleanup) return [];
+    if (task.catchUpWeekly && task.dow !== undefined) {
+      let days = (wib.getUTCDay() - task.dow + 7) % 7;
+      if (!days && hour < task.h) days = 7;
+      return [{ ...task, dueSince: midnight - days * 86400_000 + task.h * 3600_000 }];
+    }
+    if (hour < task.h || task.dow !== undefined && task.dow !== wib.getUTCDay()
+      || task.dom !== undefined && task.dom !== wib.getUTCDate()) return [];
+    return [{ ...task, dueSince: midnight }];
   });
 }

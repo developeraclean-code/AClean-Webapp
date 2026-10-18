@@ -34,7 +34,7 @@ export async function monitor(req, res) {
       let health = (errorCount === 0 && failed === 0 && staleRunning === 0) ? "healthy"
         : (errorCount < 3 && failed < 3 && staleRunning < 3) ? "degraded" : "unhealthy";
       if (infra?.level === "critical") health = "unhealthy";
-      else if (infra?.level === "warning" && health === "healthy") health = "degraded";
+      else if (["warning", "unknown"].includes(infra?.level) && health === "healthy") health = "degraded";
 
       return res.status(200).json({
         status: "ok",

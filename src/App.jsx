@@ -4177,7 +4177,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
   }, [activeMenu, currentUser]);
 
   const renderMonitoring = () => (
-    <MonitoringView monitorData={monitorData} setMonitorLoading={setMonitorLoading} setMonitorData={setMonitorData} _apiHeaders={_apiHeaders} supabase={supabase}
+    <MonitoringView currentUser={currentUser} monitorData={monitorData} setMonitorLoading={setMonitorLoading} setMonitorData={setMonitorData} _apiHeaders={_apiHeaders} supabase={supabase}
       onNavigate={(menu, focus) => { if (menu === "maintenance") setMaintenanceMonitorFocus(focus || null); setActiveMenu(menu); }} />
   );
 
