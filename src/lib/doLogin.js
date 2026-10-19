@@ -1,5 +1,16 @@
 // doLogin — autentikasi user (Supabase Auth) + set session state + lockout attempts.
 // Diekstrak dari App.jsx (Fase 3, pola ctx).
+export function isInvalidCredentials(error) {
+  return ["invalid_credentials", "invalid_login_credentials"].includes(error?.code)
+    || /^invalid login credentials\.?$/i.test(error?.message || "");
+}
+
+export function loginServiceError(error) {
+  if (Number(error?.status) === 429) return "Layanan login membatasi permintaan. Tunggu sebentar sebelum mencoba lagi; ini bukan kesalahan password.";
+  if (error?.code === "email_not_confirmed") return "Email akun belum dikonfirmasi. Hubungi Owner.";
+  return "Layanan login atau koneksi sedang bermasalah. Coba kembali setelah pulih; percobaan ini tidak dihitung sebagai password salah.";
+}
+
 export async function doLogin(email, pass, {
   _ls, _lsSave, addAgentLog, loginAttempts, requestPushPermission, setActiveMenu,
   setActiveRole, setCurrentUser, setIsLoggedIn, setLockoutUntil, setLoginAttempts,
@@ -26,7 +37,7 @@ export async function doLogin(email, pass, {
           .from("user_profiles").select("*").eq("id", data.user.id).single();
         if (profileErr) {
           console.error("[LOGIN_PROFILE_LOAD_ERROR]", profileErr.message);
-          setLoginError("Gagal load profil pengguna. Silakan coba lagi. (Err: " + profileErr.code + ")");
+          setLoginError("Login diterima, tetapi profil belum dapat dimuat. Coba kembali setelah koneksi pulih; ini bukan kesalahan password.");
           await supabase.auth.signOut();
           return;
         }
@@ -57,6 +68,13 @@ export async function doLogin(email, pass, {
       // ── Fallback dihapus: semua login wajib via Supabase Auth ──
       // Tidak ada lagi login dengan password hardcode
 
+      // HTTP 400 alone is not proof of bad credentials; database/Auth failures
+      // and rate limits must never consume the password lockout counter.
+      if (!isInvalidCredentials(error)) {
+        setLoginError(loginServiceError(error));
+        return;
+      }
+
       // SEC-07: increment attempt counter
       const newAttempts = loginAttempts + 1;
       setLoginAttempts(newAttempts);
@@ -70,6 +88,6 @@ export async function doLogin(email, pass, {
         setLoginError(`Email atau password salah. (${newAttempts}/5 percobaan)`);
       }
     } catch (err) {
-      setLoginError("Terjadi kesalahan: " + err.message);
+      setLoginError(loginServiceError(err));
     }
 }

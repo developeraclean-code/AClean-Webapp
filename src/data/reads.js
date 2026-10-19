@@ -22,11 +22,11 @@ export const fetchBootstrapOrders = (supabase, sinceDate, untilDate) =>
 
 // Incremental: hanya order yang berubah/baru sejak `since` (updated_at).
 // Polling live pakai ini agar egress minim — saat idle → 0 baris.
-export const fetchOrdersSince = (supabase, since) =>
+export const fetchOrdersSince = (supabase, since, { signal } = {}) =>
   supabase.from("orders")
     .select(ORDER_COLS)
     .gt("updated_at", since)
-    .order("updated_at", { ascending: true }).limit(200);
+    .order("updated_at", { ascending: true }).limit(200).abortSignal(signal);
 
 // Server-side search order — ilike di kolom yang relevan, batas 100 hasil.
 export const searchOrdersServer = (supabase, query) => {
@@ -148,11 +148,11 @@ export const fetchInvoicesByIds = (supabase, ids) =>
 
 // Incremental: hanya invoice yang berubah/baru sejak `since` (updated_at, set on insert & update).
 // Dipakai polling live agar egress minim — saat tak ada perubahan → 0 baris.
-export const fetchInvoicesSince = (supabase, since) =>
+export const fetchInvoicesSince = (supabase, since, { signal } = {}) =>
   supabase.from("invoices")
     .select(INVOICE_COLS)
     .gt("updated_at", since)
-    .order("updated_at", { ascending: true }).limit(300);
+    .order("updated_at", { ascending: true }).limit(300).abortSignal(signal);
 
 // Server-side search invoice — multi-kolom: identitas + tim + layanan + bayar + status.
 // Karakter spesial (koma, kurung) di-strip untuk hindari masalah parser .or() Supabase.
@@ -339,11 +339,11 @@ export const fetchReportWorkStats = async (supabase, sinceDate) => {
 
 // Incremental: hanya laporan yang berubah/baru sejak `since` (updated_at, set on insert & update).
 // Polling live pakai ini agar egress minim — payload berat (foto/json) hanya saat ada perubahan.
-export const fetchServiceReportsSince = (supabase, since) =>
+export const fetchServiceReportsSince = (supabase, since, { signal } = {}) =>
   supabase.from("service_reports")
     .select(REPORT_COLS)
     .gt("updated_at", since)
-    .order("updated_at", { ascending: true }).limit(500);
+    .order("updated_at", { ascending: true }).limit(500).abortSignal(signal);
 
 // Server-side search laporan — jangkau report lama di luar cap startup (PostgREST max 1000 row).
 // Pola sama searchInvoicesServer/searchOrdersServer (sudah terbukti). Multi-kolom identitas + tim.

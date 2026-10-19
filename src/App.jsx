@@ -1,12 +1,14 @@
 import { ARA_INTERNAL_DEFAULT, resolveAraBrain } from "./lib/araPolicy.js";
 import { planningWeekOffset } from "./lib/teamPlanning.js";
 import { useState, useEffect, useRef, useCallback, useMemo, Component, lazy, Suspense } from "react";
-import { supabase } from "./supabaseClient.js";
+import { supabase, supabaseReadTransport } from "./supabaseClient.js";
 import { normalizePhone, samePhone } from "./lib/phone.js";
 import { getLocalDate, getLocalISOString, isWorkingHours } from "./lib/dateTime.js";
 import { safeJsonParse } from "./lib/safeJson.js";
 import { useDebounce } from "./lib/useDebounce.js";
-import { cachedFetch, invalidateCache } from "./lib/fetchCache.js";
+import { cachedFetch, invalidateCache, setFetchCacheScope } from "./lib/fetchCache.js";
+import { startAdaptivePolling } from "./lib/adaptivePolling.js";
+import DataConnectionBanner from "./components/DataConnectionBanner.jsx";
 import { reportError } from "./lib/reportError.js";
 import { fotoUrl } from "./lib/fotoUrl.js";
 import {
@@ -44,7 +46,7 @@ import {
   fetchInvoicesSince, fetchServiceReportsSince, fetchOrdersSince,
   searchInvoicesServer, searchOrdersServer, searchServiceReportsServer, searchCustomersServer,
   fetchInventoryUnits, fetchAllExpenses, fetchPayments, fetchDispatchLogs,
-  fetchAppSettings, fetchUserProfiles, fetchUserAccounts,
+  fetchAppSettings, fetchUserAccounts,
   fetchWaConversations, fetchPriceList, fetchAraBrain,
   lookupCustomersByPhone, fetchKasbonRequests, fetchInvoiceById, fetchInvoicesByIds,
   fetchServiceReportById,
@@ -544,6 +546,12 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
   const [emergencySetupOpen, setEmergencySetupOpen] = useState(false);
   const [dataLoading, setDataLoading] = useState(false);
   const [bootstrapReady, setBootstrapReady] = useState(false);
+  const [bootstrapWarning, setBootstrapWarning] = useState("");
+  const [readHealth, setReadHealth] = useState(supabaseReadTransport.getSnapshot);
+  const retryBootstrapRef = useRef(null);
+  const loginInFlightRef = useRef(false);
+  const [loginLoading, setLoginLoading] = useState(false);
+  useEffect(() => supabaseReadTransport.subscribe(setReadHealth), []);
   const [paymentsData, setPaymentsData] = useState([]);
   const [dispatchLogs, setDispatchLogs] = useState([]);
   const [loginScreen, setLoginScreen] = useState("login"); // "login" | "select_account"
@@ -2367,7 +2375,14 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
     setShowUnitPresetModal, setUnitPresetHistory, setUnitPresetSelected, showNotif,
     submitLaporanLock, supabase,
   });
-  const doLogin = (email, pass) => doLoginLib(email, pass, { _ls, _lsSave, addAgentLog, loginAttempts, requestPushPermission, setActiveMenu, setActiveRole, setCurrentUser, setIsLoggedIn, setLockoutUntil, setLoginAttempts, setLoginError, showNotif, supabase });
+  const doLogin = async (email, pass) => {
+    if (loginInFlightRef.current) return;
+    loginInFlightRef.current = true;
+    setLoginLoading(true);
+    try {
+      await doLoginLib(email, pass, { _ls, _lsSave, addAgentLog, loginAttempts, requestPushPermission, setActiveMenu, setActiveRole, setCurrentUser, setIsLoggedIn, setLockoutUntil, setLoginAttempts, setLoginError, showNotif, supabase });
+    } finally { loginInFlightRef.current = false; setLoginLoading(false); }
+  };
 
   const doLogout = async () => {
     invalidateCache();
@@ -2682,7 +2697,10 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
 
   // ── Supabase: Load data + Realtime saat login ──
   useEffect(() => {
+    setFetchCacheScope(isLoggedIn ? currentUser?.id : null);
     if (!isLoggedIn) return;
+    let disposed = false, loading = null, wasPaused = false;
+    const deferredTimers = [];
     let lastFullLoadAt = 0;
     let settingsLoadAlerted = false;
 
@@ -2704,14 +2722,16 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
 
     // Wrapper (Fase 3, pola ctx): loadAll (bootstrap data) pindah ke lib/loadAllData.
     // Dipanggil dari initLoadAll (bawah) & auto-refresh polling.
-    const loadAll = (options = {}) => loadAllData({
+    const loadAll = (options = {}) => {
+      if (loading) return loading;
+      loading = loadAllData({
       ...options,
       _ls, _lsSave, buildPriceListFromDB, cachedFetch, currentUser, dedupReportsByJob,
       fetchBootstrapInvoices, fetchBootstrapOrders, fetchBootstrapServiceReports,
       fetchAppSettings, fetchAraBrain, fetchCustomers, fetchDispatchLogs, fetchInventory,
       fetchInventoryTransactions, fetchInventoryUnits, fetchInvoices, fetchOrders,
       fetchPayments, fetchPriceList, fetchServiceReports, fetchUserAccounts,
-      fetchUserProfiles, fetchWaConversations, parseInvoiceRow, parseLaporanRow,
+      fetchWaConversations, parseInvoiceRow, parseLaporanRow,
       setAppSettings, setBonusCategories, setBrainMd, setBrainMdCustomer, setCronJobs,
       setCustomersData, setDispatchLogs, setInvTxData, setInvUnitsData, setInventoryData,
       setInvoicesData, setLaporanReports, setLlmApiKey, setLlmModel, setLlmProvider,
@@ -2720,35 +2740,49 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
       setPriceListSyncedAt, setProjectDailyReports, setTeknisiData, setUserAccounts,
       setWaConversations, setWaProvider, supabase, today: TODAY,
       onSettingsLoadError, onSettingsLoadSuccess,
+      isActive: () => !disposed,
+      }).finally(() => { loading = null; });
+      return loading;
+    };
+
+    const reloadBootstrap = async () => {
+      if (disposed) return;
+      setDataLoading(true);
+      try {
+        const result = await loadAll({ bootstrapMode: "critical", onCriticalReady: ({ failed }) => {
+          if (disposed) return;
+          setBootstrapReady(true);
+          setDataLoading(false);
+          setBootstrapWarning(failed.length ? `Belum berhasil memuat: ${failed.join(", ")}. Angka yang tampil mungkin belum terbaru.` : "");
+        } });
+        if (!disposed && result?.ok) lastFullLoadAt = Date.now();
+      } catch (error) {
+        if (!disposed) setBootstrapWarning("Data awal belum berhasil dimuat. Coba kembali setelah layanan pulih.");
+      } finally {
+        if (!disposed) { setBootstrapReady(true); setDataLoading(false); }
+      }
+    };
+    retryBootstrapRef.current = reloadBootstrap;
+    const unsubscribeHealth = supabaseReadTransport.subscribe(health => {
+      if (health.state !== "healthy") wasPaused = true;
+      else if (wasPaused) { wasPaused = false; void reloadBootstrap(); }
     });
 
     const initLoadAll = async () => {
       const isValid = await measureAsync("bootstrap.session_check", checkSessionValidity);
-      if (!isValid) return;
-      setDataLoading(true);
+      if (!isValid || disposed) return;
       setBootstrapReady(false);
-      let criticalReady = false;
-      measureAsync("bootstrap.initial_total", () => loadAll({
-        bootstrapMode: "critical",
-        onCriticalReady: () => {
-          criticalReady = true;
-          setBootstrapReady(true);
-          setDataLoading(false);
-        },
-      })).finally(() => {
-        lastFullLoadAt = Date.now();
-        if (!criticalReady) {
-          setBootstrapReady(true);
-          setDataLoading(false);
-        }
+      measureAsync("bootstrap.initial_total", reloadBootstrap).finally(() => {
+        if (disposed) return;
         // GAP-7: Jalankan check stuck jobs segera setelah data load, lalu setiap 15 menit
-        setTimeout(() => checkStuckJobs(), 5000); // delay 5 detik agar state ready
+        deferredTimers.push(setTimeout(() => checkStuckJobs(), 5000));
         startStuckCheck();
         // Auto-sync: order masih DISPATCHED/ON_SITE tapi laporannya sudah VERIFIED → set COMPLETED
-        setTimeout(async () => {
+        deferredTimers.push(setTimeout(async () => {
           try {
             const { data: verifiedLaporan } = await supabase
               .from("service_reports").select("job_id").eq("status", "VERIFIED");
+            if (disposed) return;
             if (!verifiedLaporan?.length) return;
             const verifiedJobIds = new Set(verifiedLaporan.map(r => r.job_id).filter(Boolean));
             setOrdersData(prev => {
@@ -2759,7 +2793,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
               return prev.map(o => toFix.some(f => f.id === o.id) ? { ...o, status: "COMPLETED" } : o);
             });
           } catch (e) { console.warn("Auto-complete sync skip:", e?.message); }
-        }, 10000); // 10 detik setelah data load
+        }, 10000)); // 10 detik setelah data load
       });
     };
 
@@ -2775,7 +2809,11 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
       if (Date.now() - lastFullLoadAt < minimumAge) return;
       loadAll()
-        .then(() => { lastFullLoadAt = Date.now(); })
+        .then(result => {
+          if (disposed) return;
+          if (result?.ok) { lastFullLoadAt = Date.now(); setBootstrapWarning(""); }
+          else if (result?.failed?.length) setBootstrapWarning(`Belum berhasil memuat: ${result.failed.join(", ")}. Data terakhir tetap ditampilkan.`);
+        })
         .catch(e => console.warn("Full reconciliation skip:", e?.message));
     };
     const _statsTimer = setInterval(() => {
@@ -2796,8 +2834,8 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
 
     // ── Health-tracking polling (temuan audit 15 Jul 2026): .catch(() => {}) di semua
     // poll di bawah membuat kegagalan berturut-turut 100% senyap — data bisa basi
-    // sepanjang sesi tanpa indikator apa pun. Bukan alert tiap gagal (network blip
-    // sesekali wajar), tapi setelah beberapa siklus berturut-turut (~4-5 menit).
+    // sepanjang sesi tanpa indikator apa pun. Log setelah beberapa siklus gagal;
+    // circuit banner tampil lebih awal, dan retry polling memakai jeda bertahap.
     const _pollFailStreak = {};
     const _pollAlerted = {};
     const POLL_FAIL_ALERT_AT = 3;
@@ -2819,17 +2857,16 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
       }
     };
 
-    // Inkremental: hanya tarik baris yang BERUBAH sejak poll terakhir (updated_at > cursor),
-    // lalu merge by id ke state. Saat idle → 0 baris → egress ~nol. Cursor mulai dari waktu
-    // efek (minus buffer 2 mnt utk toleransi skew jam). DELETE ditutup oleh loadAll penuh tiap 30 mnt.
+    // Incremental cursors advance only after successful reads. Reconciliation of
+    // deleted rows remains on the 6-hour full refresh, not a 30-minute full fetch.
     let _orderCursor  = new Date(Date.now() - 2 * 60 * 1000).toISOString();
     let _invoiceCursor = new Date(Date.now() - 2 * 60 * 1000).toISOString();
     let _reportCursor = new Date(Date.now() - 2 * 60 * 1000).toISOString();
 
-    const _pollOrders = setInterval(() => {
-      if (!_shouldPoll()) return;
-      fetchOrdersSince(supabase, _orderCursor).then(({ data, error }) => {
-        if (error) { _reportPollHealth("orders", false); return; }
+    const _pollOrders = startAdaptivePolling({ canRun: _shouldPoll, intervalMs: POLL_MS,
+      load: signal => fetchOrdersSince(supabase, _orderCursor, { signal }),
+      onError: () => _reportPollHealth("orders", false),
+      onResult: ({ data }) => {
         _reportPollHealth("orders", true);
         if (!data || data.length === 0) return;
         _orderCursor = data[data.length - 1].updated_at || _orderCursor;
@@ -2838,13 +2875,13 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
           data.forEach(r => map.set(r.id, r));
           return Array.from(map.values()).sort((a, b) => (b.date || "") > (a.date || "") ? 1 : -1);
         });
-      }).catch(() => { _reportPollHealth("orders", false); });
-    }, POLL_MS);
+      },
+    });
 
-    const _pollInvoices = setInterval(() => {
-      if (!_shouldPoll()) return;
-      fetchInvoicesSince(supabase, _invoiceCursor).then(({ data, error }) => {
-        if (error) { _reportPollHealth("invoices", false); return; }
+    const _pollInvoices = startAdaptivePolling({ canRun: _shouldPoll, intervalMs: POLL_MS,
+      load: signal => fetchInvoicesSince(supabase, _invoiceCursor, { signal }),
+      onError: () => _reportPollHealth("invoices", false),
+      onResult: ({ data }) => {
         _reportPollHealth("invoices", true);
         if (!data || data.length === 0) return;
         // Query order updated_at ASC → baris terakhir = paling baru. Pakai langsung (format-agnostic).
@@ -2854,13 +2891,13 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
           data.map(parseInvoiceRow).forEach(r => map.set(r.id, r));
           return Array.from(map.values()).sort((a, b) => (b.created_at || "") > (a.created_at || "") ? 1 : -1);
         });
-      }).catch(() => { _reportPollHealth("invoices", false); });
-    }, POLL_MS);
+      },
+    });
 
-    const _pollReports = setInterval(() => {
-      if (!_shouldPoll()) return;
-      fetchServiceReportsSince(supabase, _reportCursor).then(({ data, error }) => {
-        if (error) { _reportPollHealth("laporan", false); return; }
+    const _pollReports = startAdaptivePolling({ canRun: _shouldPoll, intervalMs: POLL_MS,
+      load: signal => fetchServiceReportsSince(supabase, _reportCursor, { signal }),
+      onError: () => _reportPollHealth("laporan", false),
+      onResult: ({ data }) => {
         _reportPollHealth("laporan", true);
         if (!data || data.length === 0) return;
         // Query order updated_at ASC → baris terakhir = paling baru. Pakai langsung (format-agnostic).
@@ -2871,34 +2908,38 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
           return dedupReportsByJob(Array.from(map.values()))
             .sort((a, b) => (b.submitted_at || "") > (a.submitted_at || "") ? 1 : -1);
         });
-      }).catch(() => { _reportPollHealth("laporan", false); });
-    }, POLL_MS);
+      },
+    });
 
     // WA monitor: refresh daftar percakapan saat monitor aktif (gantikan ch7/ch8 postgres_changes
     // yang sudah no-op — wa_conversations/wa_messages tidak ada di publication realtime).
     const _waMonitorOn = appSettings?.wa_monitor_enabled === "true";
-    const _pollWa = _waMonitorOn ? setInterval(() => {
-      if (!_shouldPoll()) return;
-      fetchWaConversations(supabase, 100).then(res => {
-        if (res.error) { _reportPollHealth("wa", false); return; }
+    const _pollWa = _waMonitorOn ? startAdaptivePolling({ canRun: _shouldPoll, intervalMs: POLL_MS,
+      load: signal => fetchWaConversations(supabase, 100).abortSignal(signal),
+      onError: () => _reportPollHealth("wa", false),
+      onResult: res => {
         _reportPollHealth("wa", true);
         if (res.data) setWaConversations(res.data);
-      }).catch(() => { _reportPollHealth("wa", false); });
-    }, POLL_MS) : null;
+      },
+    }) : null;
 
     // Payment inbox has its own role/settings-aware, visible-tab-only 24h hook.
 
     return () => {
-      clearInterval(_pollOrders);
-      clearInterval(_pollInvoices);
-      clearInterval(_pollReports);
-      if (_pollWa) clearInterval(_pollWa);
+      disposed = true;
+      unsubscribeHealth();
+      if (retryBootstrapRef.current === reloadBootstrap) retryBootstrapRef.current = null;
+      deferredTimers.forEach(clearTimeout);
+      _pollOrders.stop();
+      _pollInvoices.stop();
+      _pollReports.stop();
+      _pollWa?.stop();
 
       clearInterval(_statsTimer);
       document.removeEventListener("visibilitychange", _onVisibilityRefresh);
       if (stuckCheckTimer.current) clearInterval(stuckCheckTimer.current);
     };
-  }, [isLoggedIn]);
+  }, [isLoggedIn, currentUser?.id]);
   // ── Helper: parse materials_detail JSON safely ──
   // Nama prefix yang menandakan item adalah JASA (bukan material)
   const jasaSvcNames = ["Cleaning /", "Install /", "Repair /", "Complain /", "Jasa ", "Pemasangan ", "Bongkar ", "Vacum ", "Flaring", "Flushing"];
@@ -4397,9 +4438,9 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
                 placeholder="••••••••"
                 style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "11px 14px", color: cs.text, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
             </div>
-            <button onClick={() => doLogin(loginEmail, loginPassword)}
+            <button disabled={loginLoading} onClick={() => doLogin(loginEmail, loginPassword)}
               style={{ width: "100%", background: "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", color: "#0a0f1e", padding: "13px", borderRadius: 10, cursor: "pointer", fontWeight: 800, fontSize: 15, marginBottom: 16 }}>
-              Masuk →
+              {loginLoading ? "Memeriksa login…" : "Masuk →"}
             </button>
 
             {/* Info akun */}
@@ -4604,6 +4645,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
               )}
             </div>
           )}
+          <DataConnectionBanner health={readHealth} warning={bootstrapWarning} loading={dataLoading} onRefresh={() => retryBootstrapRef.current?.()} />
           <ViewErrorBoundary>
             <Suspense fallback={<div style={{display:"flex",justifyContent:"center",alignItems:"center",minHeight:200,color:cs.muted,fontSize:14}}>Memuat...</div>}>
               {renderContent()}

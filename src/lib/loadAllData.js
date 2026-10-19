@@ -1,8 +1,8 @@
 import { resolveAraBrain } from "./araPolicy.js";
 // loadAllData — bootstrap: muat SEMUA data awal dari Supabase (orders, invoices,
 // customers, inventory, laporan, settings, users, WA, dll) + hydrate cache & state.
-// Diekstrak dari App.jsx (Fase 3, pola ctx). 49 dependency dioper via ctx. Body
-// verbatim. Dipanggil dari efek init & auto-refresh polling (nama tetap `loadAll`).
+// Diekstrak dari App.jsx (Fase 3, pola ctx). Dipanggil dari efek init,
+// pemulihan koneksi, dan rekonsiliasi berkala (nama wrapper tetap `loadAll`).
 import { flushPerfMetrics, recordPerfMetric } from "./perfMetrics.js";
 import { requireAppSettingsResult } from "./settingsPersistence.js";
 import { normalizeBonusCategories } from "./bonusSettings.js";
@@ -23,7 +23,7 @@ export async function loadAllData({
   fetchAppSettings, fetchAraBrain, fetchCustomers, fetchDispatchLogs, fetchInventory,
   fetchInventoryTransactions, fetchInventoryUnits, fetchInvoices, fetchOrders,
   fetchPayments, fetchPriceList, fetchServiceReports, fetchUserAccounts,
-  fetchUserProfiles, fetchWaConversations, parseInvoiceRow, parseLaporanRow,
+  fetchWaConversations, parseInvoiceRow, parseLaporanRow,
   fetchBootstrapInvoices, fetchBootstrapOrders, fetchBootstrapServiceReports,
   setAppSettings, setBonusCategories, setBrainMd, setBrainMdCustomer, setCronJobs,
   setCustomersData, setDispatchLogs, setInvTxData, setInvUnitsData, setInventoryData,
@@ -31,7 +31,7 @@ export async function loadAllData({
   setOrdersData, setPaymentsData, setPriceListData,
   setPriceListCache, setPriceListSyncedAt, setProjectDailyReports, setTeknisiData, setUserAccounts,
   setWaConversations, setWaProvider, supabase, bootstrapMode = "full",
-  onCriticalReady, onSettingsLoadError, onSettingsLoadSuccess, today,
+  onCriticalReady, onSettingsLoadError, onSettingsLoadSuccess, today, isActive = () => true,
 }) {
         const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
         const criticalBootstrap = bootstrapMode === "critical";
@@ -62,6 +62,9 @@ export async function loadAllData({
           criticalBootstrap ? Promise.resolve({ data: null, error: null }) : cachedFetch("inv_units", () => fetchInventoryUnits(supabase)),
         ]);
         const [ordersRes, invoicesRes, customersRes, inventoryRes, laporanRes, invUnitsRes] = results.map(r => r.status === "fulfilled" ? r.value : { error: r.reason });
+        if (!isActive()) return;
+        const failed = [["pekerjaan", ordersRes], ["invoice", invoicesRes], ["laporan", laporanRes], ["inventori", inventoryRes]]
+          .filter(([, result]) => result.error).map(([name]) => name);
         // Selalu pakai data DB jika tidak error (bahkan array kosong = data nyata dari DB)
         // Jika error = fallback ke demo data yang sudah di-init
         if (!ordersRes.error && ordersRes.data) setOrdersData(ordersRes.data);
@@ -89,10 +92,13 @@ export async function loadAllData({
             reports: laporanRes.data?.length || 0,
             inventory: inventoryRes.data?.length || 0,
           });
-          onCriticalReady?.();
+          onCriticalReady?.({ failed });
+          // Do not launch the secondary fan-out during a complete backend outage.
+          if (failed.length === 4) return { ok: false, failed };
           // Beri browser satu frame/tick untuk commit Dashboard sebelum request
           // pendukung dimulai, supaya UI dan RPC snapshot tidak antre di belakangnya.
           await new Promise(resolve => setTimeout(resolve, 0));
+          if (!isActive()) return;
         }
 
         // ── Expenses & agent_logs: load on-demand (opsi-A, bukan di sini) ──
@@ -104,17 +110,22 @@ export async function loadAllData({
         // latency ~1 dtk). Promise.resolve() memaksa request Supabase mulai SEKARANG
         // (builder lazy → tak jalan sampai di-then/await). Blok await di bawah tinggal
         // menunggu yang sudah in-flight — logika proses tiap blok TIDAK diubah. ──
-        const _pPayDisp = Promise.all([fetchPayments(supabase), fetchDispatchLogs(supabase)]);
-        const _pSettings = Promise.resolve(fetchAppSettings(supabase));
-        const _pTek = Promise.resolve(fetchUserProfiles(supabase));
-        const _pUA = Promise.resolve(fetchUserAccounts(supabase));
-        const _pWA = criticalBootstrap ? Promise.resolve({ data: null }) : Promise.resolve(fetchWaConversations(supabase, 100)).catch(() => ({ error: true }));
-        const _pPL = Promise.resolve(fetchPriceList(supabase));
-        const _pBrain = criticalBootstrap ? Promise.resolve({ data: null }) : Promise.resolve(fetchAraBrain(supabase));
+        const read = fn => Promise.resolve().then(fn).catch(error => ({ error }));
+        const _pPayDisp = Promise.all([read(() => fetchPayments(supabase)), read(() => fetchDispatchLogs(supabase))]);
+        const _pSettings = read(() => fetchAppSettings(supabase));
+        // Both consumers need the same columns. One request, with the larger
+        // existing bound, supplies technician choices AND the account panel.
+        const _pUsers = read(() => fetchUserAccounts(supabase));
+        const _pTek = _pUsers;
+        const _pUA = _pUsers;
+        const _pWA = criticalBootstrap ? Promise.resolve({ data: null }) : read(() => fetchWaConversations(supabase, 100));
+        const _pPL = read(() => fetchPriceList(supabase));
+        const _pBrain = criticalBootstrap ? Promise.resolve({ data: null }) : read(() => fetchAraBrain(supabase));
 
         // GAP 3: Load payments summary & dispatch recent (untuk dashboard)
         try {
           const [payRes, dispRes] = await _pPayDisp;
+          if (!isActive()) return;
           if (!payRes.error && payRes.data) setPaymentsData(payRes.data);
           if (!dispRes.error && dispRes.data) setDispatchLogs(dispRes.data);
         } catch (e) { /* tabel belum ada, skip */ }
@@ -122,6 +133,7 @@ export async function loadAllData({
         // Load app_settings dari Supabase DB (backup dari localStorage)
         try {
           const setRes = await _pSettings;
+          if (!isActive()) return;
           const settingsRows = requireAppSettingsResult(setRes);
           if (settingsRows) {
             const sMap = Object.fromEntries(settingsRows.map(s => [s.key, s.value]));
@@ -228,6 +240,7 @@ export async function loadAllData({
         // Load Teknisi dari Supabase — fallback ke TEKNISI_DATA jika kosong/error
         try {
           const tekRes = await _pTek;
+          if (!isActive()) return;
           if (!tekRes.error && tekRes.data && tekRes.data.length > 0) {
             const tekList = tekRes.data.filter(u => {
               const r = (u.role || "").toLowerCase();
@@ -250,6 +263,7 @@ export async function loadAllData({
         // Load semua user → userAccounts (untuk panel manage user)
         try {
           const uaRes = await _pUA;
+          if (!isActive()) return;
           if (!uaRes.error && uaRes.data && uaRes.data.length > 0) {
             const roleColors = { owner: "#f59e0b", admin: "#38bdf8", finance: "#10b981", teknisi: "#22c55e", helper: "#a78bfa" };
             const normalized = uaRes.data.map(u => ({
@@ -269,12 +283,14 @@ export async function loadAllData({
         // Load WA conversations dari Supabase (tabel opsional)
         try {
           const waRes = await _pWA;
+          if (!isActive()) return;
           if (!waRes.error && waRes.data && waRes.data.length > 0) setWaConversations(waRes.data);
         } catch (e) { /* WA tabel belum ada - skip */ }
 
         // ── GAP-03 FIX + PriceList state: Load price_list dari DB ──
         try {
           const plRes = await _pPL;
+          if (!isActive()) return;
           if (!plRes.error && plRes.data && plRes.data.length > 0) {
             // Satu jalur resmi: state UI dan cache kalkulasi invoice diperbarui
             // bersama. Modul ini tidak boleh menulis variabel global milik App.
@@ -287,6 +303,7 @@ export async function loadAllData({
         // ── BRAIN LOAD: Baca brain.md & brain_customer dari Supabase ara_brain ──
         try {
           const brainRes = await _pBrain;
+          if (!isActive()) return;
           if (!brainRes.error && brainRes.data && brainRes.data.length > 0) {
             const brainMap = Object.fromEntries(brainRes.data.map(r => [r.key, r.value]));
             // Load dari DB, TAPI skip jika v4.0 (use hardcoded v5.1 instead)
@@ -312,4 +329,5 @@ export async function loadAllData({
           // Sampling 10%, agregat harian; non-blocking dan gagal-silent selama rollout 186.
           void flushPerfMetrics(supabase, currentUser?.role || "Unknown");
         }
+        return { ok: failed.length === 0, failed };
 }
