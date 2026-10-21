@@ -18,6 +18,8 @@ const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 
 export default defineConfig({
   testDir: "./e2e",
+  // This suite has its own local-only provider/port and is run separately in CI.
+  testIgnore: "**/data-resilience.spec.js",
   timeout: 30000, // 30s per test — generous untuk slow PDF generation
   expect: {
     timeout: 5000,

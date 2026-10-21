@@ -32,15 +32,13 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
 
       - name: Install dependencies
-        # npm install (bukan npm ci) — optional deps platform-spesifik (rollup/esbuild
-        # linux) ter-resolve otomatis, konsisten dgn e2e.yml.
-        run: |
-          rm -rf node_modules package-lock.json
-          npm install --no-audit --no-fund
+        # Keep the tested lockfile; deleting it caused npm Arborist edgesOut
+        # crashes and silently selected a different dependency graph in CI.
+        run: npm ci --no-audit --no-fund
 
       - name: Lint (no silent catches)
         run: npm run lint
