@@ -82,6 +82,26 @@ it("does not double-process an image caption as a text payment before the R2 mir
   expect(mocks.stage).toHaveBeenCalledOnce();expect(mocks.classify).toHaveBeenCalledOnce();
   expect(requests.some(request=>/anthropic\.com|openai\.com/.test(request.origin||""))).toBe(false);
 });
+it("mencatat bukti teks dengan tanggal sebelum Rp sebagai PENDING, tanpa melunasi invoice",async()=>{
+  vi.stubEnv("LLM_API_KEY","synthetic-no-network");
+  const originalFetch=globalThis.fetch.getMockImplementation();
+  globalThis.fetch.mockImplementation(async(raw,options)=>{
+    const url=new URL(raw);
+    if(url.hostname==="api.anthropic.com")return new Response(JSON.stringify({content:[{text:JSON.stringify({is_payment:true,amount:2026,bank:"BCA",transfer_date:"2026-10-21"})}]}));
+    if(url.pathname==="/rest/v1/payment_suggestions" && options?.method==="POST"){
+      requests.push({path:url.pathname,method:options.method,body:JSON.parse(options.body)});
+      return new Response(null,{status:201});
+    }
+    if(url.pathname==="/rest/v1/orders")return new Response("[]");
+    return originalFetch(raw,options);
+  });
+  const message="m-Transfer :\nBERHASIL\n21 Oct 2026\n19:03:55\nKe 8830883011\nMALDA RETTA\nRp 195,000.00";
+  const res=await run({...body,type:"text",url:undefined,message});
+  expect(res.code).toBe(200);
+  const insert=requests.find(request=>request.path==="/rest/v1/payment_suggestions" && request.method==="POST");
+  expect(insert?.body).toMatchObject({amount:195000,status:"PENDING",source:"text"});
+  expect(requests.some(request=>/invoice_payments|apply_wa_payment/.test(request.path||""))).toBe(false);
+});
 it("preserves the captured payment toggle when the later settings refresh is unavailable",async()=>{
   vi.stubEnv("LLM_API_KEY","synthetic-no-network");
   captureResult.payment_detect_enabled=false;captureResult.media_job=null;captureResult.intake_status="RECORDED";

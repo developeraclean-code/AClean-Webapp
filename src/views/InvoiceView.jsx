@@ -1115,10 +1115,11 @@ return (
         {pendingPayments.map(sug => {
           const ai = sug.ai_extractions || {};
           const candidates = findInvoiceCandidates(sug);
-          const isManualRecovery = sug.match_source === "wa_image_review" || (!!sug.media_job_id && !sug.amount);
+          const isTextOnly = sug.source === "text" && !sug.image_url;
+          const isManualRecovery = isTextOnly || sug.match_source === "wa_image_review" || (!!sug.media_job_id && !sug.amount);
           const conf = isManualRecovery ? "REVIEW" : (sug.ai_extractions?.confidence || "?");
           const confColor = conf === "HIGH" ? "#10b981" : conf === "MEDIUM" ? "#f59e0b" : "#ef4444";
-          const selected = pendingSelectedInvoice[sug.id] || null;
+          const selected = pendingSelectedInvoice[sug.id] || sug.invoice_id || null;
           return (
             <div key={sug.id} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: 14, display: "flex", gap: 14 }}>
               {sug.image_url && <PaymentEvidencePreview url={sug.image_url} />}
@@ -1132,7 +1133,8 @@ return (
                 <div style={{ fontSize: 12, color: cs.text, marginBottom: 4 }}>🏦 {sug.bank || "—"} · 📅 {sug.transfer_date || "—"}</div>
                 <div style={{ fontSize: 12, color: cs.muted, marginBottom: 8 }}>👤 {sug.sender_name || "—"} ({sug.phone || "—"})</div>
                 {ai.notes && <div style={{ fontSize: 11, color: cs.muted, fontStyle: "italic", marginBottom: 8 }}>🧠 {ai.notes}</div>}
-                {isManualRecovery && sug.raw_message && <div style={{ fontSize: 11, color: cs.yellow, marginBottom: 8 }}>{sug.raw_message}</div>}
+                {isManualRecovery && sug.raw_message && <div style={{ fontSize: 11, color: cs.yellow, marginBottom: 8, whiteSpace: "pre-wrap" }}>{sug.raw_message}</div>}
+                {isTextOnly && <div style={{ fontSize: 11, color: cs.yellow, marginBottom: 8 }}>Bukti hanya berupa teks WA. Cocokkan dengan mutasi bank atau minta foto bukti sebelum mencatat pelunasan.</div>}
 
                 <div style={{ marginTop: 8, padding: 10, background: cs.surface, borderRadius: 8 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
@@ -1192,8 +1194,8 @@ return (
                 </div>
 
                 <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                  <button disabled={pendingPaymentBusy === sug.id || !selected} onClick={() => handleLinkPayment(sug)}
-                    style={{ background: "#10b98122", border: "1px solid #10b98155", color: "#10b981", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: selected ? "pointer" : "not-allowed", opacity: selected ? 1 : 0.5 }}>
+                  <button disabled={pendingPaymentBusy === sug.id || !selected || isTextOnly} onClick={() => handleLinkPayment(sug)}
+                    style={{ background: "#10b98122", border: "1px solid #10b98155", color: "#10b981", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: selected && !isTextOnly ? "pointer" : "not-allowed", opacity: selected && !isTextOnly ? 1 : 0.5 }}>
                     ✓ Periksa & Link Pembayaran
                   </button>
                   <button disabled={pendingPaymentBusy === sug.id} onClick={() => handleRejectPayment(sug)}
