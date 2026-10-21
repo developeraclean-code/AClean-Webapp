@@ -1093,6 +1093,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
 
   // GAP 7 — Reactive agent logs
   const [agentLogs, setAgentLogs] = useState(AGENT_LOGS);
+  const agentLogSessionWarningRef = useRef(false);
   const addAgentLog = useCallback(async (action, detail, status = "SUCCESS") => {
     const now = new Date();
     const timeStr = now.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -1106,6 +1107,17 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
     }, ...prev].slice(0, 200));
     // Persist ke Supabase
     try {
+      // currentUser bisa masih tersimpan lokal saat JWT Supabase kedaluwarsa.
+      // Jangan kirim insert audit sebagai anon (RLS akan menolak 401).
+      const { data: authData, error: authError } = await supabase.auth.getSession();
+      if (authError || !authData?.session?.access_token) {
+        if (!agentLogSessionWarningRef.current) {
+          console.warn("agent_logs skipped: sesi Supabase tidak aktif; masuk kembali setelah koneksi pulih.");
+          agentLogSessionWarningRef.current = true;
+        }
+        return;
+      }
+      agentLogSessionWarningRef.current = false;
       const { error: alErr } = await supabase.from("agent_logs").insert({
         action, detail, status,
         time: timeStr,

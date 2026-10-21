@@ -9,6 +9,7 @@ import { isTeamSplitOrder } from "./teamSplitWorkflow.js";
 import { reportHasVrv } from "./vrvBilling.js";
 import { isVrvType, capacityPkNumber } from "./maintenanceAcTypes.js";
 import { isComplainWarrantyFlow } from "./complainRepairUpgrade.js";
+import { INSTALL_INV_MAP } from "./laporanConstants.js";
 
 export const shouldFallbackAtomicReportSubmit = (error) => {
   const message = error?.message || "";
@@ -262,21 +263,6 @@ export async function submitLaporan({
         unit_no: j.unit_no ?? null,
       })),
     ];
-    // Mapping INSTALL_ITEMS key → inventory code untuk deduct stok spesifik
-    const INSTALL_INV_MAP = {
-      "pipa_1pk": "SKU022",  // Pipa AC Hoda 1PK
-      "pipa_2pk": "SKU023",  // Pipa AC Hoda 2PK
-      "pipa_25pk": "SKU024",  // Pipa AC Hoda 2,5PK
-      "pipa_3pk": "SKU057",  // Pipa AC Hoda 3PK
-      "kabel_15": "SKU025",  // Kabel Listrik 3x1,5
-      "kabel_25": "SKU026",  // Kabel Listrik 4x2,5 (nama lama: 3x2,5)
-      "ducttape_biasa": "SKU031",
-      "ducttape_lem": "SKU030",
-      "dinabolt": "SKU058",
-      "karet_mounting": "SKU059",
-      "breket_outdoor": "SKU041",
-    };
-
     // ✨ CHANGE: tambah laporanBarangItems ke effectiveMaterials dengan keterangan="barang"
     const barangAsMaterials = laporanBarangItems
       .filter(b => b.nama)

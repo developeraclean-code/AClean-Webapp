@@ -116,9 +116,8 @@ export const INSTALL_ITEMS = [
   { key: "pipa_25pk",               label: "Pipa AC Hoda 2,5PK",                 satuan: "Meter", default: 0 },
   { key: "pipa_3pk",                label: "Pipa AC Hoda 3PK",                   satuan: "Meter", default: 0 },
   { key: "kabel_15",                label: "Kabel Listrik 3x1,5",                satuan: "Meter", default: 0 },
-  // SKU026 sudah dipakai di laporan lama; label bisnis yang benar adalah 4x2,5.
-  // legacyLabels menjaga laporan lama tetap bisa dibuka dan diedit.
-  { key: "kabel_25",                label: "Kabel Listrik 4x2,5",                legacyLabels: ["Kabel Listrik 3x2,5"], satuan: "Meter", default: 0 },
+  { key: "kabel_25",                label: "Kabel Listrik 3x2,5",                satuan: "Meter", default: 0 },
+  { key: "kabel_425",               label: "Kabel Listrik 4x2,5",                satuan: "Meter", default: 0 },
   { key: "ducttape_biasa",          label: "Duct Tape Non Lem",                  satuan: "Piece", default: 0 },
   { key: "ducttape_lem",            label: "Duct Tape Lem",                       satuan: "Piece", default: 0 },
   { key: "jasa_pipa_ac",            label: "Jasa Penarikan Pipa AC",              satuan: "Meter", default: 0 },
@@ -138,6 +137,26 @@ export const INSTALL_ITEMS = [
   { key: "cleaning_split_05_1pk",   label: "Cleaning AC Split Wall 0,5PK - 1PK",   satuan: "Unit",  default: 0, priceKey: "AC Split 0.5-1PK" },
   { key: "cleaning_split_15_25pk",  label: "Cleaning AC Split Wall 1,5PK - 2,5PK", satuan: "Unit",  default: 0, priceKey: "AC Split 1.5-2.5PK" },
 ];
+
+// Nama material di laporan lama lebih tepercaya daripada key: Sep 2026 sempat
+// menyimpan 4x2,5 dengan key kabel_25, padahal SKU026 adalah kabel 3x2,5.
+export const findInstallItemForMaterial = (material) =>
+  INSTALL_ITEMS.find(item => item.label === material?.nama)
+  || INSTALL_ITEMS.find(item => item.key === material?.id || item.legacyLabels?.includes(material?.nama));
+
+export const INSTALL_INV_MAP = Object.freeze({
+  pipa_1pk: "SKU022", pipa_2pk: "SKU023", pipa_25pk: "SKU024", pipa_3pk: "SKU057",
+  kabel_15: "SKU025", kabel_25: "SKU026", kabel_425: "SKU028",
+  ducttape_biasa: "SKU031", ducttape_lem: "SKU030",
+  dinabolt: "SKU058", karet_mounting: "SKU059", breket_outdoor: "SKU041",
+});
+
+export const INSTALL_MATERIAL_KEYS = Object.freeze([
+  "pipa_1pk", "pipa_2pk", "pipa_25pk", "pipa_3pk",
+  "kabel_15", "kabel_25", "kabel_425", "ducttape_biasa", "ducttape_lem",
+  "jasa_pipa_ac", "jasa_pipa_ruko", "dinabolt", "karet_mounting",
+  "breket_outdoor", "paralon", "selang_flexibel_drain",
+]);
 
 export const TIPE_AC_OPT = [
   "AC Split 0.5PK", "AC Split 0.75PK", "AC Split 1PK", "AC Split 1.5PK",

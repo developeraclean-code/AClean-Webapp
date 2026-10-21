@@ -10,6 +10,7 @@ import { getTeamFinalizationOutcome, isTeamSplitOrder } from "../lib/teamSplitWo
 import { isProjectReportArchive } from "../lib/projectReportArchive.js";
 import { fieldReportAssignedNames, isFieldReportAssigned } from "../lib/fieldReportWorkflow.js";
 import { reportHasVrv, unpricedVrvUnits, vrvInvoiceUnitLabel } from "../lib/vrvBilling.js";
+import { findInstallItemForMaterial } from "../lib/laporanConstants.js";
 
 const isMissingFinalizeRpc = (error) => error?.code === "PGRST202" || error?.code === "42883"
   || /finalize_service_report_atomic.*(schema cache|does not exist|not found)/i.test(error?.message || "");
@@ -1698,9 +1699,7 @@ return (
                 if (r.service === "Install") {
                   const installMap = {};
                   (r.materials || []).forEach(mat => {
-                    const ii = INSTALL_ITEMS.find(item =>
-                      item.label === mat.nama || item.key === mat.id || item.legacyLabels?.includes(mat.nama)
-                    );
+                    const ii = findInstallItemForMaterial(mat);
                     if (ii) installMap[ii.key] = String(mat.jumlah || 0);
                   });
                   setLaporanInstallItems(installMap);

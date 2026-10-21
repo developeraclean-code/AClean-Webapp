@@ -6,7 +6,7 @@ import { categoryFromCatalog } from "../lib/invoicing.js";
 import { upgradeComplainToRepair } from "../lib/complainRepairUpgrade.js";
 import {
   KONDISI_SBL, KONDISI_SDH, PEKERJAAN_OPT, MATERIAL_PRESET,
-  INSTALL_ITEMS, TIPE_AC_OPT, mkUnit, isUnitDone, maintUnitToHist, acUnitToHist,
+  INSTALL_ITEMS, INSTALL_MATERIAL_KEYS, TIPE_AC_OPT, mkUnit, isUnitDone, maintUnitToHist, acUnitToHist,
   remapUnitNo, remapUnitNoList, maxFotoLaporan,
 } from "../lib/laporanConstants.js";
 import MaintUnitPickerStep from "./MaintUnitPickerStep.jsx";
@@ -1077,7 +1077,7 @@ export default function LaporanTeknisiModal({
                     </div>
                   ))}
                   <div style={{ fontSize: 10, fontWeight: 700, color: cs.muted, letterSpacing: 1, textTransform: "uppercase", marginTop: 6 }}>Material</div>
-                  {INSTALL_ITEMS.filter(it => ["pipa_1pk", "pipa_2pk", "pipa_25pk", "pipa_3pk", "kabel_15", "kabel_25", "ducttape_biasa", "ducttape_lem", "jasa_pipa_ac", "jasa_pipa_ruko", "dinabolt", "karet_mounting", "breket_outdoor", "paralon", "selang_flexibel_drain"].includes(it.key)).map(item => (
+                  {INSTALL_ITEMS.filter(it => INSTALL_MATERIAL_KEYS.includes(it.key)).map(item => (
                     <div key={item.key} style={{
                       display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center",
                       background: parseFloat(laporanInstallItems[item.key] || 0) > 0 ? cs.green + "08" : cs.card,

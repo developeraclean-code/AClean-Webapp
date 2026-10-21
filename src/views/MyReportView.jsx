@@ -1,6 +1,7 @@
 import { memo, useState } from "react";
 import { cs } from "../theme/cs.js";
 import { canOriginalReporterEdit, isFieldOrderAssigned, isFieldReportAssigned, isOldUnreportedFieldOrder, isReportableFieldOrder } from "../lib/fieldReportWorkflow.js";
+import { findInstallItemForMaterial } from "../lib/laporanConstants.js";
 
 function MyReportView({ laporanReports, projectDailyReports, ordersData, invoicesData, currentUser, searchLaporan, setSearchLaporan, setSelectedLaporan, setEditLaporanMode, setModalLaporanDetail, setEditLaporanForm, setLaporanBarangItems, setEditRepairType, setEditGratisAlasan, setActiveEditUnitIdx, setEditPhotoMode, setEditLaporanFotos, setEditStockMats, setLaporanInstallItems, openLaporanModal, openBAPModal, bapEnabled, safeArr, TODAY, INSTALL_ITEMS, downloadServiceReportPDF }) {
 const [showOldJobs, setShowOldJobs] = useState(false);
@@ -244,9 +245,7 @@ return (
                     if (r.service === "Install") {
                       const installMap = {};
                       (r.materials || []).forEach(mat => {
-                        const ii = INSTALL_ITEMS.find(item =>
-                          item.label === mat.nama || item.key === mat.id || item.legacyLabels?.includes(mat.nama)
-                        );
+                        const ii = findInstallItemForMaterial(mat);
                         if (ii) installMap[ii.key] = String(mat.jumlah || 0);
                       });
                       setLaporanInstallItems(installMap);
