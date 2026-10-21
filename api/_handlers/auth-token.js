@@ -1,6 +1,7 @@
 // api/_handlers/auth-token.js — Handler grup auth/token/config/health (Batch 2 pemecahan
 // router, Jul 2026). Isi dipindah APA ADANYA dari api/[route].js — di-dispatch oleh router.
 import { checkRateLimit, signAppToken, validateInternalToken } from "../_auth.js";
+import { readSupabaseUser, readSessionJson, sendSessionError, SessionCheckError } from "../_session-check.js";
 
 // ── TEST-CONNECTION (public) ──
 export async function testConnection(req, res) {
@@ -158,6 +159,7 @@ export async function getLlmConfig(req, res) {
 // ── GET-API-TOKEN — issue App Token (HMAC-signed JWT, 15 menit, per-user) ──
 // Replace pattern lama (echo master secret) dengan signed token per-user + role claim.
 export async function getApiToken(req, res) {
+  res.setHeader("Cache-Control", "no-store");
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   const authH = req.headers["authorization"] || "";
   const jwt = authH.startsWith("Bearer ") ? authH.slice(7) : "";
@@ -168,39 +170,28 @@ export async function getApiToken(req, res) {
   if (!process.env.INTERNAL_API_SECRET) return res.status(500).json({ error: "Server misconfiguration" });
   try {
     // Verify Supabase session
-    const r = await fetch(`${supabaseUrl}/auth/v1/user`, {
-      headers: { "Authorization": `Bearer ${jwt}`, "apikey": supabaseAnonKey }
-    });
-    if (!r.ok) return res.status(401).json({ error: "Invalid session" });
-    const userData = await r.json();
+    const userData = await readSupabaseUser({ supabaseUrl, anonKey: supabaseAnonKey, jwt });
     const userId = userData?.id;
-    if (!userId) return res.status(401).json({ error: "Invalid session" });
 
     // Resolve role dari user_profiles (single source of truth)
     const SK = process.env.SUPABASE_SERVICE_KEY;
-    let role = "Helper";
-    let name = userData.email || "";
-    if (SK) {
-      try {
-        const profRes = await fetch(
-          `${supabaseUrl}/rest/v1/user_profiles?id=eq.${encodeURIComponent(userId)}&select=role,name&limit=1`,
-          { headers: { apikey: SK, Authorization: "Bearer " + SK } }
-        );
-        if (profRes.ok) {
-          const arr = await profRes.json();
-          if (arr[0]) {
-            const rawRole = String(arr[0].role || "Helper");
-            role = rawRole.charAt(0).toUpperCase() + rawRole.slice(1).toLowerCase();
-            if (arr[0].name) name = arr[0].name;
-          }
-        }
-      } catch { /* default Helper */ }
-    }
+    if (!SK) return res.status(500).json({ error: "Server misconfiguration" });
+    const profiles = await readSessionJson(
+      `${supabaseUrl}/rest/v1/user_profiles?id=eq.${encodeURIComponent(userId)}&select=id,role,name,active&limit=1`,
+      { apikey: SK, Authorization: "Bearer " + SK }
+    );
+    if (!Array.isArray(profiles)) throw new SessionCheckError(503, "AUTH_SERVICE_UNAVAILABLE", "Respons profil belum valid. Coba kembali setelah layanan pulih.");
+    const profile = profiles[0];
+    if (!profile || profile.id !== userId || profile.active !== true) throw new SessionCheckError(403, "PROFILE_INACTIVE", "Profil tidak aktif atau belum tersedia. Hubungi Owner.");
+    const rawRole = String(profile.role || "").trim();
+    const role = rawRole.charAt(0).toUpperCase() + rawRole.slice(1).toLowerCase();
+    if (!["Owner", "Admin", "Finance", "Teknisi", "Helper"].includes(role)) throw new SessionCheckError(403, "PROFILE_ROLE_INVALID", "Role profil tidak valid. Hubungi Owner.");
+    const name = profile.name || userData.email || "";
 
     const token = signAppToken({ userId, role, name });
     return res.status(200).json({ token, expiresIn: 15 * 60, role });
   } catch (e) {
-    return res.status(500).json({ error: "Auth check failed" });
+    return sendSessionError(res, e);
   }
 }
 

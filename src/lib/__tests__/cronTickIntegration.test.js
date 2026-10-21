@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-const state = vi.hoisted(() => ({ runs: [], calls: [], lease: false }));
+const state = vi.hoisted(() => ({ runs: [], calls: [], lease: false, budgets: [], elapsed: {} }));
 vi.mock('../../../api/sentry-init.js', () => ({ initSentry() {}, setCronContext() {} }));
 vi.mock('../../../api/_tasks/_shared.js', () => ({ OWNER_PHONE: '628120000001', sendWA: vi.fn(), log: vi.fn(),
   sb: { from(table) {
@@ -14,6 +14,8 @@ vi.mock('../../../api/_tasks/_shared.js', () => ({ OWNER_PHONE: '628120000001', 
 }));
 vi.mock('../../../api/_logger.js', () => ({ closeStaleCronRuns: vi.fn(), runWithCronLogging: async(_db,name,fn,options)=>{
   expect(options.requireAudit).toBe(true);
+  state.budgets.push({name,timeoutMs:options.timeoutMs});
+  if(state.elapsed[name])vi.setSystemTime(Date.now()+state.elapsed[name]);
   const result=await fn();state.calls.push(name);state.runs.push({task_name:name,status:result.skipped?'SKIPPED':'SUCCESS',started_at:new Date().toISOString(),metadata:result});return result;
 } }));
 vi.mock('../../../api/_tasks/ops.js', () => Object.fromEntries(['taskProjectAlerts','taskBackupData','taskBackupRetention','taskPayrollWA','taskBonusEligible','taskMaintenanceContractExpiry','taskMaintenanceFollowupAlert','taskMaintenancePmDue','taskMediaGapAlert','taskDataIntegrityAudit','taskInfraUsageAlert'].map(n=>[n,async()=>({})])));
@@ -24,7 +26,23 @@ vi.mock('../../../api/_tasks/field-reports.js', () => ({taskFieldReportReminder:
 import { taskTick } from '../../../api/cron-reminder.js';
 
 describe('real dispatcher wiring with isolated task implementations', () => {
-  afterEach(()=>{vi.useRealTimers();state.runs=[];state.calls=[];state.lease=false;});
+  afterEach(()=>{vi.useRealTimers();state.runs=[];state.calls=[];state.lease=false;state.budgets=[];state.elapsed={};});
+  it('gives the payment retry time for AI plus persistence, without adding tasks or changing its cadence',async()=>{
+    vi.useFakeTimers();vi.setSystemTime(new Date('2026-10-18T10:00:00+07:00'));
+    await taskTick();
+    expect(state.budgets.find(r=>r.name==='payment-media-retry')).toEqual({name:'payment-media-retry',timeoutMs:30000});
+    await taskTick();
+    expect(state.calls.filter(n=>n==='payment-media-retry')).toHaveLength(1);
+  });
+  it('defers payment work from a late tick and runs it next tick instead of interrupting the AI/persistence',async()=>{
+    vi.useFakeTimers();vi.setSystemTime(new Date('2026-10-18T10:00:00+07:00'));
+    state.elapsed={'data-integrity-audit':2000,backup:25000};
+    const first=await taskTick();
+    expect(first.ran).not.toContain('payment-media-retry');
+    expect(first.pending).toBeGreaterThan(0);
+    expect((await taskTick()).ran).toContain('payment-media-retry');
+    expect(state.calls.filter(n=>n==='payment-media-retry')).toHaveLength(1);
+  });
   it('runs the missed Monday audit/backup first on Sunday, before cleanup; excludes night reminders before 20 WIB', async()=>{
     vi.useFakeTimers();vi.setSystemTime(new Date('2026-10-18T10:00:00+07:00'));
     const result=await taskTick();

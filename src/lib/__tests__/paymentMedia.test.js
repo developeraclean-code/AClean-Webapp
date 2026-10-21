@@ -142,7 +142,7 @@ describe("WA payment media classification", () => {
   it("mengembalikan retryable saat provider AI timeout/error", async () => {
     const fetchImpl = vi.fn().mockRejectedValue(new Error("network timeout"));
     const result = await classifyPaymentMedia({
-      buffer: Buffer.alloc(2048, 1), mimeType: "image/jpeg", apiKey: "test", fetchImpl,
+      buffer: Buffer.from([255,216,255,0]), mimeType: "image/jpeg", apiKey: "test", fetchImpl,
     });
     expect(result).toMatchObject({ ok: false, retryable: true, error: "network timeout" });
   });
@@ -156,7 +156,7 @@ describe("WA payment media classification", () => {
       }),
     });
     const result = await classifyPaymentMedia({
-      buffer: Buffer.alloc(2048, 1), mimeType: "image/jpeg", apiKey: "test", fetchImpl,
+      buffer: Buffer.from([255,216,255,0]), mimeType: "image/jpeg", apiKey: "test", fetchImpl,
     });
     expect(result.ok).toBe(true);
     expect(result.classification).toMatchObject({ amount: 200000, fee_amount: 2500, total_debit: 202500 });

@@ -8,6 +8,7 @@ import { safeJsonParse } from "./lib/safeJson.js";
 import { useDebounce } from "./lib/useDebounce.js";
 import { cachedFetch, invalidateCache, setFetchCacheScope } from "./lib/fetchCache.js";
 import { startAdaptivePolling } from "./lib/adaptivePolling.js";
+import { createAppTokenClient, AppTokenError } from "./lib/appTokenClient.js";
 import DataConnectionBanner from "./components/DataConnectionBanner.jsx";
 import { reportError } from "./lib/reportError.js";
 import { fotoUrl } from "./lib/fotoUrl.js";
@@ -1129,70 +1130,24 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
     } catch { return def; }
   };
   const _lsSave = (key, val) => { try { localStorage.setItem("aclean_" + key, JSON.stringify(val)); } catch { /* localStorage opsional — abaikan */ } };
-  // SEC-02: internal API token — App Token JWT (15 menit expiry, per-user, role claim)
-  // Cached di memory, auto-refresh 1 menit sebelum expiry. Tidak di localStorage/bundle.
-  const _internalTokenRef = useRef(null);
-  const _internalTokenExpRef = useRef(0); // epoch ms saat token harus di-refresh
-  const _exchangeApiToken = async () => {
-    try {
-      const { data } = await supabase.auth.getSession();
-      let jwt = data?.session?.access_token;
-      if (!jwt) {
-        const refreshed = await supabase.auth.refreshSession();
-        jwt = refreshed?.data?.session?.access_token;
-      }
-      if (!jwt) return;
-      const _postExchange = (bearer) => fetch("/api/get-api-token", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${bearer}` }
-      });
-      let r = await _postExchange(jwt);
-      // 401 = JWT ditolak Supabase (sesi basi walau tab masih "login"). Paksa refresh
-      // sesi lalu coba SEKALI lagi dgn JWT segar. Kalau refresh gagal -> sesi mati,
-      // biarkan silent (view yg butuh token akan tampil error, bukan loop tak henti).
-      if (r.status === 401) {
-        try {
-          const refreshed = await supabase.auth.refreshSession();
-          const freshJwt = refreshed?.data?.session?.access_token;
-          if (freshJwt && freshJwt !== jwt) r = await _postExchange(freshJwt);
-        } catch { /* refresh gagal -> sesi benar-benar mati, user perlu login ulang */ }
-      }
-      if (r.ok) {
-        const d = await r.json();
-        if (d.token) {
-          _internalTokenRef.current = d.token;
-          // Refresh 1 menit sebelum expiry (default 15 menit → refresh setelah 14 menit)
-          const ttl = (d.expiresIn || 900) - 60;
-          _internalTokenExpRef.current = Date.now() + ttl * 1000;
-        }
-      }
-    } catch { /* gagal silent — request tetap jalan tanpa token */ }
-  };
-  const _apiHeaders = useCallback(async () => {
-    if (!_internalTokenRef.current || Date.now() >= _internalTokenExpRef.current) {
-      await _exchangeApiToken();
-    }
-    return {
-      "Content-Type": "application/json",
-      ...(_internalTokenRef.current ? { "X-Internal-Token": _internalTokenRef.current } : {})
-    };
-  }, []); // deps kosong: hanya refs (stable) yang di-close
-  // Fetch wrapper: kalau 401, force-refresh token sekali lalu retry.
-  // Gunakan ini di tempat-tempat baru. Existing fetch() yang pakai _apiHeaders() tetap jalan.
+  // Memory-only, per-user: one token exchange for concurrent callers; bounded
+  // failure cooldown. Never silently send a private API call without a token.
+  const _appTokenClientRef = useRef(null);
+  if (!_appTokenClientRef.current) _appTokenClientRef.current = createAppTokenClient({ auth: supabase.auth });
+  _appTokenClientRef.current.setUser(currentUser?.id || null);
+  const _apiHeaders = useCallback(() => _appTokenClientRef.current.headers(), []);
+  // GET/HEAD may recover a rejected token once. Mutations are never replayed.
   const _apiFetch = async (url, opts = {}) => {
-    const headers = { ...(opts.headers || {}), ...(await _apiHeaders()) };
-    // Upload file tidak lagi melewati bandwidth/function Vercel bila CORS R2 siap.
-    // Saat direct PUT gagal, lanjut otomatis ke request base64 lama di bawah.
-    const direct = await tryDirectR2Upload(url, opts, headers);
-    if (direct) return direct;
-    let r = await fetch(url, { ...opts, headers });
-    if (r.status === 401) {
-      _internalTokenRef.current = null;
-      _internalTokenExpRef.current = 0;
-      const fresh = { ...(opts.headers || {}), ...(await _apiHeaders()) };
-      r = await fetch(url, { ...opts, headers: fresh });
+    try {
+      const headers = { ...(opts.headers || {}), ...(await _apiHeaders()) };
+      // Upload tetap direct-to-R2 bila tersedia; token dijamin sebelum presign.
+      const direct = await tryDirectR2Upload(url, opts, headers);
+      if (direct) return direct;
+      return await _appTokenClientRef.current.request(url, opts);
+    } catch (error) {
+      if (!(error instanceof AppTokenError)) throw error;
+      return new Response(JSON.stringify({code:error.code,error:error.message}), {status:error.status,headers:{"Content-Type":"application/json","Retry-After":String(error.retryAfter)}});
     }
-    return r;
   };
 
   // ── Indeks klien maintenance (ringan) — dipakai LINTAS menu, bukan hanya menu
@@ -2389,8 +2344,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
     // Putuskan identitas aktif service worker tanpa menghapus antrean milik akun.
     // Antrean tetap aman dan hanya akan dilanjutkan saat akun yang sama login lagi.
     await clearActiveFieldUser(currentFieldUserKey).catch(() => {});
-    _internalTokenRef.current = null; // clear cached API token saat logout
-    _internalTokenExpRef.current = 0;
+    _appTokenClientRef.current.reset(); // also invalidate any exchange still in flight
     await supabase.auth.signOut();
     _lsSave("localSession", null);
     addAgentLog("LOGOUT", `${currentUser?.name || "User"} (${currentUser?.role || ""}) keluar`, "SUCCESS");

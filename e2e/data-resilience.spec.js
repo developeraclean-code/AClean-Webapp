@@ -90,6 +90,7 @@ test("full app bounds reads, shows an outage, and safely recovers without changi
 
 test("Auth outage never consumes password attempts; real invalid credentials still do", async ({ page }) => {
   const state = await fixture(page); state.auth = "outage";
+  await page.clock.install({time:new Date("2026-10-21T03:00:00Z")});
   await page.goto("/");
   for (let i = 0; i < 5; i++) {
     await enter(page);
@@ -97,6 +98,8 @@ test("Auth outage never consumes password attempts; real invalid credentials sti
     await expect(page.getByRole("button", { name: "Masuk →", exact: true })).toBeEnabled();
   }
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem("aclean_loginAttempts") || "0"))).toBe(0);
+  expect(state.authCalls).toBe(1); // infrastructure cooldown blocks repeated Auth calls
+  await page.clock.runFor(15_001);
   state.auth = "invalid"; await enter(page);
   await expect(page.getByText("Email atau password salah. (1/5 percobaan)")).toBeVisible();
   expect(state.external).toEqual([]); expect(state.errors).toEqual([]);

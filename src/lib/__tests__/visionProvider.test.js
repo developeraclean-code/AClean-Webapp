@@ -43,4 +43,25 @@ describe("provider AI Vision", () => {
       fetchImpl: async () => ({ ok: false, status: 429, json: async () => ({ error: { code: "credit_balance_exhausted" } }) }),
     })).rejects.toThrow("credit_balance_exhausted");
   });
+
+  it.each(["openai", "claude"])("mengirim PDF sebagai dokumen, bukan gambar, ke %s", async provider => {
+    process.env.OPENAI_API_KEY = "test-openai";
+    process.env.ANTHROPIC_API_KEY = "test-claude";
+    const imageBase64 = Buffer.from("%PDF-1.4\n%%EOF").toString("base64");
+    let body;
+    await callVision({ provider, imageBase64, mimeType: "application/pdf; charset=binary", prompt: "Baca bukti", fetchImpl: async (_url, options) => {
+      body = JSON.parse(options.body);
+      return { ok: true, json: async () => ({ choices: [{message:{content:'{}'}}], content: [{text:'{}'}] }) };
+    } });
+    const parts = body.messages[0].content;
+    expect(parts.some(part => ["image", "image_url"].includes(part.type))).toBe(false);
+    if (provider === "openai") expect(parts[1]).toEqual({type:"file",file:{filename:"payment-document.pdf",file_data:`data:application/pdf;base64,${imageBase64}`}});
+    else expect(parts[0]).toEqual({type:"document",source:{type:"base64",media_type:"application/pdf",data:imageBase64}});
+  });
+
+  it("menolak URL PDF sebelum mengirim request image_url yang tidak didukung", async () => {
+    let requests = 0;
+    await expect(callVision({provider:"openai",imageUrl:"https://example.test/receipt.pdf",mimeType:"application/pdf",fetchImpl:async()=>{requests++;}})).rejects.toThrow("byte berkas");
+    expect(requests).toBe(0);
+  });
 });

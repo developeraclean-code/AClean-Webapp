@@ -1950,32 +1950,32 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                 throw new Error(stagedMedia.error || "Media belum aman di R2; AI ditunda");
               }
 
-              console.log("[WA_IMG_STEP4] calling Anthropic", { mimeType, staged: !!stagedMedia?.ok });
-              const classifyResult = await classifyPaymentMedia({ buffer: Buffer.from(imgBuf), mimeType, apiKey: AK });
-              console.log("[WA_IMG_STEP5] Anthropic response", { ok: classifyResult.ok, error: classifyResult.error || null });
+              console.log("[WA_IMG_STEP4] calling Vision", { mimeType, staged: !!stagedMedia?.ok });
+              const classifyResult = await classifyPaymentMedia({ buffer: Buffer.from(imgBuf), mimeType, apiKey: AK,
+                audit: { supabaseUrl: SU, serviceKey: SK, stage: "webhook", mediaJobId: stagedMedia?.job?.id,
+                  attempt: Number(stagedMedia?.job?.attempts || 0) + 1 } });
+              console.log("[WA_IMG_STEP5] Vision response", { ok: classifyResult.ok, error: classifyResult.error || null });
               if (!classifyResult.ok) {
-                console.warn("[WA_IMG_ANTHROPIC_ERR]", classifyResult.error);
-                try { Sentry.captureMessage(`Anthropic classify: ${classifyResult.error}`, "warning"); } catch (_) {}
+                console.warn("[WA_IMG_VISION_ERR]", classifyResult.error);
+                try { Sentry.captureMessage(`Vision classify: ${classifyResult.error}`, "warning"); } catch (_) {}
                 if (stagedMedia?.job) {
                   await updatePaymentMediaJob({
                     supabaseUrl: SU, serviceKey: SK, id: stagedMedia.job.id,
                     patch: {
                       // Belum diketahui bukti bayar: tampil di rincian retry, bukan Pending AI.
-                      status: "FAILED_RETRYABLE",
+                      status: classifyResult.retryable === false ? "FAILED_PERMANENT" : "FAILED_RETRYABLE",
                       attempts: Number(stagedMedia.job.attempts || 0) + 1,
                       last_error: classifyResult.error,
-                      next_retry_at: new Date(Date.now() + 15 * 60000).toISOString(),
+                      next_retry_at: classifyResult.retryable === false ? null : new Date(Date.now() + 15 * 60000).toISOString(),
                     },
                   });
                 }
               }
-              // Jika staging sukses, object yang sama menjadi bukti permanen (TTL 90 hari).
-              // Ini menghindari upload R2 kedua dan memangkas waktu webhook serverless.
+              // Staging is temporary; ensurePaymentSuggestion archives recognized proof
+              // separately before it exposes a durable receipt to the admin.
               let savedImageUrl = classifyResult.ok && classifyResult.classification?.category === "bukti_transfer"
                 ? (stagedMedia?.url || null) : null;
               if (classifyResult.ok) {
-                logAiUsageRest({ SU, SK, provider: classifyResult.provider, model: classifyResult.model,
-                  feature: "wa-personal-vision", usage: classifyResult.usage });
                 const classified = classifyResult.classification;
                 if (classified) {
                   if (stagedMedia?.job) {

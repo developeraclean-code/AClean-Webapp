@@ -1,7 +1,9 @@
 import { matchPaymentInvoices, paymentPhoneVariants } from "../src/lib/waPaymentMatch.js";
 import { createHash, randomUUID } from "node:crypto";
 import { downloadBufferFromR2, downloadToBuffer, uploadBufferToR2 } from "./_r2-upload.js";
-import { callVision, getVisionProvider } from "./_vision-provider.js";
+import { callVision, getVisionProvider, OPENAI_VISION_MODEL, CLAUDE_VISION_MODEL } from "./_vision-provider.js";
+import { sniffMediaMimeType } from "./_media-format.js";
+import { logAiUsageRest } from "./_logger.js";
 import { isPaymentEvidenceClassification } from "../src/lib/paymentMediaPolicy.js";
 
 export const PAYMENT_MEDIA_PROMPT = `Klasifikasikan gambar ini. Pilih SATU kategori: "bukti_transfer" (bukti pembayaran BERHASIL: transfer bank, m-banking, QRIS, e-wallet, virtual account, setor tunai, atau mutasi kredit), "kerusakan_ac", "dokumen", atau "tidak_relevan".
@@ -63,18 +65,43 @@ export function parsePaymentClassification(rawText) {
   catch { return null; }
 }
 
-export async function classifyPaymentMedia({ buffer, mimeType, apiKey, timeoutMs = 12000, fetchImpl = fetch }) {
+export async function classifyPaymentMedia({ buffer, mimeType, apiKey, timeoutMs = 12000, fetchImpl = fetch, audit }) {
   if (!buffer?.length) return { ok: false, error: "media buffer kosong", retryable: false };
+  if (buffer.length > 10 * 1024 * 1024) return { ok: false, error: "Media melebihi batas 10 MB; periksa manual", retryable: false };
+  const detectedMime = sniffMediaMimeType(buffer);
+  if (!detectedMime) return { ok: false, error: "Format media tidak dikenali; unggah ulang gambar/PDF yang dapat dibuka", retryable: false };
+  const startedAt = Date.now();
+  let provider, result, outcome, attempted = false;
   try {
-    const provider = await getVisionProvider();
-    const result = await callVision({ imageBase64: Buffer.from(buffer).toString("base64"), mimeType: mimeType || "image/jpeg",
-      prompt: PAYMENT_MEDIA_PROMPT, maxTokens: 300, timeoutMs, fetchImpl, provider, claudeApiKey: apiKey });
+    provider = await getVisionProvider();
+    // Mark only actual provider requests, not a settings read or missing API key.
+    const trackedFetch = (url, options) => { attempted = true; return fetchImpl(url, options); };
+    result = await callVision({ imageBase64: Buffer.from(buffer).toString("base64"), mimeType: detectedMime,
+      prompt: PAYMENT_MEDIA_PROMPT, maxTokens: 300, timeoutMs, fetchImpl: trackedFetch, provider, claudeApiKey: apiKey });
     const classification = parsePaymentClassification(result.text);
-    if (!classification) return { ok: false, error: "Respons AI bukan JSON klasifikasi yang valid", retryable: true, data: result.raw, provider: result.provider, model: result.model };
-    return { ok: true, classification, data: result.raw, provider: result.provider, model: result.model, usage: result.usage };
+    outcome = classification
+      ? { ok: true, classification, data: result.raw, provider: result.provider, model: result.model, usage: result.usage }
+      : { ok: false, error: "Respons AI bukan JSON klasifikasi yang valid", retryable: true, data: result.raw, provider: result.provider, model: result.model, usage: result.usage };
   } catch (error) {
-    return { ok: false, error: error?.message || "Klasifikasi media gagal", retryable: true };
+    // Bad/unsupported input will not heal by sending the same bytes three times.
+    outcome = { ok: false, error: error?.message || "Klasifikasi media gagal",
+      retryable: ![400, 413, 415, 422].includes(error?.status), provider: error?.provider || provider,
+      model: error?.model, usage: error?.usage || null };
   }
+  if (audit && attempted) {
+    // Await the bounded write so a serverless worker cannot finish before its usage log.
+    // No bytes, URLs, bank data, phone, or prompt are placed in audit metadata.
+    await logAiUsageRest({ SU: audit.supabaseUrl, SK: audit.serviceKey, provider,
+      model: outcome.model || (provider === "openai" ? OPENAI_VISION_MODEL : CLAUDE_VISION_MODEL),
+      feature: "wa-personal-vision", usage: outcome.usage, duration_ms: Date.now() - startedAt,
+      error: outcome.ok ? null : outcome.error,
+      metadata: { stage: audit.stage === "retry" ? "retry" : "webhook", media_job_id: audit.mediaJobId || null,
+        attempt: Number(audit.attempt) || 0, mime_type: detectedMime,
+        declared_mime_mismatch: !!mimeType && detectedMime !== String(mimeType).split(";")[0].trim().toLowerCase(),
+        usage_known: result?.usageReported ?? !!outcome.usage },
+    });
+  }
+  return outcome;
 }
 
 const restHeaders = (serviceKey, prefer = "return=representation") => ({
@@ -128,6 +155,7 @@ export async function registerPaymentMediaReference({ supabaseUrl, serviceKey, s
 }
 
 export async function stagePaymentMedia({ supabaseUrl, serviceKey, sourceUrl, phone, senderName, buffer, mimeType, createdAt, leaseToken }) {
+  mimeType = sniffMediaMimeType(buffer) || mimeType;
   if (!supabaseUrl || !serviceKey || !sourceUrl || !phone || !buffer?.length) return { ok: false, error: "parameter staging tidak lengkap" };
   try {
   // Webhook provider bisa mengirim event yang sama lebih dari sekali. Cek dulu
@@ -350,13 +378,15 @@ export async function retryOnePaymentMediaJob({ supabaseUrl, serviceKey, apiKey 
         next_retry_at: attempt >= 3 ? null : new Date(Date.now() + 15 * 60_000 * 2 ** (attempt - 1)).toISOString() });
       return { ok: saved.ok, checked: 1, retried: 0, failed: 1, error: saved.error || media.err };
     }
-    ai = await classifyPaymentMedia({ buffer: media.buffer, mimeType: activeJob.mime_type || media.mimeType, apiKey, timeoutMs: 9000 });
+    ai = await classifyPaymentMedia({ buffer: media.buffer, mimeType: activeJob.mime_type || media.mimeType, apiKey, timeoutMs: 9000,
+      audit: { supabaseUrl, serviceKey, stage: "retry", mediaJobId: job.id, attempt } });
   }
   if (!ai.ok) {
+    const exhausted = attempt >= 3 || ai.retryable === false;
     const saved = await finish({
-      status: attempt >= 3 ? "FAILED_PERMANENT" : "FAILED_RETRYABLE",
+      status: exhausted ? "FAILED_PERMANENT" : "FAILED_RETRYABLE",
       last_error: ai.error,
-      next_retry_at: attempt >= 3 ? null : new Date(Date.now() + 15 * 60_000 * 2 ** (attempt - 1)).toISOString(),
+      next_retry_at: exhausted ? null : new Date(Date.now() + 15 * 60_000 * 2 ** (attempt - 1)).toISOString(),
     });
     return { ok: false, checked: 1, retried: 1, failed: 1, error: saved.error || ai.error };
   }

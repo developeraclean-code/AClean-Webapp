@@ -19,6 +19,7 @@
 
 import crypto from "crypto";
 import { initSentry } from "./sentry-init.js";
+import { readSupabaseUser, sendSessionError } from "./_session-check.js";
 
 // Initialize Sentry once per serverless instance
 initSentry();
@@ -111,23 +112,19 @@ export async function validateInternalToken(req, res) {
       req.appClaims = claims; // handler bisa pakai req.appClaims.role
       return true;
     }
-    res.status(401).json({ error: "App token expired or invalid" });
+    res.status(401).json({ code: "APP_TOKEN_INVALID", error: "App token expired or invalid" });
     return false;
   }
 
   // Path 2: Supabase Bearer JWT (dari logged-in user — direct session)
   const authHeader = req.headers["authorization"] || "";
+  let sessionFailure = null;
   if (authHeader.startsWith("Bearer ") && supabaseUrl && supabaseAnonKey) {
     const jwt = authHeader.slice(7);
     try {
-      const r = await fetch(`${supabaseUrl}/auth/v1/user`, {
-        headers: { "Authorization": `Bearer ${jwt}`, "apikey": supabaseAnonKey }
-      });
-      if (r.ok) {
-        req.authUser = await r.json();
-        return true;
-      }
-    } catch { /* fall through */ }
+      req.authUser = await readSupabaseUser({ supabaseUrl, anonKey: supabaseAnonKey, jwt });
+      return true;
+    } catch (error) { sessionFailure = error; }
   }
 
   // Path 3: Legacy X-Internal-Token === INTERNAL_API_SECRET (cron, server-to-server)
@@ -154,6 +151,7 @@ export async function validateInternalToken(req, res) {
     return true;
   }
 
+  if (sessionFailure) { sendSessionError(res, sessionFailure); return false; }
   res.status(401).json({ error: "Unauthorized" });
   return false;
 }

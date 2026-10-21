@@ -37,6 +37,39 @@ umum, dan tiga tanpa klasifikasi. Dua URL bukti historis sejak April yang diperi
 membalas HTTP 404. Ini snapshot, bukan angka hardcoded atau bukti pasti penyebab
 penghapusan R2. Tidak ada transaksi/objek produksi diubah pada pemeriksaan ini.
 
+### Penanganan PDF dan audit pemakaian — perubahan lokal 21 Oktober 2026
+
+Audit produksi menemukan empat job PDF dengan `invalid_image_format`: PDF sebelumnya
+dikirim sebagai gambar. Perubahan lokal mengirim PDF sebagai `file` pada OpenAI Chat
+Completions dan `document` pada Claude. Model/provider yang dipilih tidak berubah;
+dukungan model dan hasil ekstraksi tetap perlu diuji dengan permintaan nyata.
+Referensi skema: [OpenAI Docs — File inputs](https://developers.openai.com/api/docs/guides/file-inputs)
+dan [Claude — PDF support](https://platform.claude.com/docs/en/build-with-claude/pdf-support).
+
+- Tipe media diperiksa dari signature byte, bukan ekstensi atau Content-Type saja.
+  Ini bukan decoder/validator seluruh berkas: PDF rusak/terenkripsi dan gambar rusak
+  masih dapat ditolak provider. Batas klasifikasi 10 MB; berkas tak dikenal/kebesaran
+  berhenti `FAILED_PERMANENT` untuk penanganan admin, tanpa suggestion atau auto-PAID.
+- Respons provider HTTP 400/413/415/422 tidak dikirim ulang dengan byte yang sama.
+  Gangguan jaringan, 429 dan 5xx tetap mengikuti retry terbatas yang ada. Media tetap
+  terlacak; perubahan kode tidak membuka kembali job gagal historis secara otomatis.
+- Webhook dan retry memakai satu pencatat `wa-personal-vision` di helper klasifikasi,
+  dengan metadata `stage`, `media_job_id`, `attempt`, dan `usage_known`. Respons sukses
+  yang gagal diparse tetap dicatat tokennya. Tidak ada log biaya kedua di webhook.
+  Cached OCR/antrean kosong/input yang ditolak sebelum AI bukan pemakaian model baru.
+- Logging di-await dengan timeout maksimal 3 detik dan fail-silent. Gangguan database
+  tetap dapat menghilangkan log; bukan buku tagihan provider yang dijamin lengkap.
+  `usage_known:false` berarti token/biaya tidak diketahui, **bukan** bukti gratis.
+- Anggaran dispatcher retry dinaikkan 11→30 detik (minimal sisa waktu 25 detik),
+  karena unduh/AI/log/finalisasi tidak cukup ditampung oleh timeout model 9 detik saja.
+  Tick yang sudah terlalu akhir menunda ke tick berikutnya, bukan mulai lalu terputus.
+  Interval tetap 15 menit, satu media/invocation, lease dan toggle tetap; tanpa kirim WA.
+- Verifikasi lokal memakai respons API simulasi, tanpa kuota berbayar atau mutasi
+  produksi. Kelulusan tes **bukan akurasi Vision ≥90%**. Perlu dataset foto/PDF nyata
+  berlabel dan evaluasi model terpilih sebelum menilai ketepatan nominal/recall.
+- Jalur pembayaran grup, material, dan tas teknisi belum disatukan ke classifier
+  pembayaran pribadi; hasil pengujian ini tidak mewakili akurasi semua fitur Vision.
+
 ### Pembersihan terbatas sesuai persetujuan Owner, 21 Oktober 2026
 
 Batas kandidat: suggestion PENDING bertanggal sebelum **1 Oktober 2026 00.00 WIB**.

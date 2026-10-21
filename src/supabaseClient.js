@@ -5,6 +5,7 @@
 // Single client juga menghilangkan warning "Multiple GoTrueClient instances".
 import { createClient } from "@supabase/supabase-js";
 import { createSupabaseReadTransport } from "./lib/supabaseReadTransport.js";
+import { createAuthTransport } from "./lib/authTransport.js";
 
 const SUPA_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -13,4 +14,5 @@ if (!SUPA_URL) throw new Error("[CRITICAL] VITE_SUPABASE_URL env var is required
 if (!SUPA_KEY) throw new Error("[CRITICAL] VITE_SUPABASE_ANON_KEY env var is required but not set.");
 
 export const supabaseReadTransport = createSupabaseReadTransport({ baseUrl: SUPA_URL });
-export const supabase = createClient(SUPA_URL, SUPA_KEY, { global: { fetch: supabaseReadTransport.fetch } });
+const authFetch = createAuthTransport({ baseUrl: SUPA_URL, fetchImpl: supabaseReadTransport.fetch });
+export const supabase = createClient(SUPA_URL, SUPA_KEY, { global: { fetch: authFetch } });

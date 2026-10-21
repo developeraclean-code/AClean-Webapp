@@ -54,6 +54,14 @@ it("does not spend AI quota before the R2 copy is safe",async()=>{
   expect(res.code).toBe(200);expect(mocks.classify).not.toHaveBeenCalled();
   expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({id:"job-1",patch:expect.objectContaining({status:"FAILED_RETRYABLE"})}));
 });
+it("stops invalid input without retry, while preserving the staged reference for manual review", async()=>{
+  mocks.classify.mockResolvedValue({ok:false,retryable:false,error:"Format media tidak dikenali"});
+  expect((await run(body)).code).toBe(200);
+  expect(mocks.classify).toHaveBeenCalledWith(expect.objectContaining({audit:expect.objectContaining({stage:"webhook",mediaJobId:"job-1",attempt:1})}));
+  expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({id:"job-1",patch:expect.objectContaining({status:"FAILED_PERMANENT",next_retry_at:null})}));
+  expect(mocks.suggestion).not.toHaveBeenCalled();
+  expect(requests.some(r=>/invoice_payments|apply_wa_payment|\/ai_usage/.test(r.path||""))).toBe(false);
+});
 it.each(["kerusakan_ac", "tidak_relevan", "dokumen"])("never searches invoices or creates a payment for %s, even with a transfer caption",async category=>{
   mocks.classify.mockResolvedValue({ok:true,classification:{category,amount:null}});
   const res=await run({...body,message:"sudah transfer, ini fotonya"});

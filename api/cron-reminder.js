@@ -47,7 +47,9 @@ async function taskTickWithLease({ cleanupOnly = false } = {}) {
   const schedule = [
     // Time-sensitive: before slow quota/cleanup work, durable dedup per person/day.
     { t: "field-report-reminder", fn: taskFieldReportReminder, h: 20, repeatable: true, priority: 2, budgetMs: 18_000 },
-    { t: "payment-media-retry", fn: taskRetryPaymentMedia, h: 0, repeatable: true, intervalMs: 15 * 60_000, priority: 3, budgetMs: 11_000 },
+    // Include queue claim, media download, AI (9s), bounded usage log and final writes.
+    // Do not start late in a tick with only enough time for the model call itself.
+    { t: "payment-media-retry", fn: taskRetryPaymentMedia, h: 0, repeatable: true, intervalMs: 15 * 60_000, priority: 3, budgetMs: 30_000, minimumMs: 25_000 },
     { t: "bukti-bayar", fn: taskScanBuktiBayar, h: 9, untilHour: 18, repeatable: true, intervalMs: 60 * 60_000 },
     { t: "cleanup",                  fn: taskCleanup,                h: 2, dom: 1, cleanup: true },
     { t: "r2-cleanup-90d",           fn: taskR2Cleanup90d,           h: 3, cleanup: true },

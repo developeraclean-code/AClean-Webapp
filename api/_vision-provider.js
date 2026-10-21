@@ -29,6 +29,9 @@ export async function getVisionProvider({ fetchImpl = fetch, now = Date.now() } 
 export async function callVision({ imageBase64, imageUrl, mimeType = "image/jpeg", prompt, system, maxTokens = 600, timeoutMs = 25000, fetchImpl = fetch, provider: forcedProvider, claudeApiKey }) {
   if (!imageBase64 && !imageUrl) throw new Error("vision image missing");
   const provider = forcedProvider || await getVisionProvider({ fetchImpl });
+  mimeType = String(mimeType).split(";")[0].trim().toLowerCase();
+  const isPdf = mimeType === "application/pdf";
+  if (isPdf && !imageBase64) throw new Error("PDF Vision memerlukan byte berkas, bukan URL gambar");
   if (provider === "openai") {
     const key = process.env.OPENAI_API_KEY;
     if (!key) throw new Error("OPENAI_API_KEY belum dikonfigurasi untuk AI Vision");
@@ -44,24 +47,30 @@ export async function callVision({ imageBase64, imageUrl, mimeType = "image/jpeg
           ...(system ? [{ role: "system", content: system }] : []),
           { role: "user", content: [
             { type: "text", text: prompt },
-            { type: "image_url", image_url: { url, detail: "high" } },
+            isPdf
+              ? { type: "file", file: { filename: "payment-document.pdf", file_data: url } }
+              : { type: "image_url", image_url: { url, detail: "high" } },
           ] },
         ],
       }),
       signal: AbortSignal.timeout(timeoutMs),
     });
     const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(`OpenAI vision HTTP ${r.status}: ${data.error?.code || data.error?.message || "unknown"}`);
+    if (!r.ok) throw Object.assign(new Error(`OpenAI vision HTTP ${r.status}: ${data.error?.code || data.error?.message || "unknown"}`), {
+      status: r.status, provider, model: OPENAI_VISION_MODEL,
+      usage: data.usage ? { input_tokens: data.usage.prompt_tokens || 0, output_tokens: data.usage.completion_tokens || 0 } : null,
+    });
     return {
       provider, model: OPENAI_VISION_MODEL,
       text: data.choices?.[0]?.message?.content || "",
       usage: { input_tokens: data.usage?.prompt_tokens || 0, output_tokens: data.usage?.completion_tokens || 0 }, raw: data,
+      usageReported: !!data.usage,
     };
   }
   const key = (claudeApiKey || process.env.LLM_API_KEY || process.env.ANTHROPIC_API_KEY || "").trim();
   if (!key) throw new Error("ANTHROPIC_API_KEY belum dikonfigurasi untuk AI Vision");
   const image = imageBase64
-    ? { type: "image", source: { type: "base64", media_type: mimeType, data: imageBase64 } }
+    ? { type: isPdf ? "document" : "image", source: { type: "base64", media_type: mimeType, data: imageBase64 } }
     : { type: "image", source: { type: "url", url: imageUrl } };
   const r = await fetchImpl("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -73,6 +82,8 @@ export async function callVision({ imageBase64, imageUrl, mimeType = "image/jpeg
     signal: AbortSignal.timeout(timeoutMs),
   });
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(`Claude vision HTTP ${r.status}: ${data.error?.type || data.error?.message || "unknown"}`);
-  return { provider, model: CLAUDE_VISION_MODEL, text: (data.content || []).map(c => c.text || "").join(""), usage: data.usage || {}, raw: data };
+  if (!r.ok) throw Object.assign(new Error(`Claude vision HTTP ${r.status}: ${data.error?.type || data.error?.message || "unknown"}`), {
+    status: r.status, provider, model: CLAUDE_VISION_MODEL, usage: data.usage || null,
+  });
+  return { provider, model: CLAUDE_VISION_MODEL, text: (data.content || []).map(c => c.text || "").join(""), usage: data.usage || {}, usageReported: !!data.usage, raw: data };
 }

@@ -274,8 +274,9 @@ export function extractOpenAIUsage(response) {
 // ── 4. ai_usage insert via REST (tanpa klien Supabase) ──
 // Dipakai di jalur webhook/handler yang cuma punya SUPABASE_URL + SERVICE_KEY mentah
 // (api/_handlers/wa.js, _tool-bag-vision.js, _ai-vision.js) — di sana tidak ada objek `sb`.
-// Fire-and-forget & fail-silent: logging biaya TIDAK boleh memblok balasan webhook,
-// dan kegagalan log tidak boleh menggagalkan fitur.
+// Fail-silent; caller may await the returned, bounded promise before serverless exit.
+// Kegagalan log tidak boleh menggagalkan fitur. Transport errors can have unknown
+// usage: callers mark metadata.usage_known=false; zero tokens is not proof of no charge.
 //
 // `usage` menerima langsung objek usage dari Anthropic ({input_tokens, output_tokens}).
 export function logAiUsageRest({
@@ -291,6 +292,7 @@ export function logAiUsageRest({
   duration_ms = null,
   error = null,
   metadata = null,
+  timeoutMs = 3000,
 }) {
   try {
     if (!SU || !SK || !feature) return;
@@ -299,8 +301,9 @@ export function logAiUsageRest({
     const finalCost = cost_usd !== null && cost_usd !== undefined
       ? cost_usd
       : calcAiCost({ model, input_tokens: tin, output_tokens: tout });
-    fetch(SU + "/rest/v1/ai_usage", {
+    return fetch(SU + "/rest/v1/ai_usage", {
       method: "POST",
+      signal: AbortSignal.timeout(timeoutMs),
       headers: {
         "Content-Type": "application/json",
         apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=minimal",
