@@ -7,6 +7,7 @@ import { flushPerfMetrics, measureAsync } from "../lib/perfMetrics.js";
 import AbsenBanner from "./AbsenBanner.jsx";
 import { useAppContext } from "../context/AppContext.js";
 import { isFieldOrderAssigned } from "../lib/fieldReportWorkflow.js";
+import { dashboardReadError } from "../lib/dashboardReadError.js";
 
 // Biaya dihitung ke total/chart HANYA bila sudah final: bukan menunggu approval Admin
 // (≥500rb) dan bukan draft AI belum di-review (PENDING_AI). Konsisten dgn ExpensesView,
@@ -168,6 +169,7 @@ const [workMonthOffset, setWorkMonthOffset] = useState(0);
 const [monthlyWork, setMonthlyWork] = useState(EMPTY_MONTHLY_WORK);
 const [monthlyWorkLoading, setMonthlyWorkLoading] = useState(false);
 const [monthlyWorkError, setMonthlyWorkError] = useState("");
+const [monthlyWorkRetry, setMonthlyWorkRetry] = useState(0);
 const monthlyWorkCache = useRef(new Map());
 useEffect(() => {
   if (!bootstrapReady || !["Owner", "Admin"].includes(role) || !supabase) return;
@@ -223,14 +225,14 @@ useEffect(() => {
       console.error("[DASHBOARD_WORK_SUMMARY] gagal memuat agregasi:", error);
       if (!cancelled) {
         setMonthlyWork(EMPTY_MONTHLY_WORK);
-        setMonthlyWorkError(error?.message || "Rekap pekerjaan belum dapat dimuat");
+        setMonthlyWorkError(dashboardReadError(error));
       }
     } finally {
       if (!cancelled) setMonthlyWorkLoading(false);
     }
   })();
   return () => { cancelled = true; };
-}, [bootstrapReady, role, supabase, workMonthOffset]);
+}, [bootstrapReady, role, supabase, workMonthOffset, monthlyWorkRetry]);
 useEffect(() => {
   if (!showFinancialDashboard || !bootstrapReady || !["Owner", "Admin"].includes(role) || !supabase) return;
   let cancelled = false;
@@ -519,8 +521,10 @@ return (
       </div>
 
       {monthlyWorkError ? (
-        <div style={{ background: cs.red + "12", border: "1px solid " + cs.red + "44", color: cs.red, borderRadius: 10, padding: "12px 14px", fontSize: 12 }}>
-          Rekap belum tersedia. Pastikan migration 181 sudah diterapkan. <span style={{ color: cs.muted }}>{monthlyWorkError}</span>
+        <div role="alert" style={{ background: cs.red + "12", border: "1px solid " + cs.red + "44", color: cs.red, borderRadius: 10, padding: "12px 14px", fontSize: 12 }}>
+          {monthlyWorkError.message} <span style={{ color: cs.muted }}>Kode: {monthlyWorkError.code}</span>
+          <button type="button" disabled={monthlyWorkLoading} onClick={() => { setMonthlyWorkLoading(true); setMonthlyWorkRetry(n => n + 1); }}
+            style={{ marginLeft: 12, color: cs.accent, background: cs.surface, border: '1px solid ' + cs.border, borderRadius: 6, padding: '6px 10px' }}>Coba muat rekap</button>
         </div>
       ) : (
         <div style={{ position: "relative", opacity: monthlyWorkLoading ? 0.55 : 1, transition: "opacity .2s" }}>

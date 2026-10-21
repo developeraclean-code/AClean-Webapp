@@ -1,5 +1,7 @@
-// Browser-only backpressure for REST reads. Auth, RPC POST and all writes retain
-// their original semantics: never queue, replay or automatically retry a mutation.
+// Browser-only backpressure for REST reads and explicitly known read-only RPCs.
+// Auth and mutations never queue, replay or automatically retry here.
+const READ_ONLY_RPCS = new Set(['get_dashboard_snapshot','get_dashboard_snapshot_v2',
+  'get_dashboard_monthly_work_summary','get_statistics_snapshot','get_finance_snapshot','get_service_reports_page']);
 export function createSupabaseReadTransport({ baseUrl, fetchImpl = (...args) => globalThis.fetch(...args),
   concurrency = 3, maxQueued = 200, timeoutMs = 20_000, queueTimeoutMs = 20_000,
   failureThreshold = 3, cooldownMs = 15_000, maxCooldownMs = 120_000,
@@ -53,7 +55,14 @@ export function createSupabaseReadTransport({ baseUrl, fetchImpl = (...args) => 
       if (job.signal?.aborted) throw abortError();
       // A deadline also releases the gate if a custom fetch ignores AbortSignal.
       const deadline = new Promise((_, reject) => controller.signal.addEventListener("abort", () => reject(abortError()), { once: true }));
-      const response = await Promise.race([fetchImpl(job.input, { ...job.init, signal: controller.signal }), deadline]);
+      const response = await Promise.race([(async () => {
+        const headers = await fetchImpl(job.input, { ...job.init, signal: controller.signal });
+        // Headers alone do not finish a request. Hold the slot and deadline
+        // until JSON/body is downloaded too; a stalled body must not be healthy.
+        const bytes = await headers.arrayBuffer();
+        return new Response([204,205,304].includes(headers.status) ? null : bytes,
+          { status: headers.status, statusText: headers.statusText, headers: headers.headers });
+      })(), deadline]);
       if (response.status >= 500 || response.status === 429 || response.status === 408) fail(startedEpoch, probe);
       else if (response.ok) succeed(startedEpoch, probe);
       else if (probe) {
@@ -96,7 +105,10 @@ export function createSupabaseReadTransport({ baseUrl, fetchImpl = (...args) => 
   const managed = (input, init) => {
     const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url, base);
     const method = (init?.method || input?.method || "GET").toUpperCase();
-    return url.origin === base.origin && url.pathname.startsWith("/rest/v1/") && ["GET", "HEAD"].includes(method);
+    if (url.origin !== base.origin || !url.pathname.startsWith('/rest/v1/')) return false;
+    if (['GET','HEAD'].includes(method)) return true;
+    const rpc = url.pathname.match(/^\/rest\/v1\/rpc\/([^/]+)$/)?.[1];
+    return method === 'POST' && READ_ONLY_RPCS.has(rpc);
   };
   const guardedFetch = (input, init = {}) => {
     if (!managed(input, init)) return fetchImpl(input, init);

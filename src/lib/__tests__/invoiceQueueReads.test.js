@@ -24,6 +24,16 @@ const invoiceClient = (rows) => ({
 });
 
 describe("invoice queue", () => {
+  it("bootstrap and full reads retain all 1,200 old actionable invoices exactly once, including every outstanding status", async () => {
+    const statuses = ["PENDING_APPROVAL", "APPROVED", "UNPAID", "OVERDUE", "PARTIAL_PAID"];
+    const rows = Array.from({ length: 1200 }, (_, i) => ({ id: `old-${i}`, status: statuses[i % statuses.length],
+      created_at: "2026-01-01T00:00:00Z", total: 100000 + i, remaining_amount: 50000 + i }));
+    for (const result of [await fetchBootstrapInvoices(invoiceClient(rows), "2026-10-01T00:00:00Z"), await fetchInvoices(invoiceClient(rows))]) {
+      expect(result.error).toBeNull(); expect(result.data).toHaveLength(1200);
+      expect(new Set(result.data.map(row => row.id)).size).toBe(1200);
+      expect(result.data.find(row => row.id === 'old-1199')).toEqual(rows[1199]);
+    }
+  });
   it("mempertahankan pending lama setelah reload Invoice meski di luar 300 terbaru", async () => {
     const recent = Array.from({ length: 320 }, (_, i) => ({
       id: `new-${i}`, status: "PAID", created_at: `2026-10-09T00:${String(i % 60).padStart(2, "0")}:00Z`,

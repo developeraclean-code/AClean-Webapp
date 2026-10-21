@@ -4,9 +4,9 @@ import { rawInvoice, sampleProof } from '../../preview/payment-withholding/fixtu
 const sqlFile = name => readFileSync(new URL('../../migrations/' + name, import.meta.url), 'utf8');
 export const snapshotMigration = () => sqlFile('213_payment_withholding_snapshot.sql');
 
-export async function createPaymentWithholdingDb({ applyWithholding = true, applySnapshotFix = true } = {}) {
-  const { PGlite } = await import(process.env.WA_PGLITE_MODULE || '@electric-sql/pglite');
-  const db = new PGlite();
+export async function createPaymentWithholdingDb({ applyWithholding = true, applySnapshotFix = true, database = null } = {}) {
+  let db = database;
+  if (!db) { const { PGlite } = await import(process.env.WA_PGLITE_MODULE || '@electric-sql/pglite'); db = new PGlite(); }
   try {
     await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role; CREATE SCHEMA auth;
       CREATE FUNCTION auth.role() RETURNS text LANGUAGE sql AS $$ SELECT 'authenticated'::text $$;

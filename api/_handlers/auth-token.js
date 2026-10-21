@@ -1,6 +1,7 @@
 // api/_handlers/auth-token.js — Handler grup auth/token/config/health (Batch 2 pemecahan
 // router, Jul 2026). Isi dipindah APA ADANYA dari api/[route].js — di-dispatch oleh router.
 import { checkRateLimit, signAppToken, validateInternalToken } from "../_auth.js";
+import { checkHealth } from "../_health.js";
 import { readSupabaseUser, readSessionJson, sendSessionError, SessionCheckError } from "../_session-check.js";
 
 // ── TEST-CONNECTION (public) ──
@@ -86,46 +87,10 @@ export async function testConnection(req, res) {
 // PUBLIC_ROUTES — tidak butuh auth. UptimeRobot dll bisa ping ini.
 export async function health(req, res) {
   if (req.method !== "GET" && req.method !== "HEAD") return res.status(405).json({error: "Method not allowed"});
-  const checks = { supabase: "unknown", fonnte: "unknown", ai: "unknown" };
-  const start = Date.now();
-
-  const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-  const SK = process.env.SUPABASE_SERVICE_KEY;
-  if (SU && SK) {
-    try {
-      const r = await fetch(SU + "/rest/v1/agent_logs?select=id&limit=1", {
-        headers: { apikey: SK, Authorization: "Bearer " + SK }
-      });
-      checks.supabase = r.ok ? "ok" : "fail:" + r.status;
-    } catch (e) { checks.supabase = "fail:" + (e.message || "unknown").slice(0, 40); }
-  } else { checks.supabase = "not_configured"; }
-
-  if (process.env.FONNTE_TOKEN) {
-    try {
-      // Fonnte /validate butuh POST, tidak GET
-      const r = await fetch("https://api.fonnte.com/validate", {
-        method: "POST",
-        headers: { Authorization: process.env.FONNTE_TOKEN }
-      });
-      checks.fonnte = r.ok ? "ok" : "fail:" + r.status;
-    } catch (e) { checks.fonnte = "fail:" + (e.message || "unknown").slice(0, 40); }
-  } else { checks.fonnte = "not_configured"; }
-
-  const aiProviders = [];
-  if (process.env.ANTHROPIC_API_KEY) aiProviders.push("claude");
-  if (process.env.OPENAI_API_KEY) aiProviders.push("openai");
-  if (process.env.GROQ_API_KEY) aiProviders.push("groq");
-  if (process.env.GEMINI_API_KEY) aiProviders.push("gemini");
-  checks.ai = aiProviders.length > 0 ? "ok:" + aiProviders.join(",") : "not_configured";
-
-  const isHealthy = checks.supabase === "ok";
-  return res.status(isHealthy ? 200 : 503).json({
-    status: isHealthy ? "healthy" : "unhealthy",
-    timestamp: new Date().toISOString(),
-    duration_ms: Date.now() - start,
-    checks,
-    version: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) || "dev",
-  });
+  const result = await checkHealth();
+  res.setHeader("Cache-Control", "no-store");
+  if (result.status !== "healthy") res.setHeader("Retry-After", "15");
+  return res.status(result.status === "healthy" ? 200 : 503).json(result);
 }
 
 // ── GET-LLM-CONFIG (secure backend config endpoint) ──

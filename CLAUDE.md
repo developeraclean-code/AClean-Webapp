@@ -251,10 +251,10 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
 215       # Applied 18 Okt 2026 — verifikasi manual-only, hentikan auto-return, reminder staf setelah 20.00; aktivasi scheduler wajib setelah deploy terverifikasi.
 216–217   # Applied 18 Okt 2026 — lease/catch-up, audit read-only, snapshot 51 tabel terenkripsi + agregasi JSON ringan; kunci server disiapkan, aktivasi pemicu 10 menit setelah deploy READY.
 218       # Applied 18 Okt 2026 — rincian 16 temuan Owner-only + pengaman kontak/tujuan alert; audit/kuota memakai profil Owner aktif sesuai persetujuan. Tanpa koreksi transaksi/aset otomatis.
+219       # Applied 21 Okt 2026 — materialisasi ID/status/waktu sebelum paging laporan; hash live cocok, 48 hasil uji identik.
+220       # Applied 21 Okt 2026 — grup atomik/FK bigint + RLS header/proof untuk staf kantor aktif; checksum bisnis utuh, tanpa pelunasan historis.
 ```
-
-> Daftar di atas pernah tertinggal jauh (berhenti di 126 padahal file sudah 132).
-> Sumber kebenaran nomor = isi folder `migrations/`, bukan daftar ini.
+> Sumber kebenaran nomor = folder `migrations/`, bukan daftar ini yang pernah tertinggal.
 
 > Migrasi baru: pakai skill `new-migration`; nomor = tertinggi + 1 (hati-hati nomor dobel seperti 122).
 

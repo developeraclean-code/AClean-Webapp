@@ -41,7 +41,7 @@ import { statusColor, statusLabel } from "./constants/status.js";
 import { SERVICE_TYPES } from "./constants/services.js";
 import { DEFAULT_BONUS_CATEGORIES } from "./constants/bonus.js";
 import {
-  fetchOrders, fetchInvoices, fetchOutstandingInvoices, fetchCustomers, fetchInventory,
+  fetchOrders, fetchInvoices, fetchCustomers, fetchInventory,
   fetchBootstrapOrders, fetchBootstrapInvoices, fetchBootstrapServiceReports,
   fetchServiceReports, fetchInventoryTransactions,
   fetchInvoicesSince, fetchServiceReportsSince, fetchOrdersSince,
@@ -81,7 +81,7 @@ import { createConsolidatedInvoice as createConsolidatedInvoiceLib } from "./lib
 import { createOrder as createOrderLib } from "./lib/createOrder.js";
 import { sendToARA as sendToARAImpl } from "./lib/ara.js";
 import { markPaid as markPaidLib } from "./lib/markPaid.js";
-import { handleGroupPayment as handleGroupPaymentLib } from "./lib/groupPayment.js";
+import { handleGroupPayment as handleGroupPaymentLib, createGroupPaymentRequest, groupInvoiceBalance } from "./lib/groupPayment.js";
 import { checkStuckJobs as checkStuckJobsLib } from "./lib/checkStuckJobs.js";
 import { doLogin as doLoginLib } from "./lib/doLogin.js";
 import { mergedInvoiceWA as mergedInvoiceWALib } from "./lib/mergedInvoiceWa.js";
@@ -395,16 +395,18 @@ function AuditHistory({ tableName, rowId, open, onClose, cs = {} }) {
 function GroupPaymentModal({ ctx, onConfirm, onClose, fmt, cs }) {
   const { invoices, suggestedAmount, proofUrl: initProof, method: initMethod } = ctx;
   const [selected, setSelected] = useState(invoices.map(i => i.id));
-  const [received, setReceived] = useState(suggestedAmount || invoices.reduce((s, i) => s + (i.status === "PARTIAL_PAID" ? (i.remaining_amount ?? ((i.total||0)-(i.paid_amount||0))) : (i.total||0)), 0));
+  const [received, setReceived] = useState(suggestedAmount || invoices.reduce((s, i) => s + groupInvoiceBalance(i), 0));
   const [proofUrl, setProofUrl] = useState(initProof || "");
   const [method, setMethod] = useState(initMethod || "transfer");
   const [loading, setLoading] = useState(false);
+  const [reviewAcknowledged, setReviewAcknowledged] = useState(false);
+  const [paymentError, setPaymentError] = useState('');
+  const attempt = useRef(null);
+  const confirming = useRef(false);
 
   const selectedInvoices = invoices.filter(i => selected.includes(i.id));
   // Untuk PARTIAL_PAID: tagihan efektif = remaining, bukan total
-  const effectiveTagihan = (inv) => inv.status === "PARTIAL_PAID"
-    ? (inv.remaining_amount ?? ((inv.total || 0) - (inv.paid_amount || 0)))
-    : (inv.total || 0);
+  const effectiveTagihan = groupInvoiceBalance;
   const totalTagihan = selectedInvoices.reduce((s, i) => s + effectiveTagihan(i), 0);
   const isPartial = received < totalTagihan;
   const isOver = received > totalTagihan;
@@ -433,7 +435,7 @@ function GroupPaymentModal({ ctx, onConfirm, onClose, fmt, cs }) {
         <div style={{ display: "grid", gap: 8, marginBottom: 16 }}>
           {invoices.map(inv => (
             <label key={inv.id} style={{ display: "flex", alignItems: "center", gap: 10, background: cs.surface, borderRadius: 10, padding: "10px 12px", cursor: "pointer", border: "1px solid " + (selected.includes(inv.id) ? cs.accent + "66" : cs.border) }}>
-              <input type="checkbox" checked={selected.includes(inv.id)} onChange={() => toggle(inv.id)}
+              <input type="checkbox" disabled={loading || !!attempt.current} checked={selected.includes(inv.id)} onChange={() => toggle(inv.id)}
                 style={{ width: 16, height: 16, accentColor: cs.accent, cursor: "pointer" }} />
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: cs.accent, fontFamily: "monospace" }}>{inv.id}</div>
@@ -462,7 +464,7 @@ function GroupPaymentModal({ ctx, onConfirm, onClose, fmt, cs }) {
         {/* Input jumlah diterima */}
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Jumlah Diterima dari Customer</div>
-          <input type="number" value={received} onChange={e => setReceived(Number(e.target.value))}
+          <input aria-label="Jumlah diterima" type="number" disabled={loading || !!attempt.current} value={received} onChange={e => setReceived(Number(e.target.value))}
             style={{ width: "100%", background: cs.surface, border: "1px solid " + (isPartial ? "#f59e0b66" : isOver ? "#ef444466" : cs.border), borderRadius: 8, padding: "10px 12px", color: cs.text, fontSize: 14, fontWeight: 700, boxSizing: "border-box" }} />
           {isPartial && (
             <div style={{ fontSize: 11, color: "#f59e0b", marginTop: 4 }}>
@@ -479,7 +481,7 @@ function GroupPaymentModal({ ctx, onConfirm, onClose, fmt, cs }) {
         {/* Metode */}
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>Metode Pembayaran</div>
-          <select value={method} onChange={e => setMethod(e.target.value)}
+          <select aria-label="Metode pembayaran" disabled={loading || !!attempt.current} value={method} onChange={e => setMethod(e.target.value)}
             style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, boxSizing: "border-box" }}>
             <option value="transfer">Transfer Bank</option>
             <option value="transfer_bca">Transfer BCA</option>
@@ -496,11 +498,11 @@ function GroupPaymentModal({ ctx, onConfirm, onClose, fmt, cs }) {
         {/* URL bukti bayar */}
         <div style={{ marginBottom: 16 }}>
           <div style={{ fontSize: 11, color: cs.muted, marginBottom: 4 }}>URL Bukti Bayar (foto dari WA / R2)</div>
-          <input value={proofUrl} onChange={e => setProofUrl(e.target.value)}
+          <input aria-label="URL bukti bayar" disabled={loading || !!attempt.current} value={proofUrl} onChange={e => setProofUrl(e.target.value)}
             placeholder="https://... atau /api/foto/... — akan dipakai untuk semua invoice"
             style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 12, boxSizing: "border-box" }} />
           {proofUrl && (
-            <div style={{ fontSize: 11, color: cs.green, marginTop: 3 }}>1 foto ini akan jadi bukti untuk semua {selected.length} invoice yang dipilih</div>
+            <div style={{ fontSize: 11, color: cs.green, marginTop: 3 }}>Bukti disimpan untuk grup dan hanya ditempel pada invoice yang menerima alokasi pembayaran.</div>
           )}
         </div>
 
@@ -519,20 +521,32 @@ function GroupPaymentModal({ ctx, onConfirm, onClose, fmt, cs }) {
           </div>
         )}
 
+        <label style={{ display: 'block', color: cs.text, fontSize: 12, marginBottom: 12 }}>
+          <input type="checkbox" disabled={loading || !!attempt.current} checked={reviewAcknowledged} onChange={e => setReviewAcknowledged(e.target.checked)} /> Saya sudah memeriksa bukti, pengirim, nominal dan invoice yang dibayar.
+        </label>
+        {paymentError && <div role="alert" style={{ color: '#f59e0b', fontSize: 12, marginBottom: 12 }}>{paymentError}</div>}
+        {attempt.current && <div style={{ color: cs.muted, fontSize: 11, marginBottom: 12 }}>ID permintaan: {attempt.current.p_request_id}. Ulangi hanya dengan ID ini jika respons terputus.</div>}
         <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={onClose}
+          <button disabled={loading} onClick={onClose}
             style={{ flex: 1, background: cs.surface, border: "1px solid " + cs.border, color: cs.muted, padding: "11px", borderRadius: 10, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>
             Batal
           </button>
           <button
-            disabled={loading || selected.length === 0 || received <= 0}
+            disabled={loading || selected.length === 0 || selected.length > 20 || !Number.isSafeInteger(received) || received <= 0 || isOver || !reviewAcknowledged}
             onClick={async () => {
+              if (confirming.current) return;
+              confirming.current = true;
               setLoading(true);
-              try { await onConfirm(selected, received, proofUrl || null, method); }
-              finally { setLoading(false); }
+              setPaymentError('');
+              try {
+                attempt.current ||= createGroupPaymentRequest({ invoices, invoiceIds: selected, totalReceived: received,
+                  customerPhone: ctx.phone, proofUrl, method, suggestionId: ctx.suggId || null, reviewAcknowledged });
+                await onConfirm(attempt.current);
+              } catch (error) { setPaymentError(error.message || 'Pembayaran belum dapat dipastikan; periksa riwayat.'); }
+              finally { confirming.current = false; setLoading(false); }
             }}
             style={{ flex: 2, background: loading ? cs.muted : "#22c55e", border: "none", color: "#fff", padding: "11px", borderRadius: 10, cursor: loading || selected.length === 0 ? "not-allowed" : "pointer", fontWeight: 800, fontSize: 14 }}>
-            {loading ? "Memproses..." : `✅ Konfirmasi ${fmt(received)}`}
+            {loading ? "Memproses..." : attempt.current ? 'Periksa / Ulangi ID yang sama' : `✅ Konfirmasi ${fmt(received)}`}
           </button>
         </div>
       </div>
@@ -544,6 +558,8 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
   // ── Auth & Role ──
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
+  const paymentSessionRef = useRef(null);
+  paymentSessionRef.current = currentUser?.id || null;
   const [emergencySetupOpen, setEmergencySetupOpen] = useState(false);
   const [dataLoading, setDataLoading] = useState(false);
   const [bootstrapReady, setBootstrapReady] = useState(false);
@@ -1227,10 +1243,10 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
     }
     if (["invoice", "finance"].includes(activeMenu)) {
       once("invoices", async () => {
-        const [recent, outstanding] = await Promise.all([fetchInvoices(supabase), fetchOutstandingInvoices(supabase)]);
-        if (recent.error || outstanding.error) throw recent.error || outstanding.error;
-        const map = new Map([...(recent.data || []), ...(outstanding.data || [])].map(row => [row.id, parseInvoiceRow(row)]));
-        setInvoicesData(Array.from(map.values()));
+        // fetchInvoices already includes every actionable invoice, without a date cap.
+        const { data, error } = await fetchInvoices(supabase);
+        if (error) throw error;
+        if (data) setInvoicesData(data.map(parseInvoiceRow));
       });
     }
     if (["laporantim", "reports", "myreport"].includes(activeMenu)) {
@@ -1337,41 +1353,20 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchCustomer]);
 
-  // Invoice outstanding (UNPAID/OVERDUE/PARTIAL_PAID) live-fetch TANPA cap — invoicesData
-  // global cuma 300 baris TERBARU (reads.js), tapi invoice overdue justru cenderung LAMA
-  // → dulu ketahuan hilang total dari tab Overdue/badge unpaidCnt begitu bisnis lewat
-  // 300 invoice. Fetch sekali saat login, gabung ke invoicesDataMerged di bawah.
-  const [outstandingInvExtra, setOutstandingInvExtra] = useState([]);
-  useEffect(() => {
-    if (!isLoggedIn || !supabase) return;
-    fetchOutstandingInvoices(supabase).then(({ data, error }) => {
-      if (!error) setOutstandingInvExtra(data || []);
-    });
-  }, [isLoggedIn, supabase]);
+  // Both bootstrap and full invoice reads now include the complete actionable
+  // queue. Keep old unpaid invoices in the main mutable state, without a second
+  // login query/extra state that can outlive its session or a successful reload.
+  const setInvoicesData = _setInvoicesDataRaw;
 
-  // BUG FIX (05 Agu 2026): invoice OVERDUE lama hidup di outstandingInvExtra (di luar
-  // cap 300 invoicesData), tapi semua aksi (Tandai Lunas/Approve/Edit/Delete) cuma
-  // nge-update invoicesData via setInvoicesData(prev => prev.map(...)) — .map() gak
-  // nemu id-nya di invoicesData (karena invoice-nya cuma ada di outstandingInvExtra),
-  // jadi mutasi NO-OP dan UI keliatan "stuck"/tidak berhasil walau DB-nya berhasil
-  // ke-update. Fix: setInvoicesData jadi wrapper yang broadcast updater yang sama ke
-  // KEDUA state, supaya invoice manapun sumbernya selalu ke-refresh di UI.
-  const setInvoicesData = (updater) => {
-    _setInvoicesDataRaw(updater);
-    setOutstandingInvExtra(prev => (typeof updater === "function" ? updater(prev) : prev));
-  };
-
-  // Merge local + server search + outstanding lama (dedup by id) untuk filter & display.
-  // Mutasi (approve/paid/edit/delete) lewat setInvoicesData di atas — wrapper-nya sudah
-  // broadcast ke invoicesData DAN outstandingInvExtra, jadi tetap sinkron manapun sumbernya.
+  // Server search can add paid/history rows outside the recent invoice window.
   const invoicesDataMerged = useMemo(() => {
-    if (!searchInvExt.length && !outstandingInvExtra.length) return invoicesData;
+    if (!searchInvExt.length) return invoicesData;
     const ids = new Set(invoicesData.map(i => i.id));
-    const extras = [...searchInvExt, ...outstandingInvExtra].filter(i => !ids.has(i.id));
+    const extras = searchInvExt.filter(i => !ids.has(i.id));
     const seen = new Set();
     const dedupedExtras = extras.filter(i => (seen.has(i.id) ? false : (seen.add(i.id), true)));
     return dedupedExtras.length ? [...invoicesData, ...dedupedExtras] : invoicesData;
-  }, [invoicesData, searchInvExt, outstandingInvExtra]);
+  }, [invoicesData, searchInvExt]);
 
   const ordersDataMerged = useMemo(() => {
     if (!searchOrdExt.length) return ordersData;
@@ -1525,6 +1520,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
   const [paymentSuggestBanner, setPaymentSuggestBanner] = useState(null);
   useEffect(() => { setPaymentSuggestBanner(null); }, [isLoggedIn, currentUser?.id, currentUser?.role]);
   const [groupPaymentCtx, setGroupPaymentCtx] = useState(null); // { phone, invoices, suggestedAmount, proofUrl }
+  useEffect(() => { setGroupPaymentCtx(null); }, [currentUser?.id, currentUser?.role]);
 
   // ── Statistik periode filter ──
   const [statsPeriod, setStatsPeriod] = useState("bulan"); // "hari"|"minggu"|"bulan"|"tahun"|"custom"
@@ -2356,7 +2352,6 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
     setActiveMenu("dashboard");
     setOrdersData([]);
     setInvoicesData([]);
-    setOutstandingInvExtra([]);
     setCustomersData([]);
     setInventoryData([]);
     setLaporanReports([]);
@@ -3352,15 +3347,21 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
 
   // ── Group Payment: 1 transfer cover beberapa invoice 1 customer ──
   // Wrapper (Fase 2, pola ctx): handleGroupPayment pindah ke lib/groupPayment.
-  // WAJIB kirim invoicesDataMerged (bukan invoicesData mentah cap-300): invoice unpaid
-  // LAMA di luar window hanya ada di set outstanding. Kalau pakai mentah, targetInvoices
-  // kehilangan sebagian → totalTagihan salah kecil → "melebihi total tagihan" (bug Bu
-  // Doly: bayar 4,47jt utk grup 3 invoice divalidasi ke 1 invoice 2,87jt). setInvoicesData
-  // sudah broadcast ke outstandingInvExtra, jadi update lunas tetap sinkron.
-  const handleGroupPayment = (customerPhone, invoiceIds, totalReceived, proofUrl, method) => handleGroupPaymentLib(customerPhone, invoiceIds, totalReceived, proofUrl, method, {
-    addAgentLog, auditUserName, fmt, getLocalISOString, invoicesData: invoicesDataMerged, markInvoicePaid,
-    ordersData, setAuditUser, setInvoicesData, setOrdersData, showNotif, supabase,
-  });
+  // Include server-search history too; actionable invoices of every age are
+  // already in the main state supplied by the paginated invoice reads.
+  const handleGroupPayment = async request => {
+    const actorId = currentUser?.id;
+    const result = await handleGroupPaymentLib(supabase, request);
+    if (!actorId || paymentSessionRef.current !== actorId) throw new Error('Akun berubah saat pembayaran diproses. Masuk kembali dan periksa riwayat; jangan membayar ulang.');
+    const saved = new Map(result.invoices.map(row => [row.id, parseInvoiceRow(row)]));
+    setInvoicesData(prev => [...prev.filter(row => !saved.has(row.id)), ...saved.values()]);
+    setSearchInvExt(prev => prev.map(row => saved.get(row.id) || row));
+    const savedOrders = new Map(result.orders.map(row => [row.id, row]));
+    setOrdersData(prev => prev.map(row => savedOrders.get(row.id) || row));
+    if (result.suggestion) setPaymentSuggestions(prev => prev.filter(p => p.id !== result.suggestion.id));
+    showNotif(`✅ Pembayaran ${fmt(request.p_total_received)} tersimpan${result.replayed ? ' (hasil permintaan sebelumnya)' : ''}.`);
+    return result;
+  };
 
   // ── GAP 6: Inventory deduct ──
   // GAP 1.2 + GAP 3: Inventory via transaction table — audit trail + cegah negatif
@@ -5297,16 +5298,8 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
       {groupPaymentCtx && (
         <GroupPaymentModal
           ctx={groupPaymentCtx}
-          onConfirm={async (invoiceIds, totalReceived, proofUrl, method) => {
-            await handleGroupPayment(groupPaymentCtx.phone, invoiceIds, totalReceived, proofUrl, method);
-            if (groupPaymentCtx.suggId) {
-              supabase.from("payment_suggestions").update({
-                status: "CONFIRMED",
-                resolved_at: new Date(Date.now() + 7 * 3600000).toISOString(),
-                resolved_by: currentUser?.name || "Admin",
-              }).eq("id", groupPaymentCtx.suggId).then(() => {});
-              setPaymentSuggestions(prev => prev.filter(p => p.id !== groupPaymentCtx.suggId));
-            }
+          onConfirm={async request => {
+            await handleGroupPayment(request);
             setGroupPaymentCtx(null);
             setActiveMenu("invoice");
           }}

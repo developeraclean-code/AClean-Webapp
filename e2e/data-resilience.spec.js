@@ -6,9 +6,9 @@ const profile = { ...user, name: "Owner Simulasi", role: "Owner", active: true, 
 const b64 = value => Buffer.from(JSON.stringify(value)).toString("base64url");
 const token = { access_token: `${b64({ alg: "HS256", typ: "JWT" })}.${b64({ sub: id, aud: "authenticated", role: "authenticated", exp: 4102444800 })}.SIMULATED_SIGNATURE`, refresh_token: "SIMULATED_REFRESH", expires_in: 3600, token_type: "bearer", user };
 
-async function fixture(page, { role = "Owner", orders = [], suggestions = null } = {}) {
+async function fixture(page, { role = "Owner", orders = [], invoices = [], suggestions = null, groupHandler = null, monthlyError = null } = {}) {
   const roleProfile = { ...profile, role };
-  const state = { mode: "healthy", auth: "healthy", active: 0, peak: 0, failedReads: 0, authCalls: 0, profileLists: 0, external: [], writes: [], errors: [], releaseAuth: null };
+  const state = { mode: "healthy", auth: "healthy", active: 0, peak: 0, failedReads: 0, authCalls: 0, profileLists: 0, invoiceReads: [], external: [], writes: [], errors: [], releaseAuth: null };
   page.on("pageerror", error => state.errors.push(error.message));
   await page.route("**/*", async route => {
     const request = route.request(), url = new URL(request.url());
@@ -33,9 +33,14 @@ async function fixture(page, { role = "Owner", orders = [], suggestions = null }
     const table = url.pathname.split("/").at(-1);
     if (!["GET", "HEAD"].includes(request.method())) {
       state.writes.push({ table, method: request.method() });
+      if (table === 'record_group_payment_atomic' && groupHandler) {
+        const result=await groupHandler(request.postDataJSON());return fulfill(result.body,result.status || 200);
+      }
+      if (table === 'get_dashboard_monthly_work_summary' && monthlyError) return fulfill(monthlyError,400);
       if (url.pathname.includes("/rpc/")) return fulfill(null);
       return fulfill([]);
     }
+    if (table === "invoices" && request.method() === "GET") state.invoiceReads.push(url.search);
     state.peak = Math.max(state.peak, ++state.active);
     try {
       await new Promise(resolve => setTimeout(resolve, 10));
@@ -50,6 +55,7 @@ async function fixture(page, { role = "Owner", orders = [], suggestions = null }
         { key: "wa_payment_inbox_enabled", value: "false" }, { key: "wa_provider", value: "fonnte" },
       ]);
       if (table === "orders") return await fulfill(orders);
+      if (table === 'invoices') return await fulfill(invoices);
       if (table === "payment_suggestions") return await fulfill(suggestions || []);
       return await fulfill([]);
     } finally { state.active--; }
@@ -69,6 +75,8 @@ test("full app bounds reads, shows an outage, and safely recovers without changi
   await expect(page.getByRole("button", { name: "Keluar →", exact: true })).toBeVisible();
   await expect(page.getByText("Memuat data dari Supabase...", { exact: true })).toHaveCount(0);
   await expect.poll(() => state.profileLists).toBe(1);
+  await expect.poll(() => state.invoiceReads.length).toBe(2);
+  expect(state.invoiceReads.some(query => query.includes('order=due'))).toBe(false);
   expect(state.peak).toBeLessThanOrEqual(3);
   state.mode = "outage";
   await page.clock.runFor(100_000);
@@ -86,6 +94,56 @@ test("full app bounds reads, shows an outage, and safely recovers without changi
   expect(state.peak).toBeLessThanOrEqual(3);
   expect(state.writes.filter(row => ["invoices", "payments", "invoice_payments", "inventory", "service_reports"].includes(row.table))).toEqual([]);
   expect(state.external).toEqual([]); expect(state.errors).toEqual([]);
+});
+
+for (const viewport of [{width:1440,height:1000},{width:390,height:844}]) {
+  test(`Group payment ${viewport.width}: committed-but-lost response retries same ID, no optimistic PAID or second cash`,async({page})=>{
+    const {createGroupPaymentDb,seedGroup,groupRpc}=await import('../scripts/lib/group-payment-db.mjs');
+    const db=await createGroupPaymentDb();
+    try {
+      await seedGroup(db);const invoices=(await db.query('SELECT * FROM invoices ORDER BY id')).rows;
+      const orders=(await db.query('SELECT * FROM orders ORDER BY id')).rows;
+      const requests=[];
+      const state=await fixture(page,{invoices,orders,groupHandler:async args=>{
+        requests.push(args);const result=await groupRpc(db,args);
+        if(requests.length===1)return {status:504,body:{code:'57014',message:'Simulated lost response after commit'}};
+        return {body:result};
+      }});
+      await page.setViewportSize(viewport);await page.goto('/');await enter(page);
+      if(viewport.width<600)await page.getByRole('button',{name:'☰ Menu',exact:true}).click();
+      await page.getByRole('button',{name:/Invoice/,exact:false}).first().click();
+      await page.getByRole('button',{name:/Synthetic school \(2 inv/}).click();
+      const confirm=page.getByRole('button',{name:/Konfirmasi Rp/});await expect(confirm).toBeDisabled();
+      await page.getByLabel('URL bukti bayar').fill('group-browser.jpg');
+      await page.getByLabel(/Saya sudah memeriksa bukti, pengirim/).check();
+      // Trigger twice before React can disable the button; hard ref guard must win.
+      await confirm.evaluate(el=>{el.click();el.click();});
+      await expect(page.getByRole('alert').filter({hasText:/belum dapat dipastikan/})).toBeVisible();
+      expect(requests).toHaveLength(1);
+      await expect(page.getByText('💳 Group Payment',{exact:true})).toBeVisible();
+      await expect(page.getByText(/^✅ Pembayaran Rp .* tersimpan/)).toHaveCount(0);
+      await expect(page.getByLabel('Jumlah diterima')).toBeDisabled();
+      expect((await db.query('SELECT count(*)::int n FROM payments')).rows[0].n).toBe(1);
+      await page.getByRole('button',{name:'Periksa / Ulangi ID yang sama',exact:true}).click();
+      await expect(page.getByText(/^✅ Pembayaran Rp .* tersimpan/)).toBeVisible();
+      expect(requests).toHaveLength(2);expect(requests[0]).toEqual(requests[1]);
+      const ledger=(await db.query('SELECT count(*)::int n,sum(amount)::float amount FROM invoice_payments')).rows[0];
+      expect(ledger).toEqual({n:2,amount:4300000});
+      expect(state.writes.filter(w=>['invoices','orders','payments','invoice_payments','payment_suggestions'].includes(w.table))).toEqual([]);
+      expect(state.errors).toEqual([]);expect(state.external).toEqual([]);
+    } finally {await db.close();}
+  });
+}
+
+test('Dashboard 57014 is a timeout, not a missing migration; no automatic retry loop',async({page})=>{
+  const state=await fixture(page,{monthlyError:{code:'57014',message:'canceling statement due to statement timeout'}});
+  await page.goto('/');await enter(page);
+  await expect(page.getByRole('alert').filter({hasText:/Query rekap melewati batas waktu/})).toBeVisible();
+  await expect(page.getByText(/Pastikan migration 181/)).toHaveCount(0);
+  const attempts=()=>state.writes.filter(w=>w.table==='get_dashboard_monthly_work_summary').length;
+  expect(attempts()).toBe(1);
+  await page.getByRole('button',{name:'Coba muat rekap',exact:true}).click();
+  await expect.poll(attempts).toBe(2);expect(state.errors).toEqual([]);
 });
 
 test("Auth outage never consumes password attempts; real invalid credentials still do", async ({ page }) => {
@@ -140,6 +198,8 @@ for (const role of ["Admin", "Finance", "Teknisi", "Helper"]) {
     await page.goto("/"); await enter(page);
     await expect(page.getByRole("button", { name: "Keluar →", exact: true })).toBeVisible();
     await expect.poll(() => state.profileLists).toBe(1);
+    await expect.poll(() => state.invoiceReads.length).toBe(role === "Finance" ? 4 : 2);
+    expect(state.invoiceReads.some(query => query.includes('order=due'))).toBe(false);
     await expect(page.getByRole("button", { name: /Pengaturan/ })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /Mode Darurat/ })).toHaveCount(0);
     state.mode = "outage"; await page.clock.runFor(100_000);

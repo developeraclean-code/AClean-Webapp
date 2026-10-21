@@ -9,6 +9,20 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
 describe("Supabase REST read backpressure", () => {
+  it('keeps a hanging response body inside the deadline and concurrency slot',async()=>{
+    const gate=createSupabaseReadTransport({baseUrl,timeoutMs:100,fetchImpl:async()=>new Response(new ReadableStream({start(){}}))});
+    const work=gate.fetch(url);
+    await vi.advanceTimersByTimeAsync(101);
+    const result=await work;
+    expect(result.status).toBe(504);expect((await result.json()).code).toBe('APP_READ_TIMEOUT');
+    expect(gate.getStats().active).toBe(0);
+  });
+  it('bounds explicitly allowlisted read-only RPC POSTs, without replaying writes',async()=>{
+    let active=0,peak=0;
+    const gate=createSupabaseReadTransport({baseUrl,fetchImpl:async()=>{peak=Math.max(peak,++active);await new Promise(r=>setTimeout(r,5));active--;return response();}});
+    const work=Promise.all(Array.from({length:25},()=>gate.fetch(baseUrl+'/rest/v1/rpc/get_service_reports_page',{method:'POST',body:'{}'})));
+    await vi.advanceTimersByTimeAsync(1000);await work;expect(peak).toBe(3);
+  });
   it("serves 200 synthetic job reads with at most three concurrent requests and no lost IDs", async () => {
     let active = 0, peak = 0;
     const fetchImpl = vi.fn(async input => {

@@ -15,6 +15,7 @@ import { confirmInvoiceWaProof } from "../lib/invoiceWaProof.js";
 import { confirmInvoiceWaWithholding, invoiceCashReceived, paymentWithholdingReview } from "../lib/paymentWithholding.js";
 import PaymentWithholdingReview from "../components/PaymentWithholdingReview.jsx";
 import { getLocalDate as localDateWIB } from "../lib/dateTime.js";
+import { groupInvoiceBalance, groupPaymentProof } from "../lib/groupPayment.js";
 import AcUnitInvoiceModal from "./AcUnitInvoiceModal.jsx";
 import QuotationView from "./QuotationView.jsx";
 import { BlobProvider } from "@react-pdf/renderer";
@@ -1525,17 +1526,18 @@ return (
         {(() => {
           // Buka Group Payment untuk 1 customer (+ tarik bukti bayar WA yang ditangkap AI).
           const openGroupPay = (phone, invs) => {
-            const sugg = (paymentSuggestions || []).find(s => samePhone(s.phone, phone) && s.image_url);
+            const due = invs.reduce((s, i) => s + groupInvoiceBalance(i), 0);
+            const sugg = groupPaymentProof(paymentSuggestions, phone, invs);
             setGroupPaymentCtx({
               phone, invoices: invs,
-              suggestedAmount: invs.reduce((s, i) => s + (i.total || 0), 0),
+              suggestedAmount: due,
               proofUrl: sugg?.image_url || null,
               method: "transfer",
               suggId: sugg?.id || null,
             });
             setMultiMoreOpen(false);
           };
-          const pill = (phone, invs) => `${invs[0]?.customer || phone} (${invs.length} inv · ${fmt(invs.reduce((s, i) => s + (i.total || 0), 0))})`;
+          const pill = (phone, invs) => `${invs[0]?.customer || phone} (${invs.length} inv · ${fmt(invs.reduce((s, i) => s + groupInvoiceBalance(i), 0))})`;
           const rest = multiInvoiceCustomers.slice(3);
           return (
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", position: "relative" }}>
@@ -2119,13 +2121,13 @@ return (
               <>
                 <div style={{ width: "100%", background: "#06b6d415", border: "1px dashed #06b6d444", borderRadius: 8, padding: "8px 12px", fontSize: 11 }}>
                   <span style={{ color: "#06b6d4", fontWeight: 700 }}>💳 Partial: {fmt(Number(inv.paid_amount) || 0)} terbayar</span>
-                  <span style={{ color: cs.muted }}> · sisa {fmt(Number(inv.remaining_amount) ?? ((inv.total || 0) - (Number(inv.paid_amount) || 0)))}</span>
+                  <span style={{ color: cs.muted }}> · sisa {fmt(groupInvoiceBalance(inv))}</span>
                 </div>
                 {currentUser?.role === "Owner" && (
                 <button onClick={async () => {
                   if (await showConfirm({
                     icon: "💰", title: "Lunasi Sisa?",
-                    message: `Lunasi sisa ${fmt(Number(inv.remaining_amount) ?? ((inv.total||0)-(Number(inv.paid_amount)||0)))} untuk invoice ${inv.id}?`,
+                    message: `Lunasi sisa ${fmt(groupInvoiceBalance(inv))} untuk invoice ${inv.id}?`,
                     confirmText: "Ya, Lunas"
                   })) { const pp = invoicesData.find(i => i.id === inv.id); markPaid(pp || inv); }
                 }} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>💰 Lunasi Sisa</button>
@@ -2138,7 +2140,7 @@ return (
                   <button onClick={() => {
                     const sameCust = invoicesData.filter(i => i.phone === inv.phone && INVOICE_UNPAID_STATUSES.includes(i.status));
                     // Tarik bukti bayar WA yang sudah ditangkap AI (payment_suggestions PENDING) utk phone ini
-                    const sugg = (paymentSuggestions || []).find(s => samePhone(s.phone, inv.phone) && s.image_url);
+                    const sugg = groupPaymentProof(paymentSuggestions, inv.phone, sameCust.length ? sameCust : [inv]);
                     setGroupPaymentCtx({ phone: inv.phone, invoices: sameCust.length > 0 ? sameCust : [inv], suggestedAmount: 0, proofUrl: sugg?.image_url || null, method: "transfer", suggId: sugg?.id || null });
                   }} style={{ background: "#06b6d422", border: "1px solid #06b6d444", color: "#06b6d4", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
                     💳 Group Payment

@@ -3,6 +3,32 @@ import { flushPerfMetrics, getPerfMetrics, measureAsync, recordPerfMetric, reset
 
 describe("perfMetrics", () => {
   beforeEach(() => resetPerfMetrics());
+  it('marks a resolved Supabase error as failure, without changing the result contract',async()=>{
+    const result={data:null,error:{code:'57014'}};
+    expect(await measureAsync('dashboard.timeout',async()=>result)).toBe(result);
+    expect(getPerfMetrics().at(-1).outcome).toBe('error');
+  });
+  it('coalesces simultaneous metric writes into one request',async()=>{
+    recordPerfMetric('dashboard.summary',100);let resolve;
+    const rpc=vi.fn(()=>new Promise(r=>{resolve=r;}));
+    const calls=Array.from({length:30},()=>flushPerfMetrics({rpc},'Owner',{force:true}));
+    await Promise.resolve();
+    expect(rpc).toHaveBeenCalledTimes(1);resolve({data:1,error:null});await Promise.all(calls);
+  });
+  it('continues flushing beyond the rolling 100-metric buffer, without dropping a >20 batch',async()=>{
+    const rpc=vi.fn(async()=>({data:20,error:null}));
+    for(let i=0;i<25;i++)recordPerfMetric('dashboard.metric',1);
+    await flushPerfMetrics({rpc},'Owner',{force:true});await flushPerfMetrics({rpc},'Owner',{force:true});
+    expect(rpc.mock.calls[0][1].p_metrics).toHaveLength(20);expect(rpc.mock.calls[1][1].p_metrics).toHaveLength(5);
+    for(let i=0;i<110;i++)recordPerfMetric('dashboard.metric',2);
+    await flushPerfMetrics({rpc},'Owner',{force:true});expect(rpc).toHaveBeenCalledTimes(3);
+  });
+  it('backs off failed metric writes instead of adding load on every widget completion',async()=>{
+    recordPerfMetric('dashboard.metric',1);const rpc=vi.fn(async()=>({error:{code:'503'}}));
+    await flushPerfMetrics({rpc},'Owner',{force:true});
+    for(let i=0;i<10;i++)await flushPerfMetrics({rpc},'Owner',{force:true});
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
 
   it("records a bounded, inspectable metric", () => {
     recordPerfMetric("bootstrap.critical", 123.7, { rows: 10 });

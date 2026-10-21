@@ -10,6 +10,9 @@ bukan bukti akar insiden sore 19 Oktober sudah ditemukan atau jaminan Supabase F
 - `supabaseClient.js` memasang adapter untuk **GET/HEAD ke REST Supabase proyek yang sama**.
   Maksimal tiga permintaan berjalan per instance/tab, antrean maksimal 200,
   batas tunggu antrean 20 detik, dan batas respons jaringan 20 detik.
+  Sejak 21 Oktober, deadline/slot mencakup unduhan body, bukan header saja.
+  Enam RPC baca eksplisit ikut gate: snapshot Dashboard/v2, rekap bulanan,
+  statistik, Finance dan halaman laporan. Tidak mengubah metode RPC atau mengulang mutasi.
 - Setelah tiga kegagalan server/jaringan berulang, pembacaan dijeda 15 detik.
   Percobaan pemulihan hanya satu request; gagal lagi menambah jeda menjadi 30/60/120 detik.
   Respons lama yang baru selesai tidak dapat menutup circuit yang sudah terbuka.
@@ -17,7 +20,7 @@ bukan bukti akar insiden sore 19 Oktober sudah ditemukan atau jaminan Supabase F
   `APP_READ_PAUSED`/429 untuk jeda, `APP_READ_NETWORK`/502 untuk jaringan,
   dan `APP_READ_TIMEOUT`/504 untuk timeout. Error bukan hasil kosong yang berhasil.
   SDK terpasang juga retry GET 503/520; retry tersebut tetap melewati gate yang sama.
-- Auth, POST RPC, INSERT, UPDATE, DELETE, storage, dan origin lain tidak diantrekan
+- Auth, POST RPC **selain enam fungsi baca di atas**, INSERT, UPDATE, DELETE, storage, dan origin lain tidak diantrekan
   atau diulang oleh adapter. Ini **bukan batas global koneksi database** dan bukan
   pengaman beban backend/serverless; banyak tab tetap memiliki gate masing-masing.
 
