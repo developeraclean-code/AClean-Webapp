@@ -6,7 +6,7 @@ const profile = { ...user, name: "Owner Simulasi", role: "Owner", active: true, 
 const b64 = value => Buffer.from(JSON.stringify(value)).toString("base64url");
 const token = { access_token: `${b64({ alg: "HS256", typ: "JWT" })}.${b64({ sub: id, aud: "authenticated", role: "authenticated", exp: 4102444800 })}.SIMULATED_SIGNATURE`, refresh_token: "SIMULATED_REFRESH", expires_in: 3600, token_type: "bearer", user };
 
-async function fixture(page, { role = "Owner", orders = [] } = {}) {
+async function fixture(page, { role = "Owner", orders = [], suggestions = null } = {}) {
   const roleProfile = { ...profile, role };
   const state = { mode: "healthy", auth: "healthy", active: 0, peak: 0, failedReads: 0, authCalls: 0, profileLists: 0, external: [], writes: [], errors: [], releaseAuth: null };
   page.on("pageerror", error => state.errors.push(error.message));
@@ -14,6 +14,10 @@ async function fixture(page, { role = "Owner", orders = [] } = {}) {
     const request = route.request(), url = new URL(request.url());
     if (url.origin === "http://127.0.0.1:3199" && !url.pathname.startsWith("/api/")) return route.continue();
     const fulfill = (body, status = 200) => route.fulfill({ status, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify(body) });
+    if (url.origin === "http://127.0.0.1:3199" && url.pathname === "/api/foto") {
+      state.photoRequests = (state.photoRequests || 0) + 1;
+      return fulfill({ error: "Simulated missing legacy object" }, 404);
+    }
     if (url.origin === "http://127.0.0.1:3199") return fulfill({ success: true, token: "SIMULATED_INTERNAL", expiresIn: 3600, providers: [], status: "ok" });
     if (url.origin !== "https://database.simulated.test") { state.external.push(url.origin); return route.abort(); }
     if (request.method() === "OPTIONS") return fulfill({});
@@ -42,10 +46,11 @@ async function fixture(page, { role = "Owner", orders = [] } = {}) {
         return await fulfill(url.searchParams.has("id") ? roleProfile : [roleProfile, { id: "SIM-T", name: "Teknisi Simulasi", role: "Teknisi", active: true }]);
       }
       if (table === "app_settings") return await fulfill([
-        { key: "wa_monitor_enabled", value: "false" }, { key: "wa_payment_detect", value: "false" },
+        { key: "wa_monitor_enabled", value: "false" }, { key: "wa_payment_detect", value: suggestions ? "true" : "false" },
         { key: "wa_payment_inbox_enabled", value: "false" }, { key: "wa_provider", value: "fonnte" },
       ]);
       if (table === "orders") return await fulfill(orders);
+      if (table === "payment_suggestions") return await fulfill(suggestions || []);
       return await fulfill([]);
     } finally { state.active--; }
   });
@@ -143,6 +148,32 @@ for (const role of ["Admin", "Finance", "Teknisi", "Helper"]) {
     expect(state.peak).toBeLessThanOrEqual(3);
     expect(state.external).toEqual([]); expect(state.errors).toEqual([]);
     expect(state.writes.filter(row => ["invoices", "payments", "invoice_payments", "inventory", "service_reports"].includes(row.table))).toEqual([]);
+  });
+}
+
+for (const viewport of [{width:1440,height:1000},{width:390,height:844}]) {
+  test(`Payment-only inbox ${viewport.width}: excludes AC/review images and explains a missing proof without retries or writes`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    const suggestions = [
+      { id:'PROOF-LEGACY',match_source:'wa_image_ai',amount:985000,image_url:'/api/foto?key=wa-images%2Fbukti_transfer%2Fmissing.jpg',raw_message:'Bukti transfer terdeteksi AI.' },
+      { id:'AC',match_source:'wa_image_review',raw_message:'Media WA perlu review manual: Pengirim memiliki invoice terbuka, tetapi AI mengategorikan media sebagai kerusakan_ac.',sender_name:'FOTO AC BUKAN PEMBAYARAN' },
+      { id:'REVIEW',match_source:'wa_image_review',raw_message:'Media WA perlu review manual: AI mengategorikan media sebagai dokumen; periksa apakah ini bukti bayar.',sender_name:'ULASAN GOOGLE BUKAN PEMBAYARAN' },
+    ].map(row=>({status:'PENDING',validation_status:'PENDING',source:'image',phone:'628000000002',created_at:'2026-10-20T01:00:00Z',...row}));
+    const state=await fixture(page,{suggestions});
+    await page.clock.install({time:new Date('2026-10-21T01:00:00Z')});
+    await page.goto('/');await enter(page);
+    if (viewport.width < 600) await page.getByRole('button',{name:'☰ Menu',exact:true}).click();
+    await page.getByRole('button',{name:/Invoice/,exact:false}).first().click();
+    await page.getByRole('button',{name:'🤖 Pending AI (1)',exact:true}).click();
+    await expect(page.getByText(/Hanya bukti pembayaran\./)).toBeVisible();
+    await expect(page.getByText('FOTO AC BUKAN PEMBAYARAN',{exact:false})).toHaveCount(0);
+    await expect(page.getByText('ULASAN GOOGLE BUKAN PEMBAYARAN',{exact:false})).toHaveCount(0);
+    await expect(page.getByRole('status').filter({hasText:'Berkas bukti tidak tersedia.'})).toBeVisible();
+    expect(state.photoRequests).toBe(1);
+    await page.clock.runFor(600_000);
+    expect(state.photoRequests).toBe(1);
+    expect(state.writes.filter(row=>['payments','invoices','orders','payment_suggestions'].includes(row.table))).toEqual([]);
+    expect(state.external).toEqual([]);expect(state.errors).toEqual([]);
   });
 }
 

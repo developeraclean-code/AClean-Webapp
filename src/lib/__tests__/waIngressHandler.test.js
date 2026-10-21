@@ -26,14 +26,16 @@ beforeEach(() => {
     if(url.origin==="https://db.invalid" && url.pathname==="/rest/v1/app_settings")return new Response(JSON.stringify([{key:"wa_autoreply_enabled",value:"false"},{key:"wa_forward_to_owner",value:"false"},{key:"wa_chatbot_enabled",value:"false"},{key:"wa_payment_detect",value:"true"}]));
     if(url.origin==="https://api.fonnte.com" && url.pathname==="/t/synthetic.jpg")return new Response(Buffer.alloc(500,1),{headers:{"content-type":"image/jpeg"}});
     if(url.origin==="https://db.invalid" && url.pathname==="/rest/v1/wa_messages" && options.method==="PATCH")return new Response(JSON.stringify([{id:"msg-1"}]));
+    if(url.origin==="https://db.invalid" && url.pathname==="/rest/v1/invoices" && (!options.method || options.method==="GET"))return new Response("[]");
     throw new Error(`Unexpected request in isolated test: ${url.pathname}`);
   }));
 });
 afterEach(()=>{vi.unstubAllGlobals();vi.unstubAllEnvs();vi.restoreAllMocks();});
 const run = async value => {const res=response();await receiveWa({method:"POST",headers:{},query:{},body:value},res);return res;};
-it("commits intake before download, secures a sub-1KB image in R2 before AI, and preserves manual review after AI failure",async()=>{
+it("commits intake before download, secures media before AI, and keeps failures in retry rather than the payment inbox",async()=>{
   const res=await run(body);expect(res.code).toBe(200);expect(mocks.stage).toHaveBeenCalledOnce();expect(mocks.classify).toHaveBeenCalledOnce();
-  expect(mocks.stage.mock.calls[0][0].buffer.length).toBe(500);expect(mocks.suggestion).toHaveBeenCalledWith(expect.objectContaining({forceReview:true}));
+  expect(mocks.stage.mock.calls[0][0].buffer.length).toBe(500);expect(mocks.suggestion).not.toHaveBeenCalled();
+  expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({patch:expect.objectContaining({status:"FAILED_RETRYABLE"})}));
   const captureIndex=requests.findIndex(r=>r.path?.endsWith("/capture_wa_webhook_214"));
   expect(captureIndex).toBeLessThan(requests.findIndex(r=>r.path==="/t/synthetic.jpg"));
   expect(requests.findIndex(r=>r.stage==="R2")).toBeLessThan(requests.findIndex(r=>r.stage==="AI"));
@@ -51,6 +53,21 @@ it("does not spend AI quota before the R2 copy is safe",async()=>{
   mocks.stage.mockResolvedValue({ok:false,error:"synthetic R2 unavailable"});const res=await run(body);
   expect(res.code).toBe(200);expect(mocks.classify).not.toHaveBeenCalled();
   expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({id:"job-1",patch:expect.objectContaining({status:"FAILED_RETRYABLE"})}));
+});
+it.each(["kerusakan_ac", "tidak_relevan", "dokumen"])("never searches invoices or creates a payment for %s, even with a transfer caption",async category=>{
+  mocks.classify.mockResolvedValue({ok:true,classification:{category,amount:null}});
+  const res=await run({...body,message:"sudah transfer, ini fotonya"});
+  expect(res.code).toBe(200);expect(mocks.suggestion).not.toHaveBeenCalled();
+  expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({patch:expect.objectContaining({status:"IGNORED",next_retry_at:null})}));
+  expect(requests.some(r=>r.path?.includes("/invoices"))).toBe(false);
+  expect(requests.some(r=>r.origin?.endsWith("r2.cloudflarestorage.com"))).toBe(false);
+});
+it.each([985000,null])("keeps a recognized receipt with amount %s for human verification, never auto-PAID",async amount=>{
+  mocks.classify.mockResolvedValue({ok:true,classification:{category:"bukti_transfer",amount,bank:"BCA"}});
+  const res=await run(body);expect(res.code).toBe(200);
+  expect(mocks.suggestion).toHaveBeenCalledWith(expect.objectContaining({classification:expect.objectContaining({category:"bukti_transfer",amount})}));
+  expect(requests.some(r=>/invoice_payments|apply_wa_payment/.test(r.path||""))).toBe(false);
+  expect(requests.some(r=>r.path==="/rest/v1/invoices"&&r.method!=="GET")).toBe(false);
 });
 it("does not double-process an image caption as a text payment before the R2 mirror",async()=>{
   vi.stubEnv("LLM_API_KEY","synthetic-no-network");await run({...body,message:"Bukti transfer pembayaran Rp 985000"});

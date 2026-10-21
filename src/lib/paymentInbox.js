@@ -1,4 +1,5 @@
 // The inbox is read-only. Receiving media/AI/retries never depend on a browser tab.
+import { isPaymentInboxSuggestion } from "./paymentMediaPolicy.js";
 export async function fetchPendingPaymentSuggestions(supabase, { signal } = {}) {
   const rows = [];
   for (let from = 0; ; from += 200) {
@@ -7,7 +8,7 @@ export async function fetchPendingPaymentSuggestions(supabase, { signal } = {}) 
       .order("created_at", { ascending: false }).order("id").range(from, from + 199);
     const { data, error } = await (signal && typeof query.abortSignal === "function" ? query.abortSignal(signal) : query);
     if (error) throw error;
-    rows.push(...(data || []));
+    rows.push(...(data || []).filter(isPaymentInboxSuggestion));
     if ((data || []).length < 200) return rows;
   }
 }

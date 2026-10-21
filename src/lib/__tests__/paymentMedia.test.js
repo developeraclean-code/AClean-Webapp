@@ -1,11 +1,68 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   classifyPaymentMedia, ensurePaymentSuggestion, hasPaymentMediaHint, manualPaymentReviewReason, normalizePaymentClassification,
-  parsePaymentClassification, registerPaymentMediaReference, stagePaymentMedia, retryOnePaymentMediaJob,
+  parsePaymentClassification, registerPaymentMediaReference, stagePaymentMedia, retryOnePaymentMediaJob, preservePaymentEvidence, PAYMENT_MEDIA_PROMPT,
 } from "../../../api/_payment-media.js";
 import { foto, isSafeFotoKey, sniffWaInboxMimeType } from "../../../api/_handlers/foto.js";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+
+describe('strict receipt classification and quarantine', () => {
+  it('prompt excludes reviews, AC photos, invoices and incomplete transfers, while keeping blurry receipts', () => {
+    for (const term of ['ulasan Google', 'Foto AC', 'pending', 'transfer_amount:null', 'biaya admin']) expect(PAYMENT_MEDIA_PROMPT).toContain(term);
+    expect(normalizePaymentClassification({category:'bukti_transfer',document_type:'invoice',amount:985000}).category).toBe('dokumen');
+    expect(normalizePaymentClassification({category:'bukti_transfer',document_type:'payment_receipt',amount:null})).toMatchObject({category:'bukti_transfer',amount:null});
+  });
+  it.each(['kerusakan_ac','tidak_relevan','dokumen'])('blocks %s even if forceReview, amount, or invoice candidates are passed', async category => {
+    const network=vi.fn();vi.stubGlobal('fetch',network);
+    expect(await ensurePaymentSuggestion({supabaseUrl:'https://db.test',serviceKey:'key',job:{id:'j1'},classification:{category,amount:985000},forceReview:true})).toMatchObject({skipped:true});
+    expect(network).not.toHaveBeenCalled();
+  });
+  it('archives recognized proof under wa-inbox before a suggestion, preserving the worker lease', async () => {
+    for(const [key,value] of Object.entries({R2_ACCESS_KEY:'key',R2_SECRET_KEY:'secret',R2_ACCOUNT_ID:'account'}))vi.stubEnv(key,value);
+    const key='wa-staging/2026-10/0123456789abcdef01234567.jpg';
+    const job={id:'j1',phone:'628000000002',mime_type:'image/jpeg',r2_key:key,r2_url:'/api/foto?key='+encodeURIComponent(key)};
+    const network=vi.fn(async (url,opts)=>{
+      if(opts?.method==='PUT')return {ok:true};
+      if(opts?.method==='PATCH')return {ok:true,json:async()=>[{id:job.id}]};
+      throw new Error('unexpected network call');
+    });vi.stubGlobal('fetch',network);
+    const result=await preservePaymentEvidence({supabaseUrl:'https://db.test',serviceKey:'key',job,mediaBuffer:Buffer.from([255,216,255]),leaseToken:'lease1'});
+    expect(result).toMatchObject({ok:true,job:{r2_key:key.replace('wa-staging/','wa-inbox/')}});
+    expect(network.mock.calls[0][0]).toContain('/wa-inbox/');
+    expect(network.mock.calls[1][0]).toContain('lease_token=eq.lease1');
+    expect(JSON.parse(network.mock.calls[1][1].body)).not.toHaveProperty('lease_token');
+  });
+  it('does not create a suggestion if archiving the receipt fails', async () => {
+    for(const [key,value] of Object.entries({R2_ACCESS_KEY:'key',R2_SECRET_KEY:'secret',R2_ACCOUNT_ID:'account'}))vi.stubEnv(key,value);
+    const network=vi.fn().mockResolvedValue({ok:false,status:503,text:async()=>''});vi.stubGlobal('fetch',network);
+    const result=await ensurePaymentSuggestion({supabaseUrl:'https://db.test',serviceKey:'key',job:{id:'j1',r2_key:'wa-staging/2026-10/0123456789abcdef01234567.jpg',r2_url:'temp',phone:'628000000002'},classification:{category:'bukti_transfer',amount:985000},mediaBuffer:Buffer.from([255,216,255])});
+    expect(result.ok).toBe(false);expect(network).toHaveBeenCalledTimes(1);
+  });
+  it('does not rerun AI or download an already-classified non-payment after an interrupted worker', async () => {
+    const network=vi.fn(async (url,opts)=>url.includes('/rpc/')?{ok:true,json:async()=>({id:'j1',category:'kerusakan_ac',attempts:2})}:{ok:true,json:async()=>[{id:'j1'}]});
+    vi.stubGlobal('fetch',network);
+    expect(await retryOnePaymentMediaJob({supabaseUrl:'https://db.test',serviceKey:'key'})).toMatchObject({ok:true,ignored:1,retried:0});
+    expect(network).toHaveBeenCalledTimes(2);expect(JSON.parse(network.mock.calls[1][1].body)).toMatchObject({status:'IGNORED'});
+  });
+  it.each(['kerusakan_ac','dokumen','tidak_relevan','TIMEOUT'])('retry classifies %s without manufacturing a payment suggestion', async category => {
+    for(const [key,value] of Object.entries({R2_ACCESS_KEY:'key',R2_SECRET_KEY:'secret',R2_ACCOUNT_ID:'account'}))vi.stubEnv(key,value);
+    const network=vi.fn(async (url,opts)=>{
+      if(url.includes('/rpc/claim_wa_payment_media'))return {ok:true,json:async()=>({id:'j1',phone:'628000000002',r2_key:'wa-inbox/2026-10/0123456789abcdef01234567.jpg',r2_url:'proof',attempts:3})};
+      if(url.includes('r2.cloudflarestorage.com'))return {ok:true,arrayBuffer:async()=>new Uint8Array([255,216,255]).buffer,headers:new Headers({'content-type':'image/jpeg'})};
+      if(url.includes('api.anthropic.com')){
+        if(category==='TIMEOUT')throw new Error('AI timeout');
+        return {ok:true,json:async()=>({content:[{text:JSON.stringify({category})}]})};
+      }
+      if(opts?.method==='PATCH')return {ok:true,json:async()=>[{id:'j1'}]};
+      throw new Error('Unexpected call '+new URL(url).pathname);
+    });vi.stubGlobal('fetch',network);
+    const result=await retryOnePaymentMediaJob({supabaseUrl:'https://db.test',serviceKey:'key',apiKey:'synthetic'});
+    expect(result).toMatchObject(category==='TIMEOUT'?{ok:false,failed:1}:{ok:true,ignored:1});
+    expect(network.mock.calls.some(([url])=>/invoices|payment_suggestions/.test(url))).toBe(false);
+    expect(JSON.parse(network.mock.calls.at(-1)[1].body)).toMatchObject({status:category==='TIMEOUT'?'FAILED_PERMANENT':'IGNORED',next_retry_at:null});
+  });
+});
 
 describe("WA payment media classification", () => {
   it("proxy foto menerima object wa-inbox dari R2 tanpa membuka traversal", () => {
@@ -40,11 +97,11 @@ describe("WA payment media classification", () => {
     expect(headers["Content-Type"]).toBe("application/octet-stream");
     expect(headers["Content-Disposition"]).toBe("attachment");
   });
-  it("mengirim dokumen dan foto berkonteks pembayaran ke review, bukan membuangnya diam-diam", () => {
-    expect(manualPaymentReviewReason({ category: "dokumen" })).toContain("dokumen");
-    expect(manualPaymentReviewReason({ category: "tidak_relevan", message: "sudah transfer ya" })).toContain("Pesan menyebut pembayaran");
-    expect(manualPaymentReviewReason({ category: "kerusakan_ac", hasOpenInvoice: true })).toContain("invoice terbuka");
-    expect(manualPaymentReviewReason({ category: "tidak_relevan", invoiceLookupError: "HTTP 503" })).toContain("Pencarian invoice gagal");
+  it("tidak menjadikan invoice terbuka, caption atau lookup gagal sebagai bukti pembayaran", () => {
+    expect(manualPaymentReviewReason({ category: "dokumen" })).toBeNull();
+    expect(manualPaymentReviewReason({ category: "tidak_relevan", message: "sudah transfer ya" })).toBeNull();
+    expect(manualPaymentReviewReason({ category: "kerusakan_ac", hasOpenInvoice: true })).toBeNull();
+    expect(manualPaymentReviewReason({ category: "tidak_relevan", invoiceLookupError: "HTTP 503" })).toBeNull();
     expect(manualPaymentReviewReason({ category: "kerusakan_ac", message: "AC bocor" })).toBeNull();
     expect(hasPaymentMediaHint("Bukti pembayaran terlampir")).toBe(true);
     expect(hasPaymentMediaHint("Saya lampirkan bukti ya")).toBe(true);
@@ -133,21 +190,23 @@ describe("WA payment media classification", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("membuat review manual tanpa nominal hanya untuk invoice exact-phone", async () => {
+  it("membuat review manual bukti transfer tanpa nominal tanpa otomatis menautkan invoice", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => [{ id: "INV-1", job_id: "JOB-1", total: 200000, phone: "628179527958", status: "UNPAID" }] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [{ id: "SUG-1", amount: null }] });
     vi.stubGlobal("fetch", fetchMock);
     const result = await ensurePaymentSuggestion({
       supabaseUrl: "https://example.supabase.co", serviceKey: "service",
       job: { id: "job-1", phone: "628179527958", sender_name: "Ibu Dian", r2_url: "/api/foto?key=a" },
       pendingReason: "AI timeout",
+      classification: { category: "bukti_transfer", amount: null },
     });
     expect(result).toMatchObject({ ok: true, invoice: null, suggestion: { id: "SUG-1" } });
-    const payload = JSON.parse(fetchMock.mock.calls[1][1].body);
+    const payload = JSON.parse(fetchMock.mock.calls.at(-1)[1].body);
     expect(payload).toMatchObject({ amount: null, invoice_id: null, media_job_id: "job-1", validation_status: "PENDING" });
   });
-  it("menyimpan media AI gagal untuk review walau tidak ada invoice terbuka", async () => {
+  it("AI gagal tetap dilacak worker tetapi tidak mengotori daftar pembayaran", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
@@ -158,10 +217,8 @@ describe("WA payment media classification", () => {
       job: { id: "job-review", phone: "628179527958", r2_url: "/api/foto?key=receipt.jpg" },
       pendingReason: "AI gagal membaca foto", forceReview: true,
     });
-    expect(result).toMatchObject({ ok: true, inserted: true, suggestion: { id: "SUG-REVIEW" } });
-    const payload = JSON.parse(fetchMock.mock.calls[2][1].body);
-    expect(payload).toMatchObject({ status: "PENDING", validation_status: "PENDING",
-      match_source: "wa_image_review", invoice_id: null, amount: null });
+    expect(result).toMatchObject({ ok: true, skipped: true, reason: "not_payment_evidence" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
   it("tetap menyimpan bukti ke review saat pencarian invoice gagal", async () => {
     const fetchMock = vi.fn()
@@ -269,7 +326,7 @@ describe("durable payment retry", () => {
 it('does not reuse a settled proof even when the customer has a newer open invoice',async()=>{
   const mock=vi.fn().mockResolvedValueOnce({ok:true,json:async()=>[{id:'NEW',phone:'6281234567890',status:'UNPAID',total:950000}]}).mockResolvedValueOnce({ok:true,json:async()=>[{id:'PAID-1'}]});
   vi.stubGlobal('fetch',mock);
-  const result=await ensurePaymentSuggestion({supabaseUrl:'https://db.test',serviceKey:'key',job:{id:'j1',phone:'6281234567890',r2_url:'/api/foto?key=proof.jpg'},classification:{amount:950000}});
+  const result=await ensurePaymentSuggestion({supabaseUrl:'https://db.test',serviceKey:'key',job:{id:'j1',phone:'6281234567890',r2_url:'/api/foto?key=proof.jpg'},classification:{category:'bukti_transfer',amount:950000}});
   expect(result).toMatchObject({ok:true,alreadySettled:true,inserted:false,invoice:{id:'PAID-1'}});
   expect(mock.mock.calls.every(([,options])=>!options.method)).toBe(true);
 });

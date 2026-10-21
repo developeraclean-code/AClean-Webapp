@@ -25,6 +25,12 @@
       "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 7776000 } }
     },
     {
+      "id": "aclean-wa-staging-7d",
+      "enabled": true,
+      "conditions": { "prefix": "wa-staging/" },
+      "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 604800 } }
+    },
+    {
       "id": "aclean-tool-bag-90d",
       "enabled": true,
       "conditions": { "prefix": "tool-bag/" },

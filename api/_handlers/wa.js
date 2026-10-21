@@ -13,7 +13,7 @@ import { logAiUsageRest } from "../_logger.js";
 import { analyzeToolBagPhoto } from "../_tool-bag-vision.js";
 import { classifyText, matchSelesaiToOrder, persistTextClassification, extractMaterialUsage, resolveUsageJobs, looksLikeMaterialUsage } from "../_ai-text.js";
 import { uploadBufferToR2, downloadToBuffer, hasR2Config } from "../_r2-upload.js";
-import { classifyPaymentMedia, findPaymentInvoiceMatch, ensurePaymentSuggestion, hasPaymentMediaHint, manualPaymentReviewReason, registerPaymentMediaReference, stagePaymentMedia, updatePaymentMediaJob } from "../_payment-media.js";
+import { classifyPaymentMedia, findPaymentInvoiceMatch, ensurePaymentSuggestion, registerPaymentMediaReference, stagePaymentMedia, updatePaymentMediaJob } from "../_payment-media.js";
 import { callVision } from "../_vision-provider.js";
 import { md5Buffer, checkImageDuplicate } from "../_image-dedup.js";
 import { parseKasbonText, matchKasbonName, isKasbonApprovalMessage, isKasbonRevisionMessage, resolveKasbonEntry, KASBON_APPROVER_PHONES } from "../_kasbon-parser.js";
@@ -1944,9 +1944,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                     senderName, buffer: Buffer.from(imgBuf), mimeType, createdAt: msgCreatedAt,
                   })
                 : null;
-              if (stagedMedia?.ok && stagedMedia.url && String(stagedMedia.job?.wa_message_id || "") !== String(savedWaMessageId || "")) {
-                await patchWaMessageImage(stagedMedia.url);
-              } else if (stagedMedia && !stagedMedia.ok) {
+              if (stagedMedia && !stagedMedia.ok) {
                 console.warn("[WA_IMG_STAGE_FAIL]", stagedMedia.error);
                 try { Sentry.captureMessage(`WA payment media staging gagal: ${stagedMedia.error}`, "warning"); } catch (_) {}
                 throw new Error(stagedMedia.error || "Media belum aman di R2; AI ditunda");
@@ -1959,15 +1957,10 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                 console.warn("[WA_IMG_ANTHROPIC_ERR]", classifyResult.error);
                 try { Sentry.captureMessage(`Anthropic classify: ${classifyResult.error}`, "warning"); } catch (_) {}
                 if (stagedMedia?.job) {
-                  await ensurePaymentSuggestion({
-                    supabaseUrl: SU, serviceKey: SK, job: stagedMedia.job,
-                    pendingReason: classifyResult.error, forceReview: true,
-                  });
                   await updatePaymentMediaJob({
                     supabaseUrl: SU, serviceKey: SK, id: stagedMedia.job.id,
                     patch: {
-                      // Suggestion manual boleh langsung terlihat, tetapi job tetap
-                      // retryable supaya AI masih mencoba mengisi nominal/bank.
+                      // Belum diketahui bukti bayar: tampil di rincian retry, bukan Pending AI.
                       status: "FAILED_RETRYABLE",
                       attempts: Number(stagedMedia.job.attempts || 0) + 1,
                       last_error: classifyResult.error,
@@ -2000,41 +1993,14 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                     });
                   }
 
-                  // Semua media pelanggan sudah dicadangkan ke R2. Kategori bukti
-                  // pembayaran diproses lebih lanjut untuk saran invoice.
+                  // Media sementara tidak otomatis menjadi bukti pembayaran.
                   const shouldSave = classified && classified.category === "bukti_transfer";
                   console.log("[WA_IMG_CLASSIFIED]", { sender, category: classified?.category, shouldSave, amount: classified?.amount });
 
                   if (!shouldSave && stagedMedia?.job) {
-                    const mediaMessage = wb.caption || (message === mediaUrl ? "" : message);
-                    let candidateMatch = null;
-                    let invoiceLookupError = null;
-                    if (classified.category !== "dokumen" && !hasPaymentMediaHint(mediaMessage)) {
-                      try { candidateMatch = await findPaymentInvoiceMatch({ supabaseUrl: SU, serviceKey: SK, phone: sender, amount: null }); }
-                      catch (error) { invoiceLookupError = error.message; console.warn("[WA_IMG_REVIEW_LOOKUP]", error.message); }
-                    }
-                    const reason = manualPaymentReviewReason({
-                      category: classified.category, message: mediaMessage,
-                      hasOpenInvoice: !!candidateMatch?.candidates?.length, invoiceLookupError,
-                    });
-                    if (reason) {
-                      const review = await ensurePaymentSuggestion({
-                        supabaseUrl: SU, serviceKey: SK, job: stagedMedia.job,
-                        pendingReason: reason, forceReview: true, invoiceMatch: candidateMatch,
-                      });
-                      const status = review.ok
-                        ? (review.alreadySettled || review.suggestion?.status !== "PENDING" ? "DONE" : "PENDING_REVIEW")
-                        : "FAILED_RETRYABLE";
-                      const saved = await updatePaymentMediaJob({ supabaseUrl: SU, serviceKey: SK, id: stagedMedia.job.id,
-                        patch: { status, last_error: review.ok ? null : review.error,
-                          next_retry_at: review.ok ? null : new Date(Date.now() + 15 * 60000).toISOString() },
-                      });
-                      if (!review.ok || !saved.ok) console.warn("[WA_IMG_REVIEW_SAVE]", review.error || saved.error);
-                    } else {
                       await updatePaymentMediaJob({ supabaseUrl: SU, serviceKey: SK, id: stagedMedia.job.id,
                         patch: { status: "IGNORED", next_retry_at: null },
                       });
-                    }
                   }
 
                   // Step 2: Upload ke R2 hanya jika kategori relevan
@@ -2130,7 +2096,8 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                       let psRes;
                       if (stagedMedia?.job?.id) {
                         const result = await ensurePaymentSuggestion({ supabaseUrl: SU, serviceKey: SK,
-                          job: stagedMedia.job, classification: classified, invoiceMatch });
+                          job: stagedMedia.job, classification: classified, invoiceMatch, mediaBuffer: Buffer.from(imgBuf) });
+                        if (result.evidenceUrl) savedImageUrl = result.evidenceUrl;
                         paymentInserted = result.inserted === true;
                         psRes = { ok: result.ok, status: result.ok ? 200 : 500, text: async () => result.error || "" };
                       } else {

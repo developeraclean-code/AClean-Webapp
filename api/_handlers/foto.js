@@ -203,7 +203,7 @@ export async function uploadFoto(req, res) {
 // Prefix R2 yang dipakai media WA harus dapat dibaca oleh proxy yang sama
 // dengan URL yang disimpan pada wa_messages dan payment_suggestions.
 export function isSafeFotoKey(key) {
-      const safeKey = /^(foto|tool-bag|material-checkout|laporan|invoice|invoices|wa-group|wa-snapshots|wa-images|wa-inbox|service-reports|orders|materials|payments|projects|maintenance|quotations|customer-photos|expense-photos|expenses|merged-pdfs|catalog)\/[a-zA-Z0-9_\-./]{1,200}\.(jpg|jpeg|png|gif|webp|pdf|json)$/i;
+      const safeKey = /^(foto|tool-bag|material-checkout|laporan|invoice|invoices|wa-group|wa-snapshots|wa-images|wa-inbox|wa-staging|service-reports|orders|materials|payments|projects|maintenance|quotations|customer-photos|expense-photos|expenses|merged-pdfs|catalog)\/[a-zA-Z0-9_\-./]{1,200}\.(jpg|jpeg|png|gif|webp|pdf|json)$/i;
       return safeKey.test(key) && !key.includes("..") && !key.includes("//") && !key.startsWith("/");
 }
 
@@ -282,7 +282,7 @@ export async function foto(req, res) {
         const bufNode = Buffer.from(buf);
         // Media Fonnte dapat memiliki Content-Type keliru. Jangan pernah
         // menyajikan payload HTML dari wa-inbox sebagai dokumen aktif.
-        const waInbox = key.startsWith("wa-inbox/");
+        const waInbox = key.startsWith("wa-inbox/") || key.startsWith("wa-staging/");
         const ct = waInbox
           ? (sniffWaInboxMimeType(bufNode) || "application/octet-stream")
           : (r2res.headers.get("content-type") || "image/jpeg");

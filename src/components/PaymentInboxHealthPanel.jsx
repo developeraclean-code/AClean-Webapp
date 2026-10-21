@@ -7,7 +7,7 @@ const count = value => Number.isSafeInteger(value) && value >= 0 ? value.toLocal
 const tone = level => level === "ok" ? cs.green : level === "error" ? cs.red : cs.yellow;
 const buttonStyle = { color: cs.text, background: cs.surface, border: `1px solid ${cs.border}`, borderRadius: 7, padding: "8px 10px", cursor: "pointer", font: "inherit" };
 
-export default function PaymentInboxHealthPanel({ apiHeaders, inbox, onOpenPending }) {
+export default function PaymentInboxHealthPanel({ apiHeaders, inbox, onOpenPending, pendingCount }) {
   const [health, setHealth] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -45,11 +45,11 @@ export default function PaymentInboxHealthPanel({ apiHeaders, inbox, onOpenPendi
     };
   }, []);
   return <PaymentInboxHealthView health={health} error={error || inbox?.error} busy={busy || inbox?.loading}
-    onRefresh={() => { inbox?.refresh(); loadRef.current?.(true); }} onOpenPending={onOpenPending} />;
+    onRefresh={() => { inbox?.refresh(); loadRef.current?.(true); }} onOpenPending={onOpenPending} pendingCount={pendingCount} />;
 }
 
 // Shared read-only presentation, also used by the isolated local preview.
-export function PaymentInboxHealthView({ health, error, busy, onRefresh, onOpenPending }) {
+export function PaymentInboxHealthView({ health, error, busy, onRefresh, onOpenPending, pendingCount }) {
   const [expanded, setExpanded] = useState(false);
   const [filter, setFilter] = useState("all");
   const worker = health ? paymentWorkerState(health) : null;
@@ -57,7 +57,7 @@ export function PaymentInboxHealthView({ health, error, busy, onRefresh, onOpenP
   const incidents = health?.incidents || [];
   const groups = [
     { key: "failed", label: "Gagal otomatis", hint: "Tidak dicoba ulang otomatis. Periksa file/arsip WA; jangan menghapus riwayat atau langsung menandai lunas." },
-    { key: "admin", label: "Tinjauan admin", hint: "Bukan kegagalan retry. Media ini perlu diperiksa di Pending AI. Daftar ini hanya rincian dari antrean media, bukan seluruh Pending AI." },
+    { key: "admin", label: "Tinjauan admin", hint: "Riwayat media yang pernah ditandai review, termasuk media lama yang kini tersaring. Hanya bukti pembayaran muncul di Pending AI; status ini bukan kegagalan retry." },
     { key: "retry", label: "Antrean retry", hint: "Masih ditangani otomatis. Retry berjalan berkala; tanggal retry adalah jadwal paling awal, bukan janji waktu selesai." },
     { key: "complete", label: "Selesai diproses", hint: "Pemrosesan media selesai, bukan penetapan pembayaran lunas." },
     { key: "unknown", label: "Status lainnya", hint: "Perbarui status dan periksa manual bila status belum dapat dipastikan." },
@@ -66,7 +66,7 @@ export function PaymentInboxHealthView({ health, error, busy, onRefresh, onOpenP
     <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
       <div><strong style={{ color: cs.text, fontSize: 14 }}>📡 Bukti Pembayaran WA</strong><div style={{ color: error ? cs.yellow : tone(worker?.level), marginTop: 4 }}>{error ? "Status terkini belum dapat dipastikan" : worker?.label || "Memeriksa pemicu retry…"}</div></div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button onClick={onOpenPending} style={{ ...buttonStyle, color: cs.accent }}>Tinjau bukti ({health ? count(health.review) : "…"})</button>
+        <button onClick={onOpenPending} style={{ ...buttonStyle, color: cs.accent }}>Tinjau bukti ({Number.isSafeInteger(pendingCount) ? count(pendingCount) : health ? count(health.review) : "…"})</button>
         <button disabled={busy} onClick={onRefresh} style={{ ...buttonStyle, opacity: busy ? 0.6 : 1 }}>{busy ? "Memuat…" : "↻ Perbarui status"}</button>
       </div>
     </div>
@@ -81,7 +81,7 @@ export function PaymentInboxHealthView({ health, error, busy, onRefresh, onOpenP
         {[
           { label: "Antrean retry", value: health.waiting, color: health.waiting > 0 ? cs.yellow : cs.green, detail: health.waiting === 0 ? "Tidak ada media menunggu retry." : `${count(health.overdue)} media menunggu >30 menit.` },
           { label: "Belum aman di R2", value: health.unsecured, color: health.unsecured > 0 ? cs.red : cs.green, detail: "Hanya antrean aktif; kegagalan lama dihitung terpisah." },
-          { label: "Perlu tinjau admin", value: health.review, color: cs.accent, detail: "Seluruh Pending AI; bukan gagal retry atau konfirmasi lunas." },
+          { label: "Pending tersimpan", value: health.review, color: cs.accent, detail: "Termasuk arsip/media lama tersaring. Tombol Tinjau bukti mengikuti daftar pembayaran aktif." },
           { label: "Gagal otomatis", value: health.failed, color: health.failed > 0 ? cs.yellow : cs.green, detail: `${count(health.recent_failed)} kegagalan baru dalam 24 jam; sisanya riwayat lebih lama.` },
         ].map(item => <div key={item.label} style={{ border: `1px solid ${cs.border}`, borderRadius: 8, padding: "9px 11px", minWidth: 0 }}>
           <div style={{ color: cs.muted }}>{item.label}</div>

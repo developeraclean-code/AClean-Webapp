@@ -1,5 +1,7 @@
 import { memo, useState, useMemo, useEffect, useRef } from "react";
 import PaymentInboxHealthPanel from "../components/PaymentInboxHealthPanel.jsx";
+import PaymentEvidencePreview from "../components/PaymentEvidencePreview.jsx";
+import { isPaymentInboxSuggestion } from "../lib/paymentMediaPolicy.js";
 import { fetchPendingPaymentSuggestions } from "../lib/paymentInbox.js";
 import { cs } from "../theme/cs.js";
 import { statusColor, INVOICE_UNPAID_STATUSES } from "../constants/status.js";
@@ -58,7 +60,7 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
             .order("created_at", { ascending: false })
             .range(from, from + 199);
           if (error) throw error;
-          rows.push(...(data || []));
+          rows.push(...(data || []).filter(isPaymentInboxSuggestion));
           if (cancelled || (data || []).length < 200) break;
         }
         // A proof previously dismissed for this exact invoice stays out of
@@ -676,7 +678,7 @@ const [invoiceSubTab, setInvoiceSubTab] = useState("invoice"); // "invoice" | "q
 
 // Pending AI: semua saran pembayaran yang menunggu validasi, termasuk foto
 // WA yang sudah punya kandidat invoice dan entri lama tanpa media_job_id.
-const pendingPayments = useMemo(() => (paymentSuggestions || []).filter(row => row.status === "PENDING" && row.validation_status === "PENDING"), [paymentSuggestions]);
+const pendingPayments = useMemo(() => (paymentSuggestions || []).filter(row => row.status === "PENDING" && row.validation_status === "PENDING" && isPaymentInboxSuggestion(row)), [paymentSuggestions]);
 const [dismissedPayments, setDismissedPayments] = useState([]);
 const pendingPaymentCount = pendingPayments.length;
 const [loadingPendingPayments, setLoadingPendingPayments] = useState(false);
@@ -999,7 +1001,7 @@ return (
 
     {/* Quotation sub-view */}
     {["Owner", "Admin"].includes(currentUser?.role) && ["invoice", "pending_ai"].includes(invoiceSubTab) && (
-      <PaymentInboxHealthPanel apiHeaders={apiHeaders} inbox={paymentInbox} onOpenPending={() => setInvoiceSubTab("pending_ai")} />
+      <PaymentInboxHealthPanel apiHeaders={apiHeaders} inbox={paymentInbox} pendingCount={pendingPaymentCount} onOpenPending={() => setInvoiceSubTab("pending_ai")} />
     )}
 
     {invoiceSubTab === "quotation" && (
@@ -1097,7 +1099,7 @@ return (
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <div style={{ fontSize: 12, color: cs.muted }}>
-            Bukti pembayaran dan media yang perlu diperiksa. Buka file, pilih invoice, lalu konfirmasi jika benar.
+            Hanya bukti pembayaran. Foto AC, ulasan, invoice/tagihan dan media yang belum teridentifikasi tidak masuk daftar ini. Gangguan pembacaan AI tersedia di Rincian media.
           </div>
           <button onClick={loadPendingPayments} disabled={loadingPendingPayments}
             style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, borderRadius: 8, padding: "6px 12px", fontSize: 12, cursor: "pointer" }}>
@@ -1118,14 +1120,7 @@ return (
           const selected = pendingSelectedInvoice[sug.id] || null;
           return (
             <div key={sug.id} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: 14, display: "flex", gap: 14 }}>
-              {sug.image_url && (
-                <a href={sug.image_url} target="_blank" rel="noreferrer" style={{ flexShrink: 0 }}>
-                  {sug.image_url.toLowerCase().includes(".pdf")
-                    ? <div style={{ width: 160, height: 200, display: "grid", placeItems: "center", color: cs.text, background: cs.surface, borderRadius: 8 }}>📄 Buka PDF</div>
-                    : <img src={sug.image_url} alt="media WA" style={{ width: 160, height: 200, objectFit: "cover", borderRadius: 8, border: "1px solid " + cs.border }}
-                      onError={e => { e.target.style.display = "none"; }} />}
-                </a>
-              )}
+              {sug.image_url && <PaymentEvidencePreview url={sug.image_url} />}
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                   <span style={{ fontSize: 18, fontWeight: 800, color: cs.text }}>{sug.amount ? fmt(sug.amount) : "Nominal belum terbaca"}</span>

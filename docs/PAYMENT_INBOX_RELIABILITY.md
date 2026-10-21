@@ -4,6 +4,76 @@ Penerimaan webhook dan pengamanan media ke R2 tidak bergantung pada jam kerja,
 panel WA Monitor, auto-reply ARA, maupun tab browser admin. Suggestion adalah
 kandidat pemeriksaan, **bukan** konfirmasi uang masuk atau pelunasan otomatis.
 
+## Penyaring bukti pembayaran (21 Oktober 2026)
+
+- Pending AI khusus gambar bukti pembayaran berhasil; nominal boleh belum terbaca
+  bila gambar jelas merupakan bukti transfer. Foto AC/kerusakan/unit, ulasan Google,
+  invoice/quotation, saldo dan transfer gagal/pending bukan bukti pembayaran.
+- Invoice terbuka, nama customer, nominal pada invoice, caption pembayaran maupun
+  kegagalan lookup tidak boleh mengubah foto nonpembayaran menjadi suggestion.
+- AI timeout/jenis dokumen tak pasti tetap dilacak di **Rincian media**, retry maksimal
+  tiga kali. Tidak membuat suggestion pembayaran sebelum gambar dikenali sebagai bukti.
+- Media ingress dicadangkan dahulu ke `wa-staging/` agar URL Fonnte kedaluwarsa
+  tidak menghilangkan bukti tanpa caption. Hanya bukti teridentifikasi disalin ke
+  `wa-inbox/` sebelum suggestion disimpan. Nominal/bank/tanggal dan foto bukti tetap
+  disimpan untuk pemeriksaan; tidak ada auto-PAID. Nonpembayaran berhenti `IGNORED`,
+  tanpa pencarian invoice, salinan arsip bukti, atau pengulangan AI.
+- `ops/r2-lifecycle.json` menambah retensi **7 hari hanya untuk prefix baru
+  `wa-staging/`**. Konfigurasi lokal tidak mengaktifkan aturan cloud: saat rilis,
+  periksa `scripts/apply-r2-lifecycle.mjs` dry-run lalu terapkan dengan persetujuan
+  Owner. Tanpa penerapan tersebut, penghapusan staging belum dijamin. Jangan
+  memperpendek retensi `wa-inbox/` atau menyentuh objek bisnis lama.
+- Fallback luas `wa_image_review` lama yang hanya berisi klasifikasi nonpembayaran
+  atau AI gagal disaring dari inbox/modal WA, bukan dihapus dari database.
+  Bukti transfer teridentifikasi, termasuk yang lama dan nominal belum terbaca,
+  tetap tampil. Riwayat media/RPC health dapat memuat arsip yang kini tersaring;
+  tombol Tinjau bukti memakai jumlah daftar pembayaran aktif.
+- Foto 404 tidak dipulihkan dengan mengganti prompt. Thumbnail memakai `fotoUrl`,
+  lazy loading, serta peringatan unggah ulang yang menetap untuk URL gagal, tanpa
+  retry otomatis tiap polling. Pembayaran tidak berubah karena foto tidak tersedia.
+
+Audit read-only 21 Oktober: ada lima fallback berkategori `kerusakan_ac`, 14 dokumen
+umum, dan tiga tanpa klasifikasi. Dua URL bukti historis sejak April yang diperiksa
+membalas HTTP 404. Ini snapshot, bukan angka hardcoded atau bukti pasti penyebab
+penghapusan R2. Tidak ada transaksi/objek produksi diubah pada pemeriksaan ini.
+
+### Pembersihan terbatas sesuai persetujuan Owner, 21 Oktober 2026
+
+Batas kandidat: suggestion PENDING bertanggal sebelum **1 Oktober 2026 00.00 WIB**.
+Ditemukan 56 referensi berlabel folder `wa-images/bukti_transfer`, semuanya memiliki
+nominal tetapi tanpa klasifikasi terstruktur. HEAD seluruh objek: 46 tersedia,
+10 sudah 404. OCR lokal (tanpa API AI berbayar), disertai pemeriksaan visual pada
+hasil ambigu, menemukan lima nonpembayaran: dua layar pengiriman barang (10 Juli),
+foto tagihan (7 Juli), screenshot payroll (27 Juni), dan info saldo (8 September).
+
+Lima objek tersebut dihapus setelah pemeriksaan referensi bukti invoice, ledger,
+biaya dan laporan tidak menemukan pemakaian. Lima suggestion menjadi
+`DISMISSED/REJECTED`, URL foto dikosongkan, alasan pemeriksaan dan metadata tetap
+tersimpan. Bukan penghapusan semua suggestion lama. Snapshot pemulihan terenkripsi
+disimpan lokal privat. Lima HEAD setelah delete membalas 404; kelima ID tidak lagi
+PENDING. Fingerprint status/nominal/paid_amount/sisa/bukti seluruh invoice sama
+sebelum dan sesudah. Foto Oktober tidak disentuh.
+
+Audit retensi produksi pada pemeriksaan ini:
+
+- `payment_proof_cleanup_enabled=true`; dispatcher 10 menit aktif. Dalam tujuh
+  hari ada tujuh run `payment-proof-cleanup` SUCCESS, counter `purged=81`, error 0.
+  Counter mencakup objek yang sudah tidak ada (DELETE 404 juga dianggap selesai),
+  sehingga bukan bukti 81 objek fisik baru terhapus. Run terakhir 21 Oktober
+  03.10 WIB: swept/purged 16, error 0, `has_more=false`.
+- 865 invoice memiliki sentinel `purged-90d`; tidak ada kandidat PAID lama ber-URL
+  `/api/foto` tersisa menurut kondisi cron saat audit. Dua sampel referensi yang
+  sudah ditandai purge memang membalas 404. Nominal/status lunas tidak dihapus.
+- Cakupan cron hanya invoice **PAID**; umur dihitung dari
+  `coalesce(paid_at,created_at)`, **bukan LastModified R2/umur unggahan**. Pending AI
+  tidak ikut cleanup ini. Sebelum lima penghapusan di atas masih ada 17 objek
+  Pending AI dengan LastModified >90 hari; empat di antaranya termasuk kandidat
+  nonpembayaran yang dihapus. Jangan mengklaim semua bukti >90 hari sudah dibersihkan.
+- Aturan bucket dalam `ops/r2-lifecycle.json` belum merupakan bukti aturan cloud
+  aktif. GET lifecycle S3 masih `403 AccessDenied`; header expiration sampel objek
+  juga kosong. Konfigurasi lifecycle produksi belum dapat disertifikasi dengan
+  kredensial operasional ini. Tidak ada perubahan scheduler/lifecycle pada audit.
+
 ## Pembaruan tampilan
 
 - Owner/Admin mendapat snapshot seluruh suggestion PENDING, dengan pagination
@@ -31,8 +101,9 @@ dapat menimpa hasil worker pemilik lease yang baru.
 
 Satu media per invocation menjaga beban serverless tetap terbatas. Maksimal tiga
 percobaan, jeda retry 15 lalu 30 menit. Lease kedaluwarsa dapat dipulihkan termasuk
-crash pada percobaan terakhir; bila file sudah aman tetapi AI gagal, kandidat
-review manual tetap disimpan. Upsert tidak membuka kembali CONFIRMED/DISMISSED.
+crash pada percobaan terakhir; bila file sudah aman tetapi AI gagal, media tetap
+tercatat untuk pemeriksaan di Rincian media, bukan diklaim bukti pembayaran.
+Upsert tidak membuka kembali CONFIRMED/DISMISSED.
 
 Pemicu utama: Supabase `pg_cron` + `pg_net`, setiap 15 menit, 24 jam. Kunci internal
 disimpan di Vault dan dibaca ketika fungsi dispatcher berjalan, bukan ditulis ke
