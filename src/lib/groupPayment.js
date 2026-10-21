@@ -46,6 +46,8 @@ export function createGroupPaymentRequest({ invoices, invoiceIds, totalReceived,
 export function groupPaymentError(error) {
   if (['PGRST202', '42883'].includes(error?.code))
     return 'Migrasi 220 pembayaran gabungan belum tersedia. Tidak memakai jalur penyimpanan lama.';
+  if (error?.code === '23502' && /invoice_id.*payments|payments.*invoice_id/i.test(error.message || ''))
+    return 'Skema pembayaran grup belum sinkron (migrasi 221). Pembayaran ditolak tanpa mengubah invoice; ulangi dengan ID permintaan yang sama setelah diperbaiki.';
   if (['40001','P0001','42501','23505','23503','23514','55P03'].includes(error?.code))
     return error.message || 'Pembayaran ditolak; periksa invoice dan riwayat.';
   return 'Hasil pembayaran belum dapat dipastikan. Jangan buat pembayaran baru. Periksa riwayat atau ulangi permintaan yang sama dengan ID tetap.';

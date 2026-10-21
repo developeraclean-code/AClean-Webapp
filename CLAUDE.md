@@ -253,6 +253,7 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
 218       # Applied 18 Okt 2026 — rincian 16 temuan Owner-only + pengaman kontak/tujuan alert; audit/kuota memakai profil Owner aktif sesuai persetujuan. Tanpa koreksi transaksi/aset otomatis.
 219       # Applied 21 Okt 2026 — materialisasi ID/status/waktu sebelum paging laporan; hash live cocok, 48 hasil uji identik.
 220       # Applied 21 Okt 2026 — grup atomik/FK bigint + RLS header/proof untuk staf kantor aktif; checksum bisnis utuh, tanpa pelunasan historis.
+221       # Applied 21 Okt 2026 — header grup memakai invoice penerima alokasi pertama; CHECK metode diperluas sesuai UI/RPC, tanpa mengubah pembayaran historis.
 ```
 > Sumber kebenaran nomor = folder `migrations/`, bukan daftar ini yang pernah tertinggal.
 

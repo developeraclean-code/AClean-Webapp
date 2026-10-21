@@ -28,6 +28,8 @@ try {
   await check('synthetic two-invoice transfer: one header, two ledger entries, exact cash, two PAID orders',async()=>{
     original=await request();const result=await groupRpc(db,original);
     assert.equal(result.payment.amount,4300000);assert.equal(result.invoices.length,2);
+    assert.equal(result.payment.invoice_id,'A');
+    assert.equal(result.payment.method,'transfer_bca');
     assert.deepEqual(result.invoices.map(i=>i.status),['PAID','PAID']);assert.ok(result.orders.every(o=>o.status==='PAID'));
     const ledger=(await q('SELECT count(*)::int n,sum(amount)::float amount,count(DISTINCT group_payment_id)::int groups FROM invoice_payments'))[0];
     assert.deepEqual(ledger,{n:2,amount:4300000,groups:1});
@@ -51,6 +53,15 @@ try {
     const next=await groupRpc(db,await request('partial',{totalReceived:3300000,proofUrl:'second-proof.jpg'}));
     assert.ok(next.invoices.every(i=>i.status==='PAID'));assert.ok(next.orders.every(o=>o.status==='PAID'));
     await rejectedUnchanged(args,/saldo terbaru berubah/);
+  });
+  await check('group header anchors the first actually allocated invoice, even when ID order differs',async()=>{
+    await seedGroup(db,'anchor');
+    await db.exec("UPDATE invoices SET created_at='2026-10-18' WHERE id='Aanchor'");
+    const args=await request('anchor',{totalReceived:1000000,proofUrl:null});
+    const result=await groupRpc(db,args);
+    assert.equal(result.payment.invoice_id,'Banchor');
+    assert.deepEqual(result.payment.allocation_detail,{Banchor:1000000});
+    assert.equal((await q("SELECT count(*)::int n FROM invoice_payments WHERE group_payment_id=$1 AND invoice_id='Banchor'",[result.payment.id]))[0].n,1);
   });
   await check('WA proof linked to the group, not arbitrarily to the first invoice; replay once',async()=>{
     await seedGroup(db,'wa');const proof=uid(700);

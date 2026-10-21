@@ -1,7 +1,10 @@
 // Synthetic PostgreSQL only. Never loads .env or contacts Supabase.
 import { readFileSync } from 'node:fs';
 import { createPaymentWithholdingDb } from './payment-withholding-db.mjs';
-export const groupMigration = () => readFileSync(new URL('../../migrations/220_atomic_group_payment.sql', import.meta.url), 'utf8');
+export const groupMigration = () => [
+  '../../migrations/220_atomic_group_payment.sql',
+  '../../migrations/221_group_payment_header_compatibility.sql',
+].map(path => readFileSync(new URL(path, import.meta.url), 'utf8')).join('\n');
 export const ownerId = '40000000-0000-4000-8000-000000000001';
 export async function createGroupPaymentDb({ apply = true, database = null } = {}) {
   const db = await createPaymentWithholdingDb({ database });
@@ -17,7 +20,9 @@ export async function createGroupPaymentDb({ apply = true, database = null } = {
     CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql AS $$ SELECT nullif(current_setting('test.uid',true),'')::uuid $$;
     SELECT set_config('test.uid','${ownerId}',false);
     GRANT USAGE ON SCHEMA auth,public TO authenticated,anon;
-    CREATE TABLE payments(id bigserial PRIMARY KEY,invoice_id text,amount bigint,method text,notes text,paid_at timestamptz,
+    CREATE TABLE payments(id bigserial PRIMARY KEY,invoice_id text NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+      amount bigint NOT NULL,method text CHECK(method IN ('cash','transfer','gopay','ovo','dana','qris','other')),
+      notes text,paid_at timestamptz NOT NULL DEFAULT now(),
       verified boolean,verified_by text,verified_at timestamptz,created_at timestamptz DEFAULT now(),customer_phone text,
       customer_name text,total_amount numeric,is_partial boolean,invoice_ids text[],payment_proof_url text,allocation_detail jsonb);
     ALTER TABLE invoice_payments ALTER COLUMN id SET DEFAULT gen_random_uuid();

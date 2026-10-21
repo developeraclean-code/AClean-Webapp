@@ -43,5 +43,6 @@ describe('atomic group payments',()=>{
   it('does not mislabel timeout as missing migration',()=>{
     expect(groupPaymentError({code:'57014'})).not.toMatch(/Migrasi/);
     expect(groupPaymentError({code:'PGRST202'})).toMatch(/220/);
+    expect(groupPaymentError({code:'23502',message:'null value in column "invoice_id" of relation "payments" violates not-null constraint'})).toMatch(/221/);
   });
 });
