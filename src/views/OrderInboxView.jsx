@@ -104,7 +104,7 @@ function minToPercent(minutes, startHour, endHour) {
 }
 
 // onDateChange: callback ke parent agar Planning Order ikut filter
-function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, weekOrders, allOrders = weekOrders, teknisiData, dailySlots, expandedId, setExpandedId, TODAY, onDateChange, onDragReassign, laporanJobSet, shift = "regular", selectedDate: selectedDateProp, onSelectDate }) {
+function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, weekOrders, allOrders = weekOrders, teknisiData, dailySlots, expandedId, setExpandedId, TODAY, onDateChange, onDragReassign, onEdit, laporanJobSet, shift = "regular", selectedDate: selectedDateProp, onSelectDate }) {
   const [localSelectedDate, setLocalSelectedDate] = useState(weekDays.find(d => d.date === TODAY)?.date || weekDays[0]?.date);
   const [dragOverSlot, setDragOverSlot] = useState(null); // nama slot yang sedang jadi drop target
   const isNight = shift === "night";
@@ -198,7 +198,7 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, w
           Belum ada jadwal {isNight ? "malam" : "reguler"} hari ini
         </div>
       ) : (
-        <div style={{ overflowX: "auto" }}>
+        <div style={{ overflowX: "auto", paddingBottom: dayOrders.some(o => o.id === expandedId) ? 210 : 0 }}>
           {/* Header jam */}
           <div style={{ display: "flex", marginLeft: 110, marginBottom: 4, position: "relative", minWidth: isNight ? 560 : 650 }}>
             {gridHours.map(h => (
@@ -276,6 +276,7 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, w
                     const endMin = Number.isFinite(timeEndMin)
                       ? timeEndMin + (timeEndMin < startMin ? 1440 : 0)
                       : startMin + Math.round(hitungDurasi(o.service, o.units) * 60);
+                    const durMin = endMin - startMin;
 
                     const leftPct = minToPercent(startMin, gridStart, gridEnd);
                     const widthPct = minToPercent(endMin, gridStart, gridEnd) - leftPct;
@@ -318,11 +319,11 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, w
                           border: "2px solid " + (isDone ? cs.border : (isConflict ? cs.red + "99" : blockColor + "88")),
                           borderRadius: 6,
                           cursor: isDone ? "default" : onDragReassign ? "grab" : "pointer",
-                          overflow: "hidden",
+                          overflow: expandedId === o.id ? "visible" : "hidden",
                           display: "flex", flexDirection: "column", justifyContent: "center",
                           padding: "0 5px",
                           opacity: isDone ? 0.5 : 1,
-                          zIndex: isConflict ? 2 : 1,
+                          zIndex: expandedId === o.id ? 10 : isConflict ? 2 : 1,
                           boxSizing: "border-box",
                         }}>
                         <div style={{ color: isDone ? cs.muted : blockColor, fontWeight: 800, fontSize: 9, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -336,7 +337,7 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, w
                         </div>
 
                         {expandedId === o.id && (
-                          <div style={{
+                          <div role="region" aria-label={`Detail jadwal ${o.customer}`} style={{
                             position: "absolute", top: "100%", left: 0, zIndex: 50, marginTop: 4,
                             background: cs.surface, border: "1px solid " + (isConflict ? cs.red + "88" : blockColor + "66"),
                             borderRadius: 8, padding: "8px 10px", minWidth: 190, boxShadow: "0 4px 20px #0008",
@@ -353,6 +354,10 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, w
                             {o.address && <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>{o.address}</div>}
                             <div style={{ marginTop: 4 }}><StatusBadge status={isDone ? "COMPLETED" : o.status} /></div>
                             {isConflict && <div style={{ color: cs.red, fontSize: 10, fontWeight: 800, marginTop: 4 }}>⚠️ Waktu bentrok dengan order lain</div>}
+                            {onEdit && <button type="button" onClick={() => { setExpandedId(null); onEdit(o); }}
+                              style={{ marginTop: 8, background: cs.accent, color: "#fff", border: "none", borderRadius: 6, padding: "6px 10px", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
+                              ✏️ Edit Form
+                            </button>}
                           </div>
                         )}
                       </div>
@@ -387,7 +392,7 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, w
                       <div style={{ fontSize: 10, color: cs.text, fontWeight: 700 }}>{o.customer}</div>
                       <div style={{ fontSize: 9, color: cs.muted }}>{o.service}{o.units > 1 ? ` ×${o.units}` : ""}</div>
                       {expandedId === o.id && (
-                        <div style={{ position: "absolute", top: "100%", left: 0, zIndex: 50, marginTop: 4, background: cs.surface, border: "1px solid " + cs.yellow + "66", borderRadius: 8, padding: "8px 10px", minWidth: 180, boxShadow: "0 4px 20px #0008" }}
+                        <div role="region" aria-label={`Detail jadwal ${o.customer}`} style={{ position: "absolute", top: "100%", left: 0, zIndex: 50, marginTop: 4, background: cs.surface, border: "1px solid " + cs.yellow + "66", borderRadius: 8, padding: "8px 10px", minWidth: 180, boxShadow: "0 4px 20px #0008" }}
                           onClick={e => e.stopPropagation()}>
                           <div style={{ fontWeight: 800, fontSize: 12, color: cs.text, marginBottom: 4 }}>{o.customer}</div>
                           <div style={{ fontSize: 11, color: cs.yellow }}>
@@ -397,7 +402,10 @@ function TimeGrid({ weekDays, weekLabel, weekOffset, setWeekOffset, teamSlots, w
                           <div style={{ fontSize: 11, color: cs.muted, marginTop: 2 }}>{o.service}{o.units > 1 ? ` · ${o.units} unit` : ""}</div>
                           {o.address && <div style={{ fontSize: 10, color: cs.muted, marginTop: 2 }}>{o.address}</div>}
                           <div style={{ marginTop: 4 }}><StatusBadge status={o.status} /></div>
-                          <div style={{ fontSize: 10, color: cs.muted, marginTop: 4, fontStyle: "italic" }}>Edit di Planning Order di bawah untuk assign tim & jam</div>
+                          {onEdit && <button type="button" onClick={() => { setExpandedId(null); onEdit(o); }}
+                            style={{ marginTop: 8, background: cs.accent, color: "#fff", border: "none", borderRadius: 6, padding: "6px 10px", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
+                            ✏️ Edit Form
+                          </button>}
                         </div>
                       )}
                     </div>
@@ -1094,6 +1102,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   const savingLock = useRef(false);
   const [showQuickPaste, setShowQuickPaste] = useState(false);
   const [editId, setEditId] = useState(null);
+  const planningFormRef = useRef(null);
   const [weekOffset, setWeekOffset] = useState(0);
   const [filterStatus, setFilterStatus] = useState("ALL");
   const [filterTeam, setFilterTeam] = useState("ALL");
@@ -1930,6 +1939,9 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   }
 
   function handleEdit(order) {
+    const date = order.date || TODAY;
+    const time = order.time ? order.time.slice(0, 5) : "09:00";
+    const timeEnd = order.time_end ? order.time_end.slice(0, 5) : calcTimeEnd(time, order.service || "Cleaning", order.units || 1);
     setEditId(order.id);
     setForm({
       customer: order.customer || "",
@@ -1937,10 +1949,10 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       service: order.service || "Cleaning",
       type: order.type || "",
       address: order.address || "",
-      date: order.date || TODAY,
-      time: order.time ? order.time.slice(0, 5) : "09:00",
-      time_end: order.time_end ? order.time_end.slice(0, 5) : calcTimeEnd(order.time || "09:00", order.service || "Cleaning", order.units || 1),
-      end_next_day: scheduleEndDate(order.date, order.time, order.time_end) !== order.date,
+      date,
+      time,
+      time_end: timeEnd,
+      end_next_day: scheduleEndDate(date, time, timeEnd) === shiftDateStr(date, 1),
       teknisi: order.teknisi || "",
       helper: order.helper || "",
       helper2: order.helper2 || "",
@@ -1951,7 +1963,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       customer_id: order.customer_id || null,
       team_slot: order.team_slot || "",
     });
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    planningFormRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
   }
 
   function handleCancelEdit() {
@@ -2213,7 +2225,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       />
 
       {/* ═══ FORM QUICK ENTRY ═══ */}
-      <div style={{ background: cs.surface, border: "1px solid " + (editId ? cs.yellow : continuationFrom ? "#f97316" : cs.border), borderRadius: 14, padding: 20 }}>
+      <div ref={planningFormRef} style={{ background: cs.surface, border: "1px solid " + (editId ? cs.yellow : continuationFrom ? "#f97316" : cs.border), borderRadius: 14, padding: 20 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: continuationFrom ? 8 : 16 }}>
           <div style={{ fontWeight: 800, fontSize: 15, color: editId ? cs.yellow : continuationFrom ? "#f97316" : cs.text }}>
             {editId ? "✏️ Edit Planning — " + editId : continuationFrom ? `🔗 Buat Order Lanjutan (Hari ${continuationFrom._dayNum})` : "➕ Tambah Planning Order"}
@@ -2553,6 +2565,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         selectedDate={timeGridDate}
         onDateChange={d => { setGridDate(d); setTimeGridDate(d); }}
         onDragReassign={handleDragReassign}
+        onEdit={handleEdit}
         laporanJobSet={laporanJobSet}
       />
       <label style={{ display: "flex", alignItems: "center", gap: 9, width: "fit-content", maxWidth: "100%", background: cs.surface, border: "1px solid " + (weekHasNightOrders ? cs.yellow + "88" : cs.border), borderRadius: 10, padding: "8px 12px", color: cs.text, cursor: weekHasNightOrders ? "default" : "pointer" }}>
@@ -2570,6 +2583,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         TODAY={TODAY} shift="night" selectedDate={timeGridDate}
         onDateChange={d => { setGridDate(d); setTimeGridDate(d); }}
         onDragReassign={handleDragReassign}
+        onEdit={handleEdit}
         laporanJobSet={laporanJobSet}
       />}
 

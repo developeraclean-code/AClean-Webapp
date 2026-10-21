@@ -6,7 +6,7 @@ const profile = { ...user, name: "Owner Simulasi", role: "Owner", active: true, 
 const b64 = value => Buffer.from(JSON.stringify(value)).toString("base64url");
 const token = { access_token: `${b64({ alg: "HS256", typ: "JWT" })}.${b64({ sub: id, aud: "authenticated", role: "authenticated", exp: 4102444800 })}.SIMULATED_SIGNATURE`, refresh_token: "SIMULATED_REFRESH", expires_in: 3600, token_type: "bearer", user };
 
-async function fixture(page, { role = "Owner" } = {}) {
+async function fixture(page, { role = "Owner", orders = [] } = {}) {
   const roleProfile = { ...profile, role };
   const state = { mode: "healthy", auth: "healthy", active: 0, peak: 0, failedReads: 0, authCalls: 0, profileLists: 0, external: [], writes: [], errors: [], releaseAuth: null };
   page.on("pageerror", error => state.errors.push(error.message));
@@ -45,6 +45,7 @@ async function fixture(page, { role = "Owner" } = {}) {
         { key: "wa_monitor_enabled", value: "false" }, { key: "wa_payment_detect", value: "false" },
         { key: "wa_payment_inbox_enabled", value: "false" }, { key: "wa_provider", value: "fonnte" },
       ]);
+      if (table === "orders") return await fulfill(orders);
       return await fulfill([]);
     } finally { state.active--; }
   });
@@ -142,5 +143,48 @@ for (const role of ["Admin", "Finance", "Teknisi", "Helper"]) {
     expect(state.peak).toBeLessThanOrEqual(3);
     expect(state.external).toEqual([]); expect(state.errors).toEqual([]);
     expect(state.writes.filter(row => ["invoices", "payments", "invoice_payments", "inventory", "service_reports"].includes(row.table))).toEqual([]);
+  });
+}
+
+for (const scenario of [
+  { name: 'regular', customer: 'BAPAK SANDI', id: 'SIM-SANDI', time: '09:30:00', end: '11:00:00', slot: 'Team 01', duration: '(1.5 jam)' },
+  { name: 'overnight', customer: 'CUSTOMER MALAM SIMULASI', id: 'SIM-NIGHT', time: '23:00:00', end: '04:00:00', slot: 'Malam 01', duration: '(5 jam)' },
+  { name: 'unassigned', customer: 'CUSTOMER BELUM ADA JAM', id: 'SIM-UNTIMED', time: null, end: null, slot: '' },
+]) {
+  test(`Planning grid ${scenario.name}: click job, inspect duration and open the correct edit form without writes`, async ({ page }) => {
+    const order = { id: scenario.id, customer: scenario.customer, phone: '628120000009', date: '2026-10-20',
+      time: scenario.time, time_end: scenario.end, team_slot: scenario.slot, status: 'CONFIRMED',
+      service: 'Cleaning', units: 1, teknisi: 'Teknisi Simulasi', address: 'Alamat simulasi', updated_at: '2026-10-20T01:00:00Z' };
+    const state = await fixture(page, { orders: [order] });
+    await page.clock.install({ time: new Date('2026-10-20T03:00:00Z') });
+    await page.goto('/'); await enter(page);
+    await expect.poll(() => state.profileLists).toBe(1);
+    await page.getByRole('button', { name: /Planning Order/ }).click();
+    if (scenario.name === 'unassigned') {
+      await page.getByText(scenario.customer, { exact: true }).first().click();
+    } else {
+      await page.locator('[draggable][title]').filter({ hasText: scenario.customer }).click();
+    }
+    const detail = page.getByRole('region', { name: `Detail jadwal ${scenario.customer}`, exact: true });
+    await expect(detail).toBeVisible();
+    if (scenario.duration) await expect(detail).toContainText(scenario.duration);
+    if (scenario.name === 'overnight') await expect(detail).toContainText('(+1 hari)');
+    await detail.getByRole('button', { name: '✏️ Edit Form', exact: true }).click();
+    const heading = page.getByText(`✏️ Edit Planning — ${scenario.id}`, { exact: true });
+    await expect(heading).toBeVisible();
+    await expect(heading).toBeInViewport();
+    await expect(page.getByPlaceholder('Ketik nama atau nomor WA...')).toHaveValue(scenario.customer);
+    const form = heading.locator('..').locator('..');
+    await expect(form.locator('input[type="time"]').nth(0)).toHaveValue(scenario.time?.slice(0, 5) || '09:00');
+    await expect(form.locator('input[type="time"]').nth(1)).toHaveValue(scenario.end?.slice(0, 5) || '10:00');
+    if (scenario.name === 'overnight') {
+      await expect(form.getByLabel('Tanggal selesai', { exact: true })).toHaveValue('next');
+      await expect(form.getByLabel('Tanggal selesai', { exact: true })).toContainText('2026-10-21');
+    }
+    await expect(form.getByRole('button', { name: 'Simpan Perubahan', exact: true })).toBeEnabled();
+    await form.getByRole('button', { name: 'Batal Edit', exact: true }).click();
+    await expect(heading).toHaveCount(0);
+    expect(state.writes.filter(row => ['orders', 'invoices', 'service_reports', 'inventory'].includes(row.table))).toEqual([]);
+    expect(state.errors).toEqual([]); expect(state.external).toEqual([]);
   });
 }

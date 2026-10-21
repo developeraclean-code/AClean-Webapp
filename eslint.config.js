@@ -49,9 +49,9 @@ export default [
     },
   },
   {
-    // Modul bootstrap dan Pengaturan berdampak luas. Undefined identifier pada
-    // dua file ini pernah lolos build Vite dan baru crash saat runtime.
-    files: ["src/lib/loadAllData.js", "src/views/SettingsView.jsx"],
+    // Bootstrap, Pengaturan, dan Planning Order berdampak luas. Undefined identifier pada
+    // file ini pernah lolos build Vite dan baru crash saat runtime.
+    files: ["src/lib/loadAllData.js", "src/views/SettingsView.jsx", "src/views/OrderInboxView.jsx"],
     rules: { "no-undef": "error" },
   },
 ];
