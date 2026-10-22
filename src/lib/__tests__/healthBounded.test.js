@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createHealthCheck } from '../../../api/_health.js';
+import { createHealthCheck, selectHealthComponent } from '../../../api/_health.js';
 
 const env = { SUPABASE_URL: 'https://database.simulated.test', SUPABASE_SERVICE_KEY: 'FAKE', FONNTE_TOKEN: 'FAKE', VERCEL_GIT_COMMIT_SHA: '123456789' };
 afterEach(() => vi.useRealTimers());
@@ -9,11 +9,11 @@ describe('bounded public health monitoring', () => {
     const fetchImpl = vi.fn(async () => new Response('{}'));
     const check = createHealthCheck({ fetchImpl, now: () => time });
     const results = await Promise.all(Array.from({ length: 200 }, () => check(env)));
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
     expect(results.every(result => result.status === 'healthy' && result.version === '1234567')).toBe(true);
     time = 14999; expect(await check(env)).toEqual(results[0]);
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
-    time = 15000; await check(env); expect(fetchImpl).toHaveBeenCalledTimes(4);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    time = 15000; await check(env); expect(fetchImpl).toHaveBeenCalledTimes(6);
   });
   it('finishes in three seconds when both dependencies stall; aborts upstreams and reports unhealthy', async () => {
     vi.useFakeTimers();
@@ -22,9 +22,25 @@ describe('bounded public health monitoring', () => {
     const check = createHealthCheck({ fetchImpl });
     const pending = check(env);
     await vi.advanceTimersByTimeAsync(3000);
-    expect(await pending).toMatchObject({ status: 'unhealthy', duration_ms: 3000, checks: { supabase: 'fail:timeout', fonnte: 'fail:timeout' } });
+    expect(await pending).toMatchObject({ status: 'unhealthy', diagnosis: 'shared_gateway_or_network', duration_ms: 3000,
+      checks: { supabase: 'fail:timeout', auth: 'fail:timeout', fonnte: 'fail:timeout' } });
     expect(signals.every(signal => signal.aborted)).toBe(true);
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+  it('separates Auth from the database API without claiming a precise host root cause', async () => {
+    const dbDown = createHealthCheck({ fetchImpl: async url => new Response('{}', { status: String(url).includes('/rest/v1/') ? 504 : 200 }) });
+    const dbResult = await dbDown(env);
+    expect(dbResult).toMatchObject({ status: 'unhealthy', diagnosis: 'database_api_or_postgrest',
+      checks: { database: 'fail:504', auth: 'ok' } });
+    expect(selectHealthComponent(dbResult, 'database')).toBe('fail:504');
+    expect(selectHealthComponent(dbResult, 'auth')).toBe('ok');
+    expect(selectHealthComponent(dbResult, 'overall')).toBe('fail');
+    const authDown = createHealthCheck({ fetchImpl: async url => new Response('{}', { status: String(url).includes('/auth/v1/') ? 503 : 200 }) });
+    const authResult = await authDown(env);
+    expect(authResult).toMatchObject({ status: 'unhealthy', diagnosis: 'auth_service',
+      checks: { database: 'ok', auth: 'fail:503' } });
+    expect(selectHealthComponent(authResult, 'database')).toBe('ok');
+    expect(selectHealthComponent(authResult, 'auth')).toBe('fail:503');
   });
   it('does not mistake upstream 503, failed requests or missing configuration for health', async () => {
     const check = createHealthCheck({ fetchImpl: async () => new Response('{}', { status: 503 }) });

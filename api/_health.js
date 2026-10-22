@@ -27,9 +27,13 @@ export function createHealthCheck({ fetchImpl = (...args) => fetch(...args), now
     pending = (async () => {
       const started = now();
       const url = env.SUPABASE_URL || env.VITE_SUPABASE_URL, key = env.SUPABASE_SERVICE_KEY;
-      const [supabase, fonnte] = await Promise.all([
+      const authKey = env.SUPABASE_ANON_KEY || env.VITE_SUPABASE_ANON_KEY || key;
+      const [supabase, auth, fonnte] = await Promise.all([
         url && key ? probe(url + '/rest/v1/agent_logs?select=id&limit=1', {
           headers: { apikey: key, Authorization: `Bearer ${key}` },
+        }) : 'not_configured',
+        url && authKey ? probe(url + '/auth/v1/health', {
+          headers: { apikey: authKey },
         }) : 'not_configured',
         env.FONNTE_TOKEN ? probe('https://api.fonnte.com/validate', {
           method: 'POST', headers: { Authorization: env.FONNTE_TOKEN },
@@ -37,9 +41,14 @@ export function createHealthCheck({ fetchImpl = (...args) => fetch(...args), now
       ]);
       const providers = [['ANTHROPIC_API_KEY','claude'],['OPENAI_API_KEY','openai'],['GROQ_API_KEY','groq'],['GEMINI_API_KEY','gemini']]
         .filter(([name]) => env[name]).map(([, name]) => name);
-      cached = { status: supabase === 'ok' ? 'healthy' : 'unhealthy',
+      const diagnosis = supabase === 'ok' && auth === 'ok' ? 'none'
+        : supabase === 'not_configured' || auth === 'not_configured' ? 'configuration'
+        : supabase !== 'ok' && auth !== 'ok' ? 'shared_gateway_or_network'
+        : supabase !== 'ok' ? 'database_api_or_postgrest' : 'auth_service';
+      cached = { status: diagnosis === 'none' ? 'healthy' : 'unhealthy', diagnosis,
         timestamp: new Date(now()).toISOString(), duration_ms: now() - started,
-        checks: { supabase, fonnte, ai: providers.length ? `ok:${providers.join(',')}` : 'not_configured' },
+        checks: { supabase, database: supabase, auth, fonnte,
+          ai: providers.length ? `ok:${providers.join(',')}` : 'not_configured' },
         version: env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) || 'dev' };
       expiresAt = now() + ttlMs;
       return cached;
@@ -49,3 +58,9 @@ export function createHealthCheck({ fetchImpl = (...args) => fetch(...args), now
 }
 
 export const checkHealth = createHealthCheck();
+
+export function selectHealthComponent(result, component) {
+  if (component === 'database') return result.checks.database;
+  if (component === 'auth') return result.checks.auth;
+  return result.status === 'healthy' ? 'ok' : 'fail';
+}

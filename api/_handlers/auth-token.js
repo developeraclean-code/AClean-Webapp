@@ -1,7 +1,7 @@
 // api/_handlers/auth-token.js — Handler grup auth/token/config/health (Batch 2 pemecahan
 // router, Jul 2026). Isi dipindah APA ADANYA dari api/[route].js — di-dispatch oleh router.
 import { checkRateLimit, signAppToken, validateInternalToken } from "../_auth.js";
-import { checkHealth } from "../_health.js";
+import { checkHealth, selectHealthComponent } from "../_health.js";
 import { readSupabaseUser, readSessionJson, sendSessionError, SessionCheckError } from "../_session-check.js";
 
 // ── TEST-CONNECTION (public) ──
@@ -87,10 +87,22 @@ export async function testConnection(req, res) {
 // PUBLIC_ROUTES — tidak butuh auth. UptimeRobot dll bisa ping ini.
 export async function health(req, res) {
   if (req.method !== "GET" && req.method !== "HEAD") return res.status(405).json({error: "Method not allowed"});
+  const component = req.query?.component || "overall";
+  if (typeof component !== "string" || !["overall", "database", "auth", "app"].includes(component)) {
+    return res.status(400).json({ error: "Komponen health tidak dikenal" });
+  }
+  // The app-only probe lets an external monitor distinguish a Vercel outage
+  // from an upstream Supabase outage without making any database request.
+  if (component === "app") {
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(200).json({ status: "healthy", component: "app", component_status: "ok",
+      timestamp: new Date().toISOString(), version: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) || "dev" });
+  }
   const result = await checkHealth();
+  const componentStatus = selectHealthComponent(result, component);
   res.setHeader("Cache-Control", "no-store");
-  if (result.status !== "healthy") res.setHeader("Retry-After", "15");
-  return res.status(result.status === "healthy" ? 200 : 503).json(result);
+  if (componentStatus !== "ok") res.setHeader("Retry-After", "15");
+  return res.status(componentStatus === "ok" ? 200 : 503).json({ ...result, component, component_status: componentStatus });
 }
 
 // ── GET-LLM-CONFIG (secure backend config endpoint) ──
