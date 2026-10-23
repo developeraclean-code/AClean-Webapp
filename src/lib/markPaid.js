@@ -12,37 +12,22 @@ export async function markPaid(inv, method = "transfer", notes = "", sendCustNot
     // Input validation
     if (!inv.id || inv.id.trim().length === 0) {
       showNotif("❌ Invoice ID tidak valid");
-      return;
+      return { ok: false };
     }
     if (!validatePositiveNumber(inv.total)) {
       showNotif("❌ Invoice total harus lebih dari 0");
-      return;
+      return { ok: false };
     }
     if (!inv.customer || inv.customer.trim().length === 0) {
       showNotif("❌ Nama customer tidak valid");
-      return;
+      return { ok: false };
     }
 
     const paidAt = getLocalISOString();
-    // H-04: Simpan status original untuk rollback jika DB gagal
-    const originalInvStatus = inv.status;
-    const originalOrderStatus = ordersData.find(o => o.id === inv.job_id || o.invoice_id === inv.id)?.status;
-
-    setInvoicesData(prev => prev.map(i =>
-      i.id === inv.id ? { ...i, status: "PAID", paid_at: paidAt, ...(paymentProofUrl ? { payment_proof_url: paymentProofUrl } : {}) } : i
-    ));
-    // 1 order = 1 invoice (termasuk multi-hari, kebijakan Owner 11 Agu 2026): pelunasan
-    // HANYA menyentuh order pemilik invoice ini. Dulu status PAID ikut di-propagate ke
-    // semua child multi-hari karena 1 invoice induk mewakili seluruh hari — sekarang tiap
-    // hari ditagih terpisah, jadi propagasi itu akan menandai hari lain lunas padahal
-    // invoice-nya sendiri belum dibayar. Bayar sekaligus → pakai Group Payment.
-    setOrdersData(prev => prev.map(o =>
-      (o.id === inv.job_id || o.invoice_id === inv.id) ? { ...o, status: "PAID" } : o
-    ));
     await setAuditUser();
     {
       const paymentId = globalThis.crypto?.randomUUID?.();
-      const { error: mpErr } = await markInvoicePaid(supabase, inv.id, paidAt, auditUserName(), {
+      const { data: savedInvoice, error: mpErr } = await markInvoicePaid(supabase, inv.id, paidAt, auditUserName(), {
         paymentId,
         method,
         notes: notes || "Lunas",
@@ -54,17 +39,19 @@ export async function markPaid(inv, method = "transfer", notes = "", sendCustNot
         // sendiri hanya memakai jalur legacy bila RPC belum terpasang; semua error lain
         // wajib menghentikan pelunasan agar double-click/race tidak mencatat dua kali.
         reportError("invoice.markPaid.dbFailed", mpErr, { invoiceId: inv.id, jobId: inv.job_id });
-        setInvoicesData(prev => prev.map(i =>
-          i.id === inv.id ? { ...i, status: originalInvStatus, paid_at: inv.paid_at || null } : i
-        ));
-        if (originalOrderStatus) {
-          setOrdersData(prev => prev.map(o =>
-            (o.id === inv.job_id || o.invoice_id === inv.id) ? { ...o, status: originalOrderStatus } : o
-          ));
-        }
         showNotif(`❌ Pelunasan dibatalkan: ${mpErr.message || "gagal menyimpan ke database"}`);
-        return;
+        return { ok: false, error: mpErr };
       }
+      setInvoicesData(prev => prev.map(i => i.id === inv.id
+        ? { ...i, status: "PAID", paid_at: paidAt, paid_amount: Number(i.total) || 0,
+            remaining_amount: 0, paid_method: method,
+            ...(paymentProofUrl ? { payment_proof_url: paymentProofUrl } : {}),
+            ...(savedInvoice && typeof savedInvoice === "object" ? savedInvoice : {}) }
+        : i));
+      // 1 order = 1 invoice; pelunasan hanya menyentuh order pemilik invoice ini.
+      setOrdersData(prev => prev.map(o =>
+        (o.id === inv.job_id || o.invoice_id === inv.id) ? { ...o, status: "PAID" } : o
+      ));
     }
 
     // Notif WA ke customer — hanya jika admin/owner menyetujui (sendCustNotif=true)
@@ -94,4 +81,5 @@ export async function markPaid(inv, method = "transfer", notes = "", sendCustNot
     }).then(n => {
       if (n > 0) addAgentLog("PAYMENT_SUGGESTION_CLOSED", `Invoice ${inv.id} lunas — ${n} bukti bayar pending ditutup`, "INFO");
     }).catch(() => {});
+    return { ok: true };
 }

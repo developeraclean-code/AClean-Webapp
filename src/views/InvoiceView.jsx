@@ -14,6 +14,7 @@ import { dismissedProofsForInvoice, invoiceProofAction, pendingProofsForInvoice 
 import { confirmInvoiceWaProof } from "../lib/invoiceWaProof.js";
 import { confirmInvoiceWaWithholding, invoiceCashReceived, paymentWithholdingReview } from "../lib/paymentWithholding.js";
 import PaymentWithholdingReview from "../components/PaymentWithholdingReview.jsx";
+import InvoiceSettlementReview from "../components/InvoiceSettlementReview.jsx";
 import { getLocalDate as localDateWIB } from "../lib/dateTime.js";
 import { groupInvoiceBalance, groupPaymentProof } from "../lib/groupPayment.js";
 import AcUnitInvoiceModal from "./AcUnitInvoiceModal.jsx";
@@ -143,7 +144,7 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
         body: JSON.stringify({ base64, filename: `proof_${inv.id}_${Date.now()}.jpg`, reportId: "bukti-" + inv.id, mimeType: "image/jpeg" }),
       });
       const d = await resp.json();
-      if (d.success && d.url) { setUploadedUrl(d.url); showNotif("✅ Bukti terupload"); }
+      if (d.success && d.url) { setUploadedUrl(d.url); setReviewAcknowledged(false); showNotif("✅ Bukti terupload"); }
       else showNotif("❌ Upload gagal: " + (d.error || "unknown"));
     } catch (err) { showNotif("❌ " + err.message); }
     finally { setUploading(false); e.target.value = ""; }
@@ -156,7 +157,7 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
   const hasAmountDifference = tab === "wa" && !alreadyPaid && Number(selSugg?.amount) > 0
     && Number(selSugg.amount) !== Number(inv.total) - Number(inv.paid_amount || 0);
   const withholdingReview = paymentWithholdingReview(inv, selSugg);
-  const canConfirm = !!chosenUrl && (!needsManualReview || reviewAcknowledged) && !busy
+  const canConfirm = !!chosenUrl && reviewAcknowledged && !busy
     && (!hasAmountDifference || (withholdingReview.eligible && acceptWithholding && withholdingNote.trim().length >= 10 && !!transferDate));
 
   const confirm = async () => {
@@ -235,7 +236,7 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
   };
 
   const tabBtn = (k, label) => (
-    <button onClick={() => setTab(k)} style={{
+    <button onClick={() => { setTab(k); setReviewAcknowledged(false); }} style={{
       flex: 1, padding: "8px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer",
       background: tab === k ? cs.accent : cs.card, color: tab === k ? "#fff" : cs.muted,
       border: "1px solid " + (tab === k ? cs.accent : cs.border), borderRadius: 8,
@@ -305,11 +306,11 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
               Tampilkan lebih banyak ({filtered.length - visibleLimit} tersisa)
             </button>}
             {selSugg && <a href={fotoSrc(selSugg.image_url)} target="_blank" rel="noreferrer" style={{ display: "inline-block", marginTop: 8, color: cs.accent, fontSize: 11 }}>Buka file terpilih ↗</a>}
-            {needsManualReview && <label style={{ display: "block", marginTop: 8, color: cs.yellow, fontSize: 11 }}>
+            {needsManualReview && <div style={{ display: "block", marginTop: 8, color: cs.yellow, fontSize: 11 }}>
               {!samePhone(selSugg?.phone, inv.phone) && <div style={{ marginBottom: 6 }}>Nomor pengirim {selSugg?.phone || "—"} berbeda dari customer {inv.phone || "—"}. Pastikan pengirim finance membayar untuk {inv.customer}; nomor customer tidak akan diganti.</div>}
-              <input type="checkbox" checked={reviewAcknowledged} disabled={busy} onChange={e => setReviewAcknowledged(e.target.checked)} /> Saya sudah memeriksa file dan memastikan pengirim membayar invoice ini{selSugg?.status === "DISMISSED" ? " meski sebelumnya diabaikan" : ""}.
+              Bukti ini perlu ditinjau manual{selSugg?.status === "DISMISSED" ? " karena pernah diabaikan" : ""}.
               {selSugg?.raw_message && <span style={{ display: "block", marginTop: 4 }}>{selSugg.raw_message}</span>}
-            </label>}
+            </div>}
             {hasAmountDifference && <PaymentWithholdingReview invoice={inv} suggestion={selSugg}
               accepted={acceptWithholding} onAccepted={setAcceptWithholding} note={withholdingNote} onNote={setWithholdingNote}
               paidAt={transferDate} onPaidAt={setTransferDate} disabled={busy} fmt={fmt} />}
@@ -319,7 +320,7 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
         {tab === "url" && (
           <div>
             <div style={{ fontSize: 11, color: cs.muted, marginBottom: 6 }}>Tempel link gambar bukti (mis. URL dari WA monitor / hosting lain).</div>
-            <input value={urlInput} onChange={e => setUrlInput(e.target.value)} placeholder="https://…"
+            <input value={urlInput} onChange={e => { setUrlInput(e.target.value); setReviewAcknowledged(false); }} placeholder="https://…"
               style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
             {urlInput.trim() && <img src={fotoSrc(urlInput.trim())} alt="" style={{ marginTop: 8, maxWidth: "100%", maxHeight: 180, borderRadius: 8, border: "1px solid " + cs.border }} onError={e => { e.currentTarget.style.display = "none"; }} />}
           </div>
@@ -336,6 +337,9 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
           </div>
         )}
 
+        {chosenUrl && <label style={{ display: "block", marginTop: 12, color: cs.yellow, fontSize: 11 }}>
+          <input type="checkbox" checked={reviewAcknowledged} disabled={busy} onChange={e => setReviewAcknowledged(e.target.checked)} /> Saya sudah membuka bukti dan memeriksa pengirim, nominal, dan invoice {inv.id} sebelum {alreadyPaid ? "melampirkan" : "menandai lunas"}.
+        </label>}
         <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
           <button onClick={onClose} style={{ flex: 1, background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "11px", borderRadius: 10, cursor: "pointer", fontWeight: 600 }}>Batal</button>
           <button onClick={confirm} disabled={!canConfirm}
@@ -483,6 +487,11 @@ const savePayment = async (inv) => {
   if (paySavingNow.current) return;
   const amt = Number(payForm.amount);
   if (!amt || amt <= 0) { showNotif("⚠️ Jumlah tidak valid"); return; }
+  if (amt >= groupInvoiceBalance(inv) && !await showConfirm({
+    icon: "💰", title: "Tinjau pembayaran hingga LUNAS",
+    message: `Invoice ${inv.id} · ${inv.customer}\nSisa tagihan ${fmt(groupInvoiceBalance(inv))}\nAkan dicatat ${fmt(amt)} via ${payForm.method} pada ${payForm.paid_at || getLocalDate()}.\n\nPeriksa riwayat bayar dan bukti terlebih dahulu. Lanjutkan?`,
+    confirmText: "Ya, Catat & Lunas",
+  })) return;
   const request = {
     p_invoice_id: inv.id,
     p_amount: amt,
@@ -540,6 +549,7 @@ const [lastFailedMerge, setLastFailedMerge] = useState(null); // { invList, cust
 
 // Modal "Lampirkan Bukti" — invoice yang sedang dilampiri bukti bayar manual
 const [attachProofInv, setAttachProofInv] = useState(null);
+const [settleReviewInv, setSettleReviewInv] = useState(null);
 
 const mergeMode = mergeStage === "select"; // backward-compat untuk card render
 
@@ -1042,6 +1052,13 @@ return (
         onClose={() => setAttachProofInv(null)}
       />
     )}
+
+    {settleReviewInv && <InvoiceSettlementReview
+      invoice={settleReviewInv} supabase={supabase} fmt={fmt} fotoSrc={fotoSrc} markPaid={markPaid} showNotif={showNotif}
+      onChooseProof={fresh => { setSettleReviewInv(null); setAttachProofInv({ ...settleReviewInv, ...fresh }); }}
+      onShowAudit={id => { setSettleReviewInv(null); setAuditModal({ tableName: "invoices", rowId: id }); }}
+      onClose={() => setSettleReviewInv(null)}
+    />}
 
     {/* Quotation PDF Preview Modal */}
     {quoPDFData && (
@@ -2052,13 +2069,7 @@ return (
               <>
                 <button onClick={() => { setSelectedInvoice(inv); setModalPDF(true); }} style={{ background: "#25D36622", border: "1px solid #25D36644", color: "#25D366", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>📤 Kirim ke Customer</button>
                 {currentUser?.role === "Owner" && (
-                <button onClick={async () => {
-                  if (await showConfirm({
-                    icon: "💰", title: "Tandai Lunas?",
-                    message: `Tandai invoice ${inv.id} (${fmt(inv.total)}) sudah LUNAS?`,
-                    confirmText: "Ya, Lunas"
-                  })) { const pp = invoicesData.find(i => i.id === inv.id); markPaid(pp || inv); }
-                }} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>💰 Tandai Lunas</button>
+                <button onClick={() => setSettleReviewInv(inv)} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>💰 Tinjau & Tandai Lunas</button>
                 )}
                 <button onClick={() => payPanelInvId === inv.id ? setPayPanelInvId(null) : openPayPanel(inv)}
                   style={{ background: "#06b6d422", border: "1px solid #06b6d444", color: "#06b6d4", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
@@ -2103,13 +2114,7 @@ return (
               <>
                 <button onClick={() => { setSelectedInvoice(inv); setModalPDF(true); }} style={{ background: "#25D36622", border: "1px solid #25D36644", color: "#25D366", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>📤 Kirim ke Customer</button>
                 {currentUser?.role === "Owner" && (
-                <button onClick={async () => {
-                  if (await showConfirm({
-                    icon: "💰", title: "Tandai Lunas?",
-                    message: `Tandai invoice ${inv.id} (${fmt(inv.total)}) sudah LUNAS?`,
-                    confirmText: "Ya, Lunas"
-                  })) { const pp = invoicesData.find(i => i.id === inv.id); markPaid(pp || inv); }
-                }} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>💰 Tandai Lunas</button>
+                <button onClick={() => setSettleReviewInv(inv)} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>💰 Tinjau & Tandai Lunas</button>
                 )}
                 <button onClick={() => payPanelInvId === inv.id ? setPayPanelInvId(null) : openPayPanel(inv)}
                   style={{ background: "#06b6d422", border: "1px solid #06b6d444", color: "#06b6d4", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
@@ -2126,13 +2131,7 @@ return (
                   <span style={{ color: cs.muted }}> · sisa {fmt(groupInvoiceBalance(inv))}</span>
                 </div>
                 {currentUser?.role === "Owner" && (
-                <button onClick={async () => {
-                  if (await showConfirm({
-                    icon: "💰", title: "Lunasi Sisa?",
-                    message: `Lunasi sisa ${fmt(groupInvoiceBalance(inv))} untuk invoice ${inv.id}?`,
-                    confirmText: "Ya, Lunas"
-                  })) { const pp = invoicesData.find(i => i.id === inv.id); markPaid(pp || inv); }
-                }} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>💰 Lunasi Sisa</button>
+                <button onClick={() => setSettleReviewInv(inv)} style={{ background: cs.green + "22", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>💰 Tinjau & Lunasi Sisa</button>
                 )}
                 <button onClick={() => payPanelInvId === inv.id ? setPayPanelInvId(null) : openPayPanel(inv)}
                   style={{ background: "#06b6d422", border: "1px solid #06b6d444", color: "#06b6d4", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
@@ -2272,7 +2271,11 @@ return (
             <button
               onClick={() => setAuditModal({ tableName: "invoices", rowId: inv.id })}
               style={{ background: cs.surface, border: "1px solid " + cs.border, color: cs.muted, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}
-            >📜 Riwayat</button>
+            >📜 Riwayat Status</button>
+            {inv.status === "PAID" && <button onClick={() => payPanelInvId === inv.id ? setPayPanelInvId(null) : openPayPanel(inv)}
+              style={{ background: cs.green + "18", border: "1px solid " + cs.green + "44", color: cs.green, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}>
+              {payPanelInvId === inv.id ? "✕ Tutup Riwayat Bayar" : "💳 Riwayat Bayar"}
+            </button>}
           </div>
 
           {/* ── Multi-Payment Panel ── */}
