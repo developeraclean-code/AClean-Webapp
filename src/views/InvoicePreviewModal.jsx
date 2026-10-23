@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
-import { PPH23_RATE, storedPph23Rate, summarize } from "../lib/invoicing.js";
+import { PPH23_RATE, PPH23_RATE_ALT, selectedPph23Rate, summarize } from "../lib/invoicing.js";
 import { invalidateCachedPDF } from "../lib/pdfCache.js";
+
+const PPH23_OPTIONS = [PPH23_RATE, PPH23_RATE_ALT];
 
 export default function InvoicePreviewModal({
   open, onClose, selectedInvoice, invoicesData, setInvoicesData,
@@ -12,7 +14,6 @@ export default function InvoicePreviewModal({
   const liveInv = (open && selectedInvoice)
     ? (invoicesData.find(i => i.id === selectedInvoice.id) || selectedInvoice)
     : null;
-  const rate = PPH23_RATE;
 
   const mArr = (() => {
     if (!liveInv) return [];
@@ -27,12 +28,9 @@ export default function InvoicePreviewModal({
   const jasaSubtotal = liveInv
     ? (mArr.length > 0 ? summarize(mArr).labor : Number(liveInv.labor) || 0)
     : 0;
-  const pph = computePph23(jasaSubtotal, rate);
   const savedPphAmount = Number(liveInv?.pph23_amount) || 0;
   const savedDpp = jasaSubtotal + savedPphAmount;
-  const displayedRate = liveInv?.pph23
-    ? storedPph23Rate(jasaSubtotal, savedPphAmount)
-    : rate;
+  const selectedRate = selectedPph23Rate(jasaSubtotal, savedPphAmount);
 
   // Preview = hasil generate PDF ASLI (InvoicePDF.jsx via generateInvoicePDFBlob),
   // BUKAN markup HTML terpisah — dulu preview ini re-implementasi manual yang gampang
@@ -42,6 +40,35 @@ export default function InvoicePreviewModal({
   const [pdfUrl, setPdfUrl] = useState(null);
   const [pdfError, setPdfError] = useState(null);
   const [pphSaving, setPphSaving] = useState(false);
+  const savePph23 = async (nextRate) => {
+    if (pphSaving || !liveInv) return;
+    if (nextRate != null && jasaSubtotal <= 0) {
+      showNotif("⚠️ PPh 23 hanya dapat dipilih jika invoice memiliki nilai Jasa");
+      return;
+    }
+    const on = nextRate != null;
+    const pph = on ? computePph23(jasaSubtotal, nextRate) : null;
+    setPphSaving(true);
+    try {
+      const { data, error } = await updateInvoice(
+        supabase,
+        liveInv.id,
+        { pph23: on, pph23_amount: pph?.amount || 0 },
+        auditUserName()
+      ).select("id,pph23,pph23_amount,pdf_url,pdf_generated_at,updated_at").maybeSingle();
+      if (error || !data) throw error || new Error("Invoice tidak ditemukan setelah update");
+
+      invalidateCachedPDF("invoice", liveInv.id);
+      setInvoicesData(prev => prev.map(i => i.id === liveInv.id ? { ...i, ...data } : i));
+      showNotif(on
+        ? `✅ PPh 23 ${(nextRate * 100).toLocaleString("id-ID", { maximumFractionDigits: 1 })}% aktif — DPP ${fmt(pph.dpp)}, dipotong ${fmt(pph.amount)}`
+        : "PPh 23 dinonaktifkan");
+    } catch (error) {
+      showNotif("⚠️ Gagal simpan PPh 23: " + (error?.message || "unknown"));
+    } finally {
+      setPphSaving(false);
+    }
+  };
   useEffect(() => {
     if (!liveInv) { setPdfUrl(null); setPdfError(null); return; }
     let cancelled = false;
@@ -83,37 +110,22 @@ export default function InvoicePreviewModal({
           </div>
         </div>
 
-        {/* PPh 23 toggle */}
+        {/* Kedua tarif PPh saling eksklusif; nominal tersimpan menentukan PDF. */}
         <div style={{ background: "#ecfeff", borderBottom: "1px solid #cffafe", padding: "8px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12, color: "#0e7490", fontWeight: 700 }}>
-            <input type="checkbox" checked={!!liveInv.pph23} disabled={pphSaving}
-              onChange={async e => {
-                const on = e.target.checked;
-                const amt = on ? pph.amount : 0;
-                setPphSaving(true);
-                try {
-                  const { data, error } = await updateInvoice(
-                    supabase,
-                    liveInv.id,
-                    { pph23: on, pph23_amount: amt },
-                    auditUserName()
-                  ).select("id,pph23,pph23_amount,pdf_url,pdf_generated_at,updated_at").maybeSingle();
-                  if (error || !data) throw error || new Error("Invoice tidak ditemukan setelah update");
-
-                  invalidateCachedPDF("invoice", liveInv.id);
-                  setInvoicesData(prev => prev.map(i => i.id === liveInv.id ? { ...i, ...data } : i));
-                  showNotif(on
-                    ? `✅ PPh 23 aktif — DPP ${fmt(pph.dpp)}, dipotong ${fmt(pph.amount)}`
-                    : "PPh 23 dinonaktifkan");
-                } catch (error) {
-                  showNotif("⚠️ Gagal simpan PPh 23: " + (error?.message || "unknown"));
-                } finally {
-                  setPphSaving(false);
-                }
-              }}
-              style={{ width: 15, height: 15, accentColor: "#0891b2", cursor: pphSaving ? "wait" : "pointer" }} />
-            Customer potong PPh 23 ({(displayedRate * 100).toLocaleString("id-ID", { maximumFractionDigits: 1 })}%){pphSaving ? " — menyimpan…" : ""}
-          </label>
+          <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 14 }}>
+            {PPH23_OPTIONS.map(optionRate => {
+              const checked = !!liveInv.pph23 && selectedRate === optionRate;
+              return (
+                <label key={optionRate} style={{ display: "flex", alignItems: "center", gap: 6, cursor: pphSaving ? "wait" : "pointer", fontSize: 12, color: "#0e7490", fontWeight: 700 }}>
+                  <input type="checkbox" checked={checked} disabled={pphSaving || (jasaSubtotal <= 0 && !checked)}
+                    onChange={() => savePph23(checked ? null : optionRate)}
+                    style={{ width: 15, height: 15, accentColor: "#0891b2" }} />
+                  PPh 23 {(optionRate * 100).toLocaleString("id-ID", { maximumFractionDigits: 1 })}%
+                </label>
+              );
+            })}
+            {pphSaving && <span style={{ fontSize: 11, color: "#0e7490" }}>Menyimpan…</span>}
+          </div>
           {liveInv.pph23 && <span style={{ fontSize: 11, color: "#0e7490", fontFamily: "monospace" }}>DPP {fmt(savedDpp)} · PPh −{fmt(savedPphAmount)} · diterima {fmt(liveInv.total)}</span>}
         </div>
 

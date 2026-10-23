@@ -21,7 +21,7 @@ import { classifyMaterial } from "./lib/materialRecon.js";
 import { getTechColor as getTechColorFromLib } from "./lib/techColor.js";
 import { sameCustomer, findCustomer, buildCustomerHistory } from "./lib/customers.js";
 import { detectContinuationCandidates } from "./lib/orders.js";
-import { summarize, checkInvoiceConsistency, describeInconsistency, normalizeLines, buildWarrantyDiscountLine, categoryOf, LINE_CATEGORY, categoryFromCatalog, computePph23 } from "./lib/invoicing.js";
+import { summarize, checkInvoiceConsistency, describeInconsistency, normalizeLines, buildWarrantyDiscountLine, categoryOf, LINE_CATEGORY, categoryFromCatalog, computePph23, selectedPph23Rate } from "./lib/invoicing.js";
 import { listPendingBAP, flushBAPQueue } from "./lib/bapOfflineQueue.js";
 import { buildInvoiceDetail } from "./lib/laporanInvoice.js";
 import { buildAraContext } from "./lib/araContext.js";
@@ -4889,7 +4889,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
           auditUserName={auditUserName}
           onOpenEditInvoice={(invoice) => {
             setEditInvoiceData(invoice);
-            setEditInvoiceForm({ labor: invoice.labor, material: invoice.material, discount: invoice.discount || 0, trade_in: invoice.trade_in || false, trade_in_amount: invoice.trade_in_amount || 250000, pph23: invoice.pph23 || false, notes: "" });
+            setEditInvoiceForm({ labor: invoice.labor, material: invoice.material, discount: invoice.discount || 0, trade_in: invoice.trade_in || false, trade_in_amount: invoice.trade_in_amount || 250000, pph23: invoice.pph23 || false, pph23_rate: selectedPph23Rate(invoice.labor, invoice.pph23_amount), notes: "" });
             const _aLv = parseMD(invoice.materials_detail).map((m, idx) => ({ ...m, _idx: idx }));
             setEditJasaItems(_aLv.filter(m => categoryOf(m) === LINE_CATEGORY.LABOR));
             setEditInvoiceItems(_aLv.filter(m => categoryOf(m) !== LINE_CATEGORY.LABOR));

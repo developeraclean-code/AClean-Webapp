@@ -15,8 +15,10 @@ import {
   categoryFromCatalog,
   auditQuoteDeviation,
   PPH23_RATE,
+  PPH23_RATE_ALT,
   computePph23,
   storedPph23Rate,
+  selectedPph23Rate,
   grossUpPph23Rows,
 } from "../invoicing.js";
 
@@ -289,6 +291,19 @@ describe("computePph23 (gross-up 2%)", () => {
     expect(r.amount).toBe(25641);
     expect(storedPph23Rate(1000000, r.amount)).toBeCloseTo(0.025, 5);
     expect(r.dpp - r.amount).toBe(1000000);
+  });
+  it("pilihan PPh 2% dan 2,5% dibaca dari nominal tersimpan", () => {
+    expect(PPH23_RATE_ALT).toBe(0.025);
+    expect(selectedPph23Rate(1000000, computePph23(1000000, PPH23_RATE).amount)).toBe(PPH23_RATE);
+    expect(selectedPph23Rate(1000000, computePph23(1000000, PPH23_RATE_ALT).amount)).toBe(PPH23_RATE_ALT);
+    expect(selectedPph23Rate(1000000, 0)).toBe(PPH23_RATE);
+  });
+  it("perhitungan tarif alternatif tetap hanya gross-up jasa dan menjaga total bersih", () => {
+    const jasa = 1000000;
+    const material = 250000;
+    const pph = computePph23(jasa, PPH23_RATE_ALT);
+    expect(pph).toEqual({ dpp: 1025641, amount: 25641, rate: PPH23_RATE_ALT });
+    expect(pph.dpp + material - pph.amount).toBe(jasa + material);
   });
   it("rate tampilan dari nominal tersimpan memakai default 2% bila belum ada PPh", () => {
     expect(storedPph23Rate(1000000, 20408)).toBeCloseTo(0.02, 5);

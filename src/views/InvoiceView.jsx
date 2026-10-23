@@ -7,7 +7,7 @@ import { cs } from "../theme/cs.js";
 import { statusColor, INVOICE_UNPAID_STATUSES } from "../constants/status.js";
 import { smartSearchNormalize, samePhone, formatPhone } from "../lib/phone.js";
 import { useAppContext } from "../context/AppContext.js";
-import { categoryOf, LINE_CATEGORY } from "../lib/invoicing.js";
+import { categoryOf, LINE_CATEGORY, selectedPph23Rate } from "../lib/invoicing.js";
 import { downloadCsv } from "../lib/exportUtils.js";
 import { acknowledgePaidInvoicesWithoutProofAtomic } from "../data/writes.js";
 import { dismissedProofsForInvoice, invoiceProofAction, pendingProofsForInvoice } from "../lib/paymentEvidence.js";
@@ -1760,6 +1760,9 @@ return (
               )}
               <span style={{ fontFamily: "monospace", fontWeight: 800, color: cs.accent, fontSize: 14 }}>{inv.id}</span>
               <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 99, background: (statusColor[inv.status] || cs.muted) + "22", color: statusColor[inv.status] || cs.muted, border: "1px solid " + (statusColor[inv.status] || cs.muted) + "44", fontWeight: 700 }}>{inv.status.replace(/_/g, " ")}</span>
+              {inv.pph23 && <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 99, background: "#0ea5e922", color: "#38bdf8", border: "1px solid #0ea5e944", fontWeight: 700 }} title={`PPh 23 dipotong customer: ${fmt(Number(inv.pph23_amount) || 0)}`}>
+                PPh 23 {(selectedPph23Rate(inv.labor, inv.pph23_amount) * 100).toLocaleString("id-ID", { maximumFractionDigits: 1 })}%
+              </span>}
               {inv.follow_up > 0 && <span style={{ fontSize: 10, color: cs.yellow }}>Follow-up: {inv.follow_up}x</span>}
               {/* Badge audit kirim WA — tampil jika sudah pernah dikirim */}
               {(inv.wa_sent_count || 0) > 0 && (
@@ -1925,7 +1928,7 @@ return (
             {inv.invoice_type !== "ac_unit_sale" && inv.status !== "PAID" &&
               (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
                 <button onClick={() => {
-                  setEditInvoiceData(inv); setEditInvoiceForm({ labor: inv.labor, material: inv.material, discount: inv.discount || 0, trade_in: inv.trade_in || false, trade_in_amount: inv.trade_in_amount || 250000, pph23: inv.pph23 || false, notes: "" }); const _allItems = parseMD(inv.materials_detail).map((m, idx) => ({ ...m, _idx: idx }));
+                  setEditInvoiceData(inv); setEditInvoiceForm({ labor: inv.labor, material: inv.material, discount: inv.discount || 0, trade_in: inv.trade_in || false, trade_in_amount: inv.trade_in_amount || 250000, pph23: inv.pph23 || false, pph23_rate: selectedPph23Rate(inv.labor, inv.pph23_amount), notes: "" }); const _allItems = parseMD(inv.materials_detail).map((m, idx) => ({ ...m, _idx: idx }));
                   // Split via kategori billing (bukan tebak-nama): LABOR/FEE → section jasa, sisanya → material
                   const _jasaItems = _allItems.filter(m => categoryOf(m) === LINE_CATEGORY.LABOR);
                   const _matItems = _allItems.filter(m => categoryOf(m) !== LINE_CATEGORY.LABOR);

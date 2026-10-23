@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { cs } from "../theme/cs.js";
-import { summarize, checkInvoiceConsistency, describeInconsistency, normalizeLines, categoryOf, LINE_CATEGORY, computePph23, PPH23_RATE } from "../lib/invoicing.js";
+import { summarize, checkInvoiceConsistency, describeInconsistency, normalizeLines, categoryOf, LINE_CATEGORY, computePph23, PPH23_RATE, PPH23_RATE_ALT, selectedPph23Rate } from "../lib/invoicing.js";
+
+const PPH23_OPTIONS = [PPH23_RATE, PPH23_RATE_ALT];
 
 export default function EditInvoiceModal({
   open, onClose,
@@ -63,6 +65,9 @@ export default function EditInvoiceModal({
   const editTradeIn = !!editInvoiceForm.trade_in;
   const editTradeInAmt = editTradeIn ? (parseInt(editInvoiceForm.trade_in_amount) || 0) : 0;
   const newTotal = jasaTotal + matTotal - editDiscount - editTradeInAmt;
+  const editPphRate = PPH23_OPTIONS.includes(editInvoiceForm.pph23_rate)
+    ? editInvoiceForm.pph23_rate
+    : selectedPph23Rate(editInvoiceData.labor, editInvoiceData.pph23_amount);
 
   const handleClose = () => {
     setEditAddType(""); setEditAddSearch("");
@@ -90,7 +95,8 @@ export default function EditInvoiceModal({
     // PPh 23 HANYA dari kategori Jasa (labor), BUKAN dari total (jasa+material) — fix:
     // sebelumnya computePph23(newTotalFinal) ikut hitung material, salah basis DPP.
     const pph23On = !!editInvoiceForm.pph23;
-    const pph23Amt = pph23On ? computePph23(labor).amount : 0;
+    if (pph23On && labor <= 0) { showNotif("⚠️ PPh 23 hanya dapat dipilih jika invoice memiliki nilai Jasa"); return; }
+    const pph23Amt = pph23On ? computePph23(labor, editPphRate).amount : 0;
     const billingName = (editInvoiceForm.billing_name ?? editInvoiceData.customer) || editInvoiceData.customer;
     const billingAddress = editInvoiceForm.billing_address ?? (editInvoiceData.address || "");
     setEditSaving(true);
@@ -382,16 +388,23 @@ export default function EditInvoiceModal({
 
             {/* PPh 23 — HANYA dari kategori Jasa (jasaTotal), bukan newTotal (jasa+material) */}
             {(() => {
-              const rate = PPH23_RATE;
-              const pph = computePph23(jasaTotal, rate);
+              const pph = computePph23(jasaTotal, editPphRate);
               return (
                 <div style={{ background: editInvoiceForm.pph23 ? "#0ea5e912" : cs.surface, border: "1px solid " + (editInvoiceForm.pph23 ? "#0ea5e944" : cs.border), borderRadius: 8, padding: "8px 10px" }}>
-                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12, color: cs.text }}>
-                    <input type="checkbox" checked={!!editInvoiceForm.pph23}
-                      onChange={e => setEditInvoiceForm(f => ({ ...f, pph23: e.target.checked }))}
-                      style={{ width: 16, height: 16, accentColor: "#0ea5e9" }} />
-                    <div style={{ fontWeight: 700 }}>Customer potong PPh 23 ({(rate * 100).toLocaleString("id-ID")}%) — dari Jasa saja</div>
-                  </label>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: cs.text, marginBottom: 7 }}>Customer potong PPh 23 — dari Jasa saja</div>
+                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                    {PPH23_OPTIONS.map(optionRate => {
+                      const checked = !!editInvoiceForm.pph23 && editPphRate === optionRate;
+                      return (
+                        <label key={optionRate} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12, color: cs.text }}>
+                          <input type="checkbox" checked={checked} disabled={jasaTotal <= 0 && !checked}
+                            onChange={() => setEditInvoiceForm(f => ({ ...f, pph23: !checked, pph23_rate: optionRate }))}
+                            style={{ width: 16, height: 16, accentColor: "#0ea5e9" }} />
+                          PPh 23 {(optionRate * 100).toLocaleString("id-ID", { maximumFractionDigits: 1 })}%
+                        </label>
+                      );
+                    })}
+                  </div>
                   {editInvoiceForm.pph23 && (
                     <div style={{ marginTop: 8, fontSize: 12, color: cs.muted, display: "grid", gap: 3 }}>
                       <div style={{ display: "flex", justifyContent: "space-between" }}><span>Nilai Jasa (DPP)</span><b style={{ color: cs.text, fontFamily: "monospace" }}>{fmt(pph.dpp)}</b></div>

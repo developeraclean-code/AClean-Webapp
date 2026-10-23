@@ -51,6 +51,13 @@ describe("InvoicePDF PPh 23", () => {
     expect(documentText(InvoicePDF({ inv: baseInvoice, appSettings: {} }))).toContain("PPh 23 (2,5%) dipotong customer");
   });
 
+  it("invoice baru dengan pilihan 2,5% menampilkan nominal dan tarif sesuai pilihan", () => {
+    const selected = { ...baseInvoice, pph23_amount: computePph23(baseInvoice.labor, 0.025).amount };
+    const text = documentText(InvoicePDF({ inv: selected, appSettings: {} }));
+    expect(text).toContain("PPh 23 (2,5%) dipotong customer");
+    expect(text).toContain(`- Rp ${selected.pph23_amount.toLocaleString("id-ID")}`);
+  });
+
   it("merender invoice gabungan yang berisi PPh dan non-PPh", async () => {
     const regular = {
       ...baseInvoice,

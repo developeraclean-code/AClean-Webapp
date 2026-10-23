@@ -247,6 +247,7 @@ export function auditInvoices(invoices, options = {}) {
 //   amount = dpp - netTotal                 ← PPh 23 yang dipotong (disetor customer)
 // Catatan: `total` invoice (receivable AClean) TIDAK berubah = netTotal.
 export const PPH23_RATE = 0.02;
+export const PPH23_RATE_ALT = 0.025;
 
 export function computePph23(netTotal, rate = PPH23_RATE) {
   const net = Math.max(0, Math.round(Number(netTotal) || 0));
@@ -261,6 +262,16 @@ export function storedPph23Rate(netTaxable, pphAmount) {
   const net = Number(netTaxable) || 0;
   const amount = Number(pphAmount) || 0;
   return net > 0 && amount > 0 ? amount / (net + amount) : PPH23_RATE;
+}
+
+// Pilihan form disimpulkan dari nominal yang sudah tersimpan. Ini menjaga invoice
+// lama (termasuk tarif 2,5%) tanpa kolom baru atau mengubah nominal historis.
+export function selectedPph23Rate(netTaxable, pphAmount) {
+  const amount = Number(pphAmount) || 0;
+  if (amount <= 0) return PPH23_RATE;
+  const regularDifference = Math.abs(amount - computePph23(netTaxable, PPH23_RATE).amount);
+  const alternateDifference = Math.abs(amount - computePph23(netTaxable, PPH23_RATE_ALT).amount);
+  return alternateDifference < regularDifference ? PPH23_RATE_ALT : PPH23_RATE;
 }
 
 // Alokasikan nilai gross-up PPh ke baris jasa/fee untuk kebutuhan tampilan invoice.
