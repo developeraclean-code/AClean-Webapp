@@ -10,6 +10,13 @@ function fixture(fetchImpl=vi.fn(async()=>json({token:"app-1",expiresIn:900})),o
   return {client,auth,fetchImpl,advance:ms=>{time+=ms;}};
 }
 describe("single-flight API token recovery",()=>{
+  it("keeps the browser's Basic Authorization header free during token exchange and refresh",async()=>{
+    const network=vi.fn().mockImplementationOnce(async()=>json({},401)).mockImplementationOnce(async()=>json({token:"app-fresh",expiresIn:900}));
+    const {client}=fixture(network);
+    expect(await client.getToken()).toBe("app-fresh");
+    expect(network.mock.calls.map(([,options])=>options.headers["X-Supabase-Access-Token"])).toEqual(["jwt-1","jwt-2"]);
+    expect(network.mock.calls.every(([,options])=>!Object.hasOwn(options.headers,"Authorization"))).toBe(true);
+  });
   it("200 concurrent widgets use one verified exchange and one session lookup",async()=>{
     const {client,auth,fetchImpl}=fixture();
     const results=await Promise.all(Array.from({length:200},()=>client.headers()));

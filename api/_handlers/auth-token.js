@@ -139,8 +139,12 @@ export async function getApiToken(req, res) {
   res.setHeader("Cache-Control", "no-store");
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   const authH = req.headers["authorization"] || "";
-  const jwt = authH.startsWith("Bearer ") ? authH.slice(7) : "";
-  if (!jwt) return res.status(401).json({ error: "Missing Bearer token" });
+  const accessToken = req.headers["x-supabase-access-token"];
+  // Staging's reverse proxy uses Authorization: Basic. Preserve Bearer for
+  // existing clients, but never interpret Basic credentials as a Supabase JWT.
+  const jwt = typeof accessToken === "string" && accessToken ? accessToken
+    : typeof authH === "string" && authH.startsWith("Bearer ") ? authH.slice(7) : "";
+  if (!jwt) return res.status(401).json({ error: "Missing Supabase access token" });
   const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
   const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
   if (!supabaseUrl || !supabaseAnonKey) return res.status(500).json({ error: "Supabase config missing" });

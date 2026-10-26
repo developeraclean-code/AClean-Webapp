@@ -28,7 +28,9 @@ export function createAppTokenClient({ auth, fetchImpl = (...args) => fetch(...a
     let jwt = session.access_token;
     const post = bearer => {
       if (signal.aborted) throw new AppTokenError("Pemeriksaan sesi melewati batas waktu.");
-      return fetchImpl("/api/get-api-token", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${bearer}` }, signal });
+      // Keep Authorization available for the browser's staging Basic Auth.
+      // The API validates this Supabase JWT separately before issuing an app token.
+      return fetchImpl("/api/get-api-token", { method: "POST", headers: { "Content-Type": "application/json", "X-Supabase-Access-Token": bearer }, signal });
     };
     let response = await post(jwt);
     // Only a definite session rejection permits one refresh; 503/429 never do.
