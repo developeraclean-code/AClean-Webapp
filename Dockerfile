@@ -27,6 +27,8 @@ RUN test -n "$VITE_SUPABASE_URL" && test -n "$VITE_SUPABASE_ANON_KEY" && npm run
 FROM base AS runtime
 ARG ACLEAN_BUILD_SHA=dev
 ENV NODE_ENV=production PORT=3000 ACLEAN_BUILD_SHA=${ACLEAN_BUILD_SHA}
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
