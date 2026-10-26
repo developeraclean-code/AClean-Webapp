@@ -720,7 +720,7 @@ function SettingsView({
           {/* Webhook info */}
           <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "10px 14px", marginBottom: 12, fontSize: 11, color: cs.muted }}>
             📥 Webhook URL untuk bot ARA (butuh paket berbayar Fonnte):<br />
-            <span style={{ color: cs.accent, fontFamily: "monospace", fontSize: 12 }}>https://a-clean-webapp.vercel.app/api/receive-wa</span>
+            <span style={{ color: cs.accent, fontFamily: "monospace", fontSize: 12 }}>{window.location.origin}/api/receive-wa</span>
             <div style={{ marginTop: 6 }}>Fonnte → Device → Edit: pastikan Autoread aktif dan URL webhook benar. Jika memakai secret webhook, pertahankan token rahasia pada URL; jangan dibagikan. Penerimaan bukti bayar berjalan 24 jam, terpisah dari auto-reply ARA dan refresh tampilan WA Monitor.</div>
           </div>
 
@@ -1229,11 +1229,11 @@ function SettingsView({
                 value={appSettings["customer_portal_url"] || ""}
                 onChange={e => setAppSettings(prev => ({ ...prev, customer_portal_url: e.target.value }))}
                 onBlur={async e => {
-                  const val = e.target.value.trim() || "https://a-clean-webapp.vercel.app";
+                  const val = e.target.value.trim() || window.location.origin;
                   try { await supabase.from("app_settings").upsert({ key: "customer_portal_url", value: val }, { onConflict: "key" }); }
                   catch (err) { console.warn("settings err:", err); }
                 }}
-                placeholder="https://a-clean-webapp.vercel.app"
+                placeholder={window.location.origin}
                 style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 9, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }}
               />
               <div style={{ marginTop: 6, fontSize: 11, color: cs.muted }}>

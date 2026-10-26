@@ -198,7 +198,7 @@ export async function loadAllData({
               material_confirm_deduct_enabled: sMap.material_confirm_deduct_enabled ?? prev.material_confirm_deduct_enabled ?? "false",
               ara_training_rules: sMap.ara_training_rules ?? prev.ara_training_rules,
               customer_portal_enabled: sMap.customer_portal_enabled ?? prev.customer_portal_enabled ?? "false",
-              customer_portal_url: sMap.customer_portal_url ?? prev.customer_portal_url ?? "https://a-clean-webapp.vercel.app",
+              customer_portal_url: sMap.customer_portal_url ?? prev.customer_portal_url ?? globalThis.location?.origin ?? "https://a-clean-webapp.vercel.app",
               rating_prompt_enabled: sMap.rating_prompt_enabled ?? prev.rating_prompt_enabled ?? "false",
               servis_reminder_enabled: sMap.servis_reminder_enabled ?? prev.servis_reminder_enabled ?? "false",
               voucher_loyalty_enabled: sMap.voucher_loyalty_enabled ?? prev.voucher_loyalty_enabled ?? "false",

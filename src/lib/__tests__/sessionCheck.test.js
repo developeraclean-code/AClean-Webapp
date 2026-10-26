@@ -46,3 +46,13 @@ it("signed App Tokens remain locally verified during a Supabase outage",async()=
 it("missing or tampered credentials never receive access",async()=>{
   for(const headers of [{},{"x-internal-token":"fake.fake.fake"}]){const res=response();expect(await validateInternalToken({headers},res)).toBe(false);expect(res.code).toBe(401);}
 });
+it("fails closed when self-hosted auth env is missing even without NODE_ENV=production",async()=>{
+  vi.stubEnv("INTERNAL_API_SECRET","");
+  vi.stubEnv("SUPABASE_URL","");
+  vi.stubEnv("VITE_SUPABASE_URL","");
+  vi.stubEnv("NODE_ENV","development");
+  const res=response();
+  expect(await validateInternalToken({headers:{}},res)).toBe(false);
+  expect(res.code).toBe(500);
+  expect(res.body).toEqual({error:"Server misconfiguration"});
+});

@@ -220,6 +220,25 @@ export async function receiveWa(req, res) {
       if (req.method === "GET") return res.status(200).json({ status: "ok", service: "AClean WA Webhook" });
       if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
+      // Authenticate before even acknowledging a delivery receipt or touching the
+      // database-backed rate limiter. The self-host runtime requires this secret.
+      // Existing Vercel deployment keeps its opt-in behavior until configured.
+      const webhookSecret = process.env.FONNTE_WEBHOOK_SECRET;
+      if (webhookSecret) {
+        const provided = req.query?.token || req.headers["x-webhook-token"] || "";
+        let ok = false;
+        try {
+          const a = Buffer.from(String(provided), "utf-8");
+          const b = Buffer.from(String(webhookSecret), "utf-8");
+          const { timingSafeEqual } = await import("node:crypto");
+          ok = a.length === b.length && timingSafeEqual(a, b);
+        } catch { ok = false; }
+        if (!ok) {
+          console.warn("[receive-wa] Invalid/missing webhook token — rejecting");
+          return res.status(401).json({ error: "Unauthorized webhook" });
+        }
+      }
+
       // ── OPT-CPU: buang delivery-status callback SEDINI mungkin ──────────────
       // Fonnte kirim callback status untuk SETIAP pesan keluar (sent/delivered/read).
       // Shape nyata: { state: "delivered"|"read"|2|3, device, stateid }  (varian lama: { status, id }).
@@ -246,29 +265,6 @@ export async function receiveWa(req, res) {
       // (Fonnte = sumber tepercaya, sudah diproteksi FONNTE_WEBHOOK_SECRET + dedup mutex).
       // TODO: idealnya rate-limit per-pengirim (nomor WA), bukan per-IP.
       if (!await checkRateLimit(req, res, 600, 60000)) return;
-
-      // M-01: Verifikasi asal webhook lewat secret token di URL.
-      // Fonnte TIDAK kirim signature HMAC (dikonfirmasi dari docs.fonnte.com), tapi kita bebas
-      // tentukan URL webhook → taruh ?token=RAHASIA di URL yang didaftarkan ke Fonnte.
-      // OPT-IN & aman rollout: kalau FONNTE_WEBHOOK_SECRET belum diset → tetap jalan (fail-open)
-      //   supaya WA tidak mati sebelum kamu konfigurasi. Kalau sudah diset → wajib cocok.
-      // Cara aktifkan: (1) set env FONNTE_WEBHOOK_SECRET di Vercel, (2) update URL webhook di
-      //   dashboard Fonnte jadi: https://<app>/api/receive-wa?token=<nilai-sama>
-      const webhookSecret = process.env.FONNTE_WEBHOOK_SECRET;
-      if (webhookSecret) {
-        const provided = req.query?.token || req.headers["x-webhook-token"] || "";
-        let ok = false;
-        try {
-          const a = Buffer.from(String(provided), "utf-8");
-          const b = Buffer.from(String(webhookSecret), "utf-8");
-          const { timingSafeEqual } = await import("node:crypto");
-          ok = a.length === b.length && timingSafeEqual(a, b);
-        } catch { ok = String(provided) === String(webhookSecret); }
-        if (!ok) {
-          console.warn("[receive-wa] Invalid/missing webhook token — rejecting");
-          return res.status(401).json({ error: "Unauthorized webhook" });
-        }
-      }
 
       const wb = { ...(req.body || {}) };
 
@@ -2216,7 +2212,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                               body: JSON.stringify({
                                 target: tgt.group_id,
                                 message: fwdCaption,
-                                url: savedImageUrl?.startsWith("/") ? "https://a-clean-webapp.vercel.app" + savedImageUrl : savedImageUrl || mediaUrl,
+                                url: savedImageUrl?.startsWith("/") ? (process.env.APP_URL || "https://a-clean-webapp.vercel.app").replace(/\/$/, "") + savedImageUrl : savedImageUrl || mediaUrl,
                                 delay: "2", countryCode: "62"
                               })
                             }).catch(() => {});

@@ -20,6 +20,9 @@
     "test:sfm-100": "node scripts/simulate-sfm-200.mjs",
     "test:sfm-200": "node scripts/simulate-sfm-200.mjs",
     "check:migrations": "node scripts/check-migrations.mjs",
+    "backup:local": "node scripts/backup-full-local.mjs",
+    "test:backup-local": "node --test scripts/test-local-backup-unit.mjs",
+    "test:selfhost": "node --test scripts/test-selfhost-config.mjs scripts/test-selfhost-http.mjs scripts/test-selfhost-packaging.mjs",
     "r2:lifecycle": "node scripts/apply-r2-lifecycle.mjs",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
@@ -33,8 +36,7 @@
     "dom-to-image-more": "^3.7.2",
     "html2canvas": "^1.4.1",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "vite-plugin-node-polyfills": "^0.26.0"
+    "react-dom": "^18.2.0"
   },
   "devDependencies": {
     "@babel/eslint-parser": "^8.0.1",
@@ -49,6 +51,7 @@
     "pg": "^8.23.1",
     "typescript": "^6.0.3",
     "vite": "^5.0.8",
+    "vite-plugin-node-polyfills": "^0.26.0",
     "vitest": "^4.1.4"
   }
 }

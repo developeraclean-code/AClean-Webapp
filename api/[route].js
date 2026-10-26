@@ -64,7 +64,7 @@ export default async function handler(req, res) {
   try {
     // Semua route hidup di modul api/_handlers/ (bukan endpoint terpisah —
     // prefix _ tidak dihitung serverless function Vercel).
-    if (HANDLERS[route]) return await HANDLERS[route](req, res);
+    if (Object.hasOwn(HANDLERS, route)) return await HANDLERS[route](req, res);
 
     return res.status(404).json({ error: "Route tidak ditemukan: /api/" + route });
 
@@ -83,6 +83,8 @@ export default async function handler(req, res) {
       },
     });
 
-    return res.status(500).json({ error: "Internal server error", detail: err.message });
+    // Detail exception belongs in server logs/Sentry, not in a public API
+    // response where SQL, provider or configuration details may be exposed.
+    return res.status(500).json({ error: "Internal server error" });
   }
 }

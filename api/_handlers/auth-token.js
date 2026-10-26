@@ -96,7 +96,7 @@ export async function health(req, res) {
   if (component === "app") {
     res.setHeader("Cache-Control", "no-store");
     return res.status(200).json({ status: "healthy", component: "app", component_status: "ok",
-      timestamp: new Date().toISOString(), version: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) || "dev" });
+      timestamp: new Date().toISOString(), version: (process.env.ACLEAN_BUILD_SHA || process.env.VERCEL_GIT_COMMIT_SHA)?.slice(0, 7) || "dev" });
   }
   const result = await checkHealth();
   const componentStatus = selectHealthComponent(result, component);

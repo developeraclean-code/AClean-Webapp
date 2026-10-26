@@ -62,15 +62,27 @@ export async function markPaid(inv, method = "transfer", notes = "", sendCustNot
         confirmText: "Kirim WA"
       }));
     if (shouldNotif && inv.phone) {
-      sendWA(inv.phone,
+      // Pelunasan sudah tersimpan. Kegagalan notifikasi tidak boleh membatalkan
+      // transaksi, tetapi harus terlihat agar dapat dikirim ulang manual.
+      Promise.resolve().then(() => sendWA(inv.phone,
         "Pembayaran " + inv.id + " Rp " + (inv.total || 0).toLocaleString("id-ID") + " diterima. Terima kasih! — " + (appSettings.app_name || "AClean")
-      );
+      )).then(sent => {
+        if (sent) return;
+        reportError("invoice.markPaid.customerWaFailed", new Error("Notifikasi WA tidak terkirim"), { invoiceId: inv.id });
+        showNotif(`⚠️ Invoice ${inv.id} lunas, tetapi notifikasi WA belum terkirim. Kirim ulang manual.`);
+      }).catch(error => {
+        reportError("invoice.markPaid.customerWaFailed", error, { invoiceId: inv.id });
+        showNotif(`⚠️ Invoice ${inv.id} lunas, tetapi notifikasi WA belum terkirim. Kirim ulang manual.`);
+      });
     }
     addAgentLog("PAYMENT_CONFIRMED", `Invoice ${inv.id} LUNAS — ${inv.customer} ${fmt(inv.total)} via ${method}`, "SUCCESS");
     showNotif(`💰 Invoice ${inv.id} LUNAS — ${fmt(inv.total)}`);
     // Retro-match: cari bukti bayar yang belum ter-link jika belum ada proof dari parameter
     if (!paymentProofUrl) {
-      retroMatchPayment({ ...inv, status: "PAID" }).catch(e => console.warn("[RETRO_MATCH] markPaid error:", e.message));
+      Promise.resolve().then(() => retroMatchPayment({ ...inv, status: "PAID" })).catch(error => {
+        reportError("invoice.markPaid.retroMatchFailed", error, { invoiceId: inv.id });
+        showNotif(`⚠️ Invoice ${inv.id} lunas, tetapi pencocokan bukti otomatis gagal. Periksa Pending AI.`);
+      });
     }
     // Tutup sisa bukti PENDING milik invoice ini. Perlu terpisah dari retro-match karena
     // retro-match DILEWATI saat buktinya sudah ditempel duluan oleh webhook — persis jalur
@@ -80,6 +92,9 @@ export async function markPaid(inv, method = "transfer", notes = "", sendCustNot
       supabase, samePhone, actorName: auditUserName ? auditUserName() : "Sistem",
     }).then(n => {
       if (n > 0) addAgentLog("PAYMENT_SUGGESTION_CLOSED", `Invoice ${inv.id} lunas — ${n} bukti bayar pending ditutup`, "INFO");
-    }).catch(() => {});
+    }).catch(error => {
+      reportError("invoice.markPaid.closeSuggestionsFailed", error, { invoiceId: inv.id });
+      showNotif(`⚠️ Invoice ${inv.id} lunas, tetapi bukti Pending AI belum direkonsiliasi. Periksa manual.`);
+    });
     return { ok: true };
 }

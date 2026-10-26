@@ -5,11 +5,13 @@ vi.mock("../../../api/_ara-customer.js", () => ({ processAraCustomer: vi.fn() })
 vi.mock("../../../api/_payment-media.js", async original => ({ ...await original(), stagePaymentMedia: mocks.stage,
   classifyPaymentMedia: mocks.classify, ensurePaymentSuggestion: mocks.suggestion, updatePaymentMediaJob: mocks.update, registerPaymentMediaReference: mocks.register }));
 import { receiveWa } from "../../../api/_handlers/wa.js";
+import { checkRateLimit } from "../../../api/_auth.js";
 
 let requests, captureResult, captureFailure;
 const response = () => ({ status(code) { this.code = code; return this; }, json(body) { this.body = body; return this; }, setHeader: vi.fn() });
 const body = { sender: "628000000002", type: "image", url: "https://api.fonnte.com/t/synthetic.jpg", timestamp: "1792197446" };
 beforeEach(() => {
+  vi.mocked(checkRateLimit).mockClear();
   vi.stubEnv("SUPABASE_URL", "https://db.invalid");vi.stubEnv("SUPABASE_SERVICE_KEY", "synthetic");vi.stubEnv("FONNTE_TOKEN", "");vi.stubEnv("FONNTE_WEBHOOK_SECRET", "");
   vi.stubEnv("AUTOREPLY_ENABLED", "false");vi.stubEnv("FORWARD_TO_OWNER", "false");
   requests=[];captureFailure=false;
@@ -137,8 +139,30 @@ it("still ignores genuine outgoing delivery receipts without DB writes",async()=
 });
 it("still rejects a missing webhook secret before capture",async()=>{
   vi.stubEnv("FONNTE_WEBHOOK_SECRET","secret");const res=await run(body);expect(res.code).toBe(401);expect(requests).toHaveLength(0);
+  expect(checkRateLimit).not.toHaveBeenCalled();
+});
+it("does not acknowledge an unauthenticated delivery receipt",async()=>{
+  vi.stubEnv("FONNTE_WEBHOOK_SECRET","secret");
+  const res=await run({state:"delivered",device:"628000000001",stateid:"synthetic"});
+  expect(res.code).toBe(401);expect(requests).toHaveLength(0);
+  expect(checkRateLimit).not.toHaveBeenCalled();
+});
+it("accepts an authenticated delivery receipt without a database call",async()=>{
+  vi.stubEnv("FONNTE_WEBHOOK_SECRET","secret");
+  const res=response();
+  await receiveWa({method:"POST",headers:{"x-webhook-token":"secret"},query:{},body:{state:"delivered",device:"628000000001"}},res);
+  expect(res.code).toBe(200);expect(res.body.ignored).toBe("delivery_receipt");
+  expect(requests).toHaveLength(0);expect(checkRateLimit).not.toHaveBeenCalled();
 });
 it("routes the old Settings URL to the same public webhook without exposing another unauthenticated handler",async()=>{
   const {default:router}=await import("../../../api/[route].js");
   const res=response();await router({method:"GET",headers:{},query:{route:"fonnte-webhook"}},res);expect(res.code).toBe(200);expect(res.body.service).toBe("AClean WA Webhook");expect(requests).toHaveLength(0);
+});
+it("does not invoke inherited Object methods as API handlers",async()=>{
+  vi.stubEnv("INTERNAL_API_SECRET","synthetic-internal-token");
+  const {default:router}=await import("../../../api/[route].js");
+  const res=response();
+  await router({method:"GET",headers:{"x-internal-token":"synthetic-internal-token"},query:{route:"constructor"}},res);
+  expect(res.code).toBe(404);
+  expect(res.body.error).toContain("Route tidak ditemukan");
 });

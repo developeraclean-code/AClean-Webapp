@@ -140,15 +140,12 @@ export async function validateInternalToken(req, res) {
     if (match) return true;
   }
 
-  // Kalau env belum diset sama sekali, izinkan di dev
+  // Fail closed in every environment. Self-hosted containers can accidentally
+  // start without NODE_ENV=production; that must never make protected APIs public.
   if (!secret && !supabaseUrl) {
-    if (process.env.NODE_ENV === "production") {
-      console.error("[SEC-02] CRITICAL: No auth method configured");
-      res.status(500).json({ error: "Server misconfiguration" });
-      return false;
-    }
-    console.warn("[SEC-02] No auth configured — dev mode only");
-    return true;
+    console.error("[SEC-02] CRITICAL: No auth method configured");
+    res.status(500).json({ error: "Server misconfiguration" });
+    return false;
   }
 
   if (sessionFailure) { sendSessionError(res, sessionFailure); return false; }
@@ -299,7 +296,8 @@ export function setCorsHeaders(req, res) {
             origin.match(/^http:\/\/127\.0\.0\.1:\d+$/);
   }
 
-  // In production, NEVER allow missing origin (blocks CSRF from tools like curl, postman, etc)
+  // Missing Origin receives no browser CORS permission. This is not an auth or
+  // CSRF boundary: non-browser clients can omit/forge Origin and still send requests.
   if (isProduction && !origin) {
     res.setHeader("Access-Control-Allow-Origin", "null"); // explicitly reject
     res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
