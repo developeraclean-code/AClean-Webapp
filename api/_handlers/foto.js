@@ -2,7 +2,7 @@
 // Isi blok dipindah APA ADANYA (ekstraksi programatik) dari api/[route].js.
 import { sniffMediaMimeType } from "../_media-format.js";
 import { sendSessionError } from "../_session-check.js";
-import { canAccessStagingMedia, isPrivateStagingMedia, stagingMediaActor, stagingUploadProbe } from "../_staging-media-access.js";
+import { canAccessStagingMedia, isMediaAuthRequired, isPrivateStagingMedia, stagingMediaActor, stagingUploadProbe } from "../_staging-media-access.js";
 export { sniffMediaMimeType as sniffWaInboxMimeType } from "../_media-format.js";
 
     // ── UPLOAD-FOTO ──
@@ -10,7 +10,7 @@ export async function uploadFoto(req, res) {
       if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
       const body = req.body || {};
 
-      if (isPrivateStagingMedia()) {
+      if (isMediaAuthRequired()) {
         const probe = stagingUploadProbe(body);
         if (!probe) return res.status(400).json({ error: "Folder media tidak valid" });
         try {
@@ -238,7 +238,7 @@ export async function foto(req, res) {
         return res.status(400).json({ error: "key tidak valid" });
       }
 
-      const privateStagingMedia = isPrivateStagingMedia();
+      const privateStagingMedia = isMediaAuthRequired();
       if (privateStagingMedia) {
         try {
           const actor = await stagingMediaActor(req, { cookie: true });

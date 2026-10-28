@@ -33,10 +33,10 @@ const cdnBase = () => {
 //           inline (lihat api/_handlers/foto.js). Volumenya kecil, sekali unduh.
 // - .html → report card, alasan sama.
 const BYPASS_CDN = /\.(pdf|html?)$/i;
-// The isolated staging bucket is private. Never turn its media keys into a
-// direct CDN URL, even if a shared build accidentally supplies a CDN base.
+// Both self-hosted UI domains use the authenticated API. Keep legacy website/
+// Vercel delivery unchanged; this alone does not disable public R2 URLs.
 const privateStagingHost = () => {
-  try { return window.location.hostname === "staging.aclean.id"; } catch { return false; }
+  try { return ["staging.aclean.id", "app.aclean.id"].includes(window.location.hostname); } catch { return false; }
 };
 
 // Ambil key R2 dari bentuk apa pun yang pernah tersimpan di DB selama ini.

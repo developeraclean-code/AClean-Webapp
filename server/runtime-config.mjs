@@ -22,5 +22,8 @@ export function validateRuntimeConfig(env = process.env) {
   if (appUrl.pathname !== '/' || appUrl.search || appUrl.hash) {
     throw new Error('APP_URL harus origin tanpa path/query/fragment');
   }
+  if (appUrl.hostname === 'app.aclean.id' && env.ACLEAN_MEDIA_AUTH_REQUIRED !== 'true') {
+    throw new Error('ACLEAN_MEDIA_AUTH_REQUIRED harus true pada produksi self-hosted');
+  }
   return true;
 }

@@ -29,3 +29,11 @@ test('self-host menolak secret lemah, URL non-HTTPS dan origin tak cocok', () =>
   assert.throws(() => validateRuntimeConfig({ ...valid(), ALLOWED_ORIGIN: 'https://evil.example.test' }), /sama/);
   assert.throws(() => validateRuntimeConfig({ ...valid(), APP_URL: 'https://app.example.test/path' }), /tanpa path/);
 });
+
+test('produksi self-hosted wajib mengaktifkan otorisasi API media', () => {
+  const env = { ...valid(), APP_URL: 'https://app.aclean.id', ALLOWED_ORIGIN: 'https://app.aclean.id' };
+  for (const value of [undefined, '', 'false', 'tru']) {
+    assert.throws(() => validateRuntimeConfig({ ...env, ACLEAN_MEDIA_AUTH_REQUIRED: value }), /ACLEAN_MEDIA_AUTH_REQUIRED/);
+  }
+  assert.equal(validateRuntimeConfig({ ...env, ACLEAN_MEDIA_AUTH_REQUIRED: 'true' }), true);
+});

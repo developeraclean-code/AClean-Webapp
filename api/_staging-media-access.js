@@ -1,5 +1,5 @@
-// Private media gate for the isolated staging R2 bucket only. Production's
-// existing public-media contract is unchanged until a separately reviewed cutover.
+// API authorization for isolated staging and explicitly enabled self-hosting.
+// This does not revoke existing public R2 URLs; those need a separate migration.
 import { verifyAppToken } from "./_auth.js";
 import { readSessionJson, SessionCheckError } from "./_session-check.js";
 
@@ -7,15 +7,17 @@ const COOKIE_NAME = "aclean_staging_media";
 const ACTIVE_ROLES = new Set(["Owner", "Admin", "Finance", "Teknisi", "Helper"]);
 
 export const isPrivateStagingMedia = () => process.env.R2_BUCKET_NAME === "aclean-staging-media";
+export const isMediaAuthRequired = () => isPrivateStagingMedia()
+  || process.env.ACLEAN_MEDIA_AUTH_REQUIRED === "true";
 
 export function setStagingMediaCookie(res, token) {
-  if (!isPrivateStagingMedia()) return;
+  if (!isMediaAuthRequired()) return;
   res.setHeader("Set-Cookie",
     `${COOKIE_NAME}=${token}; Path=/api/foto; Max-Age=900; HttpOnly; Secure; SameSite=Strict`);
 }
 
 export function clearStagingMediaCookie(res) {
-  if (!isPrivateStagingMedia()) return;
+  if (!isMediaAuthRequired()) return;
   res.setHeader("Set-Cookie",
     `${COOKIE_NAME}=; Path=/api/foto; Max-Age=0; HttpOnly; Secure; SameSite=Strict`);
 }

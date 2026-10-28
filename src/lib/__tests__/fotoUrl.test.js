@@ -53,6 +53,12 @@ describe("fotoUrl — dengan CDN aktif", () => {
     vi.stubGlobal("window", { location: { hostname: "staging.aclean.id" } });
     expect(fotoUrl("laporan/JOB-1/a.jpg")).toBe("/api/foto?key=laporan%2FJOB-1%2Fa.jpg");
   });
+  it("produksi self-hosted memakai API berotorisasi, bukan CDN langsung", () => {
+    setCdn("https://cdn.example.test");
+    vi.stubGlobal("window", { location: { hostname: "app.aclean.id" } });
+    expect(fotoUrl("laporan/JOB-1/a.jpg")).toBe("/api/foto?key=laporan%2FJOB-1%2Fa.jpg");
+    expect(fotoUrl("https://cdn.example.test/invoices/a.pdf")).toBe("/api/foto?key=invoices%2Fa.pdf");
+  });
   it("gambar langsung ke CDN, tidak lewat Vercel", () => {
     setCdn("https://cdn.aclean.id");
     expect(fotoUrl("/api/foto?key=laporan%2FJOB-1%2Fa.jpg")).toBe("https://cdn.aclean.id/laporan/JOB-1/a.jpg");
