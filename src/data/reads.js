@@ -550,10 +550,14 @@ export const fetchUserProfiles = (supabase) =>
     .select("id,name,email,phone,role,status,active,color,avatar,skills,last_login,daily_rate,work_start_date")
     .order("name").limit(100);
 
-export const fetchUserAccounts = (supabase) =>
-  supabase.from("user_profiles")
-    .select("id,name,email,phone,role,status,active,color,avatar,skills,last_login,daily_rate,work_start_date")
-    .order("name").limit(200);
+export const fetchUserAccounts = (supabase, role) =>
+  ["Teknisi", "Helper"].includes(role)
+    ? supabase.from("lab_team_directory")
+      .select("id,name,role,status,active,color,avatar,skills")
+      .order("name").limit(200)
+    : supabase.from("user_profiles")
+      .select("id,name,email,phone,role,status,active,color,avatar,skills,last_login,daily_rate,work_start_date")
+      .order("name").limit(200);
 
 export const fetchWaConversations = (supabase, limit = 50) => {
   const q = supabase.from("wa_conversations").select("*").order("updated_at", { ascending: false });

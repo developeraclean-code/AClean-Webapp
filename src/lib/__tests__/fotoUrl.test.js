@@ -1,8 +1,8 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { fotoUrl, r2Key } from "../fotoUrl.js";
 
 const setCdn = (v) => { import.meta.env.VITE_R2_CDN_URL = v; };
-afterEach(() => { delete import.meta.env.VITE_R2_CDN_URL; });
+afterEach(() => { delete import.meta.env.VITE_R2_CDN_URL; vi.unstubAllGlobals(); });
 
 describe("r2Key — ambil key dari semua bentuk yang pernah tersimpan di DB", () => {
   it("bentuk proxy", () => {
@@ -48,6 +48,11 @@ describe("fotoUrl — tanpa CDN (perilaku lama harus persis sama)", () => {
 });
 
 describe("fotoUrl — dengan CDN aktif", () => {
+  it("staging privat tetap memakai proxy meski CDN terkonfigurasi", () => {
+    setCdn("https://cdn.aclean.id");
+    vi.stubGlobal("window", { location: { hostname: "staging.aclean.id" } });
+    expect(fotoUrl("laporan/JOB-1/a.jpg")).toBe("/api/foto?key=laporan%2FJOB-1%2Fa.jpg");
+  });
   it("gambar langsung ke CDN, tidak lewat Vercel", () => {
     setCdn("https://cdn.aclean.id");
     expect(fotoUrl("/api/foto?key=laporan%2FJOB-1%2Fa.jpg")).toBe("https://cdn.aclean.id/laporan/JOB-1/a.jpg");

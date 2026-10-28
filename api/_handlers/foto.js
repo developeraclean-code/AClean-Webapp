@@ -1,12 +1,25 @@
 // api/_handlers/foto.js — Handler grup foto/R2 (Batch 4 pemecahan router, Jul 2026).
 // Isi blok dipindah APA ADANYA (ekstraksi programatik) dari api/[route].js.
 import { sniffMediaMimeType } from "../_media-format.js";
+import { sendSessionError } from "../_session-check.js";
+import { canAccessStagingMedia, isPrivateStagingMedia, stagingMediaActor, stagingUploadProbe } from "../_staging-media-access.js";
 export { sniffMediaMimeType as sniffWaInboxMimeType } from "../_media-format.js";
 
     // ── UPLOAD-FOTO ──
 export async function uploadFoto(req, res) {
       if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
       const body = req.body || {};
+
+      if (isPrivateStagingMedia()) {
+        const probe = stagingUploadProbe(body);
+        if (!probe) return res.status(400).json({ error: "Folder media tidak valid" });
+        try {
+          const actor = await stagingMediaActor(req);
+          if (!await canAccessStagingMedia(actor, probe)) {
+            return res.status(403).json({ error: "Akses unggah media tidak diizinkan" });
+          }
+        } catch (error) { return sendSessionError(res, error); }
+      }
 
       // Direct-to-R2 upload: browser hanya meminta URL PUT bertanda tangan, lalu byte
       // file dikirim langsung ke R2. Jalur base64 lama di bawah tetap dipertahankan
@@ -66,7 +79,8 @@ export async function uploadFoto(req, res) {
             uploadUrl,
             key,
             bucket,
-            url: publicUrl ? `${publicUrl}/${key}` : `https://${host}/${bucket}/${key}`,
+            url: isPrivateStagingMedia() ? `/api/foto?key=${encodeURIComponent(key)}`
+              : publicUrl ? `${publicUrl}/${key}` : `https://${host}/${bucket}/${key}`,
             expiresIn: Number(expires),
           });
         } catch (err) {
@@ -183,9 +197,9 @@ export async function uploadFoto(req, res) {
         }
 
         // Build public URL
-        const finalUrl = publicUrl
-          ? publicUrl + "/" + key
-          : "https://" + host + "/" + bucket + "/" + key;
+        const finalUrl = isPrivateStagingMedia()
+          ? "/api/foto?key=" + encodeURIComponent(key)
+          : publicUrl ? publicUrl + "/" + key : "https://" + host + "/" + bucket + "/" + key;
 
         console.log("[upload-foto] Success:", finalUrl);
         return res.status(200).json({
@@ -222,6 +236,16 @@ export async function foto(req, res) {
       // Cek path traversal sekaligus (defense in depth)
       if (!isSafeFotoKey(key)) {
         return res.status(400).json({ error: "key tidak valid" });
+      }
+
+      const privateStagingMedia = isPrivateStagingMedia();
+      if (privateStagingMedia) {
+        try {
+          const actor = await stagingMediaActor(req, { cookie: true });
+          if (!await canAccessStagingMedia(actor, key)) {
+            return res.status(403).json({ error: "Akses baca media tidak diizinkan" });
+          }
+        } catch (error) { return sendSessionError(res, error); }
       }
 
       const accessKeyId     = process.env.R2_ACCESS_KEY;
@@ -285,9 +309,12 @@ export async function foto(req, res) {
         } else if (ct.includes("text/html") || ct.includes("application/pdf")) {
           res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
           res.setHeader("Content-Disposition", "inline");
+        } else if (privateStagingMedia) {
+          res.setHeader("Cache-Control", "private, no-store");
         } else {
           res.setHeader("Cache-Control", "public, max-age=86400");
         }
+        if (privateStagingMedia) res.setHeader("Cache-Control", "private, no-store");
         res.setHeader("Content-Length", bufNode.length);
         return res.status(200).send(bufNode);
       } catch (err) {

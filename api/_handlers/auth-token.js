@@ -3,6 +3,7 @@
 import { checkRateLimit, signAppToken, validateInternalToken } from "../_auth.js";
 import { checkHealth, selectHealthComponent } from "../_health.js";
 import { readSupabaseUser, readSessionJson, sendSessionError, SessionCheckError } from "../_session-check.js";
+import { clearStagingMediaCookie, setStagingMediaCookie } from "../_staging-media-access.js";
 
 // ── TEST-CONNECTION (public) ──
 export async function testConnection(req, res) {
@@ -137,6 +138,10 @@ export async function getLlmConfig(req, res) {
 // Replace pattern lama (echo master secret) dengan signed token per-user + role claim.
 export async function getApiToken(req, res) {
   res.setHeader("Cache-Control", "no-store");
+  if (req.method === "DELETE") {
+    clearStagingMediaCookie(res);
+    return res.status(204).end();
+  }
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   const authH = req.headers["authorization"] || "";
   const accessToken = req.headers["x-supabase-access-token"];
@@ -170,6 +175,7 @@ export async function getApiToken(req, res) {
     const name = profile.name || userData.email || "";
 
     const token = signAppToken({ userId, role, name });
+    setStagingMediaCookie(res, token);
     return res.status(200).json({ token, expiresIn: 15 * 60, role });
   } catch (e) {
     return sendSessionError(res, e);

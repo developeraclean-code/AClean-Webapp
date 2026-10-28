@@ -13,10 +13,9 @@
 // Kalau env kosong → semua kembali ke proxy lama persis seperti sebelumnya.
 // Jadi ini aman di-deploy duluan sebelum custom domain-nya jadi.
 //
-// CATATAN KEAMANAN: tidak ada penurunan proteksi. Route `foto` sudah terdaftar
-// di PUBLIC_ROUTES (api/[route].js) — proxy pun sudah bisa diakses tanpa login.
-// Pengaman satu-satunya, dulu dan sekarang, adalah nama berkas yang tak bisa
-// ditebak (hash konten). Jangan simpan berkas rahasia di bucket ini.
+// CATATAN KEAMANAN: kontrak produksi lama mengandalkan key yang sulit ditebak;
+// jangan simpan berkas rahasia di bucket produksi publik. Bucket staging
+// terisolasi memakai proxy dengan pemeriksaan peran, tanpa URL CDN langsung.
 //
 // JANGAN simpan URL CDN ke database. Simpan bentuk proxy/`key` apa adanya, lalu
 // panggil fotoUrl() saat render — supaya pindah domain cukup ganti 1 env var.
@@ -34,6 +33,11 @@ const cdnBase = () => {
 //           inline (lihat api/_handlers/foto.js). Volumenya kecil, sekali unduh.
 // - .html → report card, alasan sama.
 const BYPASS_CDN = /\.(pdf|html?)$/i;
+// The isolated staging bucket is private. Never turn its media keys into a
+// direct CDN URL, even if a shared build accidentally supplies a CDN base.
+const privateStagingHost = () => {
+  try { return window.location.hostname === "staging.aclean.id"; } catch { return false; }
+};
 
 // Ambil key R2 dari bentuk apa pun yang pernah tersimpan di DB selama ini.
 // Mengembalikan "" kalau url bukan berkas R2 (biar pemanggil melewatkannya apa adanya).
@@ -89,7 +93,7 @@ export const fotoUrl = (url, opts = {}) => {
   if (!key) return s; // bukan berkas R2 (URL luar) → jangan diutak-atik
 
   const cdn = cdnBase();
-  if (cdn && !BYPASS_CDN.test(key)) return cdn + "/" + encodeKeyPath(key);
+  if (cdn && !privateStagingHost() && !BYPASS_CDN.test(key)) return cdn + "/" + encodeKeyPath(key);
 
   return apiBase + "/foto?key=" + encodeURIComponent(key);
 };

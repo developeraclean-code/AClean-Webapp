@@ -1164,6 +1164,20 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
   if (!_appTokenClientRef.current) _appTokenClientRef.current = createAppTokenClient({ auth: supabase.auth });
   _appTokenClientRef.current.setUser(currentUser?.id || null);
   const _apiHeaders = useCallback(() => _appTokenClientRef.current.headers(), []);
+  // The staging media proxy serves <img>/<a> requests, which cannot attach an
+  // App Token header. A server-set HttpOnly cookie is issued during this token
+  // exchange; renew it before the 15-minute media session expires.
+  useEffect(() => {
+    if (!isLoggedIn || !currentUser?.id) return;
+    let active = true;
+    const renew = () => _appTokenClientRef.current.headers().catch(() => {
+      if (!active) return;
+      // Media fails closed until Auth recovers; do not retry in a tight loop.
+    });
+    renew();
+    const interval = setInterval(renew, 60_000);
+    return () => { active = false; clearInterval(interval); };
+  }, [isLoggedIn, currentUser?.id]);
   // GET/HEAD may recover a rejected token once. Mutations are never replayed.
   const _apiFetch = async (url, opts = {}) => {
     try {
@@ -2349,6 +2363,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
 
   const doLogout = async () => {
     invalidateCache();
+    await fetch("/api/get-api-token", { method: "DELETE", signal: AbortSignal.timeout(2000) }).catch(() => {});
     // Putuskan identitas aktif service worker tanpa menghapus antrean milik akun.
     // Antrean tetap aman dan hanya akan dilanjutkan saat akun yang sama login lagi.
     await clearActiveFieldUser(currentFieldUserKey).catch(() => {});

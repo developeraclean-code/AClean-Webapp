@@ -115,7 +115,7 @@ export async function loadAllData({
         const _pSettings = read(() => fetchAppSettings(supabase));
         // Both consumers need the same columns. One request, with the larger
         // existing bound, supplies technician choices AND the account panel.
-        const _pUsers = read(() => fetchUserAccounts(supabase));
+        const _pUsers = read(() => fetchUserAccounts(supabase, currentUser?.role));
         const _pTek = _pUsers;
         const _pUA = _pUsers;
         const _pWA = criticalBootstrap ? Promise.resolve({ data: null }) : read(() => fetchWaConversations(supabase, 100));
