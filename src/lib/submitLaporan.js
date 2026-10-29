@@ -108,7 +108,7 @@ export async function submitLaporan({
       if (existingReport && (existingReport.id !== laporanModal._rewriteId ||
           !canOriginalReporterEdit(existingReport, currentUser)) &&
           !["Owner", "Admin"].includes(currentUser?.role)) {
-        showNotif("🔒 Job ini sudah dilaporkan. Hanya pengirim awal dapat mengedit sebelum verifikasi.");
+        showNotif("🔒 Job ini sudah dilaporkan dan terkunci. Hanya pengirim awal dapat memperbaiki setelah Owner/Admin meminta revisi.");
         submitLaporanLock.current = false;
         return;
       }
@@ -521,16 +521,14 @@ export async function submitLaporan({
       }
     }
 
-    // ── 10. Update status teknisi & helper → active ──
+    // ── 10. Sinkronkan status lokal teknisi & helper → active ──
+    // Database sudah melepaskan seluruh kru secara atomik di RPC submit.
+    // Browser tidak menulis profil rekan setim secara terpisah karena guard
+    // profil memang hanya mengizinkan staf mengubah statusnya sendiri.
     ["teknisi", "helper"].forEach(role => {
       const name = role === "teknisi" ? laporanModal.teknisi : laporanModal.helper;
       if (!name) return;
-      const tek = teknisiData.find(t => t.name === name);
-      if (!tek?.id) return;
       setTeknisiData(prev => prev.map(t => t.name === name ? { ...t, status: "active" } : t));
-      if (/^[0-9a-f-]{36}$/.test(tek.id)) {
-        supabase.from("user_profiles").update({ status: "active" }).eq("id", tek.id);
-      }
     });
 
     // ── 10b. Notif WA ke helper — laporan otomatis tercatat atas namanya ──
