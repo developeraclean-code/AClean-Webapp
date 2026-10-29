@@ -1,4 +1,18 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "a-clean-webapp.vercel.app"
+        }
+      ],
+      "destination": "https://app.aclean.id/:path*",
+      "permanent": false
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",
