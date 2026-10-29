@@ -114,6 +114,9 @@ const EMPTY_MONTHLY_WORK = Object.freeze({
   cleaning_cassette: 0,
   cleaning_split_duct: 0,
   cleaning_standing: 0,
+  cleaning_vrv_indoor: 0,
+  cleaning_vrv_outdoor: 0,
+  cleaning_vrv_other: 0,
   cleaning_other: 0,
   installation_units: 0,
   capacitor_units: 0,
@@ -133,7 +136,7 @@ const monthPeriod = (offset = 0) => {
   };
 };
 
-const normalizeMonthlyWorkSummary = (payload) => {
+export const normalizeMonthlyWorkSummary = (payload) => {
   const raw = payload?.counts || payload || {};
   return Object.fromEntries(Object.keys(EMPTY_MONTHLY_WORK).map(key => [key, Number(raw?.[key]) || 0]));
 };
@@ -537,6 +540,9 @@ return (
                 <span style={{ color: cs.muted }}>Cassette <b style={{ color: cs.text }}>{monthlyWork.cleaning_cassette}</b></span>
                 <span style={{ color: cs.muted }}>Split Duct <b style={{ color: cs.text }}>{monthlyWork.cleaning_split_duct}</b></span>
                 <span style={{ color: cs.muted }}>Standing <b style={{ color: cs.text }}>{monthlyWork.cleaning_standing}</b></span>
+                <span style={{ color: cs.muted }}>VRV Indoor <b style={{ color: cs.text }}>{monthlyWork.cleaning_vrv_indoor}</b></span>
+                <span style={{ color: cs.muted }}>VRV Outdoor <b style={{ color: cs.text }}>{monthlyWork.cleaning_vrv_outdoor}</b></span>
+                {monthlyWork.cleaning_vrv_other > 0 && <span style={{ color: cs.muted }}>VRV/VRF lain <b style={{ color: cs.text }}>{monthlyWork.cleaning_vrv_other}</b></span>}
               </div>
               {monthlyWork.cleaning_other > 0 && <div style={{ fontSize: 10, color: cs.yellow, marginTop: 6 }}>Belum dikategorikan: {monthlyWork.cleaning_other}</div>}
             </div>

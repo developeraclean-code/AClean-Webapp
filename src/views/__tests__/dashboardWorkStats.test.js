@@ -3,6 +3,7 @@ import {
   computeWorkStats,
   dashboardUnpaidSummary,
   dashboardWeekConfirmedCount,
+  normalizeMonthlyWorkSummary,
 } from "../DashboardView.jsx";
 
 describe("computeWorkStats dashboard RPC", () => {
@@ -40,6 +41,22 @@ describe("computeWorkStats dashboard RPC", () => {
 });
 
 describe("ringkasan KPI Dashboard", () => {
+  it("menerima kategori VRV baru dan aman terhadap respons RPC versi lama", () => {
+    const full = normalizeMonthlyWorkSummary({ counts: {
+      cleaning_total: 995, cleaning_split_wall: 909, cleaning_cassette: 27,
+      cleaning_split_duct: 17, cleaning_standing: 0,
+      cleaning_vrv_indoor: 30, cleaning_vrv_outdoor: 12,
+      cleaning_vrv_other: 0, cleaning_other: 0,
+    } });
+    expect(full.cleaning_vrv_indoor + full.cleaning_vrv_outdoor).toBe(42);
+    expect(full.cleaning_split_wall + full.cleaning_cassette + full.cleaning_split_duct
+      + full.cleaning_standing + full.cleaning_vrv_indoor + full.cleaning_vrv_outdoor
+      + full.cleaning_vrv_other + full.cleaning_other).toBe(full.cleaning_total);
+    const old = normalizeMonthlyWorkSummary({ counts: { cleaning_total: 995, cleaning_other: 42 } });
+    expect(old.cleaning_vrv_indoor).toBe(0);
+    expect(old.cleaning_other).toBe(42);
+  });
+
   it("jumlah dan nominal unpaid memakai himpunan status yang sama", () => {
     expect(dashboardUnpaidSummary([
       { status: "UNPAID", total: 125000 },
