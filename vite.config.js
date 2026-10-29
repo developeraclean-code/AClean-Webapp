@@ -6,7 +6,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   // Vite hanya menjalankan frontend. Saat dev, proxy /api ke deployment backend
   // agar Monitoring/login/upload tidak menerima index.html dan berhenti loading.
-  const apiTarget = env.VITE_DEV_API_PROXY || 'https://a-clean-webapp.vercel.app'
+  const apiTarget = env.VITE_DEV_API_PROXY || 'https://app.aclean.id'
   return {
     plugins: [react(), nodePolyfills({ include: ['buffer'] })],
     build: {

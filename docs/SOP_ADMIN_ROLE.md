@@ -85,7 +85,7 @@ Owner (Dedy)
 
 ### Login Pertama Kali
 
-1. Buka **a-clean-webapp.vercel.app**
+1. Buka **app.aclean.id**
 2. Masukkan **Email** dan **Password** yang diberikan Owner
 3. Pilih **Role = Admin** (jika ada multiple role)
 4. Klik **Login**

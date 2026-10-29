@@ -19,6 +19,7 @@ import { callVision } from "../_vision-provider.js";
 import { md5Buffer, checkImageDuplicate } from "../_image-dedup.js";
 import { parseKasbonText, matchKasbonName, isKasbonApprovalMessage, isKasbonRevisionMessage, resolveKasbonEntry, KASBON_APPROVER_PHONES } from "../_kasbon-parser.js";
 import { parseCarrierFromCaption, matchCarrierName, parseLaporanTeam, matchLaporanToOrder, parseBiayaExtended } from "../_shadow-parsers.js";
+import { normalizeAppBaseUrl } from "../../src/lib/appUrl.js";
 
 // Pencatat biaya AI untuk panggilan Anthropic yang di-fetch langsung di file ini.
 // Sebelumnya 4 titik di bawah TIDAK tercatat sama sekali di ai_usage → biaya "gelap"
@@ -2212,7 +2213,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                               body: JSON.stringify({
                                 target: tgt.group_id,
                                 message: fwdCaption,
-                                url: savedImageUrl?.startsWith("/") ? (process.env.APP_URL || "https://a-clean-webapp.vercel.app").replace(/\/$/, "") + savedImageUrl : savedImageUrl || mediaUrl,
+                                url: savedImageUrl?.startsWith("/") ? normalizeAppBaseUrl(process.env.APP_URL) + savedImageUrl : savedImageUrl || mediaUrl,
                                 delay: "2", countryCode: "62"
                               })
                             }).catch(() => {});

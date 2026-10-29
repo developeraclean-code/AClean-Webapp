@@ -122,8 +122,7 @@ export default function ProjectListView() {
 function PortalManager({ p, updateProject, close, toast }) {
   const [token, setToken] = useState(p.portalToken || "");
   const [active, setActive] = useState(!!p.tokenActive);
-  // Format seragam semua portal: https://status.aclean.id/status/<token>
-  const link = token ? `https://status.aclean.id/status/${token}` : "";
+  const link = token ? `https://app.aclean.id/status/${token}` : "";
 
   const generate = () => {
     const t = genToken();

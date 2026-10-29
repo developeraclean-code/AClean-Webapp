@@ -27,8 +27,9 @@ try {
  await db.exec(readFileSync(new URL('../migrations/188_durable_wa_payment_media_queue.sql',import.meta.url),'utf8'));
  await db.exec(readFileSync(new URL('../migrations/197_payment_media_repair.sql',import.meta.url),'utf8'));
  const migration=readFileSync(new URL('../migrations/210_payment_media_worker.sql',import.meta.url),'utf8');
+ const cutoverMigration=readFileSync(new URL('../migrations/224_coolify_worker_routes.sql',import.meta.url),'utf8');
  await check('migration is idempotent and changes no historical financial values',async()=>{
-  const before=await q('SELECT * FROM invoices');await db.exec(migration);await db.exec(migration);
+  const before=await q('SELECT * FROM invoices');await db.exec(migration);await db.exec(migration);await db.exec(cutoverMigration);
   assert.deepEqual(await q('SELECT * FROM invoices'),before);
   assert.equal((await one('SELECT count(*)::int n FROM invoice_payments')).n,0);
  });
@@ -132,7 +133,7 @@ try {
   await assert.rejects(()=>q('SELECT dispatch_payment_media_retry()'),/not configured/);
   await db.exec("INSERT INTO vault.decrypted_secrets VALUES('aclean_payment_worker_secret',repeat('x',48))");
   await q('SELECT dispatch_payment_media_retry()');const request=await one('SELECT * FROM net.test_requests');
-  assert.equal(request.url,'https://a-clean-webapp.vercel.app/api/cron-reminder?task=payment-media-retry');
+  assert.equal(request.url,'https://app.aclean.id/api/cron-reminder?task=payment-media-retry');
   assert.equal(request.headers['X-Internal-Token'],'x'.repeat(48));assert.equal(request.timeout_milliseconds,55000);
   await db.exec("UPDATE app_settings SET value='false' WHERE key='wa_payment_detect'");
   assert.equal((await one('SELECT dispatch_payment_media_retry() id')).id,null);assert.equal((await one('SELECT count(*)::int n FROM net.test_requests')).n,1);

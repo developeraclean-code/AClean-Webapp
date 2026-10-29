@@ -2,6 +2,7 @@
 // Isi dipindah APA ADANYA dari api/[route].js — di-dispatch oleh api/[route].js.
 import { checkRateLimit } from "../_auth.js";
 import { validateAndNormalizePhone, buildPhoneVariants, sanitizeName } from "../_validate.js";
+import { APP_BASE_URL, normalizeAppBaseUrl } from "../../src/lib/appUrl.js";
 
 // ── CUSTOMER-STATUS (PUBLIC — portal customer /status/<token>) ──
 export async function customerStatus(req, res) {
@@ -191,8 +192,7 @@ export async function generateCustomerToken(req, res) {
       const mcRows = await mcRes.json();
       const mc = mcRows[0];
       if (mc?.portal_token && mc.token_active) {
-        // B2B selalu pakai status.aclean.id — dedicated maintenance domain, tidak bergantung setting DB
-        const link = `https://status.aclean.id/status/${mc.portal_token}`;
+        const link = `${APP_BASE_URL}/status/${mc.portal_token}`;
         return res.status(200).json({ ok: true, token: mc.portal_token, link, is_maintenance: true, client_name: mc.name });
       }
     }
@@ -236,12 +236,11 @@ export async function generateCustomerToken(req, res) {
     }
   }
 
-  // Base URL: prioritas customer_portal_url (status.aclean.id) — konsisten dgn cron-reminder.
-  // process.env.APP_URL bisa ke-set ke aclean.id (landing page) yang TIDAK punya portal → 404.
-  let appUrl = process.env.APP_URL || "https://a-clean-webapp.vercel.app";
+  // Nilai lama di database dinormalisasi agar tautan selalu menuju app Coolify.
+  let appUrl = normalizeAppBaseUrl(process.env.APP_URL);
   try {
     const setRes = await fetch(`${SU}/rest/v1/app_settings?key=eq.customer_portal_url&select=value`, { headers });
-    if (setRes.ok) { const rows = await setRes.json(); if (rows[0]?.value) appUrl = rows[0].value; }
+    if (setRes.ok) { const rows = await setRes.json(); if (rows[0]?.value) appUrl = normalizeAppBaseUrl(rows[0].value); }
   } catch { /* fallback ke APP_URL */ }
   const link = `${appUrl}/status/${token}`;
   return res.status(200).json({ ok: true, token, link, expires_at: expiresAt });

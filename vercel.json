@@ -42,10 +42,6 @@
       "destination": "/index.html"
     }
   ],
-  "crons": [
-    { "path": "/api/cron-reminder?task=tick", "schedule": "0 3 * * *" },
-    { "path": "/api/cron-reminder?task=tick", "schedule": "0 15 * * *" }
-  ],
   "functions": {
     "api/[route].js": {
       "maxDuration": 60,

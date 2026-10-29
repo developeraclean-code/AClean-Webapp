@@ -20,6 +20,7 @@
 import crypto from "crypto";
 import { initSentry } from "./sentry-init.js";
 import { readSupabaseUser, sendSessionError } from "./_session-check.js";
+import { APP_BASE_URL, normalizeAppBaseUrl } from "../src/lib/appUrl.js";
 
 // Initialize Sentry once per serverless instance
 initSentry();
@@ -277,10 +278,8 @@ export async function checkRateLimit(req, res, maxRequests = 60, windowMs = 6000
 // CORS helper — hanya izinkan domain AClean
 export function setCorsHeaders(req, res) {
   const allowed = [
-    "https://a-clean-webapp.vercel.app",
-    "https://aclean.vercel.app",
-    "https://status.aclean.id",
-    process.env.ALLOWED_ORIGIN, // custom domain kalau ada
+    APP_BASE_URL,
+    process.env.ALLOWED_ORIGIN ? normalizeAppBaseUrl(process.env.ALLOWED_ORIGIN) : null,
   ].filter(Boolean);
 
   const origin = req.headers.origin || "";

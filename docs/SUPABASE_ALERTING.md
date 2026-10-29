@@ -10,9 +10,9 @@ subjek email langsung menunjukkan jalur yang terdampak.
 
 | Nama monitor | URL | Makna HTTP 503 / tidak terjangkau |
 | --- | --- | --- |
-| AClean - Aplikasi Vercel | `https://a-clean-webapp.vercel.app/api/health?component=app` | Function Vercel atau jalur menuju aplikasi tidak terjangkau. Endpoint ini tidak memanggil Supabase. |
-| AClean - Supabase Auth | `https://a-clean-webapp.vercel.app/api/health?component=auth` | `GET /auth/v1/health` tidak merespons sehat lewat gateway. Tidak menguji login dengan kata sandi. |
-| AClean - Supabase Database API | `https://a-clean-webapp.vercel.app/api/health?component=database` | Pembacaan kecil `agent_logs` melalui PostgREST gagal; penyebabnya dapat berupa gateway, PostgREST, koneksi, atau PostgreSQL. |
+| AClean - Aplikasi Coolify | `https://app.aclean.id/api/health?component=app` | Jalur menuju aplikasi tidak terjangkau. Endpoint ini tidak memanggil Supabase. |
+| AClean - Supabase Auth | `https://app.aclean.id/api/health?component=auth` | `GET /auth/v1/health` tidak merespons sehat lewat gateway. Tidak menguji login dengan kata sandi. |
+| AClean - Supabase Database API | `https://app.aclean.id/api/health?component=database` | Pembacaan kecil `agent_logs` melalui PostgREST gagal; penyebabnya dapat berupa gateway, PostgREST, koneksi, atau PostgreSQL. |
 
 Monitor lama `/api/health` tetap berfungsi sebagai pemeriksaan gabungan Auth +
 Database API. Agar tidak menerima empat email untuk satu insiden, setelah ketiga

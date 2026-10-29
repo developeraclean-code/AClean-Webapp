@@ -100,7 +100,7 @@ curl -X POST http://localhost:3000/api/send-wa \
 Atau ke production (akan capture ke Sentry):
 
 ```bash
-curl -X POST https://a-clean-webapp.vercel.app/api/send-wa \
+curl -X POST https://app.aclean.id/api/send-wa \
   -H "Content-Type: application/json" \
   -d '{"phone": "invalid", "message": "test"}'
 ```

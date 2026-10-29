@@ -23,6 +23,7 @@
     "backup:local": "node scripts/backup-full-local.mjs",
     "test:backup-local": "node --test scripts/test-local-backup-unit.mjs",
     "test:selfhost": "node --test scripts/test-selfhost-config.mjs scripts/test-selfhost-http.mjs scripts/test-selfhost-packaging.mjs",
+    "test:cutover-routes": "node scripts/test-cutover-routes.mjs",
     "r2:lifecycle": "node scripts/apply-r2-lifecycle.mjs",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
