@@ -202,7 +202,8 @@ return (
               {isReadOnly && (
                 <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 14px", fontSize: 12, color: cs.muted, display: "flex", alignItems: "center", gap: 6 }}>
                   🔒 {r.status === "VERIFIED" ? "Laporan sudah diverifikasi dan terkunci." :
-                    "Hanya pengirim awal yang dapat mengedit sebelum laporan diverifikasi."}
+                    r.status === "REVISION" ? "Hanya pengirim awal yang dapat mengerjakan revisi ini." :
+                      "Laporan terkunci setelah dikirim. Perubahan perlu revisi dari Owner/Admin."}
                 </div>
               )}
               {canEdit && (

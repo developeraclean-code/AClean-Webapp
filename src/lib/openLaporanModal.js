@@ -32,7 +32,7 @@ export function openLaporanModal(order, {
     if (order._rewriteId && !["Owner", "Admin"].includes(currentUser?.role) &&
         (!existingReport || existingReport.id !== order._rewriteId ||
          !canOriginalReporterEdit(existingReport, currentUser))) {
-      showNotif("🔒 Laporan terkunci. Hanya pengirim awal dapat mengedit sebelum verifikasi.");
+      showNotif("🔒 Laporan terkunci. Hanya pengirim awal dapat memperbaiki setelah Owner/Admin meminta revisi.");
       return;
     }
     if (existingReport && !order._rewriteId) {
@@ -41,7 +41,7 @@ export function openLaporanModal(order, {
         showNotif("⚠️ Laporan untuk job ini sudah dibuat oleh tim lain");
         return;
       }
-      showNotif(`⚠️ Laporan job ini sudah dibuat. Buka ${["Owner", "Admin"].includes(currentUser?.role) ? "Laporan Tim" : "Laporan Saya"} untuk melihat atau merevisi laporan yang sama.`);
+      showNotif(`⚠️ Laporan job ini sudah dibuat dan terkunci. Buka ${["Owner", "Admin"].includes(currentUser?.role) ? "Laporan Tim" : "Laporan Saya"} untuk melihatnya.`);
       return;
     }
     const count = Math.min(order.units || 1, 30);

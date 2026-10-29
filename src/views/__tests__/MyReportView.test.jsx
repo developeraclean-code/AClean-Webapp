@@ -26,8 +26,7 @@ describe("Laporan Saya multi anggota", () => {
     const html = renderFor(name);
     expect(html).toContain("JAYA-KREASI");
     expect(html).toContain("Lihat Detail");
-    if (name === "Dedi") expect(html).toContain("Tulis Ulang");
-    else expect(html).not.toContain("Tulis Ulang");
+    expect(html).not.toContain("Tulis Ulang");
   });
 
   it("tidak menampilkan laporan kepada anggota yang tidak ditugaskan", () => {

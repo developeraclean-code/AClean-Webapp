@@ -36,12 +36,13 @@ export function isFieldReportAssigned(report, order, employeeName) {
   return fieldReportAssignedNames(report, order).some(member => member.toLowerCase() === name);
 }
 
-// Satu job memiliki satu laporan. Sampai diverifikasi, hanya akun pengirim
-// pertama yang boleh memperbaikinya; nama teknisi utama bukan bukti pengirim.
+// Satu job memiliki satu laporan. Setelah submit awal semua staf lapangan
+// terkunci; bila Owner/Admin meminta REVISION, hanya akun pengirim pertama
+// yang boleh memperbaikinya. Nama teknisi utama bukan bukti pengirim.
 export function canOriginalReporterEdit(report, user) {
   return Boolean(report?.submitted_by_user_id && user?.id &&
     report.submitted_by_user_id === user.id &&
-    ["SUBMITTED", "REVISION"].includes(report.status));
+    report.status === "REVISION");
 }
 
 export function fieldReportAssignedNames(report, order) {

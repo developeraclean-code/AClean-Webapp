@@ -35,14 +35,12 @@ describe("field report workflow", () => {
     expect(setLaporanModal).not.toHaveBeenCalled();
   });
 
-  it("mengizinkan hanya pengirim awal mengedit sampai diverifikasi", () => {
+  it("mengunci submit awal dan hanya membuka revisi untuk pengirim awal", () => {
     const reporter = { id: "USER-ANGGA" };
     const teammate = { id: "USER-FIKRI" };
-    for (const status of ["SUBMITTED", "REVISION"]) {
-      const report = { status, submitted_by_user_id: reporter.id };
-      expect(canOriginalReporterEdit(report, reporter)).toBe(true);
-      expect(canOriginalReporterEdit(report, teammate)).toBe(false);
-    }
+    expect(canOriginalReporterEdit({ status: "SUBMITTED", submitted_by_user_id: reporter.id }, reporter)).toBe(false);
+    expect(canOriginalReporterEdit({ status: "REVISION", submitted_by_user_id: reporter.id }, reporter)).toBe(true);
+    expect(canOriginalReporterEdit({ status: "REVISION", submitted_by_user_id: reporter.id }, teammate)).toBe(false);
     expect(canOriginalReporterEdit({ status: "VERIFIED", submitted_by_user_id: reporter.id }, reporter)).toBe(false);
     expect(canOriginalReporterEdit({ status: "SUBMITTED", submitted_by_user_id: null }, reporter)).toBe(false);
   });
