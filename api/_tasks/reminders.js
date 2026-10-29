@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { dispatchWorkspaceMessage, deliverWorkspaceMessage } from "../_wa-workspace.js";
 import { validateAndNormalizePhone } from "../_validate.js";
 import { sb, sendWA, isCronJobEnabled, fmt, daysSince, log, OWNER_PHONE } from "./_shared.js";
+import { APP_BASE_URL, normalizeAppBaseUrl } from "../../src/lib/appUrl.js";
 
 // ══════════════════════════════════════════════════
 // TASK 1: Invoice Reminder (default)
@@ -196,7 +197,7 @@ export async function taskServisReminder() {
     return { skipped: true };
   }
 
-  const APP_URL = togMap["customer_portal_url"] || process.env.APP_URL || "https://a-clean-webapp.vercel.app";
+  const APP_URL = normalizeAppBaseUrl(togMap["customer_portal_url"] || process.env.APP_URL);
   const today = new Date();
   const cutoff = new Date(today.getTime() - 90*24*60*60*1000).toISOString().slice(0,10);
 
@@ -318,7 +319,7 @@ export async function taskVoucherExpiryReminder() {
     return { skipped: true };
   }
 
-  const APP_URL = togMap["customer_portal_url"] || process.env.APP_URL || "https://a-clean-webapp.vercel.app";
+  const APP_URL = normalizeAppBaseUrl(togMap["customer_portal_url"] || process.env.APP_URL);
   const today = new Date();
   const in3days = new Date(today.getTime() + 3*24*60*60*1000).toISOString().slice(0,10);
   const todayStr = today.toISOString().slice(0,10);
@@ -603,7 +604,7 @@ export async function taskMorningDispatch() {
     return { skipped: true };
   }
 
-  const APP_URL = togMap["customer_portal_url"] || process.env.APP_URL || "https://a-clean-webapp.vercel.app";
+  const APP_URL = normalizeAppBaseUrl(togMap["customer_portal_url"] || process.env.APP_URL);
   const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" }); // YYYY-MM-DD WIB
 
   // Ambil order hari ini: ada teknisi, ada phone, belum dapat portal WA
@@ -638,8 +639,7 @@ export async function taskMorningDispatch() {
 
       let link, isMaintenanceLink = false;
       if (isMaintenance) {
-        // B2B selalu pakai status.aclean.id — dedicated maintenance domain, tidak bergantung APP_URL setting
-        link = `https://status.aclean.id/status/${mc.portal_token}`;
+        link = `${APP_BASE_URL}/status/${mc.portal_token}`;
         isMaintenanceLink = true;
       } else {
         // Generate / refresh customer token reguler
@@ -718,7 +718,7 @@ export async function taskRatingPrompt() {
     return { skipped: true };
   }
 
-  const APP_URL = togMap["customer_portal_url"] || process.env.APP_URL || "https://a-clean-webapp.vercel.app";
+  const APP_URL = normalizeAppBaseUrl(togMap["customer_portal_url"] || process.env.APP_URL);
   const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0,10);
 
   // Order COMPLETED/INVOICE_APPROVED kemarin, ada phone, belum dapat rating

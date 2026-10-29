@@ -109,7 +109,7 @@ const insLogs = await fetch(REST("maintenance_logs"), { method: "POST", headers:
 const savedLogs = await insLogs.json();
 
 // Portal URL
-let base = "https://status.aclean.id";
+let base = "https://app.aclean.id";
 try { const s = await (await fetch(REST("app_settings?key=eq.customer_portal_url&select=value"), { headers: H })).json(); if (s[0]?.value) base = s[0].value.replace(/\/$/, ""); } catch {}
 
 console.log(JSON.stringify({

@@ -144,7 +144,7 @@
         <div style="font-weight:700;margin-bottom:12px">🔗 Token Portal Customer (Permanen)</div>
         <div class="muted small">URL akses customer</div>
         <div class="row" style="margin:6px 0 14px">
-          <input id="tokenUrl" readonly value="https://status.aclean.id/m/mtk_8fK3a9Qz">
+          <input id="tokenUrl" readonly value="https://app.aclean.id/m/mtk_8fK3a9Qz">
           <button class="btn ghost" onclick="copyTok()">Salin</button>
         </div>
 
@@ -308,7 +308,7 @@ function copyTok(){ navigator.clipboard?.writeText(document.getElementById('toke
 function regen(){
   if(!confirm('Regenerate token? URL & QR lama akan mati.')) return;
   portal.token='mtk_'+Math.random().toString(36).slice(2,12);
-  document.getElementById('tokenUrl').value='https://status.aclean.id/m/'+portal.token;
+  document.getElementById('tokenUrl').value='https://app.aclean.id/m/'+portal.token;
   drawQR(); alert('Token baru dibuat: '+portal.token);
 }
 function drawQR(){

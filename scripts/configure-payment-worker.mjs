@@ -51,7 +51,7 @@ try{
   assert.ok(extensions.some(e=>e.name==='supabase_vault'&&e.installed_version),'Vault unavailable');
   assert.ok(extensions.some(e=>e.name==='pg_net'),'pg_net unavailable');
   assert.ok(env.INTERNAL_API_SECRET?.length>=32,'Internal secret missing or too short');
-  const backend=await fetch('https://a-clean-webapp.vercel.app/api/payment-media-health',{
+  const backend=await fetch('https://app.aclean.id/api/payment-media-health',{
    headers:{'X-Internal-Token':env.INTERNAL_API_SECRET},signal:AbortSignal.timeout(12000),
   });
   assert.equal(backend.status,200,'Deploy the payment worker backend before enabling its scheduler');

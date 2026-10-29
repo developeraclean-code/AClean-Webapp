@@ -1,7 +1,7 @@
 # Trial Direct Upload Cloudflare R2
 
 Direct upload mengirim byte foto/PDF langsung dari browser ke R2 memakai presigned
-URL lima menit. API Vercel hanya menandatangani metadata kecil. Bila direct PUT gagal,
+URL lima menit. API aplikasi hanya menandatangani metadata kecil. Bila direct PUT gagal,
 webapp otomatis memakai upload base64 lama agar pekerjaan teknisi tidak terhenti.
 Fitur tetap nonaktif sampai environment `VITE_R2_DIRECT_UPLOAD=true` dipasang.
 
@@ -14,7 +14,7 @@ Cloudflare Dashboard → R2 → `aclean-files` → Settings → CORS Policy:
   {
     "AllowedOrigins": [
       "http://localhost:3000",
-      "https://a-clean-webapp.vercel.app"
+      "https://app.aclean.id"
     ],
     "AllowedMethods": ["PUT"],
     "AllowedHeaders": ["Content-Type"],

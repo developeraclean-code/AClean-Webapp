@@ -26,7 +26,7 @@ import { classifyImage, persistClassification } from "../api/_ai-vision.js";
 
 const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SK = process.env.SUPABASE_SERVICE_KEY;
-const BASE = process.env.REPLAY_BASE_URL || "https://a-clean-webapp.vercel.app";
+const BASE = process.env.REPLAY_BASE_URL || "https://app.aclean.id";
 const H = { apikey: SK, Authorization: "Bearer " + SK };
 
 const arg = (n, d = null) => {

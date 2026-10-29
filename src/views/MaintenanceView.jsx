@@ -151,7 +151,7 @@ const QuotationPDFModule = lazy(() =>
   }))
 );
 
-const PORTAL_BASE = "https://status.aclean.id/status/";
+const PORTAL_BASE = "https://app.aclean.id/status/";
 const AC_TYPES = MAINT_AC_TYPES;
 const AC_TYPE_LABELS = MAINT_AC_TYPE_LABELS;
 const REFRIGERANTS = ["R32", "R410A", "R22"];
@@ -1334,7 +1334,7 @@ export function UnitFormModal({ unit, onClose, onSave }) {
 }
 
 function UnitQrModal({ unit, sel, onClose }) {
-  const portalBase = "https://status.aclean.id/status/";
+  const portalBase = "https://app.aclean.id/status/";
   const url = portalBase + (sel.portal_token || "");
   const unitUrl = url + "?unit=" + encodeURIComponent(unit.unit_code);
   const qr = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(unitUrl)}`;

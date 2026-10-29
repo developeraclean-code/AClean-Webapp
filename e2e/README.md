@@ -145,7 +145,7 @@ Buka **GitHub repo → Settings → Secrets and variables → Actions → New re
 
 **Required** (untuk app boot di CI):
 ```
-VITE_SUPABASE_URL=https://apsbeppcmsxeldnejibz.supabase.co
+VITE_SUPABASE_URL=https://sb-staging.aclean.id
 VITE_SUPABASE_ANON_KEY=<your-anon-key>
 ```
 

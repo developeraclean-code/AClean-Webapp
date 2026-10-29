@@ -53,8 +53,8 @@ const units = [
 const ins = await fetch(REST("maintenance_units"), { method: "POST", headers: { ...H, Prefer: "return=representation" }, body: JSON.stringify(units) });
 const saved = await ins.json();
 
-// portal base url dari app_settings (fallback status.aclean.id)
-let base = "https://status.aclean.id";
+// portal base url dari app_settings (fallback Coolify)
+let base = "https://app.aclean.id";
 try { const s = await (await fetch(REST("app_settings?key=eq.customer_portal_url&select=value"), { headers: H })).json(); if (s[0]?.value) base = s[0].value.replace(/\/$/, ""); } catch {}
 
 console.log(JSON.stringify({

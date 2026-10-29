@@ -20,6 +20,7 @@
     "test:sfm-100": "node scripts/simulate-sfm-200.mjs",
     "test:sfm-200": "node scripts/simulate-sfm-200.mjs",
     "check:migrations": "node scripts/check-migrations.mjs",
+    "test:cutover-routes": "node scripts/test-cutover-routes.mjs",
     "r2:lifecycle": "node scripts/apply-r2-lifecycle.mjs",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",

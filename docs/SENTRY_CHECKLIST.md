@@ -81,7 +81,7 @@
 - [ ] **5.6** Back to "Deployments"
 - [ ] **5.7** Click "Redeploy" pada latest deployment
   - Tunggu sampai selesai (hijau = success)
-- [ ] **5.8** Buka production app: https://a-clean-webapp.vercel.app
+- [ ] **5.8** Buka production app: https://app.aclean.id
 - [ ] **5.9** Trigger error untuk test (lihat Phase 3/4)
   - Seharusnya error muncul di Sentry dalam 30 detik
 

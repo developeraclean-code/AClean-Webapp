@@ -37,6 +37,7 @@ export function encodeR2CanonicalPath(bucket, key) {
 // Cleanup may only resolve references belonging to this configured app/bucket.
 export function ownedR2Prefixes(env = process.env) {
   const prefixes = ['/api/foto?key='];
+  // Host lama hanya diterima sebagai format data historis; tidak pernah menjadi tujuan request.
   for (const app of [env.APP_URL, env.VITE_APP_URL, 'https://a-clean-webapp.vercel.app']) {
     try { if (app) prefixes.push(new URL(app).origin + '/api/foto?key='); } catch { /* invalid optional origin */ }
   }
