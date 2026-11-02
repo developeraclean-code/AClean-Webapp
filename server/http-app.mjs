@@ -20,6 +20,13 @@ const MIME = {
   '.woff2': 'font/woff2',
 };
 
+const PORTAL_PATH = /^\/(?:status\/)?(?:[a-f0-9]{48}|(?:mtk|ptk)_[a-z0-9]{40})$|^\/(?:m\/mtk_|p\/ptk_)[a-z0-9]{40}$/;
+const PORTAL_API = new Set(['customer-status', 'customer-vouchers', 'submit-rating', 'm-portal', 'project-portal', 'portal-foto']);
+
+function requestHost(req) {
+  return String(req.headers.host || '').split(':')[0].toLowerCase();
+}
+
 function securityHeaders(res) {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -112,6 +119,23 @@ export function createAppServer({ unifiedHandler, directHandlers = {}, staticDir
     try { url = new URL(req.url, 'http://localhost'); }
     catch { return res.status(400).end(); }
     const pathname = url.pathname;
+    const host = requestHost(req);
+    if (host === 'status.aclean.id') {
+      if (pathname.startsWith('/api/')) {
+        if (!PORTAL_API.has(pathname.slice('/api/'.length))) return res.status(404).json({ error: 'API route tidak ditemukan' });
+      } else if (!PORTAL_PATH.test(pathname) && !pathname.startsWith('/assets/')) {
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Location', 'https://aclean.id');
+        return res.status(302).end();
+      }
+      res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+    }
+    // Activate only after status.aclean.id points to this app and HTTPS is healthy.
+    if (host === 'app.aclean.id' && process.env.STATUS_PORTAL_REDIRECT_READY === 'true' && PORTAL_PATH.test(pathname)) {
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Location', `https://status.aclean.id${pathname}${url.search}`);
+      return res.status(302).end();
+    }
     if (pathname === '/api') return res.status(404).json({ error: 'API route tidak ditemukan' });
     if (!pathname.startsWith('/api/')) {
       return serveStatic(req, res, pathname, resolvedStaticDir);

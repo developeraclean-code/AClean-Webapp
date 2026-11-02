@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { fotoUrl } from "../lib/fotoUrl.js";
+import { portalFotoUrl } from "../lib/fotoUrl.js";
 
 // Portal customer modul Project (clean view). Dibuka via /p/<token> atau /status/ptk_<...>.
 // Data dari /api/project-portal — hanya laporan harian VERIFIED (approval Owner/Admin).
@@ -9,9 +9,7 @@ const API = "/api";
 function fmtDate(d) { if (!d) return "—"; try { return new Date(d).toLocaleDateString("id-ID", { weekday: "short", day: "numeric", month: "short", year: "numeric" }); } catch { return d; } }
 function fmtDateShort(d) { if (!d) return "—"; try { return new Date(d).toLocaleDateString("id-ID", { day: "numeric", month: "short" }); } catch { return d; } }
 
-// Foto R2 private — extract key dari full URL, serve via /api/foto proxy
-// Foto R2 — logika bersama di src/lib/fotoUrl.js (CDN kalau di-set, kalau tidak proxy).
-const fotoSrc = (url) => fotoUrl(url, { apiBase: API });
+const fotoSrc = (url, token) => portalFotoUrl(url, token, { apiBase: API });
 
 const PSTATUS = {
   BERJALAN: ["#2563eb", "Sedang Berjalan"],
@@ -92,7 +90,7 @@ export default function ProjectPortalView({ token }) {
           <>
             <h2 style={{ fontSize: 15, fontWeight: 800, margin: "20px 4px 12px" }}>📋 Berita Acara Harian ({beritaAcara.length})</h2>
             <div style={{ display: "grid", gap: 14, marginBottom: 20 }}>
-              {beritaAcara.map(ba => <BeritaAcaraCard key={ba.id} ba={ba} />)}
+              {beritaAcara.map(ba => <BeritaAcaraCard key={ba.id} ba={ba} token={token} />)}
             </div>
           </>
         )}
@@ -147,7 +145,7 @@ export default function ProjectPortalView({ token }) {
   );
 }
 
-function BeritaAcaraCard({ ba }) {
+function BeritaAcaraCard({ ba, token }) {
   const [lightbox, setLightbox] = useState(null);
   const fotos = Array.isArray(ba.foto_urls) ? ba.foto_urls : [];
   const helpers = Array.isArray(ba.helper_names) ? ba.helper_names.filter(Boolean) : [];
@@ -186,7 +184,7 @@ function BeritaAcaraCard({ ba }) {
               style={{ aspectRatio: 1, borderRadius: 10, overflow: "hidden", border: "1px solid #e2e8f0", display: "block", padding: 0, cursor: "zoom-in", background: "#f8fafc" }}>
               <img
                 alt={`foto ${i + 1}`}
-                src={fotoSrc(url)}
+                src={fotoSrc(url, token)}
                 loading="lazy"
                 style={{ width: "100%", height: "100%", objectFit: "cover" }}
               />
@@ -200,7 +198,7 @@ function BeritaAcaraCard({ ba }) {
         <div
           onClick={() => setLightbox(null)}
           style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,.88)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, cursor: "zoom-out" }}>
-          <img src={fotoSrc(lightbox)} alt="foto besar" style={{ maxWidth: "100%", maxHeight: "90vh", borderRadius: 12, objectFit: "contain", boxShadow: "0 24px 80px rgba(0,0,0,.6)" }} />
+          <img src={fotoSrc(lightbox, token)} alt="foto besar" style={{ maxWidth: "100%", maxHeight: "90vh", borderRadius: 12, objectFit: "contain", boxShadow: "0 24px 80px rgba(0,0,0,.6)" }} />
           <button onClick={() => setLightbox(null)} style={{ position: "absolute", top: 16, right: 16, background: "rgba(255,255,255,.15)", border: "none", color: "#fff", fontSize: 22, width: 40, height: 40, borderRadius: "50%", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
         </div>
       )}

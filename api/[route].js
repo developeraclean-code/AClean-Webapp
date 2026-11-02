@@ -9,11 +9,11 @@ import { testConnection, health, getLlmConfig, getApiToken, manageUser } from ".
 import { projectDelete, maintenance, mPortal, projectPortal } from "./_handlers/portal.js";
 import { sendWa, notifyAbsence, receiveWa, waGroups } from "./_handlers/wa.js";
 import { waWorkspaceSend } from "./_handlers/wa-workspace.js";
-import { uploadFoto, foto, syncFotos } from "./_handlers/foto.js";
+import { uploadFoto, foto, portalFoto, syncFotos } from "./_handlers/foto.js";
 import { araChat, cronReminder } from "./_handlers/misc.js";
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
 // upload-foto & monitor sengaja TIDAK di sini — memerlukan auth (validateInternalToken)
-const PUBLIC_ROUTES = ["receive-wa", "fonnte-webhook", "test-connection", "_auth", "foto", "get-llm-config", "get-api-token", "customer-status", "submit-rating", "customer-vouchers", "health", "m-portal", "project-portal"];
+const PUBLIC_ROUTES = ["receive-wa", "fonnte-webhook", "test-connection", "_auth", "foto", "portal-foto", "get-llm-config", "get-api-token", "customer-status", "submit-rating", "customer-vouchers", "health", "m-portal", "project-portal"];
 
 // ── HANDLER MAP: route → modul di api/_handlers/ (pemecahan router bertahap) ──
 const HANDLERS = {
@@ -47,6 +47,7 @@ const HANDLERS = {
   "wa-groups": waGroups,
   "upload-foto": uploadFoto,
   "foto": foto,
+  "portal-foto": portalFoto,
   "sync-fotos": syncFotos,
   "ara-chat": araChat,
   "cron-reminder": cronReminder,

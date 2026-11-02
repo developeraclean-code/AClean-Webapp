@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { maintenanceAcLabel } from "../lib/maintenanceAcTypes.js";
+import { portalFotoUrl } from "../lib/fotoUrl.js";
 
 // Portal customer korporat (clean view). Dibuka via /m/<token>.
 // Data dari /api/m-portal — gate akses & strip cost sudah di backend.
@@ -275,9 +276,9 @@ export default function MaintenancePortalView({ token }) {
                                 {photos.length > 0 && (
                                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
                                     {photos.map((p, i) => (
-                                      <a key={i} href={`${API}/foto?key=${encodeURIComponent(p)}`} target="_blank" rel="noreferrer"
+                                      <a key={i} href={portalFotoUrl(p, token, { apiBase: API })} target="_blank" rel="noreferrer"
                                         style={{ width: 64, height: 48, borderRadius: 7, overflow: "hidden", display: "block", border: "1px solid #e2e8f0" }}>
-                                        <img alt="foto" src={`${API}/foto?key=${encodeURIComponent(p)}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                        <img alt="foto" src={portalFotoUrl(p, token, { apiBase: API })} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                                       </a>
                                     ))}
                                   </div>

@@ -4,6 +4,7 @@ import { invoiceCashReceived } from "../lib/paymentWithholding.js";
 import { getLocalDate } from "../lib/dateTime.js";
 import { fetchFinanceMonthDetails, fetchFinanceSnapshot, fetchFinanceSummaryV2 } from "../data/reads.js";
 import { flushPerfMetrics, measureAsync } from "../lib/perfMetrics.js";
+import { fotoProxyUrl } from "../lib/fotoUrl.js";
 import { GajiTab } from "./TeknisiAdminView.jsx";
 import { downloadBlob, buildCsv, printDocument, htmlTable, rp, fmtTanggal, escapeHtml } from "../lib/exportUtils.js";
 
@@ -583,7 +584,7 @@ const ProofModal = ({ modal, onClose }) => {
         </div>
         <div style={{ fontSize: 12, color: cs.muted, marginBottom: 14 }}>{modal.customer}</div>
         {modal.url && modal.url !== "verified-no-proof" ? (
-          <img src={modal.url} alt="Bukti bayar" style={{ width: "100%", borderRadius: 8, objectFit: "contain", maxHeight: 500 }} />
+          <img src={fotoProxyUrl(modal.url)} alt="Bukti bayar" style={{ width: "100%", borderRadius: 8, objectFit: "contain", maxHeight: 500 }} />
         ) : (
           <div style={{ textAlign: "center", color: cs.muted, padding: "40px 0", fontSize: 13 }}>
             {modal.url === "verified-no-proof"

@@ -11,6 +11,7 @@ import { categoryOf, LINE_CATEGORY, selectedPph23Rate } from "../lib/invoicing.j
 import { downloadCsv } from "../lib/exportUtils.js";
 import { acknowledgePaidInvoicesWithoutProofAtomic } from "../data/writes.js";
 import { dismissedProofsForInvoice, invoiceProofAction, pendingProofsForInvoice } from "../lib/paymentEvidence.js";
+import { fotoProxyUrl } from "../lib/fotoUrl.js";
 import { confirmInvoiceWaProof } from "../lib/invoiceWaProof.js";
 import { confirmInvoiceWaWithholding, invoiceCashReceived, paymentWithholdingReview } from "../lib/paymentWithholding.js";
 import PaymentWithholdingReview from "../components/PaymentWithholdingReview.jsx";
@@ -2245,7 +2246,7 @@ return (
                 </span>
               ) : inv.payment_proof_url ? (
                 <button
-                  onClick={() => window.open(inv.payment_proof_url.startsWith("/api/") ? window.location.origin + inv.payment_proof_url : inv.payment_proof_url, "_blank")}
+                  onClick={() => window.open(fotoProxyUrl(inv.payment_proof_url), "_blank")}
                   style={{ background: "#22c55e22", border: "1px solid #22c55e44", color: "#22c55e", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600 }}
                 >📷 Bukti Bayar ✓</button>
               ) : currentUser?.role === "Owner" ? (

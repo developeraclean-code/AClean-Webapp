@@ -98,4 +98,21 @@ export const fotoUrl = (url, opts = {}) => {
   return apiBase + "/foto?key=" + encodeURIComponent(key);
 };
 
+// Portal publik memakai token yang sama dengan halaman status. API memeriksa
+// hubungan token dengan foto laporan sebelum mengambil objek dari R2.
+export const portalFotoUrl = (url, token, opts = {}) => {
+  const key = r2Key(url);
+  if (!key || !token) return "";
+  const apiBase = (opts.apiBase || "/api").replace(/\/+$/, "");
+  return `${apiBase}/portal-foto?key=${encodeURIComponent(key)}&token=${encodeURIComponent(token)}`;
+};
+
+// Bukti bayar dibuka melalui server agar URL R2 lama tidak terkena DNS/filter ISP.
+export const fotoProxyUrl = (url, opts = {}) => {
+  const key = r2Key(url);
+  if (!key) return String(url || "").trim();
+  const apiBase = (opts.apiBase || "/api").replace(/\/+$/, "");
+  return `${apiBase}/foto?key=${encodeURIComponent(key)}`;
+};
+
 export default fotoUrl;

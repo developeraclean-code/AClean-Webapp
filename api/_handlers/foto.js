@@ -3,6 +3,8 @@
 import { sniffMediaMimeType } from "../_media-format.js";
 import { sendSessionError } from "../_session-check.js";
 import { canAccessStagingMedia, isMediaAuthRequired, isPrivateStagingMedia, stagingMediaActor, stagingUploadProbe } from "../_staging-media-access.js";
+import { authorizePortalMedia } from "../_portal-media-access.js";
+import { checkRateLimit } from "../_auth.js";
 export { sniffMediaMimeType as sniffWaInboxMimeType } from "../_media-format.js";
 
     // ── UPLOAD-FOTO ──
@@ -248,6 +250,30 @@ export async function foto(req, res) {
         } catch (error) { return sendSessionError(res, error); }
       }
 
+      return serveFotoKey(key, res, { privateResponse: privateStagingMedia });
+}
+
+// Customer portals have no staff session. Their token can read only images
+// explicitly listed in their own visible, approved report or maintenance log.
+export async function portalFoto(req, res) {
+      if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
+      const key = req.query?.key;
+      const token = req.query?.token;
+      if (typeof key !== "string" || !isSafeFotoKey(key) || !/\.(jpe?g|png|gif|webp)$/i.test(key)) {
+        return res.status(400).json({ error: "key tidak valid" });
+      }
+      if (typeof token !== "string" || !token) return res.status(401).json({ error: "Token diperlukan" });
+      if (!await checkRateLimit(req, res, 240, 60000)) return;
+      const access = await authorizePortalMedia(token, key);
+      if (!access.allowed) {
+        res.setHeader("Cache-Control", "no-store");
+        return res.status(access.status).json({ error: access.status === 503 ? "Foto belum dapat diperiksa" : "Foto tidak tersedia" });
+      }
+      return serveFotoKey(key, res, { privateResponse: true });
+}
+
+async function serveFotoKey(key, res, { privateResponse = false } = {}) {
+
       const accessKeyId     = process.env.R2_ACCESS_KEY;
       const secretAccessKey = process.env.R2_SECRET_KEY;
       const accountId       = process.env.R2_ACCOUNT_ID;
@@ -309,12 +335,16 @@ export async function foto(req, res) {
         } else if (ct.includes("text/html") || ct.includes("application/pdf")) {
           res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
           res.setHeader("Content-Disposition", "inline");
-        } else if (privateStagingMedia) {
+        } else if (privateResponse) {
           res.setHeader("Cache-Control", "private, no-store");
         } else {
           res.setHeader("Cache-Control", "public, max-age=86400");
         }
-        if (privateStagingMedia) res.setHeader("Cache-Control", "private, no-store");
+        if (privateResponse) {
+          res.setHeader("Cache-Control", "private, no-store");
+          res.setHeader("Referrer-Policy", "no-referrer");
+          res.setHeader("X-Robots-Tag", "noindex, nofollow");
+        }
         res.setHeader("Content-Length", bufNode.length);
         return res.status(200).send(bufNode);
       } catch (err) {

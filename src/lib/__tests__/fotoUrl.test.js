@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { fotoUrl, r2Key } from "../fotoUrl.js";
+import { fotoUrl, fotoProxyUrl, portalFotoUrl, r2Key } from "../fotoUrl.js";
 
 const setCdn = (v) => { import.meta.env.VITE_R2_CDN_URL = v; };
 afterEach(() => { delete import.meta.env.VITE_R2_CDN_URL; vi.unstubAllGlobals(); });
@@ -77,4 +77,13 @@ describe("fotoUrl — dengan CDN aktif", () => {
     setCdn("https://cdn.aclean.id");
     expect(fotoUrl("wa/2026-08/foto a+b.jpg")).toBe("https://cdn.aclean.id/wa/2026-08/foto%20a%2Bb.jpg");
   });
+});
+
+it("portal dan bukti bayar selalu memakai proxy walau CDN aktif", () => {
+  setCdn("https://pub-test.r2.dev");
+  expect(portalFotoUrl("https://pub-test.r2.dev/laporan/JOB-1/a.jpg", "token-test"))
+    .toBe("/api/portal-foto?key=laporan%2FJOB-1%2Fa.jpg&token=token-test");
+  expect(fotoProxyUrl("https://pub-test.r2.dev/laporan/bukti-INV-1/a.jpg"))
+    .toBe("/api/foto?key=laporan%2Fbukti-INV-1%2Fa.jpg");
+  expect(portalFotoUrl("https://external.example.test/photo.jpg", "token-test")).toBe("");
 });

@@ -4,11 +4,23 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
+import { request as httpRequest } from 'node:http';
 import { createAppServer } from '../server/http-app.mjs';
 
 let root;
 let server;
 let base;
+function getHost(pathname, host) {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(new URL(pathname, base), { headers: { Host: host } }, res => {
+      const chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
 before(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), 'aclean-selfhost-'));
   await mkdir(path.join(root, 'assets'));
@@ -106,6 +118,33 @@ test('frontend SPA dan asset dilayani dengan cache berbeda', async () => {
   assert.match(asset.headers.get('cache-control'), /immutable/);
   assert.equal((await fetch(`${base}/assets/missing.js`)).status, 404);
   assert.equal((await fetch(`${base}/.env`)).status, 404);
+});
+
+test('domain status hanya membuka portal dan API terkait', async () => {
+  const portal = await getHost(`/status/${'a'.repeat(48)}`, 'status.aclean.id');
+  assert.equal(portal.status, 200);
+  assert.equal(portal.headers['x-robots-tag'], 'noindex, nofollow');
+  const photo = await getHost('/api/portal-foto?key=laporan%2FJOB-1%2Fa.jpg', 'status.aclean.id');
+  assert.equal(photo.status, 200);
+  assert.equal(JSON.parse(photo.body).route, 'portal-foto');
+  const internal = await getHost('/api/manage-user', 'status.aclean.id');
+  assert.equal(internal.status, 404);
+  const staffPage = await getHost('/invoice', 'status.aclean.id');
+  assert.equal(staffPage.status, 302);
+  assert.equal(staffPage.headers.location, 'https://aclean.id');
+});
+
+test('tautan portal lama di app beralih ke domain status setelah domain siap', async () => {
+  const previous = process.env.STATUS_PORTAL_REDIRECT_READY;
+  process.env.STATUS_PORTAL_REDIRECT_READY = 'true';
+  try {
+    const response = await getHost(`/status/${'a'.repeat(48)}`, 'app.aclean.id');
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.location, `https://status.aclean.id/status/${'a'.repeat(48)}`);
+  } finally {
+    if (previous === undefined) delete process.env.STATUS_PORTAL_REDIRECT_READY;
+    else process.env.STATUS_PORTAL_REDIRECT_READY = previous;
+  }
 });
 
 test('body rusak atau terlalu besar tidak diteruskan ke handler', async () => {

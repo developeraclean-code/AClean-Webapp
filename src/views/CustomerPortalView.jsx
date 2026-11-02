@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { INVOICE_UNPAID_STATUSES } from "../constants/status.js";
 import { formatPhone } from "../lib/phone.js";
-import { fotoUrl } from "../lib/fotoUrl.js";
+import { portalFotoUrl } from "../lib/fotoUrl.js";
 
 const API_BASE = "/api";
 const GOOGLE_REVIEW_URL = "https://g.page/r/Ce7qdwu8xHxoEAI/review";
@@ -45,9 +45,8 @@ function fmtDateShort(d) {
   } catch { return d; }
 }
 
-// Foto R2: langsung dari CDN kalau VITE_R2_CDN_URL di-set, kalau tidak lewat
-// proxy /api/foto. Logika bersama di src/lib/fotoUrl.js.
-const fotoSrc = (url) => fotoUrl(url, { apiBase: API_BASE });
+// Foto customer selalu melewati pemeriksaan token dan kepemilikan laporan.
+const fotoSrc = (url, token) => portalFotoUrl(url, token, { apiBase: API_BASE });
 
 const SERVICE_ICON = (service = "") => {
   const s = service.toLowerCase();
@@ -257,7 +256,7 @@ export default function CustomerPortalView({ token: tokenProp }) {
               {filteredOrders.slice(0, 10).map(o => {
                 const inv = data.invoices?.find(i => i.job_id === o.id);
                 const rpt = data.reports?.find(r => r.job_id === o.id);
-                return <HistoryItem key={o.id} order={o} invoice={inv} report={rpt} />;
+                return <HistoryItem key={o.id} order={o} invoice={inv} report={rpt} token={token} />;
               })}
             </div>
           </>
@@ -538,7 +537,7 @@ function GaransiCard({ inv }) {
   );
 }
 
-function HistoryItem({ order, invoice, report }) {
+function HistoryItem({ order, invoice, report, token }) {
   const [expanded, setExpanded] = useState(false);
   const inv = invoice;
   const invSt = inv ? (INV_STATUS_LABEL[inv.status] || null) : null;
@@ -672,7 +671,7 @@ function HistoryItem({ order, invoice, report }) {
                           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
                             {g.urls.map((url, i) => (
                               <div key={i} style={{ aspectRatio: "1/1", borderRadius: 8, overflow: "hidden", border: "1px solid #e2e8f0", background: "#f1f5f9" }}>
-                                <img src={fotoSrc(url)} alt={`${g.title} ${i + 1}`} loading="lazy" draggable={false}
+                                <img src={fotoSrc(url, token)} alt={`${g.title} ${i + 1}`} loading="lazy" draggable={false}
                                   style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", pointerEvents: "none", userSelect: "none" }} />
                               </div>
                             ))}
@@ -685,7 +684,7 @@ function HistoryItem({ order, invoice, report }) {
                       {fotoList.map((url, i) => (
                         <div key={i}
                           style={{ aspectRatio: "1/1", borderRadius: 8, overflow: "hidden", border: "1px solid #e2e8f0", background: "#f1f5f9" }}>
-                          <img src={fotoSrc(url)} alt={`Foto servis ${i + 1}`} loading="lazy" draggable={false}
+                          <img src={fotoSrc(url, token)} alt={`Foto servis ${i + 1}`} loading="lazy" draggable={false}
                             style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", pointerEvents: "none", userSelect: "none" }} />
                         </div>
                       ))}
