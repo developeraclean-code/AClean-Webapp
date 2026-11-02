@@ -44,6 +44,19 @@ export function computeGross(row) {
     + Number(row.manual_bonus || 0);
 }
 
+// Nilai biaya payroll yang dipakai analitik. Kolom gross_salary di DB sudah
+// merupakan nilai final: gaji pokok + full-week bonus - telat - kasbon + bonus
+// manual. Jangan menambah manual_bonus atau mengurangi kasbon_deduct sekali lagi.
+// Fallback computeGross menjaga kompatibilitas fixture/snapshot lama yang belum
+// menyertakan gross_salary.
+export function payrollExpenseAmount(row = {}) {
+  if (row.gross_salary !== null && row.gross_salary !== undefined && row.gross_salary !== "") {
+    const stored = Number(row.gross_salary);
+    if (Number.isFinite(stored)) return stored;
+  }
+  return computeGross(row);
+}
+
 // ── Kasbon ──
 // Total kasbon terutang minggu ini = kasbon baru minggu ini + sisa kasbon minggu lalu (carryover).
 export function kasbonOwed(row) {

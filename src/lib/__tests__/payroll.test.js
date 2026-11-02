@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   localDateStr, getMondayOf, getSaturdayOf, addWeeks,
-  fullWeekBonusAmt, computeGross, kasbonOwed, kasbonSisa,
+  fullWeekBonusAmt, computeGross, payrollExpenseAmount, kasbonOwed, kasbonSisa,
 } from "../payroll.js";
 
 describe("period helpers", () => {
@@ -64,6 +64,21 @@ describe("bonus & gross", () => {
 
   it("computeGross: nilai null/undefined diperlakukan 0", () => {
     expect(computeGross({})).toBe(0);
+  });
+
+  it("payrollExpenseAmount memakai gross_salary final tanpa menghitung bonus/kasbon dua kali", () => {
+    expect(payrollExpenseAmount({
+      gross_salary: 9450000,
+      manual_bonus: 375000,
+      kasbon_deduct: 1150000,
+    })).toBe(9450000);
+  });
+
+  it("payrollExpenseAmount menghitung komponen saat snapshot lama belum punya gross_salary", () => {
+    expect(payrollExpenseAmount({
+      role: "Teknisi", days_worked: 6, daily_rate: 100000,
+      full_week_bonus: true, late_days: 1, kasbon_deduct: 50000, manual_bonus: 25000,
+    })).toBe(665000);
   });
 });
 

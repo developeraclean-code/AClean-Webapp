@@ -114,6 +114,12 @@ Role hierarchy: **Owner > Admin > Teknisi > Helper**. Enforced in `canAccess()` 
 - Pemakaian bersih per job = **Σ `qty`**, bukan `qty_actual`: koreksi timbang freon menulis
   dua baris (baris asli + `adjustment`), jadi `qty_actual` terhitung dua kali.
 
+**Analitik Keuangan & Payroll:**
+- Rumus Statistik: `net profit = revenue efektif - expenses final - weekly_payroll.gross_salary - order_bonuses PAID` (migrasi 191).
+- `weekly_payroll.gross_salary` sudah final: gaji pokok + full-week bonus - telat - kasbon + bonus manual. Jangan menambah `manual_bonus` atau mengurangi `kasbon_deduct` lagi di analitik.
+- Gaji Teknisi/Helper dicatat lewat Pengelolaan Gaji dan **jangan dimasukkan ulang ke menu Biaya**. Menu Biaya hanya untuk biaya lain yang tidak terwakili payroll; entri gaji staf non-payroll harus diberi keterangan yang jelas.
+- Expenses yang di Recycle Bin, `PENDING_APPROVAL`, atau `PENDING_AI` tidak masuk total. Payroll memakai `period_end` meski belum ditandai dibayar; komisi hanya masuk bila `status='PAID'` dan memakai `paid_at`.
+
 **Customer:**
 - UNIQUE constraint: `(phone, name)` — 1 nomor HP boleh punya banyak customer asal nama beda (multi-lokasi)
 - Phone selalu di-normalize ke format `628xxx`

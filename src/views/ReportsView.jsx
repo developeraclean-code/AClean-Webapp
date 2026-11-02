@@ -494,10 +494,10 @@ return (
               { label: "Total Pendapatan", val: fmt(totalRevenue), sub: "Gross Revenue", color: cs.green, icon: "📈" },
               { label: "Pendapatan Jasa", val: fmt(totalLabor), sub: fmtPct(totalLabor, totalRevenue) + " dari revenue", color: cs.accent, icon: "🔧" },
               { label: "Pendapatan Material", val: fmt(totalMaterial), sub: fmtPct(totalMaterial, totalRevenue) + " dari revenue", color: cs.yellow, icon: "📦" },
-              { label: "Pengeluaran Tercatat", val: fmt(totalExpenses), sub: `Material ${fmt(profitBreakdown.materialPurchases)} · lain ${fmt(profitBreakdown.operatingExpenses)}`, color: cs.ara, icon: "💸" },
-              { label: "Gaji Tim Mingguan", val: fmt(totalPayroll), sub: `${statsSnapshot?.financial?.payroll_count || 0} slip pada periode ini`, color: cs.accent, icon: "👷" },
+              { label: "Pengeluaran Tercatat", val: fmt(totalExpenses), sub: `Material ${fmt(profitBreakdown.materialPurchases)} · operasional ${fmt(profitBreakdown.operatingExpenses)}`, color: cs.ara, icon: "💸" },
+              { label: "Gaji Tim Mingguan", val: fmt(totalPayroll), sub: `${statsSnapshot?.financial?.payroll_count || 0} slip · gross_salary final`, color: cs.accent, icon: "👷" },
               { label: "Komisi Dibayar", val: fmt(totalBonuses), sub: `${statsSnapshot?.financial?.bonus_count || 0} bonus dibayar`, color: cs.yellow, icon: "🎯" },
-              { label: "Total Biaya", val: fmt(totalCosts), sub: fmtPct(totalCosts, totalRevenue) + " dari revenue", color: cs.red, icon: "🧮" },
+              { label: "Total Biaya", val: fmt(totalCosts), sub: `Biaya + gaji + komisi · ${fmtPct(totalCosts, totalRevenue)} revenue`, color: cs.red, icon: "🧮" },
             ].map(k => (
               <div key={k.label} style={{ background: cs.surface, borderRadius: 10, padding: "14px 16px", border: "1px solid " + k.color + "22" }}>
                 <div style={{ fontSize: 20, marginBottom: 6 }}>{k.icon}</div>
@@ -506,6 +506,37 @@ return (
                 <div style={{ fontSize: 10, color: cs.muted, marginTop: 1 }}>{k.sub}</div>
               </div>
             ))}
+          </div>
+          <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 12, padding: "14px 16px", marginBottom: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: cs.text, marginBottom: 10 }}>🧮 Breakdown perhitungan biaya</div>
+            <div style={{ display: "grid", gap: 7 }}>
+              {[
+                { no: "1", label: "Pembelian material", value: profitBreakdown.materialPurchases, detail: "Biaya aktif dengan kategori material_purchase" },
+                { no: "2", label: "Operasional lain", value: profitBreakdown.operatingExpenses, detail: "Biaya aktif selain pembelian material" },
+                { no: "3", label: "Gaji tim mingguan", value: totalPayroll, detail: "Gaji pokok + full-week + bonus manual − telat − kasbon" },
+                { no: "4", label: "Komisi / bonus order", value: totalBonuses, detail: "Hanya order_bonuses berstatus PAID pada periode" },
+              ].map(row => (
+                <div key={row.no} style={{ display: "grid", gridTemplateColumns: "24px minmax(0,1fr) auto", gap: 9, alignItems: "center", paddingBottom: 7, borderBottom: "1px solid " + cs.border + "80" }}>
+                  <div style={{ width: 22, height: 22, borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center", background: cs.accent + "18", color: cs.accent, fontSize: 10, fontWeight: 800 }}>{row.no}</div>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: cs.text }}>{row.label}</div>
+                    <div style={{ fontSize: 9, color: cs.muted, marginTop: 1 }}>{row.detail}</div>
+                  </div>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: cs.red, fontFamily: "monospace" }}>− {fmt(row.value)}</div>
+                </div>
+              ))}
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, paddingTop: 3, fontSize: 12, fontWeight: 800 }}>
+                <span style={{ color: cs.text }}>= Total biaya</span>
+                <span style={{ color: cs.red, fontFamily: "monospace" }}>{fmt(totalCosts)}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, paddingTop: 7, borderTop: "1px solid " + cs.border, fontSize: 12, fontWeight: 800 }}>
+                <span style={{ color: cs.text }}>Pendapatan efektif − total biaya = net profit</span>
+                <span style={{ color: netProfit >= 0 ? cs.green : cs.red, fontFamily: "monospace" }}>{fmt(netProfit)}</span>
+              </div>
+            </div>
+            <div style={{ fontSize: 9, color: cs.muted, marginTop: 10, lineHeight: 1.5 }}>
+              Pendapatan efektif hanya invoice PAID dan tidak memasukkan harga unit AC passthrough. Biaya di Recycle Bin, PENDING_APPROVAL, dan PENDING_AI tidak dihitung. Gaji Teknisi/Helper berasal dari Pengelolaan Gaji; jangan dicatat ulang di menu Biaya.
+            </div>
           </div>
           {/* Revenue cards per layanan */}
           <div style={{ borderTop: "1px solid " + cs.border, paddingTop: 14 }}>

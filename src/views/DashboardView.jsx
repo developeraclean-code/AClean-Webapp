@@ -8,6 +8,7 @@ import AbsenBanner from "./AbsenBanner.jsx";
 import { useAppContext } from "../context/AppContext.js";
 import { isFieldOrderAssigned } from "../lib/fieldReportWorkflow.js";
 import { dashboardReadError } from "../lib/dashboardReadError.js";
+import { payrollExpenseAmount } from "../lib/payroll.js";
 
 // Biaya dihitung ke total/chart HANYA bila sudah final: bukan menunggu approval Admin
 // (≥500rb) dan bukan draft AI belum di-review (PENDING_AI). Konsisten dgn ExpensesView,
@@ -1276,7 +1277,7 @@ return (
       (finPayroll || []).forEach(p => {
         const d = (p.paid_at ? String(p.paid_at).slice(0, 10) : (p.period_end || "")).slice(0, 7);
         if (!d) return;
-        const bersih = (Number(p.gross_salary) || 0) + (Number(p.manual_bonus) || 0) - (Number(p.kasbon_deduct) || 0);
+        const bersih = payrollExpenseAmount(p);
         payrollByMonth[d] = (payrollByMonth[d] || 0) + bersih;
       });
 
