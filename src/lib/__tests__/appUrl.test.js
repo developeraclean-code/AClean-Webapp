@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { APP_BASE_URL, normalizeAppBaseUrl } from "../appUrl.js";
+import { APP_BASE_URL, normalizeAppBaseUrl, normalizePortalBaseUrl } from "../appUrl.js";
 
 describe("app URL cutover", () => {
   it.each([
@@ -17,5 +17,11 @@ describe("app URL cutover", () => {
 
   it("fails closed to the Coolify app for invalid values", () => {
     expect(normalizeAppBaseUrl("not a URL")).toBe(APP_BASE_URL);
+  });
+
+  it("uses status only after the dedicated portal hostname is ready", () => {
+    expect(normalizePortalBaseUrl("https://status.aclean.id")).toBe(APP_BASE_URL);
+    expect(normalizePortalBaseUrl("https://status.aclean.id", { ready: true })).toBe("https://status.aclean.id");
+    expect(normalizePortalBaseUrl("http://status.aclean.id/", { ready: true })).toBe("https://status.aclean.id");
   });
 });

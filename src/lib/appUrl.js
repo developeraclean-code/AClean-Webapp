@@ -16,3 +16,14 @@ export function normalizeAppBaseUrl(value) {
     return APP_BASE_URL;
   }
 }
+
+// The database may already contain the dedicated customer hostname while its
+// old Vercel deployment is paused. Use it for links only after Coolify serves
+// that hostname and the redirect-ready runtime flag has been enabled.
+export function normalizePortalBaseUrl(value, { ready = false } = {}) {
+  try {
+    const url = new URL(String(value || APP_BASE_URL).trim());
+    if (url.hostname === "status.aclean.id") return ready ? "https://status.aclean.id" : APP_BASE_URL;
+  } catch { /* Keep the existing safe fallback. */ }
+  return normalizeAppBaseUrl(value);
+}

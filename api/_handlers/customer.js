@@ -2,7 +2,7 @@
 // Isi dipindah APA ADANYA dari api/[route].js — di-dispatch oleh api/[route].js.
 import { checkRateLimit } from "../_auth.js";
 import { validateAndNormalizePhone, buildPhoneVariants, sanitizeName } from "../_validate.js";
-import { APP_BASE_URL, normalizeAppBaseUrl } from "../../src/lib/appUrl.js";
+import { APP_BASE_URL, normalizePortalBaseUrl } from "../../src/lib/appUrl.js";
 
 // ── CUSTOMER-STATUS (PUBLIC — portal customer /status/<token>) ──
 export async function customerStatus(req, res) {
@@ -192,7 +192,8 @@ export async function generateCustomerToken(req, res) {
       const mcRows = await mcRes.json();
       const mc = mcRows[0];
       if (mc?.portal_token && mc.token_active) {
-        const link = `${APP_BASE_URL}/status/${mc.portal_token}`;
+        const portalHost = process.env.STATUS_PORTAL_REDIRECT_READY === "true" ? "https://status.aclean.id" : APP_BASE_URL;
+        const link = `${portalHost}/status/${mc.portal_token}`;
         return res.status(200).json({ ok: true, token: mc.portal_token, link, is_maintenance: true, client_name: mc.name });
       }
     }
@@ -236,11 +237,12 @@ export async function generateCustomerToken(req, res) {
     }
   }
 
-  // Nilai lama di database dinormalisasi agar tautan selalu menuju app Coolify.
-  let appUrl = normalizeAppBaseUrl(process.env.APP_URL);
+  // Domain status dipakai lagi hanya setelah host Coolify dan TLS siap.
+  const portalReady = process.env.STATUS_PORTAL_REDIRECT_READY === "true";
+  let appUrl = normalizePortalBaseUrl(process.env.APP_URL, { ready: portalReady });
   try {
     const setRes = await fetch(`${SU}/rest/v1/app_settings?key=eq.customer_portal_url&select=value`, { headers });
-    if (setRes.ok) { const rows = await setRes.json(); if (rows[0]?.value) appUrl = normalizeAppBaseUrl(rows[0].value); }
+    if (setRes.ok) { const rows = await setRes.json(); if (rows[0]?.value) appUrl = normalizePortalBaseUrl(rows[0].value, { ready: portalReady }); }
   } catch { /* fallback ke APP_URL */ }
   const link = `${appUrl}/status/${token}`;
   return res.status(200).json({ ok: true, token, link, expires_at: expiresAt });

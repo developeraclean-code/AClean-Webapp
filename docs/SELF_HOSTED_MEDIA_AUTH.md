@@ -39,6 +39,11 @@ portal plus a real photo load successfully, set the runtime variable
 newly generated customer links use the dedicated hostname. Neither action
 restarts the paused legacy Vercel project.
 
+Production already stores `https://status.aclean.id` in `customer_portal_url`.
+The application keeps generating `app.aclean.id` links until the runtime flag
+is enabled; enabling it also allows the configured status hostname in new
+customer and reminder links. The Settings screen displays the stored value.
+
 Read-only incident evidence on 2 November 2026: the old status hostname
 returned `503 DEPLOYMENT_PAUSED` from Vercel; the new app's customer-status
 API returned 200 and four photo references, while anonymous `/api/foto`

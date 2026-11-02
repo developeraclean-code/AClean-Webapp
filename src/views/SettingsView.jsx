@@ -3,7 +3,7 @@ import { memo, useState } from "react";
 import { cs } from "../theme/cs.js";
 import { saveAutomationToggle } from "../lib/settingsPersistence.js";
 import FieldReportReminderSettings from './FieldReportReminderSettings.jsx';
-import { normalizeAppBaseUrl } from "../lib/appUrl.js";
+import { normalizeAppBaseUrl, normalizePortalBaseUrl } from "../lib/appUrl.js";
 
 const settingsInputStyle = {
   width: "100%", background: cs.surface, border: "1px solid " + cs.border,
@@ -1230,7 +1230,7 @@ function SettingsView({
                 value={appSettings["customer_portal_url"] || ""}
                 onChange={e => setAppSettings(prev => ({ ...prev, customer_portal_url: e.target.value }))}
                 onBlur={async e => {
-                  const val = normalizeAppBaseUrl(e.target.value || window.location.origin);
+                  const val = normalizePortalBaseUrl(e.target.value || window.location.origin, { ready: true });
                   setAppSettings(prev => ({ ...prev, customer_portal_url: val }));
                   try { await supabase.from("app_settings").upsert({ key: "customer_portal_url", value: val }, { onConflict: "key" }); }
                   catch (err) { console.warn("settings err:", err); }
