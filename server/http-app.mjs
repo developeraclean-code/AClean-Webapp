@@ -123,7 +123,7 @@ export function createAppServer({ unifiedHandler, directHandlers = {}, staticDir
     if (host === 'status.aclean.id') {
       if (pathname.startsWith('/api/')) {
         if (!PORTAL_API.has(pathname.slice('/api/'.length))) return res.status(404).json({ error: 'API route tidak ditemukan' });
-      } else if (!PORTAL_PATH.test(pathname) && !pathname.startsWith('/assets/')) {
+      } else if (!PORTAL_PATH.test(pathname) && !pathname.startsWith('/assets/') && pathname !== '/favicon.svg') {
         res.setHeader('Cache-Control', 'no-store');
         res.setHeader('Location', 'https://aclean.id');
         return res.status(302).end();
