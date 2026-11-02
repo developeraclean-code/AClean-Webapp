@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { paymentMediaHealth, paymentWorkerRunSummary, readPaymentMediaHealth } from "../../../api/_payment-health.js";
+import { paymentMediaHealth, paymentWorkerRunSummary, readPaymentMediaHealth, requestPaymentMediaRetry } from "../../../api/_payment-health.js";
 import { paymentMediaState, paymentWorkerResult, paymentWorkerState } from "../paymentMediaHealth.js";
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 const response = () => ({ status(code) { this.code = code; return this; }, json(body) { this.body = body; return this; }, setHeader: vi.fn() });
@@ -55,10 +55,51 @@ describe("payment health is private and read-only", () => {
     expect(await readPaymentMediaHealth({ supabaseUrl: "https://db.test", serviceKey: "key", fetchImpl, includeWorkerRun: true })).toMatchObject({ last_run: null, last_run_error: false });
   });
 });
+describe("manual AI retry is an attributable Owner/Admin queue mutation", () => {
+  const jobId = "20000000-0000-4000-8000-000000000001";
+  it.each(["Teknisi", "Helper", "Finance"])('denies role %s before an RPC call', async role => {
+    vi.stubEnv("SUPABASE_URL", "https://db.test"); vi.stubEnv("SUPABASE_SERVICE_KEY", "key");
+    const fetch = vi.fn(); vi.stubGlobal("fetch", fetch); const res = response();
+    await requestPaymentMediaRetry({ method: "POST", appClaims: { role, userId: jobId }, body: { jobIds: [jobId] } }, res);
+    expect(res.code).toBe(403); expect(fetch).not.toHaveBeenCalled();
+  });
+  it("rejects a legacy server token because the actor is not attributable", async () => {
+    vi.stubEnv("SUPABASE_URL", "https://db.test"); vi.stubEnv("SUPABASE_SERVICE_KEY", "key");
+    const fetch = vi.fn(); vi.stubGlobal("fetch", fetch); const res = response();
+    await requestPaymentMediaRetry({ method: "POST", headers: { "x-internal-token": "legacy" }, body: { jobIds: [jobId] } }, res);
+    expect(res.code).toBe(403); expect(fetch).not.toHaveBeenCalled();
+  });
+  it.each([[], ["bad"], Array.from({ length: 21 }, (_, i) => `20000000-0000-4000-8000-${String(i).padStart(12, "0")}`)])("rejects invalid target list %j", async jobIds => {
+    vi.stubEnv("SUPABASE_URL", "https://db.test"); vi.stubEnv("SUPABASE_SERVICE_KEY", "key");
+    const fetch = vi.fn(); vi.stubGlobal("fetch", fetch); const res = response();
+    await requestPaymentMediaRetry({ method: "POST", appClaims: { role: "Owner", userId: jobId }, body: { jobIds } }, res);
+    expect(res.code).toBe(400); expect(fetch).not.toHaveBeenCalled();
+  });
+  it.each(["Owner", "Admin"])("queues deduplicated jobs for %s without invoking AI", async role => {
+    vi.stubEnv("SUPABASE_URL", "https://db.test"); vi.stubEnv("SUPABASE_SERVICE_KEY", "key");
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ requested: 1, skipped: 0 }) });
+    vi.stubGlobal("fetch", fetch); const res = response();
+    await requestPaymentMediaRetry({ method: "POST", appClaims: { role, userId: jobId, name: "Dedy" }, body: { jobIds: [jobId, jobId] } }, res);
+    expect(res.code).toBe(200); expect(res.body).toEqual({ requested: 1, skipped: 0 });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][0]).toContain("/rpc/request_wa_payment_media_retry");
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ p_job_ids: [jobId], p_actor_id: jobId, p_actor_name: "Dedy" });
+  });
+  it("does not expose raw database errors", async () => {
+    vi.stubEnv("SUPABASE_URL", "https://db.test"); vi.stubEnv("SUPABASE_SERVICE_KEY", "key");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 500, text: async () => "secret SQL" })); const res = response();
+    await requestPaymentMediaRetry({ method: "POST", appClaims: { role: "Owner", userId: jobId }, body: { jobIds: [jobId] } }, res);
+    expect(res.code).toBe(503); expect(JSON.stringify(res.body)).not.toMatch(/secret|SQL/);
+  });
+});
 it("distinguishes durable review from missing original media", () => {
   expect(paymentMediaState({ status: "FAILED_PERMANENT" }).label).toContain("kirim ulang");
   expect(paymentMediaState({ status: "FAILED_RETRYABLE", r2_url: "proof" }).label).toContain("Media aman");
   expect(paymentMediaState({ status: "PENDING_REVIEW" }).label).toContain("bukan konfirmasi");
+});
+it("marks only server-approved recoverable failures as manually retryable", () => {
+  expect(paymentMediaState({ status: "FAILED_PERMANENT", r2_url: "proof", can_manual_retry: true }).label).toContain("dicoba ulang");
+  expect(paymentMediaState({ status: "FAILED_PERMANENT", r2_url: "proof", can_manual_retry: false }).label).toContain("manual");
 });
 it("shows disabled detection and missing/stale workers explicitly", () => {
   expect(paymentWorkerState({ enabled: false }).label).toContain("dimatikan");

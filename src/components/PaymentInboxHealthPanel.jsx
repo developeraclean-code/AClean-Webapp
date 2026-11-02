@@ -7,10 +7,23 @@ const count = value => Number.isSafeInteger(value) && value >= 0 ? value.toLocal
 const tone = level => level === "ok" ? cs.green : level === "error" ? cs.red : cs.yellow;
 const buttonStyle = { color: cs.text, background: cs.surface, border: `1px solid ${cs.border}`, borderRadius: 7, padding: "8px 10px", cursor: "pointer", font: "inherit" };
 
-export default function PaymentInboxHealthPanel({ apiHeaders, inbox, onOpenPending, pendingCount }) {
+export async function requestManualPaymentRetry({ apiHeaders, jobIds, fetchImpl = fetch }) {
+  const response = await fetchImpl("/api/payment-media-retry-request", {
+    method: "POST",
+    headers: { ...(await apiHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify({ jobIds }),
+    signal: AbortSignal.timeout(12_000),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error || "Permintaan retry AI gagal");
+  return body;
+}
+
+export default function PaymentInboxHealthPanel({ apiHeaders, inbox, onOpenPending, pendingCount, showConfirm, showNotif }) {
   const [health, setHealth] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [retryBusy, setRetryBusy] = useState(false);
   const loadRef = useRef(null);
   const headersRef = useRef(apiHeaders);
   headersRef.current = apiHeaders;
@@ -44,17 +57,40 @@ export default function PaymentInboxHealthPanel({ apiHeaders, inbox, onOpenPendi
       document.removeEventListener("visibilitychange", resume); window.removeEventListener("focus", resume);
     };
   }, []);
+  const retry = async jobs => {
+    const ids = [...new Set((jobs || []).filter(job => job?.can_manual_retry).map(job => job.id))].slice(0, 20);
+    if (!ids.length || retryBusy) return;
+    const ok = showConfirm ? await showConfirm({
+      icon: "↻",
+      title: ids.length === 1 ? "Coba ulang AI Vision?" : `Coba ulang ${ids.length} media?`,
+      message: "Media yang aman di R2 akan masuk antrean worker. Proses berjalan satu per satu dan tidak menandai invoice lunas.",
+      confirmText: ids.length === 1 ? "Ya, Antrekan Ulang" : "Ya, Retry yang Layak",
+    }) : globalThis.confirm?.("Antrekan ulang media yang layak ke AI Vision?");
+    if (!ok) return;
+    setRetryBusy(true);
+    try {
+      const result = await requestManualPaymentRetry({ apiHeaders: headersRef.current, jobIds: ids });
+      if (result.requested > 0) showNotif?.(`✅ ${result.requested} media masuk antrean retry AI. Worker memproses satu per satu.`, "success");
+      else showNotif?.("ℹ️ Media tidak lagi memenuhi syarat retry. Status akan diperbarui.", "info");
+      await Promise.resolve(inbox?.refresh?.()).catch(() => {});
+      await loadRef.current?.(true);
+    } catch (e) {
+      showNotif?.(`❌ Retry AI gagal: ${e.message}`, "error");
+    } finally { setRetryBusy(false); }
+  };
   return <PaymentInboxHealthView health={health} error={error || inbox?.error} busy={busy || inbox?.loading}
-    onRefresh={() => { inbox?.refresh(); loadRef.current?.(true); }} onOpenPending={onOpenPending} pendingCount={pendingCount} />;
+    onRefresh={() => { inbox?.refresh(); loadRef.current?.(true); }} onOpenPending={onOpenPending} pendingCount={pendingCount}
+    onRetry={retry} retryBusy={retryBusy} />;
 }
 
 // Shared read-only presentation, also used by the isolated local preview.
-export function PaymentInboxHealthView({ health, error, busy, onRefresh, onOpenPending, pendingCount }) {
+export function PaymentInboxHealthView({ health, error, busy, onRefresh, onOpenPending, pendingCount, onRetry, retryBusy = false }) {
   const [expanded, setExpanded] = useState(false);
   const [filter, setFilter] = useState("all");
   const worker = health ? paymentWorkerState(health) : null;
   const result = health ? paymentWorkerResult(health) : null;
   const incidents = health?.incidents || [];
+  const retryable = incidents.filter(job => job.can_manual_retry);
   const groups = [
     { key: "failed", label: "Gagal otomatis", hint: "Tidak dicoba ulang otomatis. Periksa file/arsip WA; jangan menghapus riwayat atau langsung menandai lunas." },
     { key: "admin", label: "Tinjauan admin", hint: "Riwayat media yang pernah ditandai review, termasuk media lama yang kini tersaring. Hanya bukti pembayaran muncul di Pending AI; status ini bukan kegagalan retry." },
@@ -67,6 +103,7 @@ export function PaymentInboxHealthView({ health, error, busy, onRefresh, onOpenP
       <div><strong style={{ color: cs.text, fontSize: 14 }}>📡 Bukti Pembayaran WA</strong><div style={{ color: error ? cs.yellow : tone(worker?.level), marginTop: 4 }}>{error ? "Status terkini belum dapat dipastikan" : worker?.label || "Memeriksa pemicu retry…"}</div></div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button onClick={onOpenPending} style={{ ...buttonStyle, color: cs.accent }}>Tinjau bukti ({Number.isSafeInteger(pendingCount) ? count(pendingCount) : health ? count(health.review) : "…"})</button>
+        {retryable.length > 0 && <button disabled={retryBusy} onClick={() => onRetry?.(retryable)} style={{ ...buttonStyle, color: cs.yellow, opacity: retryBusy ? 0.6 : 1 }}>{retryBusy ? "Mengantrekan…" : `↻ Retry yang layak (${retryable.length})`}</button>}
         <button disabled={busy} onClick={onRefresh} style={{ ...buttonStyle, opacity: busy ? 0.6 : 1 }}>{busy ? "Memuat…" : "↻ Perbarui status"}</button>
       </div>
     </div>
@@ -120,16 +157,18 @@ export function PaymentInboxHealthView({ health, error, busy, onRefresh, onOpenP
             <div style={{ color: tone(state.level), marginTop: 4 }}>{state.label}</div>
             <div style={{ color: cs.muted }}>{state.explanation}</div>
             <div style={{ color: cs.muted, marginTop: 4 }}>Diterima: {wibTime(job.created_at)} · {job.attempts > 0 ? `${count(job.attempts)} percobaan worker tercatat` : "Belum ada percobaan worker tercatat"}</div>
+            {state.group === "failed" && <div style={{ color: cs.muted }}>Retry manual: {count(job.manual_retry_count || 0)}/2</div>}
             {state.group === "retry" && job.status !== "PROCESSING" && <div style={{ color: cs.muted }}>Retry paling awal: {wibTime(job.next_retry_at)}</div>}
             {job.last_error && <details style={{ marginTop: 4, color: cs.muted }}><summary style={{ cursor: "pointer" }}>Alasan/kendala terakhir</summary>{job.last_error}</details>}
             <div style={{ color: cs.text, marginTop: 6 }}>Tindak lanjut: {state.action}</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginTop: 6 }}>
+              {job.can_manual_retry && <button disabled={retryBusy} onClick={() => onRetry?.([job])} style={{ ...buttonStyle, color: cs.yellow, opacity: retryBusy ? 0.6 : 1 }}>{retryBusy ? "Mengantrekan…" : "↻ Coba ulang AI"}</button>}
               {job.r2_url && <a href={job.r2_url} target="_blank" rel="noreferrer" style={{ color: cs.accent }}>Buka media tersimpan ↗</a>}
               {job.has_suggestion && <button onClick={onOpenPending} style={{ ...buttonStyle, color: cs.accent }}>Ke daftar tinjauan</button>}
             </div>
           </article>; })}</div>
         </div>)}
-        <div style={{ color: cs.muted }}>Ditampilkan {incidents.length} rincian (maksimal 50), bukan seluruh Pending AI. Angka ringkasan mencakup seluruh antrean. Tidak ada transaksi diubah atau dihapus.</div>
+        <div style={{ color: cs.muted }}>Ditampilkan {incidents.length} rincian (maksimal 50), bukan seluruh Pending AI. Retry hanya tersedia untuk kegagalan provider/jaringan dengan media aman di R2; maksimal dua siklus manual. Tidak ada invoice atau pembayaran yang diubah.</div>
       </div>}
     </>}
   </section>;

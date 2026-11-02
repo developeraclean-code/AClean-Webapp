@@ -1012,7 +1012,8 @@ return (
 
     {/* Quotation sub-view */}
     {["Owner", "Admin"].includes(currentUser?.role) && ["invoice", "pending_ai"].includes(invoiceSubTab) && (
-      <PaymentInboxHealthPanel apiHeaders={apiHeaders} inbox={paymentInbox} pendingCount={pendingPaymentCount} onOpenPending={() => setInvoiceSubTab("pending_ai")} />
+      <PaymentInboxHealthPanel apiHeaders={apiHeaders} inbox={paymentInbox} pendingCount={pendingPaymentCount}
+        onOpenPending={() => setInvoiceSubTab("pending_ai")} showConfirm={showConfirm} showNotif={showNotif} />
     )}
 
     {invoiceSubTab === "quotation" && (

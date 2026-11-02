@@ -28,8 +28,9 @@ try {
  await db.exec(readFileSync(new URL('../migrations/197_payment_media_repair.sql',import.meta.url),'utf8'));
  const migration=readFileSync(new URL('../migrations/210_payment_media_worker.sql',import.meta.url),'utf8');
  const cutoverMigration=readFileSync(new URL('../migrations/224_coolify_worker_routes.sql',import.meta.url),'utf8');
+ const manualRetryMigration=readFileSync(new URL('../migrations/226_manual_payment_media_retry.sql',import.meta.url),'utf8');
  await check('migration is idempotent and changes no historical financial values',async()=>{
-  const before=await q('SELECT * FROM invoices');await db.exec(migration);await db.exec(migration);await db.exec(cutoverMigration);
+  const before=await q('SELECT * FROM invoices');await db.exec(migration);await db.exec(migration);await db.exec(cutoverMigration);await db.exec(manualRetryMigration);await db.exec(manualRetryMigration);
   assert.deepEqual(await q('SELECT * FROM invoices'),before);
   assert.equal((await one('SELECT count(*)::int n FROM invoice_payments')).n,0);
  });
@@ -68,25 +69,49 @@ try {
   assert.equal(await claim(5001),null);
   assert.deepEqual((await q('SELECT status FROM payment_suggestions ORDER BY status')).map(x=>x.status),['CONFIRMED','DISMISSED']);
  });
+ await check('manual retry reopens only recoverable R2-backed failures, once per click and without financial writes',async()=>{
+  await db.exec('DELETE FROM payment_suggestions;DELETE FROM wa_payment_media_retry_audit;DELETE FROM wa_payment_media_jobs');
+  const before=await q('SELECT * FROM invoices');
+  await insert(520,{status:'FAILED_PERMANENT',stored:true,age:60});
+  await insert(521,{status:'FAILED_PERMANENT',stored:true,age:60});
+  await insert(522,{status:'FAILED_PERMANENT',stored:false,age:60});
+  await insert(523,{status:'FAILED_PERMANENT',stored:true,age:60});
+  await insert(524,{status:'FAILED_PERMANENT',stored:true,age:60});
+  await db.query("UPDATE wa_payment_media_jobs SET last_error=CASE id WHEN $1 THEN 'OpenAI invalid_api_key' WHEN $2 THEN 'invalid image format HTTP 400' WHEN $3 THEN 'network timeout' WHEN $4 THEN 'provider HTTP 503' WHEN $5 THEN 'rate limit 429' END, manual_retry_count=CASE WHEN id=$5 THEN 2 ELSE 0 END WHERE id=ANY($6)",
+    [id(520),id(521),id(522),id(523),id(524),[id(520),id(521),id(522),id(523),id(524)]]);
+  await db.query("INSERT INTO payment_suggestions(status,validation_status,media_job_id) VALUES('DISMISSED','REJECTED',$1)",[id(523)]);
+  const result=(await one('SELECT request_wa_payment_media_retry($1,$2,$3) result',[[id(520),id(521),id(522),id(523),id(524),id(520)],id(9001),'Owner Test'])).result;
+  assert.deepEqual(result,{requested:1,skipped:4});
+  const reopened=await one('SELECT status,attempts,manual_retry_count,manual_retry_requested_by FROM wa_payment_media_jobs WHERE id=$1',[id(520)]);
+  assert.deepEqual(reopened,{status:'FAILED_RETRYABLE',attempts:0,manual_retry_count:1,manual_retry_requested_by:id(9001)});
+  assert.equal((await one('SELECT count(*)::int n FROM wa_payment_media_retry_audit')).n,1);
+  assert.deepEqual((await one('SELECT previous_error_code,retry_number,requested_name FROM wa_payment_media_retry_audit')),{previous_error_code:'invalid_api_key',retry_number:1,requested_name:'Owner Test'});
+  assert.deepEqual((await one('SELECT request_wa_payment_media_retry($1,$2,$3) result',[[id(520)],id(9001),'Owner Test'])).result,{requested:0,skipped:1});
+  assert.equal((await one('SELECT count(*)::int n FROM wa_payment_media_retry_audit')).n,1);
+  assert.equal((await claim(5200)).id,id(520));
+  assert.deepEqual(await q('SELECT * FROM invoices'),before);assert.equal((await one('SELECT count(*)::int n FROM invoice_payments')).n,0);
+ });
  await check('legacy third-attempt crashes in a retryable status also reach a final review decision',async()=>{
-  await db.exec('DELETE FROM wa_payment_media_jobs');await insert(550,{attempts:3,age:60});
+  await db.exec('DELETE FROM wa_payment_media_retry_audit;DELETE FROM wa_payment_media_jobs');await insert(550,{attempts:3,age:60});
   const recovered=await claim(5501);assert.equal(recovered.retry_exhausted,true);assert.equal(recovered.attempts,3);
   assert.equal(await claim(5502),null);
  });
  await check('health gives exact aggregate counts, bounded incident details and no source URLs or secrets',async()=>{
-  await db.exec('DELETE FROM wa_payment_media_jobs');for(let n=600;n<800;n++)await insert(n,{status:'FAILED_PERMANENT',stored:false,age:60});
+  await db.exec('DELETE FROM wa_payment_media_retry_audit;DELETE FROM wa_payment_media_jobs');for(let n=600;n<800;n++)await insert(n,{status:'FAILED_PERMANENT',stored:false,age:60});
   const health=(await one('SELECT get_payment_ingestion_health() health')).health;
   assert.equal(health.failed,200);assert.equal(health.incidents.length,50);assert.equal(health.waiting,0);
   assert.equal(JSON.stringify(health).includes('source_url'),false);assert.equal(JSON.stringify(health).includes('lease_token'),false);
  });
  await check('RPC permissions deny anon/authenticated and allow service_role only',async()=>{
-  for(const fn of ['claim_wa_payment_media(uuid)','get_payment_ingestion_health()','dispatch_payment_media_retry()']){
+  for(const fn of ['claim_wa_payment_media(uuid)','get_payment_ingestion_health()','dispatch_payment_media_retry()','request_wa_payment_media_retry(uuid[],uuid,text)','payment_media_retry_error_code(text)','payment_media_manual_retry_eligible(text,text,text,text,integer,boolean)']){
    for(const role of ['anon','authenticated'])assert.equal((await one('SELECT has_function_privilege($1,$2,$3) ok',[role,fn,'EXECUTE'])).ok,false);
    assert.equal((await one('SELECT has_function_privilege($1,$2,$3) ok',['service_role',fn,'EXECUTE'])).ok,true);
   }
+  for(const role of ['anon','authenticated'])assert.equal((await one('SELECT has_table_privilege($1,$2,$3) ok',[role,'wa_payment_media_retry_audit','SELECT'])).ok,false);
+  assert.equal((await one('SELECT has_table_privilege($1,$2,$3) ok',['service_role','wa_payment_media_retry_audit','SELECT'])).ok,true);
  });
  await check('200 complete JavaScript retry pipelines create 200 unique reviews with no invoice/ledger writes or AI calls',async()=>{
-  await db.exec('DELETE FROM payment_suggestions;DELETE FROM wa_payment_media_jobs');
+  await db.exec('DELETE FROM payment_suggestions;DELETE FROM wa_payment_media_retry_audit;DELETE FROM wa_payment_media_jobs');
   for(let n=1000;n<1200;n++)await insert(n);
   await db.exec("UPDATE wa_payment_media_jobs SET category='bukti_transfer',transfer_amount=200000");
   const before=await q('SELECT * FROM invoices');const originalFetch=globalThis.fetch;

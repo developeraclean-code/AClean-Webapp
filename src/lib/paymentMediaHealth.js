@@ -1,10 +1,10 @@
 export function paymentMediaState(job = {}) {
   if (job.status === "FAILED_PERMANENT") return {
     group: "failed",
-    label: job.r2_url ? "Perlu pemeriksaan manual" : "File belum diamankan · periksa WA/kirim ulang",
+    label: job.can_manual_retry ? "Dapat dicoba ulang dengan AI" : job.r2_url ? "Perlu pemeriksaan manual" : "File belum diamankan · periksa WA/kirim ulang",
     level: "error",
-    explanation: "Pemrosesan otomatis sudah berhenti untuk media ini; tidak masuk antrean retry aktif.",
-    action: job.r2_url ? job.has_suggestion ? "Buka media tersimpan dan periksa manual di Pending AI." : "Buka media tersimpan. Jika ini bukti bayar, lampirkan secara manual pada invoice yang benar." : "Periksa arsip WA. Jika ini bukti bayar, unggah ulang melalui Lampirkan Bukti pada invoice yang benar.",
+    explanation: job.can_manual_retry ? "Pemrosesan otomatis berhenti setelah gangguan provider/jaringan, tetapi file aman dan dapat dimasukkan kembali ke antrean oleh Owner/Admin." : "Pemrosesan otomatis sudah berhenti untuk media ini; tidak masuk antrean retry aktif.",
+    action: job.can_manual_retry ? "Klik Coba ulang AI. Worker akan memproses satu per satu tanpa melunasi invoice." : job.r2_url ? job.has_suggestion ? "Buka media tersimpan dan periksa manual di Pending AI." : "Buka media tersimpan. Jika ini bukti bayar, lampirkan secara manual pada invoice yang benar." : "Periksa arsip WA. Jika ini bukti bayar, unggah ulang melalui Lampirkan Bukti pada invoice yang benar.",
   };
   if (["RECEIVED", "STORED", "PROCESSING", "FAILED_RETRYABLE"].includes(job.status)) return {
     group: "retry",

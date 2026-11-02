@@ -2,6 +2,20 @@
 
 Status: **cutover teknis live di VPS, penerimaan bisnis masih terbatas**. `app.aclean.id` melayani web/API Coolify produksi; `sb.aclean.id` melayani Supabase VPS. Proyek web Vercel lama dipause dan scheduler VPS tunggal aktif. Proyek Supabase managed **jangan dihapus**: website perusahaan `aclean.id` terpisah masih menggunakannya. Uji transaksi nyata, seluruh peran, dan callback Fonnte nyata belum dinyatakan lulus.
 
+## Retry manual AI Vision 2 November 2026
+
+- Migrasi `226_manual_payment_media_retry.sql` diterapkan ke `aclean-live-db`
+  dalam transaksi setelah checksum lokal/VPS cocok dan backup produksi R2 hari
+  yang sama selesai sukses dengan pemeriksaan repository tanpa error.
+- Pascamigrasi: empat kolom retry manual tersedia, tabel audit baru memiliki RLS,
+  `anon` dan `authenticated` tidak dapat membaca tabel atau menjalankan RPC,
+  sedangkan `service_role` mendapat hak eksplisit. Health RPC tetap menghasilkan
+  array insiden yang valid. Tidak ada invoice/pembayaran yang diubah oleh migrasi.
+- Enam job historis memenuhi syarat server-side pada saat verifikasi. Tidak ada job
+  yang dibuka kembali otomatis; tabel audit masih kosong. Owner/Admin harus menekan
+  tombol eksplisit setelah build aplikasi yang sesuai sehat. Worker tetap memproses
+  satu media per invocation dan suggestion tidak pernah melunasi invoice otomatis.
+
 ## Perbaikan izin view Finance 29 Oktober sekitar 11.45 WIB
 
 - Audit baca-saja menemukan `public.finance_cash_events` di database VPS dapat dibaca oleh `anon` dan `authenticated`, bertentangan dengan `migrations/212_reviewed_payment_withholding.sql`. View memuat nama pelanggan dan angka pembayaran. Probe `HEAD` anonim melalui `sb.aclean.id/rest/v1/finance_cash_events?select=id&limit=1` merespons **200**; probe SQL anonim membuktikan ada setidaknya satu baris. Isi baris tidak diambil.

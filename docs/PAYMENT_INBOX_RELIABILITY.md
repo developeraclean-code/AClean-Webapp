@@ -177,6 +177,37 @@ Periksa arsip WA untuk memastikan apakah benar bukti bayar. Jika file memang
 hilang, unggah ulang melalui Lampirkan Bukti pada invoice yang benar. Jangan
 mengubah UNPAID hanya karena screenshot ada atau nomor cocok.
 
+### Retry manual AI Vision — rilis produksi 2 November 2026
+
+Migrasi **226** dan endpoint `payment-media-retry-request` menambahkan tindakan
+Owner/Admin dari panel yang sama. Tombol **Coba ulang AI** tersedia hanya jika
+server memastikan seluruh syarat berikut terpenuhi: job sudah berhenti
+`FAILED_PERMANENT`, file masih aman di R2, belum memiliki suggestion, kegagalan
+terakhir berasal dari autentikasi/kuota/rate-limit/5xx/timeout/jaringan provider,
+dan media belum melewati dua siklus retry manual. Format media tidak didukung,
+file hilang/kedaluwarsa, atau kegagalan validasi 4xx tetap harus ditinjau manual.
+
+- Klik per media atau **Retry yang layak** hanya mengubah job menjadi antrean
+  `FAILED_RETRYABLE`. AI tidak dijalankan di request browser; worker tetap
+  mengambil satu media per invocation.
+- RPC mengunci baris, menghapus lease lama, mereset hitungan percobaan worker,
+  dan mencatat aktor/waktu/error kategori ke tabel audit khusus. Klik ganda tidak
+  membuat dua antrean atau dua suggestion.
+- Endpoint menolak token server lama dan hanya menerima sesi Owner/Admin yang
+  dapat diatribusikan. Role dari body tidak dipercaya. RPC/tabel audit hanya
+  diberi grant ke `service_role`; browser tidak mendapat akses Data API langsung.
+- Retry tidak membuat pembayaran, tidak mengubah invoice, tidak mengirim WA, dan
+  tidak pernah mengklaim PAID. Hasil AI tetap masuk proses tinjauan yang sudah ada.
+- **Perbarui status** tetap baca-saja dan tidak menjadi tombol retry terselubung.
+
+Migrasi 226 diterapkan ke database VPS produksi sebelum release aplikasi. Verifikasi
+pascamigrasi membuktikan empat kolom antrean dan tabel audit tersedia, RLS aktif,
+`anon`/`authenticated` tidak memperoleh akses, dan hanya `service_role` dapat
+menjalankan RPC. Enam job historis memenuhi syarat retry pada saat pemeriksaan,
+tetapi tidak dibuka kembali otomatis dan audit retry tetap kosong. Deploy
+backend/frontend mengikuti commit yang memuat catatan ini; health build dan smoke
+Owner/Admin tetap harus diperiksa sesudah auto-deploy Coolify selesai.
+
 ## Membaca hasil retry (pembaruan tampilan Oktober 2026)
 
 Status pemicu dan status media dipisahkan. Heartbeat hijau hanya menunjukkan
@@ -214,7 +245,8 @@ Seluruh Pending AI saat pemeriksaan berjumlah 76. Ini snapshot audit, bukan
 angka default yang dipakai aplikasi. File arsip tetap perlu diperiksa manual;
 kode tampilan ini tidak memulihkan file 404 atau mengubah status media tersebut.
 
-Pembaruan tampilan hasil retry di atas tidak memerlukan migrasi baru. Penguatan
+Pembaruan tampilan hasil retry baca-saja di atas tidak memerlukan migrasi baru;
+aksi retry manual memerlukan migrasi 226. Penguatan
 penerimaan webhook berikutnya **memerlukan migrasi 214 sebelum backend dirilis**;
 lihat [WA_INGRESS_RELIABILITY.md](WA_INGRESS_RELIABILITY.md). Preview terisolasi:
 `/preview/payment-health/index.html` (data sintetis, tanpa akses API).
