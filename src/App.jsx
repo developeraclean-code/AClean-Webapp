@@ -5,6 +5,7 @@ import { supabase, supabaseReadTransport } from "./supabaseClient.js";
 import { normalizePhone, samePhone } from "./lib/phone.js";
 import { getLocalDate, getLocalISOString, isWorkingHours } from "./lib/dateTime.js";
 import { safeJsonParse } from "./lib/safeJson.js";
+import { normalizeReportArray } from "./lib/serviceReportPersistence.js";
 import { useDebounce } from "./lib/useDebounce.js";
 import { cachedFetch, invalidateCache, setFetchCacheScope } from "./lib/fetchCache.js";
 import { startAdaptivePolling } from "./lib/adaptivePolling.js";
@@ -2937,8 +2938,8 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
 
   const parseLaporanRow = (r) => ({
     ...r,
-    units: r.units_json ? safeJsonParse(r.units_json, `laporan_units_${r.id}`, r.units || []) : (r.units || []),
-    materials: r.materials_json ? safeJsonParse(r.materials_json, `laporan_materials_${r.id}`, r.materials_used || []) : (r.materials_used || []),
+    units: normalizeReportArray(r.units, r.units_json),
+    materials: normalizeReportArray(r.materials_used, r.materials_json),
     fotos: r.fotos || (r.foto_urls || []).map((url, i) => ({ id: i, label: `Foto ${i + 1}`, url })),
     editLog: safeArr(r.edit_log ?? r.editLog),
     rekomendasi: r.rekomendasi || "",

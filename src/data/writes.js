@@ -155,7 +155,7 @@ export const deleteInvoice = async (supabase, id, userName, reason = "MANUAL_DEL
 
 // ───── SERVICE REPORTS ─────
 export const updateServiceReport = (supabase, id, fields, userName) =>
-  supabase.from("service_reports").update({ ...fields, last_changed_by: userName }).eq("id", id);
+  supabase.from("service_reports").update({ ...fields, last_changed_by: userName }).eq("id", id).select("id").maybeSingle();
 
 export const submitServiceReportAtomic = (supabase, report, userName, mutationKey) =>
   supabase.rpc("submit_service_report_atomic", {

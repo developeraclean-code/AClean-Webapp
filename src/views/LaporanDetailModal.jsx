@@ -3,6 +3,7 @@ import { cs } from "../theme/cs.js";
 import { clientCleaningUnitRate } from "../lib/maintClientPrice.js";
 import { isHarianManagedItem } from "../lib/materialRecon.js";
 import { reportHasVrv, unpricedVrvUnits, vrvInvoiceUnitLabel } from "../lib/vrvBilling.js";
+import { reportArrayPersistenceFields, reportStatusAfterEdit, serviceReportUpdateError } from "../lib/serviceReportPersistence.js";
 
 // Detail/Edit Laporan modal — diekstrak dari App.jsx (Tahap 2 refactor, lazy-loaded).
 // Semua dependensi level-komponen dilewatkan via satu prop `ctx` (lihat App.jsx).
@@ -534,7 +535,7 @@ export default function LaporanDetailModal({ ctx }) {
                   : "Admin edited unit & material details";
                 const newLogs = [{ by: currentUser?.name || "?", at: now, field: serviceChanged ? "service+units+materials" : "units+materials", old: serviceChanged ? selectedLaporan.service : "previous", new: changeDesc }];
                 const allLogs = [...safeArr(selectedLaporan.editLog), ...newLogs];
-                const newStatus = selectedLaporan.status === "REVISION" ? "SUBMITTED" : selectedLaporan.status;
+                const newStatus = reportStatusAfterEdit(selectedLaporan.status);
 
                 // Recombine jasa + barang + material items
                 // Install service: pakai laporanInstallItems (form grid), bukan editMatItems
@@ -576,7 +577,8 @@ export default function LaporanDetailModal({ ctx }) {
                     return;
                   }
                 }
-                const updatePayload = { status: newStatus, service: newService, catatan_global: editLaporanForm.catatan_global || "", rekomendasi: editLaporanForm.rekomendasi || "", units_json: JSON.stringify(editLaporanForm.editUnits || []), total_units: (editLaporanForm.editUnits || []).length || selectedLaporan.total_units || 1, materials_json: JSON.stringify(combinedMats), edit_log: JSON.stringify(allLogs), ...(isSurveyEdit && { hasil_survey: editLaporanForm.hasil_survey || "", catatan_rekomendasi: editLaporanForm.catatan_rekomendasi || "" }) };
+                const reportArrays = reportArrayPersistenceFields(editLaporanForm.editUnits, combinedMats);
+                const updatePayload = { status: newStatus, service: newService, catatan_global: editLaporanForm.catatan_global || "", rekomendasi: editLaporanForm.rekomendasi || "", ...reportArrays, total_units: (editLaporanForm.editUnits || []).length || selectedLaporan.total_units || 1, edit_log: JSON.stringify(allLogs), ...(isSurveyEdit && { hasil_survey: editLaporanForm.hasil_survey || "", catatan_rekomendasi: editLaporanForm.catatan_rekomendasi || "" }) };
 
                 // ✨ NEW: Handle photo re-upload option
                 if (editPhotoMode && editLaporanFotos.length > 0) {
@@ -610,11 +612,12 @@ export default function LaporanDetailModal({ ctx }) {
                   }
                 }
                 // If editPhotoMode = false, skip foto_urls → keep old photos
-                const { error: elErr } = await updateServiceReport(supabase, selectedLaporan.id, updatePayload, auditUserName());
-                if (elErr) {
-                  console.warn("❌ update service_reports failed:", elErr.message, "payload:", updatePayload);
-                  addAgentLog("LAPORAN_UPDATE_ERROR", `Laporan ${selectedLaporan.job_id} update error: ${elErr.message.slice(0, 100)}`, "WARNING");
-                  showNotif(`❌ Laporan belum tersimpan: ${elErr.message}`);
+                const { data: savedReport, error: elErr } = await updateServiceReport(supabase, selectedLaporan.id, updatePayload, auditUserName());
+                const saveError = serviceReportUpdateError(savedReport, elErr);
+                if (saveError) {
+                  console.warn("❌ update service_reports failed:", saveError, "payload:", updatePayload);
+                  addAgentLog("LAPORAN_UPDATE_ERROR", `Laporan ${selectedLaporan.job_id} update error: ${saveError.slice(0, 100)}`, "WARNING");
+                  showNotif(`❌ Laporan belum tersimpan: ${saveError}`);
                   return;
                 }
 
@@ -624,7 +627,7 @@ export default function LaporanDetailModal({ ctx }) {
                 const _fotoSync = updatePayload.foto_urls
                   ? { foto_urls: updatePayload.foto_urls, fotos: updatePayload.foto_urls.map((url, i) => ({ id: i, label: `Foto ${i + 1}`, url })) }
                   : {};
-                setLaporanReports(prev => prev.map(r => r.id === selectedLaporan.id ? { ...r, service: newService, rekomendasi: editLaporanForm.rekomendasi, catatan_global: editLaporanForm.catatan_global, units: editLaporanForm.editUnits, units_json: JSON.stringify(editLaporanForm.editUnits || []), total_units: (editLaporanForm.editUnits || []).length || selectedLaporan.total_units || 1, materials: combinedMats, materials_json: JSON.stringify(combinedMats), status: newStatus, editLog: allLogs, ..._fotoSync } : r));
+                setLaporanReports(prev => prev.map(r => r.id === selectedLaporan.id ? { ...r, service: newService, rekomendasi: editLaporanForm.rekomendasi, catatan_global: editLaporanForm.catatan_global, ...reportArrays, materials: combinedMats, total_units: (editLaporanForm.editUnits || []).length || selectedLaporan.total_units || 1, status: newStatus, editLog: allLogs, ..._fotoSync } : r));
                 if (serviceChanged) selectedLaporan.service = newService;
 
                 // Rule: admin edit report boleh regen invoice HANYA selama invoice masih
