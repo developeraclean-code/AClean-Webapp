@@ -11,7 +11,7 @@ const photoMetadata = value => {
   try { const parsed = JSON.parse(value); return Array.isArray(parsed) ? parsed : []; }
   catch { return []; }
 };
-const expired = value => !value || !Number.isFinite(new Date(value).getTime()) || new Date(value) <= new Date();
+const expired = value => value != null && (!Number.isFinite(new Date(value).getTime()) || new Date(value) <= new Date());
 
 export function portalTokenKind(token) {
   if (/^[a-f0-9]{48}$/.test(token)) return "customer";
@@ -40,8 +40,9 @@ export async function authorizePortalMedia(token, key, { fetchImpl = fetch, env 
 
   try {
     if (kind === "customer") {
-      const [record] = await rows("customer_tokens", { token: `eq.${token}`, select: "phone,expires_at", limit: "1" });
+      const [record] = await rows("customer_tokens", { token: `eq.${token}`, select: "phone,expires_at,revoked_at", limit: "1" });
       if (!record) return { status: 404, allowed: false };
+      if (record.revoked_at) return { status: 404, allowed: false };
       if (expired(record.expires_at)) return { status: 401, allowed: false };
       const phones = buildPhoneVariants(record.phone);
       if (!phones.length) return { status: 404, allowed: false };

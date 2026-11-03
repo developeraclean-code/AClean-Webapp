@@ -77,7 +77,7 @@ export async function sendDispatchWA(order, {
                 `• Tim      : ${team || order.teknisi}\n` +
                 `• Lokasi   : ${order.address || "-"}\n\n` +
                 `🔗 Pantau status tim secara langsung:\n${link}\n\n` +
-                `Link aktif 30 hari sejak Pemesanan Anda. Detail Service, Pembayaran, Complain dan History Pengerjaan Di Lokasi. Jika Ada Pertanyaan? Balas pesan ini.\n— ${appName} Service`;
+                `Simpan link ini untuk melihat status, riwayat servis, dan invoice Anda. Jika ada pertanyaan, balas pesan ini.\n— ${appName} Service`;
             await sendWA(order.phone, portalMsg);
             // Tandai portal WA sudah dikirim agar cron morning-dispatch tidak kirim dobel
             await supabase.from("orders").update({ portal_wa_sent_at: new Date().toISOString() }).eq("id", order.id);

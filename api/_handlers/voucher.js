@@ -17,10 +17,11 @@ export async function customerVouchers(req, res) {
   const headers = { "apikey": SK, "Authorization": "Bearer " + SK, "Content-Type": "application/json" };
 
   // Validasi token, cek expired
-  const tokRes = await fetch(`${SU}/rest/v1/customer_tokens?token=eq.${encodeURIComponent(token)}&select=phone,expires_at`, { headers });
+  const tokRes = await fetch(`${SU}/rest/v1/customer_tokens?token=eq.${encodeURIComponent(token)}&select=phone,expires_at,revoked_at`, { headers });
   const tokRows = tokRes.ok ? await tokRes.json() : [];
   if (!tokRows.length) return res.status(404).json({ error: "Token tidak valid" });
-  if (new Date(tokRows[0].expires_at) < new Date()) return res.status(401).json({ error: "Link portal sudah expired", code: "TOKEN_EXPIRED" });
+  if (tokRows[0].revoked_at) return res.status(404).json({ error: "Token tidak valid" });
+  if (tokRows[0].expires_at !== null && (!Number.isFinite(Date.parse(tokRows[0].expires_at)) || Date.parse(tokRows[0].expires_at) <= Date.now())) return res.status(401).json({ error: "Link portal sudah expired", code: "TOKEN_EXPIRED" });
   const { phone } = tokRows[0];
 
   const variants = buildPhoneVariants(phone);

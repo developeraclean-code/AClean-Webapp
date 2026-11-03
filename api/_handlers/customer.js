@@ -18,13 +18,14 @@ export async function customerStatus(req, res) {
   const headers = { "apikey": SK, "Authorization": "Bearer " + SK, "Content-Type": "application/json" };
 
   // Lookup token — explicit select, jangan pakai select=*
-  const tokRes = await fetch(`${SU}/rest/v1/customer_tokens?token=eq.${encodeURIComponent(token)}&select=id,phone,customer_name,expires_at,created_at,last_used`, { headers });
+  const tokRes = await fetch(`${SU}/rest/v1/customer_tokens?token=eq.${encodeURIComponent(token)}&select=id,phone,customer_name,expires_at,revoked_at,created_at,last_used`, { headers });
   if (!tokRes.ok) return res.status(500).json({ error: "DB error" });
   const tokRows = await tokRes.json();
   if (!tokRows.length) return res.status(404).json({ error: "Token tidak ditemukan", code: "NOT_FOUND" });
 
   const tokRow = tokRows[0];
-  const isExpired = new Date(tokRow.expires_at) < new Date();
+  if (tokRow.revoked_at) return res.status(404).json({ error: "Token tidak ditemukan", code: "NOT_FOUND" });
+  const isExpired = tokRow.expires_at !== null && (!Number.isFinite(Date.parse(tokRow.expires_at)) || Date.parse(tokRow.expires_at) <= Date.now());
 
   // H-3 fix: block expired token di backend, jangan hanya informatif
   if (isExpired) return res.status(401).json({ error: "Link portal sudah expired. Minta link baru ke AClean.", code: "TOKEN_EXPIRED" });
@@ -105,10 +106,11 @@ export async function submitRating(req, res) {
   const headers = { "apikey": SK, "Authorization": "Bearer " + SK, "Content-Type": "application/json", "Prefer": "return=representation" };
 
   // Validasi token → dapat phone, cek expired
-  const tokRes = await fetch(`${SU}/rest/v1/customer_tokens?token=eq.${encodeURIComponent(token)}&select=phone,customer_name,expires_at`, { headers });
+  const tokRes = await fetch(`${SU}/rest/v1/customer_tokens?token=eq.${encodeURIComponent(token)}&select=phone,customer_name,expires_at,revoked_at`, { headers });
   const tokRows = tokRes.ok ? await tokRes.json() : [];
   if (!tokRows.length) return res.status(404).json({ error: "Token tidak valid" });
-  if (new Date(tokRows[0].expires_at) < new Date()) return res.status(401).json({ error: "Link portal sudah expired", code: "TOKEN_EXPIRED" });
+  if (tokRows[0].revoked_at) return res.status(404).json({ error: "Token tidak valid" });
+  if (tokRows[0].expires_at !== null && (!Number.isFinite(Date.parse(tokRows[0].expires_at)) || Date.parse(tokRows[0].expires_at) <= Date.now())) return res.status(401).json({ error: "Link portal sudah expired", code: "TOKEN_EXPIRED" });
   const { phone, customer_name } = tokRows[0];
 
   // Cek order_id dari body atau ambil job terakhir
@@ -200,42 +202,41 @@ export async function generateCustomerToken(req, res) {
     // Jika maintenance client tidak ditemukan / token nonaktif → fall through ke regular token
   }
 
-  // ── Token: REUSE yang masih aktif, atau buat baru. Expiry 30 hari (cover garansi).
-  // Reuse = link customer STABIL (tidak berubah tiap dispatch) → customer bisa cek
-  // status pakai link yang sama selama masa garansi 30 hari. Expiry selalu di-refresh
-  // ke 30 hari dari dispatch terakhir.
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(); // 30 hari
+  // Reuse the active token across invoices and dispatches. Legacy expired or
+  // revoked tokens rotate once; NULL expiry makes the replacement permanent.
+  const expiresAt = null;
   const custName = sanitizeName(b.customer_name || "");
 
-  const existRes = await fetch(`${SU}/rest/v1/customer_tokens?phone=eq.${encodeURIComponent(phone)}&select=token,expires_at&order=created_at.desc&limit=1`, { headers });
-  const existRows = existRes.ok ? await existRes.json() : [];
-  let token = existRows[0]?.token;
-  const tokExpired = existRows[0]?.expires_at && new Date(existRows[0].expires_at) < new Date();
-
-  if (token && !tokExpired) {
-    // Reuse token aktif — extend expiry + update nama/last_used (token TIDAK berubah)
-    await fetch(`${SU}/rest/v1/customer_tokens?phone=eq.${encodeURIComponent(phone)}`, {
-      method: "PATCH", headers,
-      body: JSON.stringify({ expires_at: expiresAt, customer_name: custName, last_used: new Date().toISOString() }),
+  const tokenUrl = `${SU}/rest/v1/customer_tokens?phone=eq.${encodeURIComponent(phone)}&select=id,token,expires_at,revoked_at&limit=1`;
+  const { randomBytes } = await import("crypto");
+  let token = null;
+  // Conditional update prevents two simultaneous invoice/cron requests from
+  // returning different links when rotating one expired or revoked token.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const existRes = await fetch(tokenUrl, { headers });
+    if (!existRes.ok) return res.status(503).json({ error: "Token belum dapat diperiksa" });
+    const [existing] = await existRes.json();
+    const expired = existing?.expires_at != null && (!Number.isFinite(Date.parse(existing.expires_at)) || Date.parse(existing.expires_at) <= Date.now());
+    const rotate = !existing?.token || Boolean(existing.revoked_at) || Boolean(expired);
+    const candidate = rotate ? randomBytes(24).toString("hex") : existing.token;
+    const values = rotate
+      ? { token: candidate, expires_at: expiresAt, revoked_at: null, customer_name: custName }
+      : { expires_at: expiresAt, customer_name: custName, last_used: new Date().toISOString() };
+    const writeUrl = existing
+      ? `${SU}/rest/v1/customer_tokens?id=eq.${encodeURIComponent(existing.id)}&token=eq.${encodeURIComponent(existing.token)}`
+      : `${SU}/rest/v1/customer_tokens`;
+    const written = await fetch(writeUrl, {
+      method: existing ? "PATCH" : "POST", headers,
+      body: JSON.stringify(existing ? values : { phone, ...values }),
     });
-  } else {
-    // Belum ada / sudah expired → buat token baru
-    const { randomBytes } = await import("crypto");
-    token = randomBytes(24).toString("hex");
-    if (existRows.length > 0) {
-      const upd = await fetch(`${SU}/rest/v1/customer_tokens?phone=eq.${encodeURIComponent(phone)}`, {
-        method: "PATCH", headers,
-        body: JSON.stringify({ token, expires_at: expiresAt, customer_name: custName }),
-      });
-      if (!upd.ok) { const e = await upd.json().catch(() => ({})); console.error("[generate-customer-token] update error:", JSON.stringify(e)); return res.status(500).json({ error: "Gagal simpan token" }); }
-    } else {
-      const insRes = await fetch(`${SU}/rest/v1/customer_tokens`, {
-        method: "POST", headers,
-        body: JSON.stringify({ phone, token, expires_at: expiresAt, customer_name: custName }),
-      });
-      if (!insRes.ok) { const e = await insRes.json().catch(() => ({})); console.error("[generate-customer-token] DB error:", JSON.stringify(e)); return res.status(500).json({ error: "Gagal simpan token" }); }
-    }
+    if (written.status === 409) continue; // A concurrent insert won the unique phone index.
+    if (!written.ok) return res.status(503).json({ error: "Token belum dapat disimpan" });
+    const rows = await written.json().catch(() => []);
+    if (existing && !rows.length) continue; // Another request rotated it first.
+    token = candidate;
+    break;
   }
+  if (!token) return res.status(503).json({ error: "Token sedang diperbarui, coba lagi" });
 
   // Domain status dipakai lagi hanya setelah host Coolify dan TLS siap.
   const portalReady = process.env.STATUS_PORTAL_REDIRECT_READY === "true";

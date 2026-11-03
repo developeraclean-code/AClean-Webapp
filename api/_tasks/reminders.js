@@ -1,11 +1,37 @@
 // api/_tasks/reminders.js — Task cron grup reminders (dipindah APA ADANYA dari
 // api/cron-reminder.js, pemecahan _tasks/ Jul 2026). Entry & jadwal tetap di cron-reminder.js.
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { dispatchWorkspaceMessage, deliverWorkspaceMessage } from "../_wa-workspace.js";
 import { validateAndNormalizePhone } from "../_validate.js";
 import { sb, sendWA, isCronJobEnabled, fmt, daysSince, log, OWNER_PHONE } from "./_shared.js";
 import { normalizePortalBaseUrl } from "../../src/lib/appUrl.js";
 const portalBaseUrl = value => normalizePortalBaseUrl(value, { ready: process.env.STATUS_PORTAL_REDIRECT_READY === "true" });
+
+async function ensureCustomerPortalToken(phone, customerName) {
+  phone = validateAndNormalizePhone(phone);
+  if (!phone) throw new Error("Nomor customer tidak valid untuk portal");
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { data, error } = await sb.from("customer_tokens")
+      .select("token,expires_at,revoked_at,customer_name").eq("phone", phone).limit(1);
+    if (error) throw error;
+    const existing = data?.[0];
+    const expired = existing?.expires_at != null && (!Number.isFinite(Date.parse(existing.expires_at)) || Date.parse(existing.expires_at) <= Date.now());
+    const rotate = !existing?.token || Boolean(existing.revoked_at) || Boolean(expired);
+    const token = rotate ? randomBytes(24).toString("hex") : existing.token;
+    if (existing && !rotate && existing.expires_at === null && existing.customer_name === customerName) return token;
+    const values = { token, expires_at: null, revoked_at: null, customer_name: customerName || "" };
+    const result = existing
+      ? await sb.from("customer_tokens").update(values).eq("phone", phone).eq("token", existing.token).select("token")
+      : await sb.from("customer_tokens").insert({ phone, ...values }).select("token");
+    if (result.error) {
+      if (result.error.code === "23505") continue; // Concurrent insert won.
+      throw result.error;
+    }
+    if (!result.data?.length) continue; // Concurrent rotation won.
+    return token;
+  }
+  throw new Error("Token portal sedang diperbarui, coba lagi");
+}
 
 // ══════════════════════════════════════════════════
 // TASK 1: Invoice Reminder (default)
@@ -224,21 +250,9 @@ export async function taskServisReminder() {
 
     const daysSince = Math.floor((Date.now() - new Date(c.last_service).getTime()) / 86400000);
 
-    // Get portal token
-    const { data: tokRows } = await sb.from("customer_tokens")
-      .select("token,expires_at").eq("phone", c.phone).limit(1);
-    let token = tokRows?.[0]?.token;
-    const tokExpired = tokRows?.[0]?.expires_at && new Date(tokRows[0].expires_at) < new Date();
-    if (!token || tokExpired) {
-      const { randomBytes } = await import("crypto");
-      token = randomBytes(24).toString("hex");
-      const expiresAt = new Date(Date.now() + 30*24*60*60*1000).toISOString();
-      if (tokRows?.length > 0) {
-        await sb.from("customer_tokens").update({ token, expires_at: expiresAt, customer_name: c.name }).eq("phone", c.phone);
-      } else {
-        await sb.from("customer_tokens").insert({ phone: c.phone, token, expires_at: expiresAt, customer_name: c.name });
-      }
-    }
+    let token;
+    try { token = await ensureCustomerPortalToken(c.phone, c.name); }
+    catch { skipped++; continue; }
 
     const lastServiceFmt = new Date(c.last_service).toLocaleDateString("id-ID",{day:"numeric",month:"long",year:"numeric"});
     const link = `${APP_URL}/status/${token}`;
@@ -345,10 +359,8 @@ export async function taskVoucherExpiryReminder() {
       : v.type === "free_unit" ? `${v.value} Unit Cuci Gratis`
       : "Voucher Servis";
 
-    // Get portal token untuk link
-    const { data: tokRows } = await sb.from("customer_tokens")
-      .select("token").eq("phone", v.phone).limit(1);
-    const token = tokRows?.[0]?.token;
+    // The voucher can still be sent if the optional portal link is unavailable.
+    const token = await ensureCustomerPortalToken(v.phone, v.customer_name).catch(() => null);
     const portalLine = token
       ? `\n\nLihat voucher di portal Anda:\n${APP_URL}/status/${token}`
       : "";
@@ -634,7 +646,7 @@ export async function taskMorningDispatch() {
   let sent = 0, failed = 0;
   for (const order of orders) {
     try {
-      // ── Tentukan link portal: B2B (permanen) atau reguler (30 hari) ──
+      // ── Tentukan link portal: B2B atau reguler (keduanya tetap) ──
       const mc = order.maintenance_client_id ? mcMap[order.maintenance_client_id] : null;
       const isMaintenance = !!(mc?.portal_token && mc.token_active);
 
@@ -643,21 +655,7 @@ export async function taskMorningDispatch() {
         link = `${APP_URL}/status/${mc.portal_token}`;
         isMaintenanceLink = true;
       } else {
-        // Generate / refresh customer token reguler
-        const { data: tokRows } = await sb.from("customer_tokens")
-          .select("token,expires_at").eq("phone", order.phone).limit(1);
-        let token = tokRows?.[0]?.token;
-        const tokExpired = tokRows?.[0]?.expires_at && new Date(tokRows[0].expires_at) < new Date();
-        if (!token || tokExpired) {
-          const { randomBytes } = await import("crypto");
-          token = randomBytes(24).toString("hex");
-          const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-          if (tokRows?.length > 0) {
-            await sb.from("customer_tokens").update({ token, expires_at: expiresAt, customer_name: order.customer }).eq("phone", order.phone);
-          } else {
-            await sb.from("customer_tokens").insert({ phone: order.phone, token, expires_at: expiresAt, customer_name: order.customer });
-          }
-        }
+        const token = await ensureCustomerPortalToken(order.phone, order.customer);
         link = `${APP_URL}/status/${token}`;
       }
 
@@ -683,7 +681,7 @@ export async function taskMorningDispatch() {
           `• Tim      : ${team}\n` +
           `• Lokasi   : ${order.address || "-"}\n\n` +
           `🔗 Pantau status tim secara langsung:\n${link}\n\n` +
-          `Link aktif 30 hari sejak Pemesanan Anda. Detail Service, Pembayaran, Complain dan History Pengerjaan Di Lokasi. Jika Ada Pertanyaan? Balas pesan ini.\n— AClean Service`;
+          `Simpan link ini untuk melihat status, riwayat servis, dan invoice Anda. Jika ada pertanyaan, balas pesan ini.\n— AClean Service`;
 
       const ok = await sendWA(order.phone, msg);
       if (ok) {
@@ -740,24 +738,9 @@ export async function taskRatingPrompt() {
   for (const o of orders) {
     if (ratedSet.has(o.id) || !o.phone) { skipped++; continue; }
 
-    // Get atau buat portal token
-    const { data: tokRows } = await sb.from("customer_tokens")
-      .select("token,expires_at").eq("phone", o.phone).limit(1);
-
-    let token = tokRows?.[0]?.token;
-    const tokExpired = tokRows?.[0]?.expires_at && new Date(tokRows[0].expires_at) < new Date();
-    // Buat token baru jika belum ada atau sudah expired
-    if (!token || tokExpired) {
-      const { randomBytes } = await import("crypto");
-      token = randomBytes(24).toString("hex");
-      const expiresAt = new Date(Date.now() + 30*24*60*60*1000).toISOString();
-      if (tokRows?.length > 0) {
-        // Update token yang expired
-        await sb.from("customer_tokens").update({ token, expires_at: expiresAt, customer_name: o.customer }).eq("phone", o.phone);
-      } else {
-        await sb.from("customer_tokens").insert({ phone: o.phone, token, expires_at: expiresAt, customer_name: o.customer });
-      }
-    }
+    let token;
+    try { token = await ensureCustomerPortalToken(o.phone, o.customer); }
+    catch { skipped++; continue; }
 
     const link = `${APP_URL}/status/${token}#rating`;
     const msg =

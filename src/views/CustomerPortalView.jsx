@@ -265,11 +265,9 @@ export default function CustomerPortalView({ token: tokenProp }) {
         {/* FOOTER */}
         <div style={s.footer}>
           <div style={s.footerLogo}><strong style={{ color: "#0369a1" }}>AClean</strong> · Jasa Servis AC Profesional</div>
-          {data.token_expires && (
-            <div style={s.footerExp}>
-              Link berlaku hingga {fmtDateShort(data.token_expires)}
-            </div>
-          )}
+          <div style={s.footerExp}>
+            {data.token_expires ? `Link berlaku hingga ${fmtDateShort(data.token_expires)}` : "Simpan tautan ini untuk melihat riwayat servis Anda"}
+          </div>
         </div>
       </div>
     </div>

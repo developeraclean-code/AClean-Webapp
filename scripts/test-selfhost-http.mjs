@@ -24,7 +24,7 @@ function getHost(pathname, host) {
 before(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), 'aclean-selfhost-'));
   await mkdir(path.join(root, 'assets'));
-  await writeFile(path.join(root, 'index.html'), '<h1>AClean</h1>');
+  await writeFile(path.join(root, 'index.html'), '<link rel="manifest" href="/manifest.webmanifest" /><h1>AClean</h1>');
   await writeFile(path.join(root, 'assets', 'app.js'), 'export default 1');
   server = createAppServer({
     staticDir: root,
@@ -124,6 +124,9 @@ test('domain status hanya membuka portal dan API terkait', async () => {
   const portal = await getHost(`/status/${'a'.repeat(48)}`, 'status.aclean.id');
   assert.equal(portal.status, 200);
   assert.equal(portal.headers['x-robots-tag'], 'noindex, nofollow');
+  assert.doesNotMatch(portal.body.toString(), /manifest\.webmanifest/);
+  const staff = await getHost('/', 'app.aclean.id');
+  assert.match(staff.body.toString(), /manifest\.webmanifest/);
   const photo = await getHost('/api/portal-foto?key=laporan%2FJOB-1%2Fa.jpg', 'status.aclean.id');
   assert.equal(photo.status, 200);
   assert.equal(JSON.parse(photo.body).route, 'portal-foto');

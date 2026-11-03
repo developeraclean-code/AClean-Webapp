@@ -3120,10 +3120,17 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
         method: "POST", headers: hdrs,
         body: JSON.stringify({ phone, customer_name: customerName || "" }),
       });
-      if (!r.ok) return null;
+      if (!r.ok) {
+        addAgentLog("PORTAL_LINK_FAILED", `Pembuatan tautan portal gagal (HTTP ${r.status})`, "ERROR");
+        return null;
+      }
       const { link } = await r.json();
+      if (!link) addAgentLog("PORTAL_LINK_FAILED", "API portal tidak mengembalikan tautan", "ERROR");
       return link || null;
-    } catch { return null; }
+    } catch {
+      addAgentLog("PORTAL_LINK_FAILED", "API portal tidak dapat dihubungi", "ERROR");
+      return null;
+    }
   };
 
   // Satu pintu pengiriman dokumen customer. Provider WA harus sukses lebih dulu;
@@ -3188,7 +3195,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
       attachment: invoiceUrl ? { url: invoiceUrl, filename: `Invoice-${inv.id}.pdf` } : {},
       mode: "reminder",
     });
-    if (result.ok) showNotif(`✅ Invoice terkirim ke ${inv.customer}`);
+    if (result.ok) showNotif(`✅ Invoice terkirim ke ${inv.customer}${appSettings?.customer_portal_enabled === "true" && !portalLink ? " — ⚠️ tautan portal gagal dibuat" : ""}`);
     else showNotif(`⚠️ Invoice gagal dikirim ke ${inv.customer}`);
   };
 
@@ -3320,7 +3327,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
       attachment: invoiceUrl ? { url: invoiceUrl, filename: `Invoice-${inv.id}.pdf` } : {},
       mode: "approval",
     });
-    if (result.ok) showNotif(`✅ Invoice ${inv.id} diapprove & terkirim ke WA ${inv.customer}${invoiceUrl ? " 📎" : ""}`);
+    if (result.ok) showNotif(`✅ Invoice ${inv.id} diapprove & terkirim ke WA ${inv.customer}${invoiceUrl ? " 📎" : ""}${appSettings?.customer_portal_enabled === "true" && !portalLink ? " — ⚠️ tautan portal gagal dibuat" : ""}`);
     else showNotif(`✅ Invoice ${inv.id} diapprove — WA gagal terkirim (cek koneksi Fonnte)`);
 
     setModalApproveInv(false); setPendingApproveInv(null);

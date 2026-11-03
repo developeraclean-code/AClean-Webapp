@@ -51,7 +51,7 @@ export async function mergedInvoiceWA(invList, {
       mode: "merged", batchInfo: ids.join(","),
     });
     if (result.ok) {
-      showNotif(`✅ ${sorted.length} invoice terkirim digabung ke ${customer}${uploaded ? " 📎" : ""}`);
+      showNotif(`✅ ${sorted.length} invoice terkirim digabung ke ${customer}${uploaded ? " 📎" : ""}${appSettings?.customer_portal_enabled === "true" && !portalLink ? " — ⚠️ tautan portal gagal dibuat" : ""}`);
       addAgentLog("INVOICE_MERGED_SEND",
         `${sorted.length} invoice digabung & dikirim ke ${customer} (${phone}) oleh ${currentUser?.name || "—"}: ${ids.join(", ")}`,
         "SUCCESS"

@@ -44,6 +44,21 @@ describe("portal media access", () => {
     expect(fixture.requests).toHaveLength(1);
   });
 
+  it("token customer tanpa kedaluwarsa boleh membaca foto sendiri, tetapi token yang dicabut ditolak", async () => {
+    const active = apiFixture({
+      customer_tokens: [{ phone: "628123456789", expires_at: null, revoked_at: null }],
+      orders: [{ id: "JOB-1" }],
+      service_reports: [{ foto_urls: [ownKey], fotos: [] }],
+    });
+    expect(await authorizePortalMedia(customerToken, ownKey, { ...active, env }))
+      .toEqual({ status: 200, allowed: true });
+
+    const revoked = apiFixture({ customer_tokens: [{ phone: "628123456789", expires_at: null, revoked_at: "2026-11-03T00:00:00Z" }] });
+    expect(await authorizePortalMedia(customerToken, ownKey, { ...revoked, env }))
+      .toEqual({ status: 404, allowed: false });
+    expect(revoked.requests).toHaveLength(1);
+  });
+
   it("metadata foto JSON lama tetap diperiksa dan tanggal kedaluwarsa rusak ditolak", async () => {
     const fixture = apiFixture({
       customer_tokens: [{ phone: "628123456789", expires_at: "2099-01-01T00:00:00Z" }],

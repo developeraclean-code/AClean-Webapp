@@ -3,7 +3,7 @@
 import http from 'node:http';
 import path from 'node:path';
 import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 
 const MIME = {
   '.css': 'text/css; charset=utf-8',
@@ -78,7 +78,7 @@ async function parseBody(req, maxBodyBytes) {
   throw error;
 }
 
-async function serveStatic(req, res, pathname, staticDir) {
+async function serveStatic(req, res, pathname, staticDir, { portalHost = false } = {}) {
   if (req.method !== 'GET' && req.method !== 'HEAD') return res.status(405).end();
   let decoded;
   try { decoded = decodeURIComponent(pathname); }
@@ -102,6 +102,14 @@ async function serveStatic(req, res, pathname, staticDir) {
   res.setHeader('Content-Type', MIME[path.extname(file).toLowerCase()] || 'application/octet-stream');
   res.setHeader('Cache-Control', file.includes(`${path.sep}assets${path.sep}`)
     ? 'public, max-age=31536000, immutable' : 'no-cache, must-revalidate');
+  // The staff PWA manifest points to "/". Portal visitors must not request it:
+  // the portal host redirects that route to the company site, which creates a
+  // cross-origin manifest error in browsers and an unnecessary network trip.
+  if (portalHost && file === path.join(staticDir, 'index.html')) {
+    const html = (await readFile(file, 'utf8')).replace('<link rel="manifest" href="/manifest.webmanifest" />', '');
+    res.setHeader('Content-Length', Buffer.byteLength(html));
+    return req.method === 'HEAD' ? res.end() : res.end(html);
+  }
   res.setHeader('Content-Length', info.size);
   if (req.method === 'HEAD') return res.end();
   const stream = createReadStream(file);
@@ -138,7 +146,7 @@ export function createAppServer({ unifiedHandler, directHandlers = {}, staticDir
     }
     if (pathname === '/api') return res.status(404).json({ error: 'API route tidak ditemukan' });
     if (!pathname.startsWith('/api/')) {
-      return serveStatic(req, res, pathname, resolvedStaticDir);
+      return serveStatic(req, res, pathname, resolvedStaticDir, { portalHost: host === 'status.aclean.id' });
     }
     const route = pathname.slice('/api/'.length);
     if (!/^[a-z][a-z0-9-]*$/.test(route)) return res.status(404).json({ error: 'API route tidak ditemukan' });

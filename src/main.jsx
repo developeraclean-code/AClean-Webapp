@@ -1,7 +1,5 @@
 import React, { lazy, Suspense, useRef, useState } from 'react'
 import ReactDOM from 'react-dom/client'
-import App from './App.jsx'
-import EmergencyModeView from './views/EmergencyModeView.jsx'
 import { getEmergencyVaultMeta } from './lib/emergencyVault.js'
 import * as Sentry from "@sentry/react"
 
@@ -41,6 +39,8 @@ window.addEventListener('vite:preloadError', (event) => {
   window.location.reload();
 });
 
+const App = lazy(() => import('./App.jsx'))
+const EmergencyModeView = lazy(() => import('./views/EmergencyModeView.jsx'))
 const CustomerPortalView = lazy(() => import('./views/CustomerPortalView.jsx'))
 const MaintenancePortalView = lazy(() => import('./views/MaintenancePortalView.jsx'))
 const ProjectPortalView = lazy(() => import('./views/ProjectPortalView.jsx'))
@@ -130,9 +130,11 @@ function Root() {
         </div>
       </div>
     }>
-      {emergencyActive
-        ? <EmergencyModeView initialAccess={emergencyInitialAccess.current} onInitialAccessConsumed={() => { emergencyInitialAccess.current = null }} onClosed={() => setEmergencyActive(false)} />
-        : <App onEmergencyActivated={access => { emergencyInitialAccess.current = access; setEmergencyActive(true) }} />}
+      <Suspense fallback={portalFallback}>
+        {emergencyActive
+          ? <EmergencyModeView initialAccess={emergencyInitialAccess.current} onInitialAccessConsumed={() => { emergencyInitialAccess.current = null }} onClosed={() => setEmergencyActive(false)} />
+          : <App onEmergencyActivated={access => { emergencyInitialAccess.current = access; setEmergencyActive(true) }} />}
+      </Suspense>
     </Sentry.ErrorBoundary>
   )
 }
