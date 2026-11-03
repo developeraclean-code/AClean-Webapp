@@ -16,7 +16,7 @@ import {
 } from "../lib/fieldReportWorkflow.js";
 import {
   enqueueFieldPhoto, listQueuedFieldPhotos, queuedPhotoActionId, removeFieldAction,
-  fieldUserKey,
+  fieldUserKey, isRetryableUploadStatus,
 } from "../lib/fieldOfflineQueue.js";
 
 // Debounce lokal (disalin dari App.jsx module-level) — untuk search material
@@ -290,20 +290,12 @@ export default function LaporanTeknisiModal({
 
   // Helper retry upload foto — dipakai Step 2 (per unit) & Step 3 (umum)
   const retryFoto = async (f) => {
-    if (typeof navigator !== "undefined" && navigator.onLine === false) {
-      if (f.data_url && f.hash) await enqueueFieldPhoto({
-        jobId: laporanModal?.id, id: f.id, hash: f.hash, dataUrl: f.data_url,
-        label: f.label, unitNo: f.unit_no, role: currentUser?.role, userKey: currentFieldUserKey,
-      });
-      showNotif("📡 Masih offline — foto tetap aman di antrean perangkat.");
-      return;
-    }
     setLaporanFotos(prev => prev.map(x => x.id === f.id ? { ...x, uploading: true, errMsg: "" } : x));
     showNotif("⏳ Retry upload...");
     const reportId = laporanModal?.id || "tmp";
     const result = await uploadWithRetry(async () => {
       const r = await _apiFetch("/api/upload-foto", {
-        method: "POST", headers: await _apiHeaders(),
+        method: "POST",
         body: JSON.stringify({
           base64: f.data_url,
           filename: f.hash ? `${f.hash}.jpg` : `retry_${f.id}.jpg`,
@@ -314,13 +306,27 @@ export default function LaporanTeknisiModal({
       const d = await r.json().catch(() => ({}));
       return { ...d, success: Boolean(r.ok && d.success && d.url), status: r.status };
     }, { shouldRetry: result => !result?.status || result.status === 408 || result.status === 429 || result.status >= 500 });
+    let queued = Boolean(f.queued);
+    let errorMessage = result.error || "Upload gagal";
+    if (!result.success && isRetryableUploadStatus(result.status)) {
+      try {
+        await enqueueFieldPhoto({
+          jobId: reportId, id: f.id, hash: f.hash, dataUrl: f.data_url,
+          label: f.label, unitNo: f.unit_no, role: currentUser?.role, userKey: currentFieldUserKey,
+        });
+        queued = true;
+        onFieldQueued?.();
+      } catch (queueError) {
+        if (!queued) errorMessage = queueError?.message || errorMessage;
+      }
+    }
     setLaporanFotos(prev => prev.map(x => x.id === f.id
-      ? { ...x, uploading: false, queued: false, url: result.success ? result.url : null, errMsg: result.success ? "" : result.error, uploadAttempts: result.attempts } : x));
+      ? { ...x, uploading: false, queued: result.success ? false : queued, url: result.success ? result.url : null, errMsg: result.success ? "" : errorMessage, uploadAttempts: result.attempts } : x));
     if (result.success && f.hash) {
       removeFieldAction(queuedPhotoActionId(laporanModal?.id, f.hash, currentFieldUserKey)).catch(() => {});
     }
     if (!result.success) recordFieldPhotoUploadFailure(laporanModal?.id, 1, currentFieldUserKey);
-    showNotif(result.success ? `✅ Upload berhasil (${result.attempts} percobaan)` : "❌ Masih gagal: " + result.error);
+    showNotif(result.success ? `✅ Upload berhasil (${result.attempts} percobaan)` : "⚠️ Foto belum terkirim: " + errorMessage);
   };
 
   const removeFoto = (f) => {
@@ -583,7 +589,7 @@ export default function LaporanTeknisiModal({
                   const up = laporanFotos.filter(f => f.uploading).length;
                   if (up > 0) { showNotif(`⏳ Tunggu ${up} foto selesai upload dulu`); return; }
                   const queued = laporanFotos.filter(f => f.queued && !f.url).length;
-                  if (queued > 0 || navigator.onLine === false) { await onQueueOfflineReport?.(); return; }
+                  if (queued > 0) { await onQueueOfflineReport?.(); return; }
                   const fail = laporanFotos.filter(f => !f.uploading && !f.url && f.errMsg).length;
                   if (fail > 0 && !window.confirm(`⚠️ ${fail} foto GAGAL upload dan tidak akan masuk laporan.\n\nLanjut submit? (Batal untuk retry / hapus dulu)`)) return;
                   submitLaporan();
@@ -1753,7 +1759,8 @@ export default function LaporanTeknisiModal({
                     {laporanFotos.length > 0 && (() => {
                       const uploadingN = laporanFotos.filter(f => f.uploading).length;
                       const savedN = laporanFotos.filter(f => f.url).length;
-                      const failedN = laporanFotos.filter(f => !f.uploading && !f.url && f.errMsg).length;
+                      const queuedN = laporanFotos.filter(f => !f.uploading && !f.url && f.queued).length;
+                      const failedN = laporanFotos.filter(f => !f.uploading && !f.url && !f.queued).length;
                       return (
                         <span style={{ marginLeft: 8, fontSize: 11 }}>
                           {uploadingN > 0 && (
@@ -1762,9 +1769,8 @@ export default function LaporanTeknisiModal({
                           {savedN > 0 && (
                             <span style={{ color: cs.green, marginLeft: uploadingN > 0 ? 6 : 0 }}>☁️ {savedN} tersimpan</span>
                           )}
-                          {failedN > 0 && (
-                            <span style={{ color: cs.yellow, marginLeft: 6 }}>⚠️ {failedN} gagal — retry / hapus</span>
-                          )}
+                          {queuedN > 0 && <span style={{ color: cs.yellow, marginLeft: 6 }}>📡 {queuedN} antre</span>}
+                          {failedN > 0 && <span style={{ color: cs.red, marginLeft: 6 }}>⚠️ {failedN} gagal</span>}
                         </span>
                       );
                     })()}
@@ -1806,6 +1812,9 @@ export default function LaporanTeknisiModal({
                           style={{ position: "absolute", top: 4, left: 4, background: "#ef4444cc", border: "none", color: "#fff", borderRadius: 99, width: 18, height: 18, cursor: "pointer", fontSize: 10, lineHeight: 1, padding: 0 }}>×</button>
                         <input value={f.label} onChange={e => setLaporanFotos(p => p.map(x => x.id === f.id ? { ...x, label: e.target.value } : x))}
                           placeholder="Label foto..." style={{ marginTop: 3, width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 5, padding: "4px 6px", color: cs.text, fontSize: 10, outline: "none", boxSizing: "border-box" }} />
+                        {!f.uploading && !f.url && f.errMsg && (
+                          <div role="status" style={{ color: cs.yellow, fontSize: 10, lineHeight: 1.3, marginTop: 3, overflowWrap: "anywhere" }}>{f.queued ? "Antre: " : "Gagal: "}{f.errMsg}</div>
+                        )}
                         {laporanUnits.length > 1 && (
                           <select value={f.unit_no || ""} onChange={e => setLaporanFotos(p => p.map(x => x.id === f.id ? { ...x, unit_no: e.target.value ? parseInt(e.target.value) : null } : x))}
                             style={{ marginTop: 3, width: "100%", background: cs.card, border: "1px solid " + (f.unit_no ? "#0ea5e966" : cs.border), borderRadius: 5, padding: "4px 6px", color: f.unit_no ? "#0ea5e9" : cs.muted, fontSize: 10, outline: "none", boxSizing: "border-box" }}>

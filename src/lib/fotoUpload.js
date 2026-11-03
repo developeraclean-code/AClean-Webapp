@@ -7,7 +7,7 @@ import {
 } from "./fieldOfflineQueue.js";
 
 export async function handleFotoUpload(e, {
-  _apiFetch, _apiHeaders, appSettings, compressImg, currentUser, fotoTargetUnitRef,
+  _apiFetch, appSettings, compressImg, currentUser, fotoTargetUnitRef,
   fotoUnitInputRef, laporanFotos, laporanModal, setLaporanFotos, showNotif, onFieldQueued,
 } = {}) {
     // Maintenance = 50 foto, reguler = 20 (sumber tunggal di laporanConstants).
@@ -123,33 +123,10 @@ export async function handleFotoUpload(e, {
     // Push placeholders ke state supaya user lihat progress langsung
     setLaporanFotos(prev => [...prev, ...placeholders]);
 
-    // Saat offline, simpan foto terkompresi ke IndexedDB. Worker akan upload saat
-    // koneksi kembali; draft teks tetap ringan karena base64 tidak masuk localStorage.
-    if (typeof navigator !== "undefined" && navigator.onLine === false) {
-      const queued = await Promise.allSettled(placeholders.map(ph => enqueueFieldPhoto({
-          jobId: reportId, id: ph.id, hash: ph.hash, dataUrl: ph.data_url,
-          label: ph.label, unitNo: ph.unit_no, role: currentUser?.role, userKey,
-        })));
-      const queuedIds = new Set(queued.flatMap((result, index) => result.status === "fulfilled" ? [placeholders[index].id] : []));
-      const firstError = queued.find(result => result.status === "rejected")?.reason;
-      setLaporanFotos(prev => prev.map(foto => placeholders.some(ph => ph.id === foto.id)
-        ? queuedIds.has(foto.id)
-          ? { ...foto, uploading: false, queued: true, errMsg: "Menunggu koneksi" }
-          : { ...foto, uploading: false, queued: false, errMsg: firstError?.message || "Tidak dapat disimpan offline" }
-        : foto));
-      if (queuedIds.size > 0) onFieldQueued?.();
-      showNotif(queuedIds.size === placeholders.length
-        ? `📡 ${placeholders.length} foto disimpan offline dan akan dikirim otomatis.`
-        : `⚠️ ${queuedIds.size}/${placeholders.length} foto tersimpan. ${firstError?.message || "Storage perangkat tidak cukup."}`);
-      e.target.value = "";
-      return;
-    }
-
     const uploadOne = async (ph) => {
       const result = await uploadWithRetry(async () => {
         const r = await _apiFetch("/api/upload-foto", {
           method: "POST",
-          headers: await _apiHeaders(),
           body: JSON.stringify({
             base64: ph.data_url,
             filename: `${ph.hash}.jpg`,
@@ -175,7 +152,7 @@ export async function handleFotoUpload(e, {
             label: ph.label, unitNo: ph.unit_no, role: currentUser?.role, userKey,
           });
           onFieldQueued?.();
-          return { id: ph.id, url: null, queued: true, errMsg: "Menunggu koneksi", uploading: false, uploadAttempts: result.attempts };
+          return { id: ph.id, url: null, queued: true, errMsg: result.error || "Server belum dapat dihubungi", uploading: false, uploadAttempts: result.attempts };
         } catch (queueError) {
           return { id: ph.id, url: null, queued: false, errMsg: queueError?.message || "Storage perangkat tidak cukup", uploading: false, uploadAttempts: result.attempts };
         }
@@ -200,9 +177,9 @@ export async function handleFotoUpload(e, {
     if (savedCount === placeholders.length) {
       showNotif(`✅ ${savedCount} foto tersimpan di R2!`);
     } else if (savedCount > 0) {
-      showNotif(`⚠️ ${savedCount} berhasil, ${failedCount} gagal. Tap ⏳ untuk retry.`);
+      showNotif(`⚠️ ${savedCount} berhasil, ${failedCount} belum terkirim. Cek pesan di bawah foto lalu coba lagi.`);
     } else {
-      showNotif(`❌ Upload gagal. Cek koneksi & coba lagi.`);
+      showNotif(`⚠️ Foto belum terkirim. Cek pesan di bawah foto lalu coba lagi.`);
     }
     e.target.value = "";
 }

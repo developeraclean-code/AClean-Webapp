@@ -912,7 +912,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
   }, [ordersData.length]);
 
   const triggerFieldSync = async () => {
-    if (!currentFieldUserKey || fieldSyncLock.current || (typeof navigator !== "undefined" && navigator.onLine === false)) return;
+    if (!currentFieldUserKey || fieldSyncLock.current) return;
     fieldSyncLock.current = true;
     setFieldSyncing(true);
     setFieldSyncError("");
@@ -935,7 +935,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
         },
         syncPhoto: async row => {
           const response = await _apiFetch("/api/upload-foto", {
-            method: "POST", headers: await _apiHeaders(),
+            method: "POST",
             body: JSON.stringify({
               base64: row.dataUrl, filename: `${row.hash}.jpg`, reportId: row.jobId,
               mimeType: "image/jpeg", hash: row.hash, currentUserRole: row.role || currentUser?.role || "Unknown",
@@ -1010,7 +1010,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
     const onOnline = () => triggerFieldSync();
     window.addEventListener("online", onOnline);
     const timer = setInterval(() => {
-      if (navigator.onLine !== false) triggerFieldSync();
+      triggerFieldSync();
     }, 30_000);
     return () => { window.removeEventListener("online", onOnline); clearInterval(timer); };
     // Worker lifecycle tunggal; callback membaca state sesi aktif dari render awal
@@ -4436,7 +4436,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
   // ── Laporan modal handlers (diekstrak dari IIFE render — Tahap 1 refactor) ──
   // Logika murni level-komponen; incompleteUnits dihitung ulang di dalam submitLaporan.
   // Wrapper (Fase 3, pola ctx): handleFotoUpload pindah ke lib/fotoUpload.
-  const handleFotoUpload = (e) => handleFotoUploadLib(e, { _apiFetch, _apiHeaders, appSettings, compressImg, currentUser, fotoTargetUnitRef, fotoUnitInputRef, laporanFotos, laporanModal, setLaporanFotos, showNotif, onFieldQueued: refreshFieldQueueCount });
+  const handleFotoUpload = (e) => handleFotoUploadLib(e, { _apiFetch, appSettings, compressImg, currentUser, fotoTargetUnitRef, fotoUnitInputRef, laporanFotos, laporanModal, setLaporanFotos, showNotif, onFieldQueued: refreshFieldQueueCount });
 
   const queueCurrentReportForOffline = async () => {
     if (!laporanModal?.id || !currentFieldUserKey) {
