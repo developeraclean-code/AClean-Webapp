@@ -11,9 +11,11 @@
 ## Rilis
 
 1. Periksa tabel produksi `customer_tokens`: tidak ada dua baris dengan `phone` yang sama. Pada pemeriksaan baca-saja 3 November, ada 677 baris dan 677 nomor unik setelah normalisasi. Ulangi pemeriksaan tepat sebelum migrasi.
-2. Ambil backup database yang dapat dipulihkan, kemudian terapkan migrasi `227_permanent_customer_portal_token.sql` sebelum deploy kode. Migrasi menambahkan indeks unik per nomor dan kolom `revoked_at`; kode baru memerlukan keduanya.
-3. Deploy staging dan verifikasi: token aktif tetap sama, token lama yang kedaluwarsa diganti sekali, portal dan foto dapat dibuka, dan URL dimulai dengan `status.aclean.id/status/`.
-4. Deploy production, lalu uji alur invoice WhatsApp, portal, foto, dan fallback saat tautan gagal. Jangan menyimpulkan tes lokal sebagai bukti produksi.
+2. Backup R2 terenkripsi produksi `8cbb1bd2` berhasil dibuat dan `restic check` lulus pada 3 November 07.47 WIB. Migrasi `227_permanent_customer_portal_token.sql` sudah diterapkan pada database produksi dan staging: kolom `revoked_at` serta indeks unik per nomor tersedia.
+3. Sebelum kode baru aktif, 310 token produksi yang masih berlaku dikembalikan **sementara** ke `expires_at = now() + interval '30 days'` agar kode lama tetap dapat membacanya. Nilai token tidak diubah; 367 token yang sudah kedaluwarsa tetap kedaluwarsa. Jangan menganggap token produksi sudah permanen pada fase ini.
+4. Deploy staging commit `e334572` dan verifikasi: portal, foto, serta URL `status.aclean.id/status/`. Smoke test dengan token dummy pada 3 November menunjukkan image sehat, halaman portal dan pembatasan host berfungsi; uji foto/customer nyata belum dilakukan.
+5. Deploy kode baru ke production dan verifikasi health, portal, serta foto. **Baru setelah kode production baru aktif**, terapkan migrasi `228_finalize_permanent_customer_portal_token.sql` untuk membuat seluruh token yang masih berlaku permanen. Migrasi 228 tidak menghidupkan token yang telah kedaluwarsa atau dicabut. Verifikasi jumlah token aktif `expires_at IS NULL` dan bahwa token tidak berubah.
+6. Uji alur invoice WhatsApp, portal, foto, dan fallback saat tautan gagal. Jangan menyimpulkan tes lokal sebagai bukti produksi.
 
 ## Pencabutan darurat
 
