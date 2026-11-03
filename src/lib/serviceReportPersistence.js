@@ -1,6 +1,5 @@
 // service_reports keeps legacy TEXT JSON columns alongside canonical JSONB.
-// Writes must keep both representations aligned; reads prefer JSONB because it
-// is the column selected by report list/detail queries.
+// Keep legacy fields until all readers use JSONB; writes keep both in sync.
 export function normalizeReportArray(primary, legacy, fallback = []) {
   if (Array.isArray(primary)) return primary;
   if (typeof primary === "string") {
