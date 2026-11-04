@@ -15,6 +15,8 @@ import { fotoProxyUrl } from "../lib/fotoUrl.js";
 import { confirmInvoiceWaProof } from "../lib/invoiceWaProof.js";
 import { confirmInvoiceWaWithholding, invoiceCashReceived, paymentWithholdingReview } from "../lib/paymentWithholding.js";
 import PaymentWithholdingReview from "../components/PaymentWithholdingReview.jsx";
+import { combinedTransferReview, confirmInvoiceWaCombinedTransfer } from "../lib/paymentCombinedTransfer.js";
+import PaymentCombinedTransferReview from "../components/PaymentCombinedTransferReview.jsx";
 import InvoiceSettlementReview from "../components/InvoiceSettlementReview.jsx";
 import { getLocalDate as localDateWIB } from "../lib/dateTime.js";
 import { groupInvoiceBalance, groupPaymentProof } from "../lib/groupPayment.js";
@@ -157,24 +159,29 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
   const alreadyPaid = inv.status === "PAID";
   const hasAmountDifference = tab === "wa" && !alreadyPaid && Number(selSugg?.amount) > 0
     && Number(selSugg.amount) !== Number(inv.total) - Number(inv.paid_amount || 0);
+  const hasExcessTransfer = hasAmountDifference && Number(selSugg.amount) > Number(inv.total) - Number(inv.paid_amount || 0);
   const withholdingReview = paymentWithholdingReview(inv, selSugg);
+  const combinedReview = combinedTransferReview(inv, selSugg);
   const canConfirm = !!chosenUrl && reviewAcknowledged && !busy
-    && (!hasAmountDifference || (withholdingReview.eligible && acceptWithholding && withholdingNote.trim().length >= 10 && !!transferDate));
+    && (!hasAmountDifference || ((hasExcessTransfer ? combinedReview.eligible : withholdingReview.eligible)
+      && acceptWithholding && withholdingNote.trim().length >= 10 && !!transferDate));
 
   const confirm = async () => {
     if (confirmationRef.current.busy) return;
     if (!chosenUrl) { showNotif("⚠️ Pilih/isi bukti bayar dulu"); return; }
     if (needsManualReview && !reviewAcknowledged) { showNotif("⚠️ Buka dan periksa file sebelum melampirkan bukti yang belum dikenali AI"); return; }
-    if (!canConfirm) { showNotif("⚠️ Periksa selisih, konfirmasi potongan PPh dan isi catatan terlebih dahulu"); return; }
+    if (!canConfirm) { showNotif("⚠️ Periksa selisih, konfirmasi alokasi/potongan dan isi catatan terlebih dahulu"); return; }
     confirmationRef.current.busy = true;
     setBusy(true);
     let committed = false;
     try {
       if (tab === "wa") {
         confirmationRef.current.id ||= crypto.randomUUID();
-        const result = hasAmountDifference
-          ? await confirmInvoiceWaWithholding({ supabase, invoice: inv, suggestion: selSugg, requestId: confirmationRef.current.id,
-            paidAt: transferDate, note: withholdingNote, reviewAcknowledged: acceptWithholding && (!needsManualReview || reviewAcknowledged) })
+        const reviewedArgs = { supabase, invoice: inv, suggestion: selSugg, requestId: confirmationRef.current.id,
+          paidAt: transferDate, note: withholdingNote, reviewAcknowledged: acceptWithholding && reviewAcknowledged };
+        const result = hasExcessTransfer
+          ? await confirmInvoiceWaCombinedTransfer(reviewedArgs)
+          : hasAmountDifference ? await confirmInvoiceWaWithholding(reviewedArgs)
           : await confirmInvoiceWaProof({ supabase, invoiceId: inv.id, suggestion: selSugg,
             requestId: confirmationRef.current.id, reviewAcknowledged,
             actorName: auditUserName ? auditUserName() : currentUser?.name });
@@ -193,7 +200,9 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
           }
         }
         addAgentLog?.("INVOICE_WA_PROOF_VERIFIED", `Bukti ${selSugg.id} diverifikasi atomik untuk ${inv.id}`, "SUCCESS");
-        showNotif(result.attach_only ? "✅ Bukti dilampirkan; pembayaran tidak dicatat ulang" : hasAmountDifference
+        showNotif(result.attach_only ? "✅ Bukti dilampirkan; pembayaran tidak dicatat ulang" : hasExcessTransfer
+          ? `✅ ${inv.id} lunas: ${fmt(result.payment.amount)} dialokasikan; ${fmt(result.payment.combined_transfer_detail.unallocated_amount)} belum dialokasikan ke invoice ini`
+          : hasAmountDifference
           ? `✅ ${inv.id} lunas: kas ${fmt(result.payment.amount)} + potongan PPh estimasi ${fmt(result.payment.withheld_amount)}`
           : `✅ Bukti diverifikasi & ${inv.id} lunas`);
         onClose();
@@ -312,7 +321,10 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
               Bukti ini perlu ditinjau manual{selSugg?.status === "DISMISSED" ? " karena pernah diabaikan" : ""}.
               {selSugg?.raw_message && <span style={{ display: "block", marginTop: 4 }}>{selSugg.raw_message}</span>}
             </div>}
-            {hasAmountDifference && <PaymentWithholdingReview invoice={inv} suggestion={selSugg}
+            {hasExcessTransfer && <PaymentCombinedTransferReview invoice={inv} suggestion={selSugg}
+              accepted={acceptWithholding} onAccepted={setAcceptWithholding} note={withholdingNote} onNote={setWithholdingNote}
+              paidAt={transferDate} onPaidAt={setTransferDate} disabled={busy} fmt={fmt} />}
+            {hasAmountDifference && !hasExcessTransfer && <PaymentWithholdingReview invoice={inv} suggestion={selSugg}
               accepted={acceptWithholding} onAccepted={setAcceptWithholding} note={withholdingNote} onNote={setWithholdingNote}
               paidAt={transferDate} onPaidAt={setTransferDate} disabled={busy} fmt={fmt} />}
           </div>
@@ -345,7 +357,7 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
           <button onClick={onClose} style={{ flex: 1, background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "11px", borderRadius: 10, cursor: "pointer", fontWeight: 600 }}>Batal</button>
           <button onClick={confirm} disabled={!canConfirm}
             style={{ flex: 2, background: canConfirm ? cs.green : cs.surface, border: "none", color: canConfirm ? "#fff" : cs.muted, padding: "11px", borderRadius: 10, cursor: canConfirm ? "pointer" : "not-allowed", fontWeight: 800, fontSize: 13 }}>
-            {busy ? "Proses…" : alreadyPaid ? "✅ Simpan Bukti" : hasAmountDifference ? "✅ Catat Transfer + Potongan & Lunas" : "✅ Simpan Bukti & Tandai Lunas"}
+            {busy ? "Proses…" : alreadyPaid ? "✅ Simpan Bukti" : hasExcessTransfer ? `✅ Alokasikan ${fmt(combinedReview.remaining)} & Lunas` : hasAmountDifference ? "✅ Catat Transfer + Potongan & Lunas" : "✅ Simpan Bukti & Tandai Lunas"}
           </button>
         </div>
       </div>
@@ -471,7 +483,7 @@ const openPayPanel = async (inv) => {
   setPayLoading(true);
   try {
     const { data, error } = await supabase.from("invoice_payments")
-      .select("id,amount,withheld_amount,withholding_detail,method,notes,paid_at,recorded_by_name,created_at")
+      .select("id,amount,withheld_amount,withholding_detail,combined_transfer_detail,method,notes,paid_at,recorded_by_name,created_at")
       .eq("invoice_id", inv.id)
       .order("paid_at", { ascending: true });
     if (error) throw error;
@@ -519,7 +531,7 @@ const savePayment = async (inv) => {
     setInvoicesData(prev => prev.map(i => i.id === inv.id ? { ...i, ...savedInvoice } : i));
     // Refresh history
     const { data } = await supabase.from("invoice_payments")
-      .select("id,amount,withheld_amount,withholding_detail,method,notes,paid_at,recorded_by_name,created_at")
+      .select("id,amount,withheld_amount,withholding_detail,combined_transfer_detail,method,notes,paid_at,recorded_by_name,created_at")
       .eq("invoice_id", inv.id).order("paid_at", { ascending: true });
     setPayHistory(data || []);
     setPayForm({ amount: "", method: "transfer", notes: "", paid_at: getLocalDate() });
@@ -2311,6 +2323,9 @@ return (
                       <div>
                         <div style={{ fontWeight: 600, color: cs.text }}>{fmt(p.amount)}{Number(p.withheld_amount) > 0 ? " kas" : ""}</div>
                         {Number(p.withheld_amount) > 0 && <div style={{ color: cs.yellow }}>+ {fmt(p.withheld_amount)} potongan PPh estimasi · nonkas · belum bukti potong</div>}
+                        {p.combined_transfer_detail?.kind === 'AC_UNIT_PLUS_INSTALLATION' && <div style={{ color: cs.yellow }}>
+                          Bukti transfer {fmt(p.combined_transfer_detail.transfer_amount)} · dialokasikan {fmt(p.combined_transfer_detail.allocated_amount)} · kelebihan belum dialokasikan {fmt(p.combined_transfer_detail.unallocated_amount)}
+                        </div>}
                         <div style={{ fontSize: 10, color: cs.muted }}>{p.paid_at} · {p.method} {p.notes ? "· " + p.notes : ""}</div>
                       </div>
                       <div style={{ fontSize: 10, color: cs.muted }}>{p.recorded_by_name || "—"}</div>

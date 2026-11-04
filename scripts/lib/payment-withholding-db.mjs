@@ -4,7 +4,7 @@ import { rawInvoice, sampleProof } from '../../preview/payment-withholding/fixtu
 const sqlFile = name => readFileSync(new URL('../../migrations/' + name, import.meta.url), 'utf8');
 export const snapshotMigration = () => sqlFile('213_payment_withholding_snapshot.sql');
 
-export async function createPaymentWithholdingDb({ applyWithholding = true, applySnapshotFix = true, database = null } = {}) {
+export async function createPaymentWithholdingDb({ applyWithholding = true, applySnapshotFix = true, applyCombinedTransfer = false, database = null } = {}) {
   let db = database;
   if (!db) { const { PGlite } = await import(process.env.WA_PGLITE_MODULE || '@electric-sql/pglite'); db = new PGlite(); }
   try {
@@ -29,6 +29,7 @@ export async function createPaymentWithholdingDb({ applyWithholding = true, appl
     await db.exec(sqlFile('206_invoice_merge_payment_review.sql'));
     if (applyWithholding) await db.exec(sqlFile('212_reviewed_payment_withholding.sql'));
     if (applySnapshotFix && applyWithholding) await db.exec(snapshotMigration());
+    if (applyCombinedTransfer) await db.exec(sqlFile('229_reviewed_combined_transfer.sql'));
     return db;
   } catch (error) { await db.close(); throw error; }
 }
