@@ -32,8 +32,11 @@ Contoh sintetis berdasarkan skenario PT ONE 3:
 
 - Tarif/perhitungan/PDF PPh gross-up 2% yang sudah ada tidak diubah. Invoice
   gross-up ditolak untuk potongan tambahan: `total` sudah merupakan transfer neto.
-- Di luar rentang: tidak boleh dipaksa PAID. Gunakan Catat Pembayaran sebagai
-  cicilan, atau periksa/koreksi rincian invoice lebih dulu.
+- Transfer yang **lebih kecil** di luar rentang tidak boleh dipaksa PAID lewat
+  jalur PPh. Gunakan Catat Pembayaran sebagai cicilan, atau periksa/koreksi
+  rincian invoice lebih dulu. Transfer yang **lebih besar** karena pembayaran
+  AC unit + instalasi memiliki jalur peninjauan terpisah di
+  [PAYMENT_COMBINED_TRANSFER.md](PAYMENT_COMBINED_TRANSFER.md).
 - RPC baru memeriksa role, snapshot invoice, bukti dan pemakaian sebelumnya;
   perubahan ledger, kredit, invoice, job, dan status bukti dilakukan atomik.
 - UUID permintaan tetap untuk retry. Payload berbeda atau media yang telah
