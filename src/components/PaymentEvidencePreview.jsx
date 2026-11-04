@@ -3,7 +3,7 @@ import { fotoUrl } from "../lib/fotoUrl.js";
 import { cs } from "../theme/cs.js";
 
 // Kegagalan jaringan saat memuat bukti bukan bukti bahwa objek R2 terhapus.
-export default function PaymentEvidencePreview({ url }) {
+export default function PaymentEvidencePreview({ url, onLoadError }) {
   const [failedUrl, setFailedUrl] = useState(null);
   const src = fotoUrl(url);
   if (!src) return null;
@@ -13,6 +13,6 @@ export default function PaymentEvidencePreview({ url }) {
   return <a href={src} target="_blank" rel="noreferrer" style={{ flexShrink: 0 }}>
     {/\.pdf(?:[?#]|$)/i.test(src)
       ? <div style={{ width: 160, height: 200, display: "grid", placeItems: "center", color: cs.text, background: cs.surface, borderRadius: 8 }}>📄 Buka PDF</div>
-      : <img src={src} alt="Bukti pembayaran WA" loading="lazy" onError={() => setFailedUrl(src)} style={{ width: 160, height: 200, objectFit: "cover", borderRadius: 8, border: "1px solid " + cs.border }} />}
+      : <img src={src} alt="Bukti pembayaran WA" loading="lazy" onError={() => { setFailedUrl(src); onLoadError?.(); }} style={{ width: 160, height: 200, objectFit: "cover", borderRadius: 8, border: "1px solid " + cs.border }} />}
   </a>;
 }

@@ -4,6 +4,20 @@ Penerimaan webhook dan pengamanan media ke R2 tidak bergantung pada jam kerja,
 panel WA Monitor, auto-reply ARA, maupun tab browser admin. Suggestion adalah
 kandidat pemeriksaan, **bukan** konfirmasi uang masuk atau pelunasan otomatis.
 
+## Pembaruan tampilan tinjau bukti — 4 November 2026 (lokal, belum dirilis)
+
+- Daftar utama bukti PENDING di Pending AI, kartu invoice, dan modal Lampirkan Bukti
+  menampilkan bukti 90 hari terakhir. Bukti yang lebih lama atau tanpa tanggal tetap
+  tersedia lewat Arsip; pemisahan ini tidak menghapus baris DB atau objek R2.
+- Jika thumbnail gagal dimuat, UI memberi tanda foto tidak tersedia dan menonaktifkan
+  tindakan menautkan bukti itu sampai foto dapat diverifikasi. Status pembayaran tidak
+  berubah karena kegagalan gambar.
+- Setelah verifikasi WA berhasil, kandidat terpilih langsung dikeluarkan dari state
+  layar dan inbox dimuat ulang. RPC tetap menjadi sumber kebenaran untuk menautkan
+  suggestion dan mencatat pembayaran secara atomik.
+- Perubahan ini belum diterapkan ke production. Tidak mengubah kebijakan retensi R2:
+  bukti PENDING lama tetap dipertahankan dan dapat dicari di Arsip.
+
 ## Penyaring bukti pembayaran (21 Oktober 2026)
 
 - Pending AI khusus gambar bukti pembayaran berhasil; nominal boleh belum terbaca

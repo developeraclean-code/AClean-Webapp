@@ -10,7 +10,7 @@ import { useAppContext } from "../context/AppContext.js";
 import { categoryOf, LINE_CATEGORY, selectedPph23Rate } from "../lib/invoicing.js";
 import { downloadCsv } from "../lib/exportUtils.js";
 import { acknowledgePaidInvoicesWithoutProofAtomic } from "../data/writes.js";
-import { dismissedProofsForInvoice, invoiceProofAction, pendingProofsForInvoice } from "../lib/paymentEvidence.js";
+import { dismissedProofsForInvoice, invoiceProofAction, partitionPaymentProofCandidates, pendingProofsForInvoice } from "../lib/paymentEvidence.js";
 import { fotoProxyUrl } from "../lib/fotoUrl.js";
 import { confirmInvoiceWaProof } from "../lib/invoiceWaProof.js";
 import { confirmInvoiceWaWithholding, invoiceCashReceived, paymentWithholdingReview } from "../lib/paymentWithholding.js";
@@ -36,6 +36,8 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
   const [loadingSuggs, setLoadingSuggs] = useState(true);
   const [search, setSearch] = useState("");
   const [visibleLimit, setVisibleLimit] = useState(60);
+  const [showArchived, setShowArchived] = useState(false);
+  const [failedImageUrls, setFailedImageUrls] = useState(() => new Set());
   const [selSugg, setSelSugg] = useState(null);
   const [reviewAcknowledged, setReviewAcknowledged] = useState(false);
   const [acceptWithholding, setAcceptWithholding] = useState(false);
@@ -83,6 +85,7 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
           if (inv.initialSuggestionId) {
             const selected = rows.find(row => row.id === inv.initialSuggestionId) || null;
             setSelSugg(selected);
+            if (selected && partitionPaymentProofCandidates([selected]).archived.length > 0) setShowArchived(true);
             const parsed = selected?.transfer_date ? new Date(selected.transfer_date) : null;
             if (parsed && Number.isFinite(parsed.getTime())) setTransferDate(new Date(parsed.getTime() + 7 * 3600000).toISOString().slice(0, 10));
           }
@@ -98,10 +101,12 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
     return () => { cancelled = true; };
   }, [supabase, inv.id, inv.initialSuggestionId, showNotif]);
 
+  const proofBuckets = useMemo(() => partitionPaymentProofCandidates(suggs), [suggs]);
+  const candidatePool = showArchived ? proofBuckets.archived : proofBuckets.recent;
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const qd = q.replace(/\D/g, "");
-    let list = suggs;
+    let list = candidatePool;
     if (q) list = list.filter(s =>
       (s.sender_name || "").toLowerCase().includes(q) ||
       (qd && (s.phone || "").replace(/\D/g, "").includes(qd)) ||
@@ -113,7 +118,7 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
       const bm = invTail && (b.phone || "").replace(/\D/g, "").endsWith(invTail) ? 0 : 1;
       return am - bm;
     });
-  }, [suggs, search, invTail]);
+  }, [candidatePool, search, invTail]);
 
   // Kompres + downscale dulu (canvas) — bukti HP bisa 3-8MB; tanpa ini bisa kena
   // limit body Vercel ~4.5MB → upload gagal. 1600px @ q0.72 cukup jelas baca nominal.
@@ -162,9 +167,27 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
   const hasExcessTransfer = hasAmountDifference && Number(selSugg.amount) > Number(inv.total) - Number(inv.paid_amount || 0);
   const withholdingReview = paymentWithholdingReview(inv, selSugg);
   const combinedReview = combinedTransferReview(inv, selSugg);
-  const canConfirm = !!chosenUrl && reviewAcknowledged && !busy
+  const selectedImageSrc = tab === "wa" && selSugg ? fotoSrc(selSugg.image_url) : null;
+  const selectedImageUnavailable = tab === "wa" && !!selSugg
+    && (!selectedImageSrc || failedImageUrls.has(selectedImageSrc));
+  const canConfirm = !!chosenUrl && !selectedImageUnavailable && reviewAcknowledged && !busy
     && (!hasAmountDifference || ((hasExcessTransfer ? combinedReview.eligible : withholdingReview.eligible)
       && acceptWithholding && withholdingNote.trim().length >= 10 && !!transferDate));
+
+  const selectSuggestion = (suggestion) => {
+    const imageSrc = fotoSrc(suggestion.image_url);
+    if (confirmationRef.current.busy || !imageSrc || failedImageUrls.has(imageSrc)) return;
+    const isSelected = selSugg?.id === suggestion.id;
+    confirmationRef.current.id = null;
+    setSelSugg(isSelected ? null : suggestion);
+    setReviewAcknowledged(false);
+    setAcceptWithholding(false);
+    setWithholdingNote("");
+    const parsed = suggestion.transfer_date ? new Date(suggestion.transfer_date) : null;
+    setTransferDate(parsed && Number.isFinite(parsed.getTime())
+      ? new Date(parsed.getTime() + 7 * 3600000).toISOString().slice(0, 10)
+      : localDateWIB());
+  };
 
   const confirm = async () => {
     if (confirmationRef.current.busy) return;
@@ -273,6 +296,19 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
 
         {tab === "wa" && (
           <div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
+              <span style={{ color: cs.muted, fontSize: 10 }}>
+                {showArchived ? "Arsip bukti lebih dari 90 hari atau tanpa tanggal." : "Bukti 90 hari terakhir."}
+              </span>
+              {proofBuckets.archived.length > 0 && <button type="button" onClick={() => {
+                setShowArchived(value => !value);
+                setVisibleLimit(60);
+                setSelSugg(null);
+                setReviewAcknowledged(false);
+              }} style={{ padding: "5px 8px", color: cs.accent, background: cs.card, border: "1px solid " + cs.border, borderRadius: 7, cursor: "pointer", fontSize: 10 }}>
+                {showArchived ? "Kembali ke bukti terbaru" : `Lihat arsip (${proofBuckets.archived.length})`}
+              </button>}
+            </div>
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Cari nama / nomor / jumlah…"
               style={{ width: "100%", background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 12px", color: cs.text, fontSize: 12, outline: "none", boxSizing: "border-box", marginBottom: 8 }} />
             {loadingSuggs ? (
@@ -284,18 +320,23 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
                 {filtered.slice(0, visibleLimit).map(s => {
                   const sel = selSugg?.id === s.id;
                   const sameNo = invTail && (s.phone || "").replace(/\D/g, "").endsWith(invTail);
+                  const imageSrc = fotoSrc(s.image_url);
+                  const imageUnavailable = !imageSrc || failedImageUrls.has(imageSrc);
                   return (
-                    <div key={s.id} onClick={() => {
-                      if (confirmationRef.current.busy) return;
-                      confirmationRef.current.id = null; setSelSugg(sel ? null : s); setReviewAcknowledged(false); setAcceptWithholding(false); setWithholdingNote("");
-                      const parsed = s.transfer_date ? new Date(s.transfer_date) : null;
-                      setTransferDate(parsed && Number.isFinite(parsed.getTime()) ? new Date(parsed.getTime() + 7 * 3600000).toISOString().slice(0, 10) : localDateWIB());
+                    <div key={s.id} onClick={() => selectSuggestion(s)} onKeyDown={event => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        selectSuggestion(s);
+                      }
                     }}
-                      style={{ border: "2px solid " + (sel ? cs.green : cs.border), borderRadius: 10, overflow: "hidden", cursor: "pointer", background: cs.card }}>
+                      role="button" aria-disabled={imageUnavailable} tabIndex={imageUnavailable ? -1 : 0}
+                      style={{ border: "2px solid " + (sel ? cs.green : cs.border), borderRadius: 10, overflow: "hidden", cursor: imageUnavailable ? "not-allowed" : "pointer", background: cs.card, opacity: imageUnavailable ? 0.78 : 1 }}>
                       <div style={{ position: "relative", width: "100%", height: 100, background: "#0008" }}>
-                        {s.image_url?.toLowerCase().includes(".pdf")
+                        {imageUnavailable
+                          ? <div role="status" style={{ height: "100%", display: "grid", placeItems: "center", padding: 8, boxSizing: "border-box", textAlign: "center", color: cs.yellow, fontSize: 10 }}>Foto tidak tersedia · tidak dapat dipilih</div>
+                          : s.image_url?.toLowerCase().includes(".pdf")
                           ? <div style={{ padding: 22, color: cs.text, textAlign: "center" }}>📄 PDF · buka file</div>
-                          : <img src={fotoSrc(s.image_url)} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
+                          : <img src={imageSrc} alt="" loading="lazy" onError={() => setFailedImageUrls(prev => new Set(prev).add(imageSrc))} style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
                         {sel && <div style={{ position: "absolute", top: 4, right: 4, background: cs.green, color: "#fff", borderRadius: 99, width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12 }}>✓</div>}
                         {sameNo && <div style={{ position: "absolute", top: 4, left: 4, background: "#22c55e", color: "#fff", fontSize: 8, padding: "1px 5px", borderRadius: 99, fontWeight: 700 }}>nomor sama</div>}
                       </div>
@@ -315,6 +356,9 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
               style={{ marginTop: 8, padding: "7px 10px", color: cs.accent, background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, cursor: "pointer" }}>
               Tampilkan lebih banyak ({filtered.length - visibleLimit} tersisa)
             </button>}
+            {selectedImageUnavailable && <div role="alert" style={{ marginTop: 8, color: cs.yellow, fontSize: 11 }}>
+              Foto bukti tidak bisa dimuat. Bukti ini tidak dapat dipakai untuk pelunasan; verifikasi dari WA asli atau unggah bukti yang tersedia.
+            </div>}
             {selSugg && <a href={fotoSrc(selSugg.image_url)} target="_blank" rel="noreferrer" style={{ display: "inline-block", marginTop: 8, color: cs.accent, fontSize: 11 }}>Buka file terpilih ↗</a>}
             {needsManualReview && <div style={{ display: "block", marginTop: 8, color: cs.yellow, fontSize: 11 }}>
               {!samePhone(selSugg?.phone, inv.phone) && <div style={{ marginBottom: 6 }}>Nomor pengirim {selSugg?.phone || "—"} berbeda dari customer {inv.phone || "—"}. Pastikan pengirim finance membayar untuk {inv.customer}; nomor customer tidak akan diganti.</div>}
@@ -702,7 +746,12 @@ const [invoiceSubTab, setInvoiceSubTab] = useState("invoice"); // "invoice" | "q
 
 // Pending AI: semua saran pembayaran yang menunggu validasi, termasuk foto
 // WA yang sudah punya kandidat invoice dan entri lama tanpa media_job_id.
-const pendingPayments = useMemo(() => (paymentSuggestions || []).filter(row => row.status === "PENDING" && row.validation_status === "PENDING" && isPaymentInboxSuggestion(row)), [paymentSuggestions]);
+const allPendingPayments = useMemo(() => (paymentSuggestions || []).filter(row => row.status === "PENDING" && row.validation_status === "PENDING" && isPaymentInboxSuggestion(row)), [paymentSuggestions]);
+const pendingPaymentBuckets = useMemo(() => partitionPaymentProofCandidates(allPendingPayments), [allPendingPayments]);
+const pendingPayments = pendingPaymentBuckets.recent;
+const [showPendingArchive, setShowPendingArchive] = useState(false);
+const [unavailableProofs, setUnavailableProofs] = useState(() => new Map());
+const pendingPaymentList = showPendingArchive ? pendingPaymentBuckets.archived : pendingPayments;
 const [dismissedPayments, setDismissedPayments] = useState([]);
 const pendingPaymentCount = pendingPayments.length;
 const [loadingPendingPayments, setLoadingPendingPayments] = useState(false);
@@ -1131,19 +1180,27 @@ return (
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <div style={{ fontSize: 12, color: cs.muted }}>
-            Hanya bukti pembayaran. Foto AC, ulasan, invoice/tagihan dan media yang belum teridentifikasi tidak masuk daftar ini. Gangguan pembacaan AI tersedia di Rincian media.
+            {showPendingArchive
+              ? "Arsip bukti lebih dari 90 hari atau tanpa tanggal. Baris dan foto tidak dihapus."
+              : "Bukti 90 hari terakhir. Foto AC, ulasan, invoice/tagihan dan media yang belum teridentifikasi tidak masuk daftar ini. Gangguan pembacaan AI tersedia di Rincian media."}
           </div>
-          <button onClick={loadPendingPayments} disabled={loadingPendingPayments}
-            style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, borderRadius: 8, padding: "6px 12px", fontSize: 12, cursor: "pointer" }}>
-            {loadingPendingPayments ? "Loading..." : "↻ Refresh"}
-          </button>
+          <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+            {pendingPaymentBuckets.archived.length > 0 && <button type="button" onClick={() => setShowPendingArchive(value => !value)}
+              style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.accent, borderRadius: 8, padding: "6px 10px", fontSize: 11, cursor: "pointer" }}>
+              {showPendingArchive ? "Bukti terbaru" : `Arsip (${pendingPaymentBuckets.archived.length})`}
+            </button>}
+            <button onClick={loadPendingPayments} disabled={loadingPendingPayments}
+              style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, borderRadius: 8, padding: "6px 12px", fontSize: 12, cursor: "pointer" }}>
+              {loadingPendingPayments ? "Loading..." : "↻ Refresh"}
+            </button>
+          </div>
         </div>
-        {pendingPayments.length === 0 && !loadingPendingPayments && (
+        {pendingPaymentList.length === 0 && !loadingPendingPayments && (
           <div style={{ padding: 24, background: cs.card, borderRadius: 10, textAlign: "center", color: cs.muted, fontSize: 13 }}>
-            Tidak ada bukti TF menunggu validasi.
+            {showPendingArchive ? "Tidak ada bukti lama di arsip." : "Tidak ada bukti TF terbaru yang menunggu validasi."}
           </div>
         )}
-        {pendingPayments.map(sug => {
+        {pendingPaymentList.map(sug => {
           const ai = sug.ai_extractions || {};
           const candidates = findInvoiceCandidates(sug);
           const isTextOnly = sug.source === "text" && !sug.image_url;
@@ -1151,9 +1208,10 @@ return (
           const conf = isManualRecovery ? "REVIEW" : (sug.ai_extractions?.confidence || "?");
           const confColor = conf === "HIGH" ? "#10b981" : conf === "MEDIUM" ? "#f59e0b" : "#ef4444";
           const selected = pendingSelectedInvoice[sug.id] || sug.invoice_id || null;
+          const proofUnavailable = unavailableProofs.get(sug.id) === sug.image_url;
           return (
             <div key={sug.id} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: 14, display: "flex", gap: 14 }}>
-              {sug.image_url && <PaymentEvidencePreview url={sug.image_url} />}
+              {sug.image_url && <PaymentEvidencePreview url={sug.image_url} onLoadError={() => setUnavailableProofs(prev => new Map(prev).set(sug.id, sug.image_url))} />}
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                   <span style={{ fontSize: 18, fontWeight: 800, color: cs.text }}>{sug.amount ? fmt(sug.amount) : "Nominal belum terbaca"}</span>
@@ -1225,8 +1283,9 @@ return (
                 </div>
 
                 <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                  <button disabled={pendingPaymentBusy === sug.id || !selected || isTextOnly} onClick={() => handleLinkPayment(sug)}
-                    style={{ background: "#10b98122", border: "1px solid #10b98155", color: "#10b981", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: selected && !isTextOnly ? "pointer" : "not-allowed", opacity: selected && !isTextOnly ? 1 : 0.5 }}>
+                  <button disabled={pendingPaymentBusy === sug.id || !selected || isTextOnly || proofUnavailable} onClick={() => handleLinkPayment(sug)}
+                    title={proofUnavailable ? "Foto tidak tersedia; verifikasi dari WA asli atau unggah ulang sebelum menautkan" : undefined}
+                    style={{ background: "#10b98122", border: "1px solid #10b98155", color: "#10b981", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: selected && !isTextOnly && !proofUnavailable ? "pointer" : "not-allowed", opacity: selected && !isTextOnly && !proofUnavailable ? 1 : 0.5 }}>
                     ✓ Periksa & Link Pembayaran
                   </button>
                   <button disabled={pendingPaymentBusy === sug.id} onClick={() => handleRejectPayment(sug)}
@@ -1750,6 +1809,7 @@ return (
         const atCapacity = mergeMode && !isSelected && mergeSelectedIds.length >= MERGE_MAX;
         const pendingProofs = INVOICE_UNPAID_STATUSES.includes(inv.status) ? pendingProofsForInvoice(pendingPayments, inv) : [];
         const pendingProof = pendingProofs[0];
+        const pendingProofUnavailable = pendingProof && unavailableProofs.get(pendingProof.id) === pendingProof.image_url;
         const dismissedProof = !pendingProof && INVOICE_UNPAID_STATUSES.includes(inv.status)
           ? dismissedProofsForInvoice(dismissedPayments, inv)[0] : null;
         return (
@@ -1884,17 +1944,22 @@ return (
           </div>
           {pendingProof && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", background: cs.yellow + "14", border: "1px solid " + cs.yellow + "55", borderRadius: 9, padding: "8px 10px", marginBottom: 12 }}>
-              <a href={fotoSrc(pendingProof.image_url)} target="_blank" rel="noreferrer" title="Buka bukti WA untuk diperiksa">
-                <img src={fotoSrc(pendingProof.image_url)} alt="Bukti WA menunggu verifikasi" loading="lazy" style={{ width: 42, height: 42, objectFit: "cover", borderRadius: 6 }} />
-              </a>
+              {pendingProofUnavailable
+                ? <span role="status" style={{ width: 42, height: 42, display: "grid", placeItems: "center", textAlign: "center", color: cs.yellow, fontSize: 8 }}>Foto tidak tersedia</span>
+                : <a href={fotoSrc(pendingProof.image_url)} target="_blank" rel="noreferrer" title="Buka bukti WA untuk diperiksa">
+                    <img src={fotoSrc(pendingProof.image_url)} alt="Bukti WA menunggu verifikasi" loading="lazy"
+                      onError={() => setUnavailableProofs(prev => new Map(prev).set(pendingProof.id, pendingProof.image_url))}
+                      style={{ width: 42, height: 42, objectFit: "cover", borderRadius: 6 }} />
+                  </a>}
               <div style={{ flex: 1, minWidth: 160, fontSize: 11, color: cs.text }}>
                 <b style={{ color: cs.yellow }}>Bukti WA menunggu verifikasi{pendingProofs.length > 1 ? ` (${pendingProofs.length})` : ""}</b>
                 <div>{pendingProof.amount ? fmt(Number(pendingProof.amount)) : "Nominal belum terbaca"} · {pendingProof.sender_name || inv.customer} · {(pendingProof.created_at || "").slice(0, 10)}</div>
               </div>
-              <button onClick={() => currentUser?.role === "Owner"
+              <button disabled={pendingProofUnavailable} onClick={() => currentUser?.role === "Owner"
                 ? setAttachProofInv({ ...inv, initialSuggestionId: pendingProof.id })
                 : setInvoiceSubTab("pending_ai")}
-                style={{ background: cs.yellow + "22", color: cs.yellow, border: "1px solid " + cs.yellow + "66", borderRadius: 7, padding: "6px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                title={pendingProofUnavailable ? "Foto tidak tersedia; verifikasi dari WA asli atau unggah ulang sebelum menautkan" : undefined}
+                style={{ background: cs.yellow + "22", color: cs.yellow, border: "1px solid " + cs.yellow + "66", borderRadius: 7, padding: "6px 10px", fontSize: 11, fontWeight: 700, cursor: pendingProofUnavailable ? "not-allowed" : "pointer", opacity: pendingProofUnavailable ? 0.5 : 1 }}>
                 Periksa & lampirkan
               </button>
             </div>

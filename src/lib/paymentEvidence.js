@@ -1,5 +1,23 @@
 import { samePhone } from "./phone.js";
 
+export const PAYMENT_PROOF_ACTIVE_DAYS = 90;
+
+// Keep old unresolved proof rows available for deliberate review, but separate
+// them from the active queue so stale object URLs do not load by default.
+export function partitionPaymentProofCandidates(suggestions, {
+  now = Date.now(), activeDays = PAYMENT_PROOF_ACTIVE_DAYS,
+} = {}) {
+  const cutoff = now - activeDays * 86400000;
+  const recent = [];
+  const archived = [];
+  for (const suggestion of suggestions || []) {
+    const createdAt = Date.parse(suggestion?.created_at || "");
+    if (Number.isFinite(createdAt) && createdAt >= cutoff) recent.push(suggestion);
+    else archived.push(suggestion);
+  }
+  return { recent, archived };
+}
+
 // A pending proof is a review candidate, never a payment confirmation.
 // An explicit invoice link takes priority. Without one, require both the
 // customer phone and exact invoice amount to avoid suggesting another job's
