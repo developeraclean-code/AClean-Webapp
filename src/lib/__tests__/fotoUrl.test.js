@@ -59,6 +59,11 @@ describe("fotoUrl — dengan CDN aktif", () => {
     expect(fotoUrl("laporan/JOB-1/a.jpg")).toBe("/api/foto?key=laporan%2FJOB-1%2Fa.jpg");
     expect(fotoUrl("https://cdn.example.test/invoices/a.pdf")).toBe("/api/foto?key=invoices%2Fa.pdf");
   });
+  it("domain pengembangan r2.dev lewat proxy juga pada host lain", () => {
+    setCdn("https://pub-e159.r2.dev");
+    expect(fotoUrl("https://pub-e159.r2.dev/wa-inbox/2026-11/bukti.jpg"))
+      .toBe("/api/foto?key=wa-inbox%2F2026-11%2Fbukti.jpg");
+  });
   it("gambar langsung ke CDN, tidak lewat Vercel", () => {
     setCdn("https://cdn.aclean.id");
     expect(fotoUrl("/api/foto?key=laporan%2FJOB-1%2Fa.jpg")).toBe("https://cdn.aclean.id/laporan/JOB-1/a.jpg");
