@@ -108,7 +108,7 @@ export async function enqueueFieldStatus({ orderId, status, extra = {}, actorNam
   });
 }
 
-export async function enqueueFieldPhoto({ jobId, id, hash, dataUrl, label, unitNo, role, userKey }) {
+export async function enqueueFieldPhoto({ jobId, id, hash, dataUrl, label, unitNo, role, userKey, error = "" }) {
   if (!jobId || !hash || !dataUrl) throw new Error("Foto antrean tidak lengkap");
   if (!userKey) throw new Error("Identitas pengguna antrean tidak tersedia");
   const health = await getFieldStorageHealth(Math.ceil(dataUrl.length * 0.75));
@@ -120,7 +120,7 @@ export async function enqueueFieldPhoto({ jobId, id, hash, dataUrl, label, unitN
   return put({
     id: `photo:${userKey}:${jobId}:${hash}`, type: "photo", jobId, photoId: id, hash, dataUrl,
     label: label || "Foto", unitNo: unitNo || null, role: role || "Unknown",
-    userKey, createdAt: Date.now(), attempts: 0, lastAttempt: null, error: "", state: "queued",
+    userKey, createdAt: Date.now(), attempts: 0, lastAttempt: null, error, state: "queued",
   });
 }
 

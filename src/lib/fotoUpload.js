@@ -150,6 +150,7 @@ export async function handleFotoUpload(e, {
           await enqueueFieldPhoto({
             jobId: reportId, id: ph.id, hash: ph.hash, dataUrl: ph.data_url,
             label: ph.label, unitNo: ph.unit_no, role: currentUser?.role, userKey,
+            error: result.error || "Server belum dapat dihubungi",
           });
           onFieldQueued?.();
           return { id: ph.id, url: null, queued: true, errMsg: result.error || "Server belum dapat dihubungi", uploading: false, uploadAttempts: result.attempts };

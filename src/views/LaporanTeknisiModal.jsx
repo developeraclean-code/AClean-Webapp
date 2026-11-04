@@ -169,7 +169,7 @@ export default function LaporanTeknisiModal({
         const queued = rows.filter(row => !hashes.has(row.hash)).map(row => ({
           id: row.photoId || row.id, label: row.label || "Foto", data_url: row.dataUrl,
           url: null, hash: row.hash, unit_no: row.unitNo || null, uploading: false,
-          queued: true, errMsg: "Menunggu koneksi",
+          queued: true, errMsg: row.error || "Menunggu koneksi",
         }));
         return [...prev, ...queued];
       });
@@ -313,6 +313,7 @@ export default function LaporanTeknisiModal({
         await enqueueFieldPhoto({
           jobId: reportId, id: f.id, hash: f.hash, dataUrl: f.data_url,
           label: f.label, unitNo: f.unit_no, role: currentUser?.role, userKey: currentFieldUserKey,
+          error: errorMessage,
         });
         queued = true;
         onFieldQueued?.();
@@ -1985,7 +1986,7 @@ export default function LaporanTeknisiModal({
                 <button onClick={() => setLaporanStep(3)} style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "12px", borderRadius: 10, cursor: "pointer", fontWeight: 600 }}>← Kembali</button>
                 <button onClick={async () => {
                   const queued = (laporanFotos || []).filter(f => f.queued && !f.url).length;
-                  if (queued > 0 || navigator.onLine === false) { await onQueueOfflineReport?.(); return; }
+                  if (queued > 0) { await onQueueOfflineReport?.(); return; }
                   // Guard sebelum submit — cegah laporan kosong / salah tanpa disadari (soft confirm).
                   const nJasa = (laporanJasaItems || []).filter(j => j.nama && j.nama !== "__manual__").length;
                   const nBarang = (laporanBarangItems || []).filter(b => b.nama && b.nama !== "__manual__").length;
