@@ -1870,7 +1870,19 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       helper3: form.helper3 || null,
     };
 
-    if (!isProjectOrder) {
+    if (isProjectOrder && form.team_slot !== previousOrder.team_slot && form.team_slot) {
+      // Edit Planning hanya menyimpan team_slot secara eksplisit. Untuk project,
+      // sinkronkan juga keenam kolom peran dan snapshot anggota saat tim diganti;
+      // trigger DB mengisi assigned_members, tetapi tidak menulis kolom peran ini.
+      const slot = getSlotData(form.date, form.team_slot);
+      const roster = slot ? slotMemberRoles(slot) : [];
+      if (roster.length === 0) {
+        setSaving(false);
+        unlock();
+        return showNotif(`⚠️ Tim ${form.team_slot} belum memiliki roster untuk ${form.date}. Isi Tim Harian dahulu.`, "error");
+      }
+      personnelPayload = buildOrderTeamAssignment(roster);
+    } else if (!isProjectOrder) {
       const slot = form.team_slot ? getSlotData(form.date, form.team_slot) : null;
       personnelPayload = resolveRegularOrderTeam({
         teamSlot: form.team_slot,
