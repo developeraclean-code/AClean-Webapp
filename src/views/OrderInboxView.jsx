@@ -12,6 +12,7 @@ import { scheduleEndDate, scheduleMinutes, scheduleRange, schedulesOverlap } fro
 import { shiftDateStr } from "../lib/dateTime.js";
 import { createWaPlanningForm } from "../lib/waWorkspace.js";
 import { preserveComplainRepairNotes } from "../lib/complainRepairUpgrade.js";
+import { projectCrewMembers } from "../lib/projectCrew.js";
 import {
   ORDER_TEKNISI_FIELDS,
   ORDER_HELPER_FIELDS,
@@ -916,7 +917,7 @@ const EMPTY_SLOT = {
 // Panel assign tim ke project per hari (hanya muncul kalau ada project BERJALAN
 // yang tanggal terpilih masuk rentang mulai→target). Assign → buat order type=Project
 // yang ikut konflik + jadwal + bulk dispatch WA.
-function ProjectPlanningPanel({ slotDate, runningProjects, ordersData, activeTeknisi, onAssign }) {
+function ProjectPlanningPanel({ slotDate, runningProjects, ordersData, activeTeknisi, onAssign, onToggleLock }) {
   const inRange = (date, mulai, target) => {
     if (mulai && date < mulai) return false;
     if (target && date > target) return false;
@@ -941,7 +942,7 @@ function ProjectPlanningPanel({ slotDate, runningProjects, ordersData, activeTek
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(320px,1fr))", gap: 12 }}>
         {active.map(p => (
           <ProjectCard key={p.id} project={p} slotDate={slotDate} ordersData={ordersData}
-            personNames={personNames} fmtD={fmtD} onAssign={onAssign} />
+            personNames={personNames} fmtD={fmtD} onAssign={onAssign} onToggleLock={onToggleLock} />
         ))}
       </div>
     </div>
@@ -952,21 +953,18 @@ const TFIELDS = ORDER_TEKNISI_FIELDS;
 const HFIELDS = ORDER_HELPER_FIELDS;
 const ROSTER_ASSIGNABLE_STATUSES = ["PENDING", "CONFIRMED", "DISPATCHED", "ON_SITE", "IN_PROGRESS", "WORKING", "COMPLETED"];
 
-function ProjectCard({ project, slotDate, ordersData, personNames, fmtD, onAssign }) {
+function ProjectCard({ project, slotDate, ordersData, personNames, fmtD, onAssign, onToggleLock }) {
   const ord = ordersData.find(o => o.project_id === project.id && o.date === slotDate && o.status !== "CANCELLED");
   const filledT = TFIELDS.filter(f => ord?.[f]).length;
   const filledH = HFIELDS.filter(f => ord?.[f]).length;
   const [showT, setShowT] = useState(Math.max(1, filledT));
   const [showH, setShowH] = useState(Math.max(1, filledH));
-  const [confirmed, setConfirmed] = useState(false);
+  const locked = Boolean(ord?.assignment_locked);
 
   useEffect(() => {
     setShowT(t => Math.max(t, Math.max(1, filledT)));
     setShowH(h => Math.max(h, Math.max(1, filledH)));
   }, [filledT, filledH]);
-
-  // Reset confirmed state bila ord berubah (assign ulang)
-  useEffect(() => { setConfirmed(false); }, [ord?.id]);
 
   const busyElsewhere = (name) => !!name && ordersData.some(o =>
     o.date === slotDate && o.id !== ord?.id && !["CANCELLED"].includes(o.status) &&
@@ -980,10 +978,10 @@ function ProjectCard({ project, slotDate, ordersData, personNames, fmtD, onAssig
     }}>{label}</button>
   );
 
-  const assignedNames = ord ? [...TFIELDS, ...HFIELDS].map(f => ord[f]).filter(Boolean) : [];
+  const assignedNames = ord ? projectCrewMembers(ord) : [];
 
-  // Tampilan terkunci setelah Konfirmasi
-  if (confirmed && ord) {
+  // Kunci assignment disimpan di DB agar tetap berlaku setelah refresh.
+  if (locked && ord) {
     return (
       <div style={{ border: `2px solid ${cs.green}`, borderRadius: 12, padding: 12, background: cs.surface }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
@@ -993,11 +991,11 @@ function ProjectCard({ project, slotDate, ordersData, personNames, fmtD, onAssig
           </div>
           <span style={{ fontSize: 18 }}>🔒</span>
         </div>
-        <div style={{ fontSize: 12, color: cs.green, fontWeight: 700, marginBottom: 6 }}>✅ Terkonfirmasi — WA terkirim</div>
+        <div style={{ fontSize: 12, color: cs.green, fontWeight: 700, marginBottom: 6 }}>✅ Assignment terkunci</div>
         <div style={{ fontSize: 12, color: cs.text, marginBottom: 8 }}>👥 {assignedNames.join(", ")}</div>
-        <button onClick={() => setConfirmed(false)}
+        <button onClick={() => onToggleLock(project, slotDate, false)}
           style={{ fontSize: 10, color: cs.muted, background: "transparent", border: `1px solid ${cs.border}`, borderRadius: 6, padding: "3px 10px", cursor: "pointer" }}>
-          ✏️ Edit
+          ✏️ Buka kunci untuk edit
         </button>
       </div>
     );
@@ -1011,21 +1009,21 @@ function ProjectCard({ project, slotDate, ordersData, personNames, fmtD, onAssig
       </div>
       {TFIELDS.slice(0, showT).map((field, i) => (
         <PersonRow key={field} label={i === 0 ? "T" : `T${i + 1}`} color="#38bdf8"
-          value={ord?.[field] || ""} names={personNames} warn={busyElsewhere(ord?.[field])}
+          value={ord?.[field] || ""} names={personNames} warn={busyElsewhere(ord?.[field])} disabled={locked}
           onChange={(v) => onAssign(project, slotDate, { [field]: v || null })} />
       ))}
-      {showT < 3 && addBtn("+ Teknisi", () => setShowT(t => t + 1))}
+      {!locked && showT < 3 && addBtn("+ Teknisi", () => setShowT(t => t + 1))}
       {HFIELDS.slice(0, showH).map((field, i) => (
         <PersonRow key={field} label={i === 0 ? "H" : `H${i + 1}`} color={cs.muted}
-          value={ord?.[field] || ""} names={personNames} warn={busyElsewhere(ord?.[field])}
+          value={ord?.[field] || ""} names={personNames} warn={busyElsewhere(ord?.[field])} disabled={locked}
           onChange={(v) => onAssign(project, slotDate, { [field]: v || null })} />
       ))}
-      {showH < 3 && addBtn("+ Helper", () => setShowH(h => h + 1))}
+      {!locked && showH < 3 && addBtn("+ Helper", () => setShowH(h => h + 1))}
       {ord ? (
         <div style={{ marginTop: 8 }}>
           <div style={{ fontSize: 10, color: cs.green, marginBottom: 6 }}>✓ Terjadwal sebagai job project hari ini</div>
           <button
-            onClick={() => setConfirmed(true)}
+            onClick={() => onToggleLock(project, slotDate, true)}
             style={{
               width: "100%", padding: "8px 0", borderRadius: 8, border: "none",
               cursor: "pointer", background: cs.green, color: "#0a0f1e", fontWeight: 800, fontSize: 12,
@@ -1040,11 +1038,11 @@ function ProjectCard({ project, slotDate, ordersData, personNames, fmtD, onAssig
   );
 }
 
-function PersonRow({ label, color, value, names, warn, onChange }) {
+function PersonRow({ label, color, value, names, warn, onChange, disabled = false }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
       <span style={{ width: 22, height: 22, borderRadius: "50%", background: color + "33", color, fontSize: 10, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{label}</span>
-      <select value={value} onChange={e => onChange(e.target.value)}
+      <select value={value} disabled={disabled} onChange={e => onChange(e.target.value)}
         style={{ flex: 1, background: cs.card, border: `1px solid ${warn ? cs.yellow : cs.border}`, borderRadius: 8, padding: "7px 9px", color: cs.text, fontSize: 12 }}>
         <option value="">— kosong —</option>
         {names.map(n => <option key={n} value={n}>{n}</option>)}
@@ -1234,13 +1232,14 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     const { error: orderError } = await supabase.from("orders")
       .update(propagatePayload)
       .eq("date", date).eq("team_slot", slotName)
+      .neq("assignment_locked", true)
       .in("status", ROSTER_ASSIGNABLE_STATUSES);
     if (orderError) {
       showNotif("Roster tersimpan, tetapi penugasan order gagal: " + orderError.message, "error");
       return null;
     }
     setOrdersData(prev => prev.map(o =>
-      o.date === date && o.team_slot === slotName && ROSTER_ASSIGNABLE_STATUSES.includes(o.status)
+      o.date === date && o.team_slot === slotName && !o.assignment_locked && ROSTER_ASSIGNABLE_STATUSES.includes(o.status)
         ? { ...o, ...propagatePayload }
         : o
     ));
@@ -1260,13 +1259,14 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     const { error: ordErr } = await supabase.from("orders")
       .update(updatePayload)
       .eq("date", date).eq("team_slot", slotName)
+      .neq("assignment_locked", true)
       .in("status", ROSTER_ASSIGNABLE_STATUSES);
 
     if (ordErr) return showNotif("Gagal propagasi ke orders: " + ordErr.message);
 
     // Update state orders lokal
     setOrdersData(prev => prev.map(o =>
-      o.date === date && o.team_slot === slotName && ROSTER_ASSIGNABLE_STATUSES.includes(o.status)
+      o.date === date && o.team_slot === slotName && !o.assignment_locked && ROSTER_ASSIGNABLE_STATUSES.includes(o.status)
         ? { ...o, ...updatePayload }
         : o
     ));
@@ -1376,8 +1376,12 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
     // Sekaligus dedup: kalau ada >1 order project untuk tanggal ini, hapus yang ekstra.
     const { data: existingRows } = await supabase
       .from("orders")
-      .select("id,teknisi,teknisi2,teknisi3,helper,helper2,helper3")
+      .select("id,teknisi,teknisi2,teknisi3,helper,helper2,helper3,assignment_locked")
       .eq("project_id", project.id).eq("date", date).neq("status", "CANCELLED");
+    if (existingRows?.some(row => row.assignment_locked)) {
+      showNotif("🔒 Assignment project terkunci. Buka kunci dahulu sebelum mengubah anggota.", "warning");
+      return;
+    }
     if ((existingRows?.length || 0) > 1) {
       const dupeIds = (existingRows || []).slice(1).map(o => o.id);
       await supabase.from("orders").delete().in("id", dupeIds);
@@ -1399,11 +1403,16 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       ? (dailySlots.find(s => s.date === date &&
           Array.from({ length: MEMBER_COUNT }, (_, i) => s[`member${i + 1}`]).includes(primaryTeknisi))?.slot || null)
       : null;
+    const autoRoster = autoSlot
+      ? slotMemberRoles(dailySlots.find(s => s.date === date && s.slot === autoSlot))
+      : [];
+    const assignedMembers = projectCrewMembers(resolved, autoRoster);
 
     if (existing) {
       const upd = {
         ...patch,
         ...(autoSlot ? { team_slot: autoSlot } : {}),
+        assigned_members: assignedMembers,
         last_changed_by: auditUserName(),
       };
       const { error } = await supabase.from("orders").update(upd).eq("id", existing.id);
@@ -1418,11 +1427,25 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
       address: project.lokasi || "", date, time: "09:00", time_end: "18:00",
       status: "CONFIRMED", units: 1, project_id: project.id,
       team_slot: autoSlot,
-      ...resolved, last_changed_by: auditUserName(),
+      ...resolved, assigned_members: assignedMembers, last_changed_by: auditUserName(),
     };
     const { error } = await insertOrder(supabase, payload);
     if (error) { showNotif("❌ Gagal simpan: " + error.message); return; }
     setOrdersData(prev => [{ ...payload, created_at: new Date().toISOString() }, ...prev]);
+  }
+
+  async function toggleProjectAssignmentLock(project, date, locked) {
+    const { data: order, error: readError } = await supabase.from("orders")
+      .select("id").eq("project_id", project.id).eq("date", date).neq("status", "CANCELLED").maybeSingle();
+    if (readError || !order) {
+      showNotif(readError ? "Gagal membaca assignment: " + readError.message : "Job project belum tersimpan.", "error");
+      return;
+    }
+    const { error } = await supabase.from("orders")
+      .update({ assignment_locked: locked, last_changed_by: auditUserName() }).eq("id", order.id);
+    if (error) { showNotif("Gagal menyimpan kunci assignment: " + error.message, "error"); return; }
+    setOrdersData(prev => prev.map(row => row.id === order.id ? { ...row, assignment_locked: locked } : row));
+    showNotif(locked ? "🔒 Assignment project dikunci." : "Assignment project dibuka untuk diedit.");
   }
 
   async function handleBulkDispatch(date) {
@@ -1759,6 +1782,11 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   }
 
   async function handleSave(opts = {}) {
+    const currentlyEdited = editId && ordersData.find(order => order.id === editId);
+    if (currentlyEdited?.project_id && currentlyEdited.assignment_locked) {
+      showNotif("🔒 Assignment project terkunci. Buka kunci di panel Project Berjalan sebelum mengedit.", "warning");
+      return;
+    }
     // Kunci SINKRON di baris pertama — lihat komentar savingLock di atas.
     if (savingLock.current) return;
     savingLock.current = true;
@@ -1939,6 +1967,10 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   }
 
   function handleEdit(order) {
+    if (order.project_id && order.assignment_locked) {
+      showNotif("🔒 Assignment project terkunci. Buka kunci di panel Project Berjalan sebelum mengedit.", "warning");
+      return;
+    }
     const date = order.date || TODAY;
     const time = order.time ? order.time.slice(0, 5) : "09:00";
     const timeEnd = order.time_end ? order.time_end.slice(0, 5) : calcTimeEnd(time, order.service || "Cleaning", order.units || 1);
@@ -2070,16 +2102,27 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
 
   // ── Opsi B: update teknisi/helper inline tanpa buka form edit ──
   async function handleQuickAssign(order, field, value) {
+    if (order.project_id && order.assignment_locked && field === "team_slot") {
+      showNotif("🔒 Assignment project terkunci. Buka kunci dahulu sebelum mengganti tim.", "warning");
+      return false;
+    }
     if (field === "team_slot" && hasValidTime(order.time) && toMinutes(order.time) >= 18 * 60 && value && !value.startsWith("Malam ")) {
       showNotif("Order mulai 18:00 atau sesudahnya harus memakai slot Malam agar roster terpisah.", "warning");
       return false;
     }
     let update = { [field]: value || null, last_changed_by: auditUserName() };
 
-    // Project order: team_slot hanya sebagai pengelompokan di Time Grid —
-    // JANGAN overwrite teknisi/helper yang sudah diisi lewat ProjectCard
     if (field === "team_slot" && order.project_id) {
-      // hanya update team_slot, biarkan TFIELDS/HFIELDS tetap
+      const slot = value ? getSlotData(order.date, value) : null;
+      const roster = slot ? slotMemberRoles(slot) : [];
+      if (value && roster.length === 0) {
+        showNotif("⚠️ Tim " + value + " belum memiliki anggota. Isi roster di Tim Harian dahulu.", "warning");
+        return false;
+      }
+      // Memilih tim pada job project menjadikan roster itu sumber anggota job;
+      // enam slot peran tetap menyimpan peran dan assigned_members menampung sampai 8 orang.
+      if (value) update = { ...update, ...buildOrderTeamAssignment(roster) };
+      else update.assigned_members = projectCrewMembers(order);
     } else if (field === "team_slot") {
       const slot = value ? getSlotData(order.date, value) : null;
       let assignment = resolveRegularOrderTeam({
@@ -2207,6 +2250,7 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         ordersData={ordersData}
         activeTeknisi={activeTeknisi}
         onAssign={saveProjectAssignment}
+        onToggleLock={toggleProjectAssignmentLock}
       />
 
       {/* ═══ SAFETY NET PANEL ═══ */}

@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { cs } from "../theme/cs.js";
+import { projectReportCrew } from "../lib/projectCrew.js";
 
 const MAX_FOTO = 20;
 const MAX_DIM  = 1280;
@@ -149,7 +150,6 @@ export default function ProjectLaporanModal({
     setSubmitting(true);
     try {
       const fotoUrls  = fotos.filter(f => f.url).map(f => f.url);
-      const helperArr = [order?.helper, order?.helper2, order?.helper3].filter(Boolean);
       const myName    = currentUser?.name || null;
 
       if (existing) {
@@ -170,6 +170,9 @@ export default function ProjectLaporanModal({
       } else {
         // INSERT baru
         const id = "PDR-" + order.id + "-" + Date.now().toString(36).toUpperCase();
+        const { teknisiName: leadName, helperNames: crewNamesExceptLead } = projectReportCrew(order, myName);
+        // Satu BAP project dibagikan ke seluruh kru dalam snapshot job.
+        // Kolom helper_names dipakai view/PDF lama untuk nama anggota selain PIC.
         const { error } = await supabase
           .from("project_daily_reports")
           .insert({
@@ -177,8 +180,8 @@ export default function ProjectLaporanModal({
             project_id:   order.project_id,
             order_id:     order.id,
             tanggal:      order.date,
-            teknisi_name: order.teknisi || myName,
-            helper_names: helperArr,
+            teknisi_name: leadName,
+            helper_names: crewNamesExceptLead,
             pekerjaan:    pekerjaan.trim(),
             kendala:      kendala.trim() || null,
             foto_urls:    fotoUrls,
