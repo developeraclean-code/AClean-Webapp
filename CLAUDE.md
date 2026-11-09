@@ -260,6 +260,7 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
 219       # Applied 21 Okt 2026 — materialisasi ID/status/waktu sebelum paging laporan; hash live cocok, 48 hasil uji identik.
 220       # Applied 21 Okt 2026 — grup atomik/FK bigint + RLS header/proof untuk staf kantor aktif; checksum bisnis utuh, tanpa pelunasan historis.
 221       # Applied 21 Okt 2026 — header grup memakai invoice penerima alokasi pertama; CHECK metode diperluas sesuai UI/RPC, tanpa mengubah pembayaran historis.
+230       # Applied 9 Nov 2026 — simpan kunci assignment project, tahan perubahan assignment job saat terkunci, dan sertakan roster slot pada assigned_members. Diterapkan via SSH key resmi pada Supabase self-hosted staging + production; verifikasi kolom/trigger/resolver lulus dan mismatch project 30 hari = 0.
 ```
 > Sumber kebenaran nomor = folder `migrations/`, bukan daftar ini yang pernah tertinggal.
 
