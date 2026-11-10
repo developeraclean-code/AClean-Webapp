@@ -3,21 +3,16 @@
 import { checkRateLimit, signAppToken, validateInternalToken } from "../_auth.js";
 import { checkHealth, selectHealthComponent } from "../_health.js";
 import { readSupabaseUser, readSessionJson, sendSessionError, SessionCheckError } from "../_session-check.js";
+import { clearWaProviderCache, normalizeWaProvider, testWaProvider } from "../_wa-provider.js";
 
 // ── TEST-CONNECTION (public) ──
 export async function testConnection(req, res) {
   const type = (req.query&&req.query.type) || (req.body&&req.body.type) || "";
 
   if (type === "wa" || type === "fonnte") {
-    const FT = process.env.FONNTE_TOKEN;
-    if (!FT) return res.status(200).json({ ok: false, success: false, error: "FONNTE_TOKEN belum diset" });
-    try {
-      const r = await fetch("https://api.fonnte.com/validate", { method:"POST", headers:{ Authorization:FT, "Content-Type":"application/json" }, body:JSON.stringify({}) });
-      const d = await r.json().catch(()=>({}));
-      const isOk = r.ok && d.status !== false;
-      // Return both `ok` and `success` for compatibility
-      return res.status(200).json({ ok: isOk, success: isOk, message: isOk ? "Fonnte terhubung" : (d.reason || "Gagal terkoneksi"), detail: d });
-    } catch(e) { return res.status(200).json({ ok: false, success: false, error: e.message }); }
+    const requested = normalizeWaProvider(req.body?.provider || "fonnte");
+    const result = await testWaProvider(requested || req.body?.provider);
+    return res.status(200).json(result);
   }
 
   if (type === "storage" || type === "r2") {
@@ -83,6 +78,62 @@ export async function testConnection(req, res) {
   return res.status(200).json({ ok: true, success: true, service: "AClean API" });
 }
 
+// ── WHATSAPP PROVIDER SELECTION (Owner only) ──
+export async function setWaProvider(req, res) {
+  res.setHeader("Cache-Control", "no-store");
+  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  const provider = normalizeWaProvider(req.body?.provider);
+  if (!provider) return res.status(400).json({ success: false, error: "Provider harus Fonnte atau WhaCenter" });
+
+  let callerRole = req.appClaims?.role || "";
+  if (!callerRole && req.authUser?.id) {
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+    const serviceKey = process.env.SUPABASE_SERVICE_KEY;
+    if (!supabaseUrl || !serviceKey) return res.status(503).json({ error: "Profil Owner belum dapat diverifikasi" });
+    try {
+      const profiles = await readSessionJson(
+        `${supabaseUrl}/rest/v1/user_profiles?id=eq.${encodeURIComponent(req.authUser.id)}&select=role,active&limit=1`,
+        { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` }
+      );
+      const profile = Array.isArray(profiles) ? profiles[0] : null;
+      callerRole = profile?.active === true ? String(profile.role || "") : "";
+    } catch (error) { return sendSessionError(res, error); }
+  }
+  if (callerRole !== "Owner") return res.status(403).json({ error: "Hanya Owner yang dapat mengganti provider WhatsApp" });
+
+  if (provider === "whacenter" && !process.env.WHACENTER_WEBHOOK_SECRET) {
+    return res.status(409).json({ success: false, provider_saved: false, provider, error: "WHACENTER_WEBHOOK_SECRET belum dikonfigurasi di server" });
+  }
+  if (provider === "whacenter" && /https?:\/\/|\s|[?&]token=|["']/i.test(process.env.WHACENTER_WEBHOOK_SECRET)) {
+    return res.status(409).json({ success: false, provider_saved: false, provider, error: "WHACENTER_WEBHOOK_SECRET harus berisi token saja, tanpa URL, tanda kutip, atau spasi" });
+  }
+  const connection = await testWaProvider(provider);
+  if (!connection.success) return res.status(409).json({ ...connection, provider_saved: false });
+
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_KEY;
+  if (!supabaseUrl || !serviceKey) return res.status(503).json({ success: false, error: "Penyimpanan provider belum dikonfigurasi" });
+  let response;
+  try {
+    response = await fetch(`${supabaseUrl.replace(/\/+$/, "")}/rest/v1/app_settings?on_conflict=key`, {
+      method: "POST",
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        "Content-Type": "application/json",
+        Prefer: "resolution=merge-duplicates,return=minimal",
+      },
+      body: JSON.stringify({ key: "wa_provider", value: provider }),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch {
+    return res.status(503).json({ success: false, error: "Provider teruji, tetapi penyimpanan pilihan gagal. Provider aktif tidak diubah." });
+  }
+  if (!response.ok) return res.status(503).json({ success: false, error: "Provider teruji, tetapi penyimpanan pilihan gagal. Provider aktif tidak diubah." });
+  clearWaProviderCache();
+  return res.status(200).json({ ...connection, provider_saved: true });
+}
+
 // ── HEALTH: Public lightweight health check (untuk uptime monitor eksternal) ──
 // PUBLIC_ROUTES — tidak butuh auth. UptimeRobot dll bisa ping ini.
 export async function health(req, res) {
@@ -96,7 +147,7 @@ export async function health(req, res) {
   if (component === "app") {
     res.setHeader("Cache-Control", "no-store");
     return res.status(200).json({ status: "healthy", component: "app", component_status: "ok",
-      timestamp: new Date().toISOString(), version: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) || "dev" });
+      timestamp: new Date().toISOString(), version: (process.env.ACLEAN_BUILD_SHA || process.env.VERCEL_GIT_COMMIT_SHA)?.slice(0, 7) || "dev" });
   }
   const result = await checkHealth();
   const componentStatus = selectHealthComponent(result, component);

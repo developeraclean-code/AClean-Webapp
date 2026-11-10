@@ -1,5 +1,5 @@
 import { parseAraTraining, resolveAraBrain } from "../lib/araPolicy.js";
-import { memo, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { cs } from "../theme/cs.js";
 import { saveAutomationToggle } from "../lib/settingsPersistence.js";
 import FieldReportReminderSettings from './FieldReportReminderSettings.jsx';
@@ -312,7 +312,7 @@ function TeamPresetsPanel({ supabase, showNotif, showConfirm, currentUser }) {
 // ── Main SettingsView ────────────────────────────────────────────────────────
 function SettingsView({
   currentUser, isMobile, appSettings, setAppSettings,
-  waProvider, setWaProvider, waToken, setWaToken, waDevice, setWaDevice, waStatus, setWaStatus,
+  waProvider, setWaProvider, waStatus, setWaStatus,
   llmProvider, setLlmProvider, llmModel, setLlmModel,
   ollamaUrl, setOllamaUrl, llmStatus, setLlmStatus,
   storageProvider, brainMd, brainMdCustomer,
@@ -330,6 +330,8 @@ function SettingsView({
 
   // ── Tab kategori (biar tidak scroll panjang) ─────────────────────────────────
   const [activeTab, setActiveTab] = useState("bisnis");
+  const [waProviderDraft, setWaProviderDraft] = useState(waProvider === "whacenter" ? "whacenter" : "fonnte");
+  useEffect(() => { setWaProviderDraft(waProvider === "whacenter" ? "whacenter" : "fonnte"); }, [waProvider]);
   const SETTINGS_TABS = [
     { id: "bisnis",  icon: "🏢", label: "Bisnis" },
     { id: "ai",      icon: "🤖", label: "AI & Brain" },
@@ -374,34 +376,6 @@ function SettingsView({
   const waStatusLabel = waStatus === "connected" ? "● Connected" : waStatus === "testing" ? "● Testing..." : "● Not Connected";
   const llmStatusLabel = llmStatus === "connected" ? "● Connected" : llmStatus === "testing" ? "● Testing..." : "● Not Connected";
 
-  // Field getter/setter untuk Fonnte
-  const waFieldMap = {
-    token: { val: waToken, set: e => setWaToken(e.target.value) },
-    device: { val: waDevice, set: e => setWaDevice(e.target.value) },
-  };
-
-  const FonnteFields = () => (
-    <div style={{ display: "grid", gap: 8, marginBottom: 12 }}>
-      {[
-        { k: "token", label: "API Token", ph: "fnt_••••••••", t: "password" },
-        { k: "device", label: "Device / No WA", ph: "6281299898937", t: "text" },
-      ].map(f => {
-        const val = waFieldMap[f.k]?.val || "";
-        return (
-          <div key={f.k}>
-            <div style={{ fontSize: 11, color: cs.muted, marginBottom: 3, fontWeight: 600 }}>{f.label}</div>
-            <input
-              type={f.t || "text"} placeholder={f.ph} value={val}
-              onChange={waFieldMap[f.k]?.set}
-              style={{ width: "100%", background: cs.surface, border: "1px solid " + (val ? cs.green : cs.border), borderRadius: 8, padding: "9px 12px", color: cs.text, fontSize: 13, outline: "none", boxSizing: "border-box" }}
-            />
-            {val && <div style={{ fontSize: 10, color: cs.green, marginTop: 3 }}>✓ {f.label} tersimpan</div>}
-          </div>
-        );
-      })}
-    </div>
-  );
-
   const GuideBox = ({ guide, title }) => (
     <div style={{ background: "#0ea5e910", border: "1px solid #0ea5e930", borderRadius: 8, padding: "10px 14px", marginBottom: 12 }}>
       <div style={{ fontSize: 11, fontWeight: 700, color: "#7dd3fc", marginBottom: 6 }}>📋 {title}</div>
@@ -432,13 +406,15 @@ function SettingsView({
   const testWA = async () => {
     setWaStatus("testing");
     try {
-      const r = await fetch("/api/test-connection", { method: "POST", headers: await _apiHeaders(), body: JSON.stringify({ type: "wa", provider: "fonnte", token: waToken, device: waDevice }) });
+      const r = await fetch("/api/set-wa-provider", { method: "POST", headers: await _apiHeaders(), body: JSON.stringify({ provider: waProviderDraft }) });
       const d = await r.json();
-      setWaStatus(d.success ? "connected" : "not_connected");
-      showNotif(d.message);
+      if (!r.ok || !d.success || !d.provider_saved) throw new Error(d.message || d.error || "Koneksi gateway gagal");
+      setWaProvider(d.provider);
+      setWaStatus("connected");
+      showNotif(`✅ ${d.message}. Provider aktif: ${d.provider === "whacenter" ? "WhaCenter" : "Fonnte"}`);
     } catch (e) {
       setWaStatus("not_connected");
-      showNotif("❌ " + e.message);
+      showNotif("❌ Provider tidak diubah: " + e.message);
     }
   };
 
@@ -692,43 +668,35 @@ function SettingsView({
           </div>
         </Card>
 
-        {/* WhatsApp — Fonnte only */}
+        {/* WhatsApp provider selection is stored globally in app_settings. */}
         <Card>
-          <CardHeader icon="📱" title="WhatsApp Gateway — Fonnte" subtitle="Gateway WA untuk kirim & terima pesan ARA"
+          <CardHeader icon="📱" title="WhatsApp Gateway" subtitle="Pilih satu provider aktif untuk semua pengiriman dan webhook"
             badge={waStatusLabel} badgeColor={waSC} />
 
-          {/* Fonnte info badge */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#22c55e10", border: "1px solid #22c55e30", borderRadius: 10, padding: "10px 14px", marginBottom: 14 }}>
-            <span style={{ fontSize: 20 }}>🟢</span>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 700, color: cs.text, fontSize: 13 }}>Fonnte</div>
-              <div style={{ fontSize: 11, color: cs.muted }}>WA Gateway lokal Indonesia — aktif digunakan</div>
-            </div>
-            <span style={{ fontSize: 10, background: "#22c55e22", color: "#22c55e", border: "1px solid #22c55e44", borderRadius: 99, padding: "3px 9px", fontWeight: 800 }}>AKTIF</span>
+          <div style={{ marginBottom: 12 }}>
+            <label htmlFor="wa-provider-select" style={{ display: "block", fontSize: 11, color: cs.muted, marginBottom: 5, fontWeight: 700 }}>Provider aktif</label>
+            <select id="wa-provider-select" value={waProviderDraft} onChange={e => { setWaProviderDraft(e.target.value); setWaStatus("not_connected"); }} style={settingsInputStyle}>
+              <option value="fonnte">Fonnte (existing)</option>
+              <option value="whacenter">WhaCenter</option>
+            </select>
           </div>
 
-          <div style={{ fontSize: 12, fontWeight: 700, color: cs.text, marginBottom: 8 }}>🔑 Kredensial Fonnte</div>
-          <FonnteFields />
-
-          <GuideBox guide={[
-            "Login fonnte.com → menu Device",
-            "Klik + Add Device, scan QR WA HP kamu",
-            "Klik nama device → salin TOKEN di halaman detail device (bukan dari Profile!)",
-            "Paste token di kolom API Token di sini → klik Test & Simpan",
-            "Webhook (bot balas otomatis): butuh paket berbayar Fonnte",
-          ]} title="Setup Fonnte" />
-
-          {/* Webhook info */}
           <div style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "10px 14px", marginBottom: 12, fontSize: 11, color: cs.muted }}>
-            📥 Webhook URL untuk bot ARA (butuh paket berbayar Fonnte):<br />
-            <span style={{ color: cs.accent, fontFamily: "monospace", fontSize: 12 }}>{APP_BASE_URL}/api/receive-wa</span>
-            <div style={{ marginTop: 6 }}>Fonnte → Device → Edit: pastikan Autoread aktif dan URL webhook benar. Jika memakai secret webhook, pertahankan token rahasia pada URL; jangan dibagikan. Penerimaan bukti bayar berjalan 24 jam, terpisah dari auto-reply ARA dan refresh tampilan WA Monitor.</div>
+            {waProviderDraft === "fonnte" ? <>
+              <b>Fonnte tetap tersedia.</b> Token tetap dibaca dari environment server <code>FONNTE_TOKEN</code>; pilihan di sini tidak mengubah token atau device Fonnte.
+              <div style={{ marginTop: 6 }}>Webhook Fonnte: <code>{window.location.origin}/api/receive-wa</code></div>
+            </> : <>
+              <b>WhaCenter memakai jalur terpisah.</b> Set <code>WHACENTER_DEVICE_ID</code> dan <code>WHACENTER_WEBHOOK_SECRET</code> di environment server sebelum mengaktifkannya. Nilai rahasia tidak disimpan di browser atau <code>app_settings</code>.
+              <div style={{ marginTop: 6 }}>Webhook WhaCenter: <code>{window.location.origin}/api/whacenter-webhook?token=&lt;WHACENTER_WEBHOOK_SECRET&gt;</code></div>
+              <div style={{ marginTop: 6 }}>Webhook media menerima host WhaCenter. Host storage tujuan redirect (misalnya sin1.contabostorage.com) harus dimasukkan secara eksplisit ke <code>WHACENTER_MEDIA_HOSTS</code>.</div>
+            </>}
+            <div style={{ marginTop: 6 }}>Provider baru hanya menjadi aktif setelah tes koneksi berhasil. Pengiriman tidak otomatis dialihkan ke provider lain bila hasilnya gagal/tidak pasti, untuk mencegah pesan ganda.</div>
           </div>
 
           <div style={{ display: "flex", gap: 8 }}>
             <button onClick={testWA}
               style={{ flex: 2, background: "linear-gradient(135deg," + cs.green + ",#059669)", border: "none", color: "#fff", padding: "10px", borderRadius: 8, cursor: "pointer", fontWeight: 800, fontSize: 13 }}>
-              {waStatus === "testing" ? "⏳ Testing..." : "🔌 Test & Simpan Koneksi"}
+              {waStatus === "testing" ? "⏳ Testing..." : `🔌 Test & Aktifkan ${waProviderDraft === "whacenter" ? "WhaCenter" : "Fonnte"}`}
             </button>
             <button onClick={() => { setWaStatus("not_connected"); showNotif("Koneksi WA direset"); }}
               style={{ flex: 1, background: cs.surface, border: "1px solid " + cs.border, color: cs.muted, padding: "10px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}>Reset</button>

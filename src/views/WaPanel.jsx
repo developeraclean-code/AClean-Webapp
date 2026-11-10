@@ -1,5 +1,6 @@
 import { fetchWaPaymentContext, waMediaUrl } from "../lib/waPaymentContext.js";
 import AraReviewPanel from "./AraReviewPanel.jsx";
+import WaMessageAttachment from "../components/WaMessageAttachment.jsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { normalizePhone, samePhone, formatPhone } from "../lib/phone.js";
 import { createWaOrderDraft, customerRecords, fetchWaCustomers, waCustomerTitle, fetchWaHistory, invoiceBalance, matchesConversation, paymentReminder, waMoney } from "../lib/waWorkspace.js";
@@ -339,7 +340,7 @@ export default function WaPanel({
         onClick={e => e.stopPropagation()}>
         <header className="wa-topbar">
           <div className="wa-brand-icon">◉</div>
-          <div className="wa-grow"><h2 id="wa-workspace-title">WhatsApp <span>Workspace</span></h2><p>AClean · {waProvider === "fonnte" ? "Fonnte" : waProvider === "wa_cloud" ? "WA Cloud API" : "Twilio"} · {waConversations.length} percakapan dimuat</p><p style={{ color: conversationFeed.error ? "#fbbf24" : undefined }} role={conversationFeed.error ? "alert" : undefined}>{conversationFeed.error ? (conversationFeed.updatedAt ? `Daftar belum diperbarui: ${conversationFeed.error}. Data terakhir tetap ditampilkan.` : `Daftar percakapan gagal dimuat: ${conversationFeed.error}`) : inboxLoading ? "Memuat daftar percakapan…" : conversationFeed.updatedAt ? `Terakhir diperbarui ${timeLabel(conversationFeed.updatedAt)}` : "Refresh daftar aktif saat panel terlihat · termasuk malam hari"}</p></div>
+          <div className="wa-grow"><h2 id="wa-workspace-title">WhatsApp <span>Workspace</span></h2><p>AClean · {waProvider === "fonnte" ? "Fonnte" : waProvider === "whacenter" ? "WhaCenter" : waProvider === "wa_cloud" ? "WA Cloud API" : "Provider belum dikenal"} · {waConversations.length} percakapan dimuat</p><p style={{ color: conversationFeed.error ? "#fbbf24" : undefined }} role={conversationFeed.error ? "alert" : undefined}>{conversationFeed.error ? (conversationFeed.updatedAt ? `Daftar belum diperbarui: ${conversationFeed.error}. Data terakhir tetap ditampilkan.` : `Daftar percakapan gagal dimuat: ${conversationFeed.error}`) : inboxLoading ? "Memuat daftar percakapan…" : conversationFeed.updatedAt ? `Terakhir diperbarui ${timeLabel(conversationFeed.updatedAt)}` : "Refresh daftar aktif saat panel terlihat · termasuk malam hari"}</p></div>
           <span className="wa-top-note">Percakapan & operasional</span>
           <button className="wa-icon-button" onClick={refresh} disabled={refreshing} aria-label="Muat ulang percakapan" title="Muat ulang percakapan">{refreshing ? "…" : "↻"}</button>
           <button className="wa-icon-button wa-expand" onClick={() => setExpanded(v => !v)} aria-label={expanded ? "Perkecil panel" : "Perbesar panel"} title={expanded ? "Perkecil panel" : "Perbesar panel"}>{expanded ? "↙" : "↗"}</button>
@@ -387,7 +388,7 @@ export default function WaPanel({
                     {(index === 0 || dayKey(msg.created_at) !== dayKey(visibleMessages[index - 1].created_at)) && <div className="wa-date-divider"><span>{dateLabel(msg.created_at)}</span></div>}
                     <div className={`wa-message-row ${out ? "outgoing" : "incoming"}`}><div className="wa-bubble">
                       {out && <strong className="wa-sender">{msg.role === "ara" ? "ARA · Asisten" : msg.name || "Admin"}</strong>}
-                      {safeUrl(msg.image_url) && <a href={safeUrl(msg.image_url)} target="_blank" rel="noopener noreferrer" className="wa-media"><img src={safeUrl(msg.image_url)} alt="Lampiran pesan WhatsApp" loading="lazy" onError={e => { e.currentTarget.hidden = true; }} /><span>Buka lampiran ↗</span></a>}
+                      {msg.image_url && <WaMessageAttachment key={msg.image_url} value={msg.image_url} />}
                       <div className="wa-message-content">{msg.content}</div><div className="wa-message-time">{timeLabel(msg.created_at)}{out ? " · Keluar" : ""}</div>
                     </div></div>
                   </div>;

@@ -53,6 +53,13 @@ describe("fotoUrl — dengan CDN aktif", () => {
     expect(fotoUrl("/api/foto?key=laporan%2FJOB-1%2Fa.jpg")).toBe("https://cdn.aclean.id/laporan/JOB-1/a.jpg");
     expect(fotoUrl("https://pub-e159.r2.dev/wa/b.png")).toBe("https://cdn.aclean.id/wa/b.png");
   });
+  it("r2.dev pengembangan selalu lewat proxy agar gambar tidak bergantung pada DNS browser", () => {
+    setCdn("https://pub-e159.r2.dev");
+    expect(fotoUrl("https://pub-e159.r2.dev/wa-inbox/2026-11/bukti.jpg"))
+      .toBe("/api/foto?key=wa-inbox%2F2026-11%2Fbukti.jpg");
+    expect(fotoUrl("laporan/job-1/foto.jpg"))
+      .toBe("/api/foto?key=laporan%2Fjob-1%2Ffoto.jpg");
+  });
   it("trailing slash di env tidak bikin dobel slash", () => {
     setCdn("https://cdn.aclean.id/");
     expect(fotoUrl("laporan/a.jpg")).toBe("https://cdn.aclean.id/laporan/a.jpg");

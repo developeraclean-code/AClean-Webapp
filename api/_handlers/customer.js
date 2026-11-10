@@ -1,3 +1,4 @@
+import { sendConfiguredWaNotification } from "../_wa-provider.js";
 // api/_handlers/customer.js — Handler grup customer/portal (Batch 2 pemecahan router, Jul 2026).
 // Isi dipindah APA ADANYA dari api/[route].js — di-dispatch oleh api/[route].js.
 import { checkRateLimit } from "../_auth.js";
@@ -149,9 +150,8 @@ export async function submitRating(req, res) {
 
   // Alert ke owner via WA jika rating ≤ 2
   if (rating <= 2) {
-    const FT = process.env.FONNTE_TOKEN;
     const ownerPhone = process.env.OWNER_PHONE;
-    if (FT && ownerPhone) {
+    if (ownerPhone) {
       const alertMsg =
         `⚠️ *Rating Rendah dari Customer*\n\n` +
         `⭐ Rating: ${rating}/5\n` +
@@ -160,11 +160,7 @@ export async function submitRating(req, res) {
         `🛠 Teknisi: ${jobData.teknisi || "-"}\n` +
         `💬 Komentar: ${comment || "(tidak ada)"}\n\n` +
         `Segera follow-up untuk cegah churn! — AClean System`;
-      fetch("https://api.fonnte.com/send", {
-        method: "POST",
-        headers: { "Authorization": FT, "Content-Type": "application/json" },
-        body: JSON.stringify({ target: ownerPhone, message: alertMsg }),
-      }).catch(() => {});
+      void sendConfiguredWaNotification(ownerPhone, alertMsg);
     }
   }
 

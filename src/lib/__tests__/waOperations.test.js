@@ -51,16 +51,24 @@ describe("Durable WhatsApp delivery",()=>{
   it("distinguishes accepted, explicit rejection, ambiguous response and timeout without retry",async()=>{
     for(const [body,status] of [[{status:true,id:["provider1"]},"ACCEPTED"],[{status:false,reason:"offline"},"FAILED"],[{},"UNCERTAIN"]]){
       const fn=vi.fn().mockResolvedValue({ok:true,json:async()=>body});
-      expect((await deliverWorkspaceMessage(payload,{token:"mock",fetchImpl:fn})).status).toBe(status);
+      expect((await deliverWorkspaceMessage(payload,{token:"mock",fetchImpl:fn,provider:"fonnte"})).status).toBe(status);
       expect(fn).toHaveBeenCalledTimes(1);
     }
     const fn=vi.fn().mockRejectedValue(new Error("timeout"));
-    expect((await deliverWorkspaceMessage(payload,{token:"mock",fetchImpl:fn})).status).toBe("UNCERTAIN");
+    expect((await deliverWorkspaceMessage(payload,{token:"mock",fetchImpl:fn,provider:"fonnte"})).status).toBe("UNCERTAIN");
     expect(fn).toHaveBeenCalledTimes(1);
+  });
+  it("records the selected provider with the durable send outcome",async()=>{
+    const deliver=vi.fn().mockResolvedValue({status:"ACCEPTED",provider:"whacenter",provider_id:"wc-1"});
+    const db={rpc:vi.fn().mockResolvedValueOnce({data:{claimed:true,row:{id:"1",status:"SENDING"}}}).mockResolvedValueOnce({data:{id:"1",status:"ACCEPTED",provider:"whacenter"}})};
+    await dispatchWorkspaceMessage(db,"1",payload,"Admin",deliver);
+    expect(db.rpc.mock.calls[1]).toEqual(["finish_wa_send",{
+      p_id:"1",p_status:"ACCEPTED",p_error:null,p_provider_id:"wc-1",p_provider:"whacenter",
+    }]);
   });
   it("sends PDF as one request and never falls back to duplicate text",async()=>{
     const fn=vi.fn().mockRejectedValue(new Error("timeout"));
-    await deliverWorkspaceMessage({...payload,url:"https://example.test/document.pdf",filename:"Invoice.pdf"},{token:"mock",fetchImpl:fn});
+    await deliverWorkspaceMessage({...payload,url:"https://example.test/document.pdf",filename:"Invoice.pdf"},{token:"mock",fetchImpl:fn,provider:"fonnte"});
     expect(JSON.parse(fn.mock.calls[0][1].body)).toMatchObject({url:"https://example.test/document.pdf",filename:"Invoice.pdf"});
     expect(fn).toHaveBeenCalledTimes(1);
   });

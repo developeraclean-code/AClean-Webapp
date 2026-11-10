@@ -35,7 +35,7 @@ describe("Katalog WA", () => {
     expect(catalogPrice(item, [{ id: 24, price: 95000, is_active: true }])).toBe(95000);
     expect(catalogCaption(item, 95000)).toContain("Rp 95.000");
     const fetchImpl = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: true, id: ["fonnte-id"] }) });
-    const result = await deliverWorkspaceMessage({ phone: "6281234567890", message: "SOP\n\nHarga: Rp 95.000", url: "https://cdn.example.test/catalog/example.jpg" }, { token: "test", fetchImpl });
+    const result = await deliverWorkspaceMessage({ phone: "6281234567890", message: "SOP\n\nHarga: Rp 95.000", url: "https://cdn.example.test/catalog/example.jpg" }, { token: "test", fetchImpl, provider: "fonnte" });
     expect(result.status).toBe("ACCEPTED");
     expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toMatchObject({ target: "6281234567890", message: "SOP\n\nHarga: Rp 95.000", url: "https://cdn.example.test/catalog/example.jpg" });
     expect(fetchImpl).toHaveBeenCalledTimes(1);

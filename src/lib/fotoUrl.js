@@ -6,9 +6,10 @@
 // Vercel — kena kuota bandwidth DAN invocation sekaligus. Ini penyumbang
 // terbesar pemakaian kuota.
 //
-// SEKARANG: kalau `VITE_R2_CDN_URL` di-set (custom domain R2, mis.
-// https://cdn.aclean.id), gambar disajikan LANGSUNG dari Cloudflare — egress R2
-// gratis, cache CDN penuh, Vercel tidak tersentuh sama sekali.
+// Jika `VITE_R2_CDN_URL` adalah custom domain R2 (mis.
+// https://cdn.aclean.id), gambar disajikan langsung dari Cloudflare.
+// Domain pengembangan r2.dev tidak digunakan sebagai CDN browser karena dapat
+// gagal di resolver/jaringan pelanggan; selama itu terkonfigurasi, pakai proxy.
 //
 // Kalau env kosong → semua kembali ke proxy lama persis seperti sebelumnya.
 // Jadi ini aman di-deploy duluan sebelum custom domain-nya jadi.
@@ -27,6 +28,11 @@ const cdnBase = () => {
   try {
     return String(import.meta.env?.VITE_R2_CDN_URL || "").replace(/\/+$/, "");
   } catch { return ""; }
+};
+
+const isR2DevelopmentDomain = (base) => {
+  try { return new URL(base).hostname.toLowerCase().endsWith(".r2.dev"); }
+  catch { return false; }
 };
 
 // Berkas yang HARUS tetap lewat proxy, tidak boleh kena cache CDN:
@@ -89,9 +95,17 @@ export const fotoUrl = (url, opts = {}) => {
   if (!key) return s; // bukan berkas R2 (URL luar) → jangan diutak-atik
 
   const cdn = cdnBase();
-  if (cdn && !BYPASS_CDN.test(key)) return cdn + "/" + encodeKeyPath(key);
+  if (cdn && !isR2DevelopmentDomain(cdn) && !BYPASS_CDN.test(key)) return cdn + "/" + encodeKeyPath(key);
 
   return apiBase + "/foto?key=" + encodeURIComponent(key);
 };
 
 export default fotoUrl;
+
+// Force temporary WhatsApp previews through the existing application proxy.
+export const fotoProxyUrl = (url, opts = {}) => {
+  const key = r2Key(url);
+  if (!key) return String(url || "").trim();
+  const apiBase = (opts.apiBase || "/api").replace(/\/+$/, "");
+  return `${apiBase}/foto?key=${encodeURIComponent(key)}`;
+};

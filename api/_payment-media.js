@@ -1,6 +1,7 @@
+import { downloadIngressMedia } from "./_wa-ingress.js";
 import { matchPaymentInvoices, paymentPhoneVariants } from "../src/lib/waPaymentMatch.js";
 import { createHash, randomUUID } from "node:crypto";
-import { downloadBufferFromR2, downloadToBuffer, uploadBufferToR2 } from "./_r2-upload.js";
+import { downloadBufferFromR2, uploadBufferToR2 } from "./_r2-upload.js";
 import { callVision, getVisionProvider, OPENAI_VISION_MODEL, CLAUDE_VISION_MODEL } from "./_vision-provider.js";
 import { sniffMediaMimeType } from "./_media-format.js";
 import { logAiUsageRest } from "./_logger.js";
@@ -127,14 +128,14 @@ export function manualPaymentReviewReason({ category }) {
   return null;
 }
 
-export async function registerPaymentMediaReference({ supabaseUrl, serviceKey, sourceUrl, phone, senderName, mimeType }) {
+export async function registerPaymentMediaReference({ supabaseUrl, serviceKey, sourceUrl, phone, senderName, mimeType, provider = "fonnte" }) {
   if (!supabaseUrl || !serviceKey || !sourceUrl || !phone) return { ok: false, error: "parameter queue tidak lengkap" };
   try {
     const response = await fetch(`${supabaseUrl}/rest/v1/wa_payment_media_jobs?on_conflict=source_url`, {
       method: "POST",
       headers: restHeaders(serviceKey, "resolution=ignore-duplicates,return=representation"),
       body: JSON.stringify({
-        source_url: sourceUrl, phone, sender_name: senderName || null,
+        source_url: sourceUrl, phone, sender_name: senderName || null, provider,
         mime_type: mimeType || null, status: "RECEIVED",
         next_retry_at: new Date(Date.now() + 120_000).toISOString(), updated_at: new Date().toISOString(),
       }),
@@ -154,7 +155,7 @@ export async function registerPaymentMediaReference({ supabaseUrl, serviceKey, s
   }
 }
 
-export async function stagePaymentMedia({ supabaseUrl, serviceKey, sourceUrl, phone, senderName, buffer, mimeType, createdAt, leaseToken }) {
+export async function stagePaymentMedia({ supabaseUrl, serviceKey, sourceUrl, phone, senderName, buffer, mimeType, createdAt, leaseToken, provider = "fonnte" }) {
   mimeType = sniffMediaMimeType(buffer) || mimeType;
   if (!supabaseUrl || !serviceKey || !sourceUrl || !phone || !buffer?.length) return { ok: false, error: "parameter staging tidak lengkap" };
   try {
@@ -179,7 +180,7 @@ export async function stagePaymentMedia({ supabaseUrl, serviceKey, sourceUrl, ph
     method: "POST",
     headers: restHeaders(serviceKey, "resolution=merge-duplicates,return=representation"),
     body: JSON.stringify({
-      source_url: sourceUrl, phone, sender_name: senderName || null,
+      source_url: sourceUrl, phone, sender_name: senderName || null, provider,
       mime_type: mimeType || "image/jpeg", r2_key: key, r2_url: upload.url,
       status: leaseToken ? "PROCESSING" : "STORED",
       next_retry_at: new Date(Date.now() + 120_000).toISOString(), updated_at: new Date().toISOString(),
@@ -361,14 +362,20 @@ export async function retryOnePaymentMediaJob({ supabaseUrl, serviceKey, apiKey 
   if (cached) ai = { ok: true, classification: cached };
   else if (job.retry_exhausted) ai = { ok: false, error: "Retry AI habis setelah worker terputus; periksa media secara manual" };
   else {
-    let media = job.r2_key
-      ? await downloadBufferFromR2(job.r2_key, { timeoutMs: 7000 })
-      : await downloadToBuffer(job.source_url, { timeoutMs: 7000 });
+    // Retry the originating gateway, even if the global selector changed meanwhile.
+    // Old jobs predate the provider column and belong to the legacy Fonnte path.
+    let media;
+    try {
+      media = job.r2_key
+        ? await downloadBufferFromR2(job.r2_key, { timeoutMs: 7000 })
+        : { ok: true, ...await downloadIngressMedia(job.source_url, { provider: job.provider || "fonnte", timeoutMs: 7000 }) };
+    } catch (error) { media = { ok: false, err: error.waMediaCode
+      ? error.message : "Unduhan media provider gagal [WA_MEDIA_FETCH_FAILED]" }; }
     if (media.ok && !job.r2_key) {
       const staged = await stagePaymentMedia({
         supabaseUrl, serviceKey, sourceUrl: job.source_url, phone: job.phone,
         senderName: job.sender_name, buffer: media.buffer,
-        mimeType: media.mimeType || job.mime_type, createdAt: job.created_at, leaseToken,
+        mimeType: media.mimeType || job.mime_type, createdAt: job.created_at, leaseToken, provider: job.provider || "fonnte",
       });
       if (!staged.ok) media = { ok: false, err: staged.error };
       else activeJob = staged.job;

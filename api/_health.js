@@ -3,14 +3,17 @@
 export function createHealthCheck({ fetchImpl = (...args) => fetch(...args), now = Date.now,
   timeoutMs = 3000, ttlMs = 15_000 } = {}) {
   let pending = null, cached = null, expiresAt = 0;
-  async function probe(url, options) {
+  async function probe(url, options, connected) {
     const controller = new AbortController();
     let timer;
     try {
       return await Promise.race([
         Promise.resolve().then(async () => {
           const response = await fetchImpl(url, { ...options, signal: controller.signal });
-          // No response payload is needed. Release the connection without reading logs.
+          if (connected && response.ok) {
+            const body = await response.json().catch(() => null);
+            return connected(body) ? 'ok' : 'fail:device_disconnected';
+          }
           await response.body?.cancel();
           return response.ok ? 'ok' : `fail:${response.status}`;
         }),
@@ -28,16 +31,18 @@ export function createHealthCheck({ fetchImpl = (...args) => fetch(...args), now
       const started = now();
       const url = env.SUPABASE_URL || env.VITE_SUPABASE_URL, key = env.SUPABASE_SERVICE_KEY;
       const authKey = env.SUPABASE_ANON_KEY || env.VITE_SUPABASE_ANON_KEY || key;
-      const [supabase, auth, fonnte] = await Promise.all([
+      const [supabase, auth, fonnte, whacenter] = await Promise.all([
         url && key ? probe(url + '/rest/v1/agent_logs?select=id&limit=1', {
           headers: { apikey: key, Authorization: `Bearer ${key}` },
         }) : 'not_configured',
         url && authKey ? probe(url + '/auth/v1/health', {
           headers: { apikey: authKey },
         }) : 'not_configured',
-        env.FONNTE_TOKEN ? probe('https://api.fonnte.com/validate', {
+        env.FONNTE_TOKEN ? probe('https://api.fonnte.com/device', {
           method: 'POST', headers: { Authorization: env.FONNTE_TOKEN },
-        }) : 'not_configured',
+        }, body => body?.status === true && body.device_status === 'connect') : 'not_configured',
+        env.WHACENTER_DEVICE_ID ? probe(`https://app.whacenter.com/api/statusDevice?device_id=${encodeURIComponent(env.WHACENTER_DEVICE_ID)}`, {},
+          body => body?.status === true && String(body.data?.status).toUpperCase() === 'CONNECTED') : 'not_configured',
       ]);
       const providers = [['ANTHROPIC_API_KEY','claude'],['OPENAI_API_KEY','openai'],['GROQ_API_KEY','groq'],['GEMINI_API_KEY','gemini']]
         .filter(([name]) => env[name]).map(([, name]) => name);
@@ -47,9 +52,9 @@ export function createHealthCheck({ fetchImpl = (...args) => fetch(...args), now
         : supabase !== 'ok' ? 'database_api_or_postgrest' : 'auth_service';
       cached = { status: diagnosis === 'none' ? 'healthy' : 'unhealthy', diagnosis,
         timestamp: new Date(now()).toISOString(), duration_ms: now() - started,
-        checks: { supabase, database: supabase, auth, fonnte,
+        checks: { supabase, database: supabase, auth, fonnte, whacenter,
           ai: providers.length ? `ok:${providers.join(',')}` : 'not_configured' },
-        version: env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) || 'dev' };
+        version: (env.ACLEAN_BUILD_SHA || env.VERCEL_GIT_COMMIT_SHA)?.slice(0, 7) || 'dev' };
       expiresAt = now() + ttlMs;
       return cached;
     })().finally(() => { pending = null; });

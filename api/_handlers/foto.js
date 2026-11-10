@@ -226,7 +226,7 @@ export async function foto(req, res) {
 
       const accessKeyId     = process.env.R2_ACCESS_KEY;
       const secretAccessKey = process.env.R2_SECRET_KEY;
-      const accountId       = process.env.R2_ACCOUNT_ID;
+      const accountId       = process.env.R2_ACCOUNT_ID || process.env.CLOUDFLARE_ACCOUNT_ID;
       const bucket          = process.env.R2_BUCKET_NAME || "aclean-files";
 
       // Selalu serve via AWS Sig V4 (tidak redirect ke public URL)
@@ -282,7 +282,17 @@ export async function foto(req, res) {
         if (waInbox && ct === "application/octet-stream") {
           res.setHeader("Cache-Control", "no-store");
           res.setHeader("Content-Disposition", "attachment");
-        } else if (ct.includes("text/html") || ct.includes("application/pdf")) {
+        } else if (ct.includes("application/pdf")) {
+          const requestedName = String(req.query?.filename || "").trim();
+          const safeName = requestedName
+            .replace(/[^a-zA-Z0-9._-]/g, "_")
+            .replace(/\.{2,}/g, ".")
+            .slice(0, 120);
+          res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+          res.setHeader("Content-Disposition", safeName.toLowerCase().endsWith(".pdf")
+            ? `attachment; filename="${safeName}"`
+            : "inline");
+        } else if (ct.includes("text/html")) {
           res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
           res.setHeader("Content-Disposition", "inline");
         } else {
