@@ -61,11 +61,12 @@ export async function dispatchWorkspaceMessage(db, id, payload, actor, deliver) 
 }
 
 export async function deliverWorkspaceMessage(payload, { token = process.env.FONNTE_TOKEN, fetchImpl = fetch, timeoutMs = 20000, provider: providerOverride } = {}) {
+  let provider = providerOverride || null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1000, Math.min(20000, Number(timeoutMs) || 20000)));
   try {
     // Exactly one attempt. A timeout must not trigger a fallback text or duplicate document.
-    const provider = providerOverride || await readSelectedWaProvider({ fetchImpl });
+    provider ||= await readSelectedWaProvider({ fetchImpl });
     const response = await sendWithConfiguredWaProvider({
       method: "POST", headers: { Authorization: token || "", "Content-Type": "application/json" },
       body: JSON.stringify({ target: payload.phone, message: payload.message, ...(payload.url ? { url: payload.url, filename: payload.filename } : {}), countryCode: "62" }), signal: controller.signal,
@@ -74,7 +75,7 @@ export async function deliverWorkspaceMessage(payload, { token = process.env.FON
     if (response.ok && body.status === true) return { status: "ACCEPTED", provider, provider_id: Array.isArray(body.id) ? body.id.join(",") : String(body.id || "") };
     if (body.status === false) return { status: "FAILED", provider, error: String(body.reason || "Gateway menolak pesan") };
     return { status: "UNCERTAIN", provider, error: "Respons gateway tidak memastikan hasil pengiriman" };
-  } catch (error) { return { status: "UNCERTAIN", provider: providerOverride || null, error: error.name === "AbortError" ? "Gateway melewati batas waktu; periksa WhatsApp sebelum mengirim lagi" : "Koneksi gateway terputus; status pengiriman belum pasti" }; }
+  } catch (error) { return { status: "UNCERTAIN", provider, error: error.name === "AbortError" ? "Gateway melewati batas waktu; periksa WhatsApp sebelum mengirim lagi" : "Koneksi gateway terputus; status pengiriman belum pasti" }; }
   finally { clearTimeout(timer); }
 }
 

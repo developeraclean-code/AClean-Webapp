@@ -1,3 +1,4 @@
+import { sendConfiguredWaNotification as sendWA } from "./_wa-provider.js";
 // api/upload-toolbag.js
 // POST /api/upload-toolbag — cek kelengkapan Tas Teknisi langsung dari app (menu Alat Saya),
 // alternatif in-app dari alur WA lama ("Pagi/Pulang Tas N" ke WA Owner) — keduanya tetap aktif
@@ -10,24 +11,11 @@ import { analyzeToolBagPhoto } from "./_tool-bag-vision.js";
 
 const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SK = process.env.SUPABASE_SERVICE_KEY;
-const FONNTE_TOKEN = process.env.FONNTE_TOKEN || "";
 const OWNER_PHONE = process.env.OWNER_PHONE || "";
 const H = { apikey: SK, Authorization: "Bearer " + SK, "Content-Type": "application/json" };
 const REST = (p) => `${SU}/rest/v1/${p}`;
 
 const BAGS = Array.from({ length: 10 }, (_, i) => "Tas " + (i + 1));
-
-async function sendWA(phone, message) {
-  if (!FONNTE_TOKEN || !phone) return false;
-  try {
-    const r = await fetch("https://api.fonnte.com/send", {
-      method: "POST",
-      headers: { "Authorization": FONNTE_TOKEN, "Content-Type": "application/json" },
-      body: JSON.stringify({ target: phone, message }),
-    });
-    return r.ok;
-  } catch { return false; }
-}
 
 export default async function handler(req, res) {
   setCorsHeaders(req, res);

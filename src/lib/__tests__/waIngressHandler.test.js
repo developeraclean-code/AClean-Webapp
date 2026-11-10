@@ -4,7 +4,7 @@ vi.mock("../../../api/_auth.js", async original => ({ ...await original(), check
 vi.mock("../../../api/_ara-customer.js", () => ({ processAraCustomer: vi.fn() }));
 vi.mock("../../../api/_payment-media.js", async original => ({ ...await original(), stagePaymentMedia: mocks.stage,
   classifyPaymentMedia: mocks.classify, ensurePaymentSuggestion: mocks.suggestion, updatePaymentMediaJob: mocks.update, registerPaymentMediaReference: mocks.register }));
-import { receiveWa } from "../../../api/_handlers/wa.js";
+import { receiveWa, waGroups } from "../../../api/_handlers/wa.js";
 import { checkRateLimit } from "../../../api/_auth.js";
 import { clearWaProviderCache } from "../../../api/_wa-provider.js";
 
@@ -183,4 +183,53 @@ it("does not invoke inherited Object methods as API handlers",async()=>{
   await router({method:"GET",headers:{"x-internal-token":"synthetic-internal-token"},query:{route:"constructor"}},res);
   expect(res.code).toBe(404);
   expect(res.body.error).toContain("Route tidak ditemukan");
+});
+
+it.each(["jpg", "pdf"])("processes authenticated WhaCenter %s through intake, bounded download, staging and retry", async extension => {
+  selectedProvider="whacenter";
+  const source=`https://app.whacenter.com/media/synthetic.${extension}`;
+  const originalFetch=globalThis.fetch.getMockImplementation();
+  globalThis.fetch.mockImplementation(async(raw, options={})=>{
+    if(String(raw)===source){requests.push({path:new URL(source).pathname,stage:"DOWNLOAD"});expect(options.redirect).toBe("error");return new Response(Buffer.alloc(500,1),{headers:{"content-type":extension==="pdf"?"application/pdf":"image/jpeg"}});}
+    return originalFetch(raw,options);
+  });
+  const res=response();
+  await receiveWa({method:"POST",headers:{},query:{route:"whacenter-webhook",token:"synthetic-whacenter-secret"},body:{from:body.sender,media:source,timestamp:"2026-11-10 10:30:13"}},res);
+  expect(res.code).toBe(200);
+  expect(requests.find(r=>r.path?.endsWith("capture_wa_webhook_214")).body.p_event).toMatchObject({media_url:source,type:extension==="pdf"?"document":"image",payload:{provider:"whacenter"}});
+  expect(mocks.stage).toHaveBeenCalledWith(expect.objectContaining({provider:"whacenter",sourceUrl:source}));
+  expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({patch:expect.objectContaining({status:"FAILED_RETRYABLE"})}));
+  expect(requests.findIndex(r=>r.path?.endsWith("capture_wa_webhook_214"))).toBeLessThan(requests.findIndex(r=>r.stage==="DOWNLOAD"));
+  expect(requests.findIndex(r=>r.stage==="R2")).toBeLessThan(requests.findIndex(r=>r.stage==="AI"));
+});
+
+it("pins webhook replies to the authenticated gateway across a global provider switch",async()=>{
+  selectedProvider="whacenter";vi.stubEnv("OWNER_PHONE","628000000009");
+  const originalFetch=globalThis.fetch.getMockImplementation();let sent=false;
+  globalThis.fetch.mockImplementation(async(raw,options={})=>{
+    const url=new URL(raw);
+    if(url.hostname==="app.whacenter.com" && url.pathname==="/api/send"){
+      sent=true;expect(options.body.get("number")).toBe("628000000009");return new Response(JSON.stringify({status:true}));
+    }
+    if(url.pathname==="/rest/v1/app_settings" && url.searchParams.get("key")!=="eq.wa_provider")return new Response(JSON.stringify([{key:"wa_forward_to_owner",value:"true"}]));
+    const result=await originalFetch(raw,options);
+    if(url.pathname.endsWith("capture_wa_webhook_214")){selectedProvider="fonnte";clearWaProviderCache();}
+    return result;
+  });
+  const res=response();
+  await receiveWa({method:"POST",headers:{},query:{route:"whacenter-webhook",token:"synthetic-whacenter-secret"},body:{from:body.sender,message:"hello",timestamp:"2026-11-10 11:00:00"}},res);
+  expect(res.code).toBe(200);expect(sent).toBe(true);
+});
+
+it("keeps database group discovery available with WhaCenter and no Fonnte credential",async()=>{
+  selectedProvider="whacenter";
+  const originalFetch=globalThis.fetch.getMockImplementation();
+  globalThis.fetch.mockImplementation(async(raw,options={})=>{
+    if(new URL(raw).pathname==="/rest/v1/wa_group_discovery")return new Response(JSON.stringify([{group_id:"120000000001@g.us",group_name:"Synthetic team"}]));
+    return originalFetch(raw,options);
+  });
+  const res=response();await waGroups({method:"GET",query:{action:"discovery-list"}},res);
+  expect(res.code).toBe(200);expect(res.body.count).toBe(1);
+  const unsupported=response();await waGroups({method:"GET",query:{action:"fonnte-list"}},unsupported);
+  expect(unsupported.code).toBe(409);
 });

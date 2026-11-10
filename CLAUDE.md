@@ -186,6 +186,8 @@ migrations/               # SQL migration files (run manually in Supabase SQL Ed
 ```
 
 ## Migrations Status (status per baris; jangan anggap semua sudah diterapkan)
+
+**10 November 2026 — Pending:** `233_wa_media_provider_parity.sql` menyelaraskan validasi media Fonnte/WhaCenter dan menyimpan provider asal antrean media. Teruji pada PostgreSQL terisolasi; belum diterapkan ke staging/produksi. Detail: `docs/WHACENTER_PARITY_AUDIT_2026-11-10.md`.
 ```
 001–014   # Applied — constraint, audit trail, freon qty actual
 015       # Applied — trade_in support di invoices

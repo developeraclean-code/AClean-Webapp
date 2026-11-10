@@ -54,3 +54,13 @@ describe("Owner WhatsApp provider setting", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 });
+
+it("rejects a complete URL stored as the webhook secret before probing or activating", async () => {
+  vi.stubEnv("WHACENTER_WEBHOOK_SECRET", "https://app.example.com/api/whacenter-webhook?token=synthetic");
+  const res = response();
+  await setWaProvider({ method: "POST", appClaims: { role: "Owner" }, body: { provider: "whacenter" } }, res);
+  expect(res.code).toBe(409);
+  expect(res.body.provider_saved).toBe(false);
+  expect(res.body.error).toContain("token saja");
+  expect(fetch).not.toHaveBeenCalled();
+});

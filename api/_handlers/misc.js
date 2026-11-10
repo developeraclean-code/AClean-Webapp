@@ -1,3 +1,4 @@
+import { readSelectedWaProvider, sendWithConfiguredWaProvider } from "../_wa-provider.js";
 // api/_handlers/misc.js — ara-chat (proxy LLM legacy) & cron-reminder legacy
 // (Batch 4 pemecahan router, Jul 2026). Dipindah APA ADANYA dari api/[route].js.
 import { logAiUsageRest } from "../_logger.js";
@@ -76,24 +77,25 @@ export async function araChat(req, res) {
 
     // ── CRON-REMINDER ──
 export async function cronReminder(req, res) {
-      const SU=process.env.SUPABASE_URL||process.env.VITE_SUPABASE_URL, SK=process.env.SUPABASE_SERVICE_KEY, FT=process.env.FONNTE_TOKEN;
-      if (!SU||!SK||!FT) return res.status(200).json({ ok:false, error:"Env vars tidak lengkap" });
+      const SU=process.env.SUPABASE_URL||process.env.VITE_SUPABASE_URL, SK=process.env.SUPABASE_SERVICE_KEY;
+      if (!SU||!SK) return res.status(200).json({ ok:false, error:"Env vars tidak lengkap" });
       const today = new Date().toISOString().slice(0,10);
       const invR = await fetch(SU+"/rest/v1/invoices?select=*&status=eq.UNPAID&due=lt."+today, { headers:{ apikey:SK, Authorization:"Bearer "+SK } });
       const invs = await invR.json().catch(err => {
         console.error("[CRON_INVOICE_FETCH_ERROR]", {error: err.message});
         return [];
       });
+      const provider = await readSelectedWaProvider();
       let sent=0, updated=0;
       for (const inv of (invs||[])) {
         await fetch(SU+"/rest/v1/invoices?id=eq."+inv.id, { method:"PATCH", headers:{ "Content-Type":"application/json", apikey:SK, Authorization:"Bearer "+SK, Prefer:"return=minimal" }, body:JSON.stringify({ status:"OVERDUE" }) });
         updated++;
         if (inv.phone) {
           const np = String(inv.phone).replace(/^0/,"62").replace(/[^0-9]/g,"");
-          await fetch("https://api.fonnte.com/send", { method:"POST", headers:{ Authorization:FT, "Content-Type":"application/json" }, body:JSON.stringify({ target:np, message:"Halo "+( inv.customer||"Bapak/Ibu")+", tagihan AClean Rp"+Number(inv.total||0).toLocaleString("id-ID")+" (Invoice "+inv.id+") sudah jatuh tempo. Mohon segera lakukan pembayaran.", delay:"3", countryCode:"62" }) }).catch(err => {
+          const delivery = await sendWithConfiguredWaProvider({ method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ target:np, message:"Halo "+( inv.customer||"Bapak/Ibu")+", tagihan AClean Rp"+Number(inv.total||0).toLocaleString("id-ID")+" (Invoice "+inv.id+") sudah jatuh tempo. Mohon segera lakukan pembayaran.", delay:"3", countryCode:"62" }) }, { provider }).catch(err => {
             console.error("[CRON_OVERDUE_REMINDER_FAILED]", {invoiceId: inv.id, customerPhone: np, error: err.message});
           });
-          sent++;
+          if (delivery?.ok && (await delivery.json().catch(() => null))?.status === true) sent++;
         }
       }
       return res.status(200).json({ ok:true, overdue_found:(invs||[]).length, updated, reminders_sent:sent });

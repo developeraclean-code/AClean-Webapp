@@ -117,8 +117,16 @@ export async function sendWithConfiguredWaProvider(init = {}, {
     // Preserve uncertainty to callers. Never send via Fonnte after a WhaCenter timeout.
     throw error;
   }
-  const raw = await response.clone().json().catch(() => ({}));
+  const parsed = await response.clone().json().catch(() => null);
+  const raw = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
   const accepted = response.ok && (raw.status === true || raw.success === true);
+  const rejected = raw.status === false || raw.success === false
+    || (response.status >= 400 && response.status < 500 && response.status !== 408);
+  if (!accepted && !rejected) {
+    // A missing/invalid confirmation is not proof that nothing was sent.
+    // Propagate uncertainty so callers cannot mark it FAILED and invite a duplicate.
+    throw new Error("Hasil kirim WhaCenter belum pasti; periksa riwayat sebelum mengirim ulang");
+  }
   const normalized = {
     ...raw,
     status: accepted,
@@ -135,12 +143,16 @@ export async function testWaProvider(provider, { fetchImpl = fetch, env = proces
     const token = env.FONNTE_TOKEN;
     if (!token) return { ok: false, success: false, message: "FONNTE_TOKEN belum dikonfigurasi di server" };
     try {
-      const response = await fetchImpl("https://api.fonnte.com/validate", {
-        method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: "{}", signal: AbortSignal.timeout(10000),
+      const response = await fetchImpl("https://api.fonnte.com/device", {
+        method: "POST", headers: { Authorization: token }, signal: AbortSignal.timeout(10000),
       });
       const body = await response.json().catch(() => ({}));
-      const ok = response.ok && body.status !== false;
-      return { ok, success: ok, provider: selected, message: ok ? "Fonnte terhubung" : String(body.reason || `Fonnte HTTP ${response.status}`) };
+      const deviceConnected = String(body.device_status || "").toLowerCase() === "connect";
+      const ok = response.ok && body.status === true && deviceConnected;
+      const message = ok ? "Fonnte terhubung"
+        : body.status === true && !deviceConnected ? "Token Fonnte valid, tetapi perangkat terputus"
+          : String(body.reason || `Fonnte HTTP ${response.status}`);
+      return { ok, success: ok, provider: selected, message };
     } catch (error) { return { ok: false, success: false, provider: selected, message: error.name === "AbortError" ? "Fonnte timeout" : "Tidak dapat menghubungi Fonnte" }; }
   }
 
@@ -154,4 +166,19 @@ export async function testWaProvider(provider, { fetchImpl = fetch, env = proces
     const connected = response.ok && body.status === true && String(body.data?.status || "").toUpperCase() === "CONNECTED";
     return { ok: connected, success: connected, provider: selected, message: connected ? "WhaCenter terhubung" : String(body.message || body.data?.status || `WhaCenter HTTP ${response.status}`) };
   } catch (error) { return { ok: false, success: false, provider: selected, message: error.name === "AbortError" ? "WhaCenter timeout" : "Tidak dapat menghubungi WhaCenter" }; }
+}
+
+// Best-effort operational alerts share the same gateway selection and acceptance
+// rules as workspace sends. No retry/fallback after an uncertain response.
+export async function sendConfiguredWaNotification(phone, message, options = {}) {
+  if (!phone || !message) return false;
+  try {
+    const response = await sendWithConfiguredWaProvider({
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target: phone, message, countryCode: "62" }),
+      signal: AbortSignal.timeout(12000),
+    }, options);
+    const body = await response.json().catch(() => null);
+    return response.ok && body?.status === true;
+  } catch { return false; }
 }

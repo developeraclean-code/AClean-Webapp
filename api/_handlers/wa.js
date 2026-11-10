@@ -12,7 +12,7 @@ import { classifyImage, persistClassification, safeDateStr } from "../_ai-vision
 import { logAiUsageRest } from "../_logger.js";
 import { analyzeToolBagPhoto } from "../_tool-bag-vision.js";
 import { classifyText, matchSelesaiToOrder, persistTextClassification, extractMaterialUsage, resolveUsageJobs, looksLikeMaterialUsage } from "../_ai-text.js";
-import { uploadBufferToR2, downloadToBuffer, hasR2Config } from "../_r2-upload.js";
+import { uploadBufferToR2, hasR2Config } from "../_r2-upload.js";
 import { classifyPaymentMedia, findPaymentInvoiceMatch, ensurePaymentSuggestion, registerPaymentMediaReference, stagePaymentMedia, updatePaymentMediaJob } from "../_payment-media.js";
 import { shouldInspectPaymentText, normalizePaymentTextAmount } from "../../src/lib/waPaymentText.js";
 import { callVision } from "../_vision-provider.js";
@@ -315,6 +315,7 @@ export async function receiveWa(req, res) {
       if (!selectedProvider) return res.status(503).json({ error: "Pengaturan provider WA belum tersedia" });
       if (selectedProvider !== routeProvider) return res.status(409).json({ error: "Webhook provider ini sedang tidak dipilih", selected_provider: selectedProvider });
       if (selectedProvider === "whacenter" && !process.env.WHACENTER_DEVICE_ID) return res.status(503).json({ error: "WHACENTER_DEVICE_ID belum dikonfigurasi di server" });
+      const sendWebhookWa = init => sendWithConfiguredWaProvider(init, { provider: selectedProvider });
       const waConfigured = selectedProvider === "whacenter"
         ? !!process.env.WHACENTER_DEVICE_ID
         : !!process.env.FONNTE_TOKEN;
@@ -629,9 +630,9 @@ export async function receiveWa(req, res) {
                       const removedLbl = toRemove.map(r2 => `${r2.teknisi_name} (${Number(r2.amount).toLocaleString("id-ID")})`);
                       console.log("[KASBON_REVISI]", { removed: removedLbl });
                       if (waConfigured) {
-                        sendWithConfiguredWaProvider({
+                        sendWebhookWa({
                           method: "POST",
-                          headers: { Authorization: waConfigured, "Content-Type": "application/json" },
+                          headers: { "Content-Type": "application/json" },
                           body: JSON.stringify({ target: participantNorm, message: `♻️ Revisi kasbon diterapkan — dibatalkan dari catatan hari ini:\n${removedLbl.map(n => "• " + n).join("\n")}`, delay: "2", countryCode: "62" })
                         }).catch(() => {});
                       }
@@ -692,9 +693,9 @@ export async function receiveWa(req, res) {
                 }
                 // Alert Owner: AI mencatat kasbon yang TIDAK ada request-nya di panel teknisi/helper
                 if (noPanelAlerts.length && waConfigured && process.env.OWNER_PHONE) {
-                  sendWithConfiguredWaProvider({
+                  sendWebhookWa({
                     method: "POST",
-                    headers: { Authorization: waConfigured, "Content-Type": "application/json" },
+                    headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ target: process.env.OWNER_PHONE, message: `🚨 *Kasbon WA tanpa request panel*\n${noPanelAlerts.map(a => "• " + a).join("\n")}\n\nTetap dicatat (PENDING) dengan flag ⚠️ — verifikasi di menu Biaya sebelum finalisasi.`, delay: "2", countryCode: "62" })
                   }).catch(() => {});
                 }
@@ -707,9 +708,9 @@ export async function receiveWa(req, res) {
                   if (waConfigured) {
                     const failMsg = failedNames.length ? `\n⚠️ Gagal match: ${failedNames.join(", ")}` : "";
                     const dupMsg = dupNames.length ? `\n♻️ Sudah tercatat (skip duplikat): ${dupNames.join(", ")}` : "";
-                    sendWithConfiguredWaProvider({
+                    sendWebhookWa({
                       method: "POST",
-                      headers: { Authorization: waConfigured, "Content-Type": "application/json" },
+                      headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({ target: participantNorm, message: `✅ ${insertedNames.length} kasbon tercatat (PENDING AI):\n${insertedNames.map(n => "• " + n).join("\n")}${dupMsg}${failMsg}\n\nTunggu approve dari Finance/Owner, lalu Owner finalisasi di app.`, delay: "2", countryCode: "62" })
                     }).catch(() => {});
                   }
@@ -720,16 +721,16 @@ export async function receiveWa(req, res) {
                   expenseSaved = true;
                   console.log("[KASBON_MULTI_ALL_DUP]", { dup: dupNames });
                   if (waConfigured) {
-                    sendWithConfiguredWaProvider({
+                    sendWebhookWa({
                       method: "POST",
-                      headers: { Authorization: waConfigured, "Content-Type": "application/json" },
+                      headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({ target: participantNorm, message: `♻️ Kasbon sudah tercatat sebelumnya (skip duplikat):\n${dupNames.map(n => "• " + n).join("\n")}`, delay: "2", countryCode: "62" })
                     }).catch(() => {});
                   }
                 } else if (failedNames.length > 0 && waConfigured) {
-                  sendWithConfiguredWaProvider({
+                  sendWebhookWa({
                     method: "POST",
-                    headers: { Authorization: waConfigured, "Content-Type": "application/json" },
+                    headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ target: participantNorm, message: `⚠️ Kasbon list gagal — semua nama tidak ditemukan di tim aktif: ${failedNames.join(", ")}. Cek ejaan.`, delay: "2", countryCode: "62" })
                   }).catch(() => {});
                 }
@@ -750,9 +751,9 @@ export async function receiveWa(req, res) {
                 if (isDupKasbon) {
                   console.log("[KASBON_SINGLE_DUP]", { name: matchRes.matched.name, amount: kasbonParsed.amount, via: resolved1.action });
                   if (waConfigured) {
-                    sendWithConfiguredWaProvider({
+                    sendWebhookWa({
                       method: "POST",
-                      headers: { Authorization: waConfigured, "Content-Type": "application/json" },
+                      headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({ target: participantNorm, message: `♻️ Kasbon ${matchRes.matched.name} (${kasbonParsed.amount.toLocaleString("id-ID")}) sudah tercatat${resolved1.action === "skip_linked" ? " (dari request panel)" : " hari ini"} — skip duplikat.`, delay: "2", countryCode: "62" })
                     }).catch(() => {});
                   }
@@ -776,9 +777,9 @@ export async function receiveWa(req, res) {
                   console.log("[KASBON_PARSED]", { name: matchRes.matched.name, amount: kasbonParsed.amount, date: entryDate1 });
                   // Alert Owner: kasbon terbaca AI tapi tidak ada request dari panel
                   if (resolved1.alert && waConfigured && process.env.OWNER_PHONE) {
-                    sendWithConfiguredWaProvider({
+                    sendWebhookWa({
                       method: "POST",
-                      headers: { Authorization: waConfigured, "Content-Type": "application/json" },
+                      headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({ target: process.env.OWNER_PHONE, message: `🚨 *Kasbon WA tanpa request panel*\n• ${resolved1.alert}\n\nTetap dicatat (PENDING) dengan flag ⚠️ — verifikasi di menu Biaya sebelum finalisasi.`, delay: "2", countryCode: "62" })
                     }).catch(() => {});
                   }
@@ -786,16 +787,16 @@ export async function receiveWa(req, res) {
               } else if (matchRes.reason === "ambiguous" && waConfigured) {
                 // Reply ambiguous ke sender
                 const cands = matchRes.candidates.map(c => `• ${c.name} (${c.role})`).join("\n");
-                sendWithConfiguredWaProvider({
+                sendWebhookWa({
                   method: "POST",
-                  headers: { Authorization: waConfigured, "Content-Type": "application/json" },
+                  headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ target: participantNorm, message: `⚠️ Kasbon ambigu — nama "${kasbonParsed.nameRaw}" cocok ke beberapa orang:\n${cands}\n\nKirim ulang dengan nama lengkap.`, delay: "2", countryCode: "62" })
                 }).catch(() => {});
                 console.warn("[KASBON_AMBIGUOUS]", kasbonParsed.nameRaw, matchRes.candidates.map(c => c.name));
               } else if (matchRes.reason === "none" && waConfigured) {
-                sendWithConfiguredWaProvider({
+                sendWebhookWa({
                   method: "POST",
-                  headers: { Authorization: waConfigured, "Content-Type": "application/json" },
+                  headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ target: participantNorm, message: `⚠️ Kasbon gagal — nama "${kasbonParsed.nameRaw}" tidak ditemukan di tim aktif. Cek ejaan nama teknisi/helper.`, delay: "2", countryCode: "62" })
                 }).catch(() => {});
                 console.warn("[KASBON_NO_MATCH]", kasbonParsed.nameRaw);
@@ -842,9 +843,9 @@ export async function receiveWa(req, res) {
                 parsedOk = true;
                 // Reply confirm singkat
                 if (waConfigured) {
-                  sendWithConfiguredWaProvider({
+                  sendWebhookWa({
                     method: "POST",
-                    headers: { Authorization: waConfigured, "Content-Type": "application/json" },
+                    headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ target: groupId, message: `✅ ${pendings.length} kasbon hari ini di-acknowledge. Owner tinggal final approve di app.`, delay: "2", countryCode: "62" })
                   }).catch(() => {});
                 }
@@ -918,7 +919,7 @@ export async function receiveWa(req, res) {
         let imageMd5 = null;
         let imageDupRef = null; // { refLogId, refGroupName } kalau foto duplikat sender sama dlm ±1 jam
         if (groupImageUrl && !imageDedupSkip && hasR2Config()) {
-          const dl = await downloadToBuffer(groupImageUrl, { timeoutMs: 8000 });
+          const dl = { ok: true, ...await downloadIngressMedia(groupImageUrl, { provider: selectedProvider, timeoutMs: 8000 }) };
           if (dl.ok) {
             imageBuffer = dl.buffer;
             imageMime = dl.mimeType;
@@ -1124,9 +1125,9 @@ export async function receiveWa(req, res) {
                 if (classification.intent === "material" && groupConfig.ai_material_enabled && waConfigured) {
                   const items = (classification.data?.items || []).map(i => `${i.type}${i.brand ? " " + i.brand : ""}${i.size ? " " + i.size : ""}`).filter(Boolean).join(", ");
                   const matReply = `✅ Foto material diterima${items ? `\n📦 ${items}` : ""}\n🕐 Menunggu review Admin/Owner di tab Pending Material.`;
-                  sendWithConfiguredWaProvider({
+                  sendWebhookWa({
                     method: "POST",
-                    headers: { Authorization: waConfigured, "Content-Type": "application/json" },
+                    headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ target: participantNorm, message: matReply, delay: "2", countryCode: "62" })
                   }).catch(() => {});
                 }
@@ -1205,9 +1206,9 @@ export async function receiveWa(req, res) {
                       replyMsg = `❓ Tidak ketemu customer "${textCls.data.customer_name || "?"}" di jadwal kamu hari ini. Cek nama lagi atau hubungi admin.`;
                     }
                     if (replyMsg) {
-                      sendWithConfiguredWaProvider({
+                      sendWebhookWa({
                         method: "POST",
-                        headers: { Authorization: waConfigured, "Content-Type": "application/json" },
+                        headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ target: participantNorm, message: replyMsg, delay: "2", countryCode: "62" })
                       }).catch(() => {});
                     }
@@ -1313,9 +1314,9 @@ export async function receiveWa(req, res) {
                       // ACK ke teknisi
                       if (waConfigured && (aiMatStatus.startsWith("new") || aiMatStatus.startsWith("merged"))) {
                         const summ = newItems.map(i => `${i.label} ${i.qty}${i.unit}${i.per_job[0].job_id ? " → " + (i.per_job[0].customer || "job") : " (job?)"}`).join("\n");
-                        sendWithConfiguredWaProvider({
+                        sendWebhookWa({
                           method: "POST",
-                          headers: { Authorization: waConfigured, "Content-Type": "application/json" },
+                          headers: { "Content-Type": "application/json" },
                           body: JSON.stringify({ target: participantNorm, message: `📝 Draft pemakaian material dicatat:\n${summ}\n\n🕐 Menunggu konfirmasi Admin/Owner di *Konfirmasi Material*.`, delay: "2", countryCode: "62" })
                         }).catch(() => {});
                       }
@@ -1337,9 +1338,9 @@ export async function receiveWa(req, res) {
           else if (fwdToOwner && parsedType === "general") prefix = "📥 *Pesan Grup*";
           const ownerMsg = prefix + "\n📛 " + (groupName || groupId) + "\n👤 " + profileName + ": " + message
             + (parsedOk ? "\n✅ Dicatat otomatis" : "");
-          sendWithConfiguredWaProvider({
+          sendWebhookWa({
             method: "POST",
-            headers: { Authorization: waConfigured, "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ target: OP_g, message: ownerMsg, delay: "1", countryCode: "62" })
           }).catch(() => {});
         }
@@ -1532,9 +1533,9 @@ export async function receiveWa(req, res) {
                         + (matchedInvoiceId ? "Invoice: " + matchedInvoiceId + "\n" : "")
                         + (matchedOrderId ? "Order: " + matchedOrderId + "\n" : "")
                         + "\nPesan: \"" + message.slice(0,100) + "\"\n\n_Cek & konfirmasi di menu Invoice → WA Monitor_";
-                      sendWithConfiguredWaProvider({
+                      sendWebhookWa({
                         method: "POST",
-                        headers: { Authorization: waConfigured, "Content-Type": "application/json" },
+                        headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ target: OP, message: ownerNotif, delay: "1", countryCode: "62" })
                       }).catch(() => {});
                     }
@@ -1601,19 +1602,17 @@ export async function receiveWa(req, res) {
               if (checklist.length === 0) {
                 console.warn("[TOOL_BAG] Checklist kosong untuk", bagId);
               } else {
-                // Unduh foto dari Fonnte: timeout 25s + 1 retry (penyebab "nyangkut" tersering).
-                let imgFetch = null;
+                let downloaded;
                 for (let attempt = 1; attempt <= 2; attempt++) {
-                  try { imgFetch = await fetch(mediaUrl, { signal: AbortSignal.timeout(25000) }); if (imgFetch.ok) break; }
-                  catch (e) { if (attempt === 2) throw new Error("Unduh foto Fonnte gagal/timeout: " + e.message); }
+                  try { downloaded = await downloadIngressMedia(mediaUrl, { provider: selectedProvider, timeoutMs: 25000 }); break; }
+                  catch (error) { if (attempt === 2) throw error; }
                 }
-                if (!imgFetch || !imgFetch.ok) throw new Error("Unduh foto Fonnte HTTP " + (imgFetch ? imgFetch.status : "no-response"));
                 {
-                  const imgBuf = await imgFetch.arrayBuffer();
+                  const imgBuf = downloaded.buffer;
                   if (imgBuf.byteLength < 10240) throw new Error("Foto terlalu kecil/rusak (" + imgBuf.byteLength + " bytes)");
                   {
                     const base64Img = Buffer.from(imgBuf).toString("base64");
-                    const mimeType = (imgFetch.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
+                    const mimeType = downloaded.mimeType;
 
                     // Vision prompt/parsing diekstrak ke _tool-bag-vision.js (dipakai juga oleh
                     // endpoint upload in-app /api/upload-toolbag) — satu sumber, tidak divergen.
@@ -1732,9 +1731,9 @@ export async function receiveWa(req, res) {
                         if (priorityList) warnMsg += `*Alat WAJIB tidak terdeteksi:*\n${priorityList}\n\n`;
                         if (normalList) warnMsg += `*Alat lain tidak terdeteksi:*\n${normalList}\n\n`;
                         warnMsg += `_Cek detail di webapp → Inventori → Tas Teknisi_`;
-                        await sendWithConfiguredWaProvider({
+                        await sendWebhookWa({
                           method: "POST",
-                          headers: { Authorization: waConfigured, "Content-Type": "application/json" },
+                          headers: { "Content-Type": "application/json" },
                           body: JSON.stringify({ target: OP, message: warnMsg, delay: "1", countryCode: "62" })
                         }).catch(()=>{});
                       }
@@ -1785,9 +1784,9 @@ export async function receiveWa(req, res) {
                         } else {
                           konfirMsg = `📸 *${bagId} — ${sessionLabel}*${updateLabel}\n\n📋 *List Alat ${bagId}:*\n${checklistList}\n\n🔍 *Alat Terdeteksi AI:*\n${foundList}\n\n❌ *Alat Tidak Terdeteksi AI:*\n${missingList}\n\n📝 *Note:* Foto ulang yang jelas agar terbaca dengan benar. Pastikan semua alat terlihat di foto.`;
                         }
-                        await sendWithConfiguredWaProvider({
+                        await sendWebhookWa({
                           method: "POST",
-                          headers: { Authorization: waConfigured, "Content-Type": "application/json" },
+                          headers: { "Content-Type": "application/json" },
                           body: JSON.stringify({ target: sender, message: konfirMsg, delay: "2", countryCode: "62" })
                         }).catch(()=>{});
                       }
@@ -1804,8 +1803,8 @@ export async function receiveWa(req, res) {
             const failKind = /unduh foto/i.test(tbErr.message) ? "jaringan/Fonnte lambat"
               : /ai vision/i.test(tbErr.message) ? "AI sedang sibuk"
               : /aborted|timeout/i.test(tbErr.message) ? "jaringan lambat" : "kendala sistem";
-            if (waConfigured && sender) sendWithConfiguredWaProvider({
-              method: "POST", headers: { Authorization: waConfigured, "Content-Type": "application/json" },
+            if (waConfigured && sender) sendWebhookWa({
+              method: "POST", headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ target: sender, message: `⚠️ Foto ${toolBagCaption.bagId} gagal diproses (${failKind}). Mohon *kirim ulang* fotonya ya. 🙏`, delay: "1", countryCode: "62" })
             }).catch(() => {});
             // 3) Catat ke Sentry biar kelihatan (sebelumnya senyap total).
@@ -1813,9 +1812,9 @@ export async function receiveWa(req, res) {
           }
         } else if (toolBagCaption && !toolBagCaption.bagId) {
           // Nomor tas di luar range 1-10
-          if (waConfigured) sendWithConfiguredWaProvider({
+          if (waConfigured) sendWebhookWa({
             method: "POST",
-            headers: { Authorization: waConfigured, "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               target: sender,
               message: `❓ Nomor tas "${toolBagCaption.bagNumRaw}" tidak valid.\nMohon kirim ulang dengan format:\n"Pagi Tas 1" atau "Pulang Tas 5"\n\nNomor tas yang terdaftar: Tas 1 - Tas 10`,
@@ -1853,8 +1852,8 @@ export async function receiveWa(req, res) {
           ).catch(() => null);
           const prof = (profRes?.ok ? await profRes.json() : [])[0] || null;
           if (!prof) {
-            if (waConfigured) await sendWithConfiguredWaProvider({
-              method: "POST", headers: { Authorization: waConfigured, "Content-Type": "application/json" },
+            if (waConfigured) await sendWebhookWa({
+              method: "POST", headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ target: sender, message: "❓ Nomor Anda belum terdaftar sebagai teknisi. Hubungi admin, atau input lewat app menu *Material Harian*.", delay: "1", countryCode: "62" })
             }).catch(() => {});
             return res.status(200).json({ ok: true, skipped: "unknown-teknisi" });
@@ -1872,10 +1871,10 @@ export async function receiveWa(req, res) {
           // Vision count-only + R2 upload
           let aiDetected = {}; let aiStatus = "SKIPPED"; let photoR2Path = null; let imgBuf = null; let mimeType = "image/jpeg";
           if (AK || process.env.OPENAI_API_KEY) {
-            const imgFetch = await fetch(mediaUrl, { signal: AbortSignal.timeout(15000) });
-            if (imgFetch.ok) {
-              imgBuf = await imgFetch.arrayBuffer();
-              mimeType = (imgFetch.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
+            const downloaded = await downloadIngressMedia(mediaUrl, { provider: selectedProvider, timeoutMs: 15000 });
+            if (downloaded.buffer) {
+              imgBuf = downloaded.buffer;
+              mimeType = downloaded.mimeType;
               if (imgBuf.byteLength >= 10240) {
                 const base64Img = Buffer.from(imgBuf).toString("base64");
                 const visionPrompt = `Anda menganalisa foto material AC (pipa, kabel, freon) yang dibawa teknisi.
@@ -1957,15 +1956,15 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
             const msg = aiStatus === "UNREADABLE"
               ? `⚠️ Foto material *${sLabel}* tidak terbaca jelas — foto ulang yang terang & dekat ya. Lalu input jumlah (pipa meter, kabel meter, freon kg) di app → menu *Material Harian*.`
               : `📥 Foto material *${sLabel}* diterima.\nTerdeteksi: ${aiDetected.tabung_count || 0} tabung, ${aiDetected.roll_count || 0} roll.\n\nJangan lupa input angka (pipa meter, kabel meter, freon kg) di app → menu *Material Harian* agar bisa dicocokkan. Terima kasih!`;
-            await sendWithConfiguredWaProvider({
-              method: "POST", headers: { Authorization: waConfigured, "Content-Type": "application/json" },
+            await sendWebhookWa({
+              method: "POST", headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ target: sender, message: msg, delay: "2", countryCode: "62" })
             }).catch(() => {});
           }
           // Alert Owner hanya bila foto tak terbaca
           if (aiStatus === "UNREADABLE" && waConfigured && OP) {
-            await sendWithConfiguredWaProvider({
-              method: "POST", headers: { Authorization: waConfigured, "Content-Type": "application/json" },
+            await sendWebhookWa({
+              method: "POST", headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ target: OP, message: `⚠️ Foto material ${tekName} (${session}, ${today}) tidak terbaca AI. Minta foto ulang / cek manual.`, delay: "1", countryCode: "62" })
             }).catch(() => {});
           }
@@ -1984,7 +1983,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
         try {
             stagedMedia ||= payDetectOn && !senderIsInternal
               ? await registerPaymentMediaReference({
-                  supabaseUrl: SU, serviceKey: SK, sourceUrl: mediaUrl, phone: sender, senderName,
+                  supabaseUrl: SU, serviceKey: SK, sourceUrl: mediaUrl, phone: sender, provider: selectedProvider, senderName,
                 })
               : null;
             if (stagedMedia && !stagedMedia.ok) throw new Error(stagedMedia.error);
@@ -1994,7 +1993,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
               // URL Fonnte bersifat sementara; tanpa urutan ini timeout AI membuat bukti hilang.
               stagedMedia = payDetectOn && !senderIsInternal
                 ? await stagePaymentMedia({
-                    supabaseUrl: SU, serviceKey: SK, sourceUrl: mediaUrl, phone: sender,
+                    supabaseUrl: SU, serviceKey: SK, sourceUrl: mediaUrl, phone: sender, provider: selectedProvider,
                     senderName, buffer: Buffer.from(imgBuf), mimeType, createdAt: msgCreatedAt,
                   })
                 : null;
@@ -2198,9 +2197,9 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                         }).catch(sentryCatch("agent_log_pay_suggest_fail", { phone: sender, invoice_id: matchedInvoiceId }));
                         // Alert owner kalau bukti ada tapi gagal disimpan — biar tidak hilang
                         if (waConfigured && OP && savedImageUrl) {
-                          sendWithConfiguredWaProvider({
+                          sendWebhookWa({
                             method: "POST",
-                            headers: { Authorization: waConfigured, "Content-Type": "application/json" },
+                            headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({
                               target: OP,
                               message: "⚠️ *Bukti Bayar GAGAL Tersimpan*\nDari: " + senderName + " (" + sender + ")\n"
@@ -2231,9 +2230,9 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                         + (invoiceMatch?.kind === "multi" ? "Saran alokasi: " + invoiceMatch.invoices.map(i => i.id).join(" + ") + "\n"
                             : matchedInvoiceId ? "Invoice: " + matchedInvoiceId + " (" + (matchedInvoice?.status || "UNPAID") + ")\n" : "⚠️ Pilih invoice secara manual; belum ada kecocokan nominal yang unik\n")
                         + "\n📷 Foto bukti tersimpan otomatis.\n✅ Periksa bukti & alokasi di *WhatsApp → Verifikasi bayar* sebelum konfirmasi.";
-                      sendWithConfiguredWaProvider({
+                      sendWebhookWa({
                         method: "POST",
-                        headers: { Authorization: waConfigured, "Content-Type": "application/json" },
+                        headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ target: OP, message: ownerNotifImg, delay: "1", countryCode: "62" })
                       }).catch(() => {});
                     }
@@ -2266,9 +2265,9 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                               + (invoiceMatch?.invoices.length ? "Saran: " + invoiceMatch.invoices.map(i => i.id).join(" + ") + "\n" : "⚠️ Pilih invoice secara manual\n")
                               + "Confidence: " + conf + "\n"
                               + "\n✅ Verify di app menu Invoice → Pending AI";
-                            sendWithConfiguredWaProvider({
+                            sendWebhookWa({
                               method: "POST",
-                              headers: { Authorization: waConfigured, "Content-Type": "application/json" },
+                              headers: { "Content-Type": "application/json" },
                               body: JSON.stringify({
                                 target: tgt.group_id,
                                 message: fwdCaption,
@@ -2328,9 +2327,9 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
       // dan pesan bukan dari Owner itu sendiri (cegah loop)
       if (!reply && fwdOn && waConfigured && OP && sender !== OP.replace(/^0/, "62").replace(/[^0-9]/g, "")) {
         const fwdMsg = "📲 *WA Masuk*\nDari: " + senderName + " (" + sender + ")\nPesan: " + message + "\n\n_Balas langsung di app WA Monitor_";
-        sendWithConfiguredWaProvider({
+        sendWebhookWa({
           method: "POST",
-          headers: { Authorization: waConfigured, "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ target: OP, message: fwdMsg, delay: "2", countryCode: "62" })
         }).catch(err => console.error("[WA_FORWARD_FAILED]", err.message));
       }
@@ -2348,10 +2347,10 @@ export async function waGroups(req, res) {
         return null;
       });
       if (!selectedProvider) return res.status(503).json({ ok: false, error: "Pengaturan provider WA belum tersedia" });
-      if (selectedProvider !== "fonnte") return res.status(409).json({ ok: false, error: "Sinkronisasi daftar grup otomatis hanya tersedia melalui Fonnte; pesan grup WhaCenter memakai nama grup yang sudah dipetakan." });
+      if (action === "fonnte-list" && selectedProvider !== "fonnte") return res.status(409).json({ ok: false, error: "Sinkronisasi daftar grup otomatis hanya tersedia melalui Fonnte; pesan grup WhaCenter memakai nama grup yang sudah dipetakan." });
       const FT = process.env.FONNTE_TOKEN;
-      if (!FT) return res.status(500).json({ error: "FONNTE_TOKEN belum diset" });
       if (action === "fonnte-list") {
+        if (!FT) return res.status(503).json({ error: "FONNTE_TOKEN belum diset" });
         // Fonnte API per docs.fonnte.com:
         // Step 1: POST /fetch-group → populate cache (CATATAN: jangan sering, bisa banned WA)
         // Step 2: POST /get-whatsapp-group → ambil cached list

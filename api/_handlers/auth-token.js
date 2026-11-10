@@ -105,6 +105,9 @@ export async function setWaProvider(req, res) {
   if (provider === "whacenter" && !process.env.WHACENTER_WEBHOOK_SECRET) {
     return res.status(409).json({ success: false, provider_saved: false, provider, error: "WHACENTER_WEBHOOK_SECRET belum dikonfigurasi di server" });
   }
+  if (provider === "whacenter" && /https?:\/\/|\s|[?&]token=|["']/i.test(process.env.WHACENTER_WEBHOOK_SECRET)) {
+    return res.status(409).json({ success: false, provider_saved: false, provider, error: "WHACENTER_WEBHOOK_SECRET harus berisi token saja, tanpa URL, tanda kutip, atau spasi" });
+  }
   const connection = await testWaProvider(provider);
   if (!connection.success) return res.status(409).json({ ...connection, provider_saved: false });
 
