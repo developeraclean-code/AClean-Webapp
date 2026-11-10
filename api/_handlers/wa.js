@@ -260,9 +260,20 @@ export async function receiveWa(req, res) {
       const webhookSecret = routeProvider === "whacenter"
         ? process.env.WHACENTER_WEBHOOK_SECRET
         : (process.env.FONNTE_WEBHOOK_SECRET || process.env.WA_WEBHOOK_SECRET);
-      if (routeProvider === "whacenter" && !webhookSecret) return res.status(503).json({ error: "WHACENTER_WEBHOOK_SECRET belum dikonfigurasi di server" });
+      const queryToken = req.query?.token || "";
+      const headerToken = req.headers["x-webhook-token"] || "";
+      const provided = queryToken || headerToken || "";
+      const tokenSource = queryToken ? "query" : headerToken ? "header" : "missing";
+      if (routeProvider === "whacenter" && !webhookSecret) {
+        console.warn("[receive-wa] webhook secret missing", JSON.stringify({
+          route: routeProvider,
+          token_source: tokenSource,
+          token_present: Boolean(provided),
+          secret_configured: false,
+        }));
+        return res.status(503).json({ error: "WHACENTER_WEBHOOK_SECRET belum dikonfigurasi di server" });
+      }
       if (webhookSecret) {
-        const provided = req.query?.token || req.headers["x-webhook-token"] || "";
         let ok = false;
         try {
           const a = Buffer.from(String(provided), "utf-8");
@@ -271,7 +282,12 @@ export async function receiveWa(req, res) {
           ok = a.length === b.length && timingSafeEqual(a, b);
         } catch { ok = false; }
         if (!ok) {
-          console.warn("[receive-wa] Invalid/missing webhook token — rejecting");
+          console.warn("[receive-wa] webhook token rejected", JSON.stringify({
+            route: routeProvider,
+            token_source: tokenSource,
+            token_present: Boolean(provided),
+            secret_configured: true,
+          }));
           return res.status(401).json({ error: "Unauthorized webhook" });
         }
       }
@@ -389,6 +405,7 @@ export async function receiveWa(req, res) {
         return res.status(503).json({ error: "Penerimaan belum tersimpan; perlu retry", code: "WA_INGRESS_NOT_DURABLE" });
       }
       console.info("[WA_INGRESS_CAPTURED]", JSON.stringify({ event_key: inboundEvent.event_key, receipt_id: inboundCapture.receipt_id,
+        route: routeProvider, selected_provider: selectedProvider, token_source: tokenSource, token_present: Boolean(provided),
         type: inboundEvent.type, status: inboundCapture.intake_status, duplicate: inboundCapture.duplicate, queued: !!inboundCapture.media_job?.id }));
       const senderRaw = inboundEvent.sender, memberRaw = inboundEvent.member;
       const looksLikeGroup = inboundEvent.is_group, sender = inboundEvent.phone;
