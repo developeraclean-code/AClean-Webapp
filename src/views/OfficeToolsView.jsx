@@ -12,6 +12,7 @@ function OfficeToolsView({ supabase, currentUser, showNotif, showConfirm }) {
   const [tools, setTools] = useState([]);
   const [moves, setMoves] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [expand, setExpand] = useState(null);   // tool id riwayat terbuka
   const [form, setForm] = useState(null);        // {id?, nama, kategori, qty, kondisi, catatan}
   const [busy, setBusy] = useState(false);
@@ -19,11 +20,19 @@ function OfficeToolsView({ supabase, currentUser, showNotif, showConfirm }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [{ data: t }, { data: m }] = await Promise.all([
-      supabase.from("office_tools").select("*").order("nama"),
-      supabase.from("office_tool_movement").select("*").order("checkout_at", { ascending: false }).limit(300),
-    ]);
-    setTools(t || []); setMoves(m || []); setLoading(false);
+    setLoadError("");
+    try {
+      const [toolsResult, movesResult] = await Promise.all([
+        supabase.from("office_tools").select("*").order("nama"),
+        supabase.from("office_tool_movement").select("*").order("checkout_at", { ascending: false }).limit(300),
+      ]);
+      const errors = [toolsResult.error, movesResult.error].filter(Boolean);
+      if (errors.length) throw new Error(errors.map(error => error.message).join(" · "));
+      setTools(toolsResult.data || []);
+      setMoves(movesResult.data || []);
+    } catch (error) {
+      setLoadError(error?.message || "Data alat kantor belum dapat dimuat.");
+    } finally { setLoading(false); }
   }, [supabase]);
   useEffect(() => { load(); }, [load]);
 
@@ -76,9 +85,12 @@ function OfficeToolsView({ supabase, currentUser, showNotif, showConfirm }) {
             {["Alat", "Kategori", "Total", "Tersedia", "Dibawa", "Kondisi", isOwnerAdmin ? "Aksi" : ""].filter(Boolean).map((h) => <th key={h} style={th}>{h}</th>)}
           </tr></thead>
           <tbody>
+            {loadError && <tr><td colSpan={7} role="alert" style={{ ...td, color: cs.red, textAlign: "center", padding: 20 }}>
+              Gagal memuat inventaris: {loadError}. Data sebelumnya tetap ditampilkan. <button type="button" onClick={load} disabled={loading}>Coba lagi</button>
+            </td></tr>}
             {loading ? (
               <tr><td colSpan={7} style={{ ...td, color: cs.muted, textAlign: "center", padding: 20 }}>Memuat…</td></tr>
-            ) : activeTools.length === 0 ? (
+            ) : !loadError && activeTools.length === 0 ? (
               <tr><td colSpan={7} style={{ ...td, color: cs.muted, textAlign: "center", padding: 20 }}>Belum ada alat. Klik + Tambah Alat.</td></tr>
             ) : activeTools.map((t, i) => {
               const st = status[t.id] || { total: t.qty, out: 0, available: t.qty, holders: [] };

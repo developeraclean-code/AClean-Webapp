@@ -17,6 +17,7 @@ export default function WaCatalogView({ supabase, apiFetch, priceListData = [], 
   const [form, setForm] = useState(empty);
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [catalogPhase, setCatalogPhase] = useState("loading");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [filePreview, setFilePreview] = useState("");
@@ -29,17 +30,22 @@ export default function WaCatalogView({ supabase, apiFetch, priceListData = [], 
   }, [file]);
 
   const load = async () => {
-    setLoading(true); setError("");
+    setLoading(true); setError(""); setCatalogPhase("loading");
     try {
       const [catalog, ac] = await Promise.all([
         supabase.from("wa_catalog_items").select("*").order("sort_order").order("title"),
         supabase.from("ac_price_list").select("id,brand,tipe,kapasitas,seri,harga_unit,harga_inc_pasang,is_active").eq("is_active", true).order("brand"),
       ]);
-      if (catalog.error) setError(`Katalog belum dapat dimuat: ${catalog.error.message}. Pastikan migrasi 198 sudah diterapkan.`);
-      else setItems(catalog.data || []);
+      if (catalog.error) {
+        setCatalogPhase("error");
+        setError(`Katalog belum dapat dimuat: ${catalog.error.message}. Pastikan migrasi 198 sudah diterapkan.`);
+      } else {
+        setItems(catalog.data || []);
+        setCatalogPhase("ready");
+      }
       if (ac.error) setError(previous => `${previous} Harga AC gagal dimuat: ${ac.error.message}`);
       else setAcPrices(ac.data || []);
-    } catch (cause) { setError(`Katalog gagal dimuat: ${cause.message}`); }
+    } catch (cause) { setCatalogPhase("error"); setError(`Katalog gagal dimuat: ${cause.message}`); }
     finally { setLoading(false); }
   };
   useEffect(() => { load(); }, [supabase]);
@@ -87,7 +93,8 @@ export default function WaCatalogView({ supabase, apiFetch, priceListData = [], 
     <div className="wa-catalog-layout">
       <section className="wa-catalog-list" aria-label="Daftar item katalog">
         {loading && <p>Memuat katalog…</p>}
-        {!loading && !items.length && <p>Belum ada item. Tambahkan foto katalog pertama.</p>}
+        {!loading && catalogPhase === "error" && <p role="alert">Katalog belum dapat dipastikan. <button type="button" onClick={load}>Coba lagi</button></p>}
+        {!loading && catalogPhase === "ready" && !items.length && <p>Belum ada item. Tambahkan foto katalog pertama.</p>}
         {items.map(item => <button key={item.id} className={form.id === item.id ? "selected" : ""} onClick={() => choose(item)}>
           <img src={fotoUrl(item.image_key)} alt="" loading="lazy"/><span><strong>{item.title}</strong><small>{item.is_active ? "Aktif" : "Nonaktif"} · {item.price_source === "none" ? "Tanpa harga" : item.price_source === "fixed" ? "Harga tetap" : "Harga dari daftar"}</small></span>
         </button>)}

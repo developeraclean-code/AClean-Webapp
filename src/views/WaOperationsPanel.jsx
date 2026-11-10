@@ -20,8 +20,11 @@ export default function WaOperationsPanel({ phone, conv, customer, needsLocation
   const [service, setService] = useState("Cleaning");
   const [units, setUnits] = useState(1);
   const [slots, setSlots] = useState([]);
-  const [history, setHistory] = useState([]);
-  const [historyReady, setHistoryReady] = useState(false);
+  // Keep the read status and snapshot together so an empty snapshot can never
+  // be confused with a failed or still-running history request.
+  const [historyState, setHistoryState] = useState({ phase: "loading", rows: [], error: "" });
+  const history = historyState.rows;
+  const historyReady = historyState.phase === "ready";
   const [proofId, setProofId] = useState("");
   const [amount, setAmount] = useState("");
   const [selected, setSelected] = useState([]);
@@ -44,9 +47,13 @@ export default function WaOperationsPanel({ phone, conv, customer, needsLocation
   useEffect(()=>{ if(followupDirty.current)return; setForm({ status:followup?.status || "NEEDS_REPLY", due:toJakartaInput(followup?.due_at), assignee:followup?.assignee || "", note:followup?.note || "", version:followup?.version || 0 }); },[followup?.version]);
   useEffect(()=>{
     let cancelled=false;
-    setHistoryReady(false);
+    setHistoryState(previous=>({ phase: "loading", rows: previous.rows, error: "" }));
     supabase.from("wa_outbox").select("*").eq("phone",phone).order("created_at",{ascending:false}).limit(100)
-      .then(({data,error})=>{if(cancelled)return;if(error){setError("Riwayat operasional belum tersedia: "+error.message);return;}setHistory(data||[]);setHistoryReady(true);}).catch(e=>{if(!cancelled)setError("Riwayat gagal dimuat: "+e.message);});
+      .then(({data,error})=>{
+        if(cancelled)return;
+        if(error){setHistoryState(previous=>({ phase: "error", rows: previous.rows, error: "Riwayat operasional belum tersedia: "+error.message }));return;}
+        setHistoryState({ phase: "ready", rows: data||[], error: "" });
+      }).catch(e=>{if(!cancelled)setHistoryState(previous=>({ phase: "error", rows: previous.rows, error: "Riwayat gagal dimuat: "+e.message }));});
     return()=>{cancelled=true;};
   },[phone,supabase,refreshKey,localRefresh]);
   const run = async fn => {
@@ -93,12 +100,12 @@ export default function WaOperationsPanel({ phone, conv, customer, needsLocation
     try {
       const row=await onSendDocument(kind,item,id);
       if(["ACCEPTED","FAILED"].includes(row.status))documentRequests.current.delete(key);
-      if(mounted.current){setHistory(h=>[row,...h.filter(x=>x.id!==row.id)]);setNotice(SEND_STATES[row.status]+(row.audit_pending?" · audit belum tersimpan":""));}
+      if(mounted.current){setHistoryState(s=>({...s,rows:[row,...s.rows.filter(x=>x.id!==row.id)]}));setNotice(SEND_STATES[row.status]+(row.audit_pending?" · audit belum tersimpan":""));}
     } finally { if(mounted.current)setLocalRefresh(v=>v+1); }
   });
   return <section className="wa-operations">
     <div className="wa-ops-tabs" aria-label="Fitur operasional">{[["followup","Tindak lanjut"],["schedule","Slot jadwal"],["payment","Verifikasi bayar"],["documents","Dokumen"],["service","Servis berkala"]].map(([key,label])=><button key={key} aria-pressed={section===key} onClick={()=>{setSection(key);setError("");setNotice("");}}>{label}</button>)}</div>
-    {error && <p className="wa-ops-error" role="alert">{error}</p>}{notice && <p className="wa-ops-notice" role="status">{notice}</p>}
+    {(error || historyState.error) && <p className="wa-ops-error" role="alert">{error || historyState.error}{historyState.error && history.length ? " · Data terakhir tetap ditampilkan." : ""}</p>}{notice && <p className="wa-ops-notice" role="status">{notice}</p>}
     {section==="followup" && <div className="wa-ops-form">
       <h4>Urusan pelanggan</h4>
       <label>Status tindak lanjut<select value={form.status || "NEEDS_REPLY"} onChange={e=>editFollowup({...form,status:e.target.value})}>{Object.entries(WA_STATES).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label>
@@ -142,8 +149,9 @@ export default function WaOperationsPanel({ phone, conv, customer, needsLocation
       {invoices.filter(i=>["APPROVED","UNPAID","OVERDUE","PARTIAL_PAID","PAID"].includes(i.status)).map(inv=><div className="wa-info-card" key={inv.id}><strong>Invoice {inv.id}</strong><p>{inv.customer} · {waMoney(inv.total)}</p><button disabled={busy || !historyReady || !onSendDocument || documentBlocked("INVOICE",inv.id)} className="wa-primary" onClick={()=>sendDoc("INVOICE",inv)}>Kirim PDF invoice</button></div>)}
       {availableReports.map(report=><div className="wa-info-card" key={report.id}><strong>Laporan {report.job_id}</strong><button disabled={busy || !historyReady || !onSendDocument || documentBlocked("REPORT",report.id)} className="wa-primary" onClick={()=>sendDoc("REPORT",report)}>Kirim PDF laporan</button></div>)}
       <h4>Riwayat pengiriman</h4><button className="wa-text-button" onClick={()=>setLocalRefresh(v=>v+1)}>Muat ulang status</button>
+      {historyState.phase==="loading" && <p className="wa-muted" role="status">Memuat riwayat pengiriman…</p>}
       {history.slice(0,20).map(h=><div className="wa-order" key={h.id}><strong>{h.document_id || h.kind}</strong><p>{h.message?.slice(0,90)}</p><span className="wa-tag">{SEND_STATES[h.status]}</span><p>{new Date(h.created_at).toLocaleString("id-ID",{timeZone:"Asia/Jakarta"})} · {h.actor}</p>{h.error && <p>{h.error}</p>}{/^https:\/\//i.test(h.attachment_url || h.url || "") && <a href={h.attachment_url || h.url} target="_blank" rel="noopener noreferrer">Buka PDF ↗</a>}</div>)}
-      {!history.length && <p className="wa-muted">Belum ada riwayat pengiriman terpantau.</p>}
+      {historyState.phase==="ready" && !history.length && <p className="wa-muted">Belum ada riwayat pengiriman terpantau.</p>}
     </div>}
     {section==="service" && <div className="wa-ops-form"><h4>Follow-up servis berkala</h4>
       <p className="wa-muted">Lokasi: {customer?.name || "Pilih pelanggan/lokasi terlebih dahulu"}</p>
@@ -153,7 +161,7 @@ export default function WaOperationsPanel({ phone, conv, customer, needsLocation
       {follow.legacyBlocked && <p className="wa-ops-notice">Kontak otomatis tercatat pada {customer.last_rating_request}. Tunggu jeda 30 hari sebelum mengirim pengingat lagi.</p>}
       {follow.blocked && <p className="wa-ops-notice">Pengingat sudah dikirim/diproses dalam 30 hari terakhir.</p>}
       <button className="wa-primary" disabled={!customer || !follow.eligible || !historyReady || busy} onClick={()=>insertDraft(`Halo ${customer.name}, servis AC terakhir di ${customer.address || customer.name} tercatat pada ${follow.last}. Apakah ingin menjadwalkan perawatan berikutnya? Kami dapat membantu memeriksa slot tim AClean.`,{kind:"SERVICE_REMINDER",customer_id:String(customer.id),customer_name:customer.name})}>Buat draf penawaran servis</button>
-      <button className="wa-secondary" disabled={!customer || !follow.eligible || !historyReady || busy || !onSendReminder} onClick={()=>run(async()=>{const row=await onSendReminder(customer,`Halo ${customer.name}, servis AC terakhir di ${customer.address || customer.name} tercatat pada ${follow.last}. Apakah ingin menjadwalkan perawatan berikutnya? Kami dapat membantu memeriksa slot tim AClean.`,crypto.randomUUID());setHistory(h=>[row,...h]);setNotice(SEND_STATES[row.status]);setLocalRefresh(v=>v+1);})}>Kirim pengingat servis</button>
+      <button className="wa-secondary" disabled={!customer || !follow.eligible || !historyReady || busy || !onSendReminder} onClick={()=>run(async()=>{const row=await onSendReminder(customer,`Halo ${customer.name}, servis AC terakhir di ${customer.address || customer.name} tercatat pada ${follow.last}. Apakah ingin menjadwalkan perawatan berikutnya? Kami dapat membantu memeriksa slot tim AClean.`,crypto.randomUUID());setHistoryState(s=>({...s,rows:[row,...s.rows]}));setNotice(SEND_STATES[row.status]);setLocalRefresh(v=>v+1);})}>Kirim pengingat servis</button>
       <button className="wa-text-button" disabled={!customer || needsLocation} onClick={()=>onCreateOrder(createWaOrderDraft(conv,customer,orders.find(o=>["PAID","COMPLETED"].includes(o.status))))}>Buat reorder untuk lokasi ini →</button>
       {follow.contacts.map(h=><p className="wa-muted" key={h.id}>{new Date(h.created_at).toLocaleDateString("id-ID")} · {SEND_STATES[h.status]} · {h.actor}</p>)}
       <p className="wa-context-footnote">Pengiriman pengingat berbagi jeda 30 hari dengan reminder otomatis AClean. Riwayat hanya memakai pekerjaan selesai yang dimuat.</p>

@@ -139,6 +139,8 @@ export default function WaPanel({
     return (filter !== "due" || isDue(followups[conv.phone])) && (filter !== "open" || followups[conv.phone]?.status !== "DONE") && (filter !== "unread" || conv.unread > 0) && (filter !== "new" || (verifiedPhones.has(normalizePhone(conv.phone)) && !known.length)) &&
       matchesConversation(conv, known, waSearch);
   });
+  const inboxLoading = conversationFeed.loading && !conversationFeed.updatedAt;
+  const inboxUnavailable = Boolean(conversationFeed.error && !conversationFeed.updatedAt);
 
   const conversationPhones = waConversations.map(c=>c.phone).join(",");
   useEffect(() => {
@@ -337,7 +339,7 @@ export default function WaPanel({
         onClick={e => e.stopPropagation()}>
         <header className="wa-topbar">
           <div className="wa-brand-icon">◉</div>
-          <div className="wa-grow"><h2 id="wa-workspace-title">WhatsApp <span>Workspace</span></h2><p>AClean · {waProvider === "fonnte" ? "Fonnte" : waProvider === "wa_cloud" ? "WA Cloud API" : "Twilio"} · {waConversations.length} percakapan dimuat</p><p style={{ color: conversationFeed.error ? "#fbbf24" : undefined }} role={conversationFeed.error ? "alert" : undefined}>{conversationFeed.error ? `Daftar belum diperbarui: ${conversationFeed.error}. Data terakhir tetap ditampilkan.` : "Refresh daftar aktif saat panel terlihat · termasuk malam hari"}</p></div>
+          <div className="wa-grow"><h2 id="wa-workspace-title">WhatsApp <span>Workspace</span></h2><p>AClean · {waProvider === "fonnte" ? "Fonnte" : waProvider === "wa_cloud" ? "WA Cloud API" : "Twilio"} · {waConversations.length} percakapan dimuat</p><p style={{ color: conversationFeed.error ? "#fbbf24" : undefined }} role={conversationFeed.error ? "alert" : undefined}>{conversationFeed.error ? (conversationFeed.updatedAt ? `Daftar belum diperbarui: ${conversationFeed.error}. Data terakhir tetap ditampilkan.` : `Daftar percakapan gagal dimuat: ${conversationFeed.error}`) : inboxLoading ? "Memuat daftar percakapan…" : conversationFeed.updatedAt ? `Terakhir diperbarui ${timeLabel(conversationFeed.updatedAt)}` : "Refresh daftar aktif saat panel terlihat · termasuk malam hari"}</p></div>
           <span className="wa-top-note">Percakapan & operasional</span>
           <button className="wa-icon-button" onClick={refresh} disabled={refreshing} aria-label="Muat ulang percakapan" title="Muat ulang percakapan">{refreshing ? "…" : "↻"}</button>
           <button className="wa-icon-button wa-expand" onClick={() => setExpanded(v => !v)} aria-label={expanded ? "Perkecil panel" : "Perbesar panel"} title={expanded ? "Perkecil panel" : "Perbesar panel"}>{expanded ? "↙" : "↗"}</button>
@@ -352,7 +354,7 @@ export default function WaPanel({
             {customerLookup.error && <p className="wa-ops-error" role="alert">Nama Customer belum dapat diverifikasi: {customerLookup.error} <button onClick={()=>setCustomerRefresh(k=>k+1)}>Coba lagi nama pelanggan</button></p>}
             {opsError && <p className="wa-ops-error" role="alert">{opsError} <button onClick={()=>setRefreshKey(k=>k+1)}>Muat ulang</button></p>}
             <div className="wa-conversations">
-              {!filtered.length && <div className="wa-empty"><span>⌕</span><strong>{waSearch || filter !== "all" ? "Tidak ada percakapan yang cocok" : "Belum ada pesan masuk"}</strong><p>{waSearch || filter !== "all" ? "Ubah pencarian atau filter untuk melihat chat lainnya." : "Percakapan dari gateway WhatsApp akan muncul di sini."}</p></div>}
+              {!filtered.length && <div className="wa-empty" role={inboxUnavailable ? "alert" : inboxLoading ? "status" : undefined}><span>⌕</span><strong>{inboxLoading ? "Memuat percakapan…" : inboxUnavailable ? "Percakapan belum dapat dimuat" : waSearch || filter !== "all" ? "Tidak ada percakapan yang cocok" : "Belum ada pesan masuk"}</strong><p>{inboxLoading ? "Daftar WhatsApp sedang diperbarui." : inboxUnavailable ? "Coba muat ulang setelah koneksi pulih." : waSearch || filter !== "all" ? "Ubah pencarian atau filter untuk melihat chat lainnya." : "Percakapan dari gateway WhatsApp akan muncul di sini."}</p></div>}
               {filtered.map(conv => {
                 const known = byPhone.get(normalizePhone(conv.phone)) || [];
                 const name = waCustomerTitle(conv,known);
