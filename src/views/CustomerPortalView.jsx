@@ -65,43 +65,61 @@ const SERVICE_BG = (service = "") => {
 
 export default function CustomerPortalView({ token: tokenProp }) {
   const token = tokenProp || "";
-  const [data, setData]       = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState(null);
+  const [portalState, setPortalState] = useState({ phase: "loading", token: null, data: null, error: null });
   const [vouchers, setVouchers] = useState([]);
   const [ratingTarget, setRatingTarget] = useState(null); // order yang mau di-rating
   const [ratedOrders, setRatedOrders]   = useState({}); // { order_id: true }
   const [activeLocation, setActiveLocation] = useState(null); // null = lokasi pertama
 
   useEffect(() => {
-    if (!token) { setError("not_found"); setLoading(false); return; }
-    fetch(`${API_BASE}/customer-status?token=${encodeURIComponent(token)}`)
-      .then(r => r.json())
-      .then(d => {
-        if (d.error) setError(d.code === "NOT_FOUND" ? "not_found" : d.code === "TOKEN_EXPIRED" ? "expired" : "error");
-        else {
-          setData(d);
-          // Fetch vouchers paralel
-          fetch(`${API_BASE}/customer-vouchers?token=${encodeURIComponent(token)}`)
-            .then(r => r.json()).then(v => setVouchers(v.vouchers || [])).catch(() => {});
-          // Cek hash anchor #rating
-          if (window.location.hash === "#rating" && d.orders?.length > 0) {
-            const lastDone = d.orders.find(o => ["COMPLETED","INVOICE_APPROVED"].includes(o.status));
-            if (lastDone) setRatingTarget(lastDone);
-          }
+    let cancelled = false;
+    setPortalState({ phase: "loading", token, data: null, error: null });
+    setVouchers([]);
+    setRatingTarget(null);
+    setActiveLocation(null);
+    if (!token) {
+      setPortalState({ phase: "error", token, data: null, error: "not_found" });
+      return () => { cancelled = true; };
+    }
+    (async () => {
+      try {
+        const response = await fetch(`${API_BASE}/customer-status?token=${encodeURIComponent(token)}`);
+        const d = await response.json();
+        if (!response.ok || d.error) {
+          if (!cancelled) setPortalState({ phase: "error", token, data: null, error: d.code === "NOT_FOUND" ? "not_found" : d.code === "TOKEN_EXPIRED" ? "expired" : "error" });
+          return;
         }
-      })
-      .catch(() => setError("error"))
-      .finally(() => setLoading(false));
+        if (cancelled) return;
+        setPortalState({ phase: "ready", token, data: d, error: null });
+        // Fetch vouchers paralel; voucher bersifat tambahan untuk tampilan portal.
+        fetch(`${API_BASE}/customer-vouchers?token=${encodeURIComponent(token)}`)
+          .then(async r => {
+            const v = await r.json();
+            if (!r.ok) throw new Error("Gagal memuat voucher");
+            return v;
+          })
+          .then(v => { if (!cancelled) setVouchers(v.vouchers || []); })
+          .catch(() => {});
+        if (window.location.hash === "#rating" && d.orders?.length > 0) {
+          const lastDone = d.orders.find(o => ["COMPLETED","INVOICE_APPROVED"].includes(o.status));
+          if (lastDone) setRatingTarget(lastDone);
+        }
+      } catch {
+        if (!cancelled) setPortalState({ phase: "error", token, data: null, error: "error" });
+      }
+    })();
+    return () => { cancelled = true; };
   }, [token]);
+
+  const data = portalState.data;
 
   const contactPhone = data?.contact_phone || "";
   const waHref = contactPhone ? `https://wa.me/${contactPhone.replace(/\D/g,"")}` : "https://wa.me/";
 
-  if (loading) return <LoadingScreen />;
-  if (error === "not_found") return <NotFoundScreen waHref={waHref} />;
-  if (error === "expired") return <ExpiredScreen waHref={waHref} />;
-  if (error) return <ErrorScreen waHref={waHref} />;
+  if (portalState.token !== token || portalState.phase === "loading") return <LoadingScreen />;
+  if (portalState.error === "not_found") return <NotFoundScreen waHref={waHref} />;
+  if (portalState.error === "expired") return <ExpiredScreen waHref={waHref} />;
+  if (portalState.phase === "error") return <ErrorScreen waHref={waHref} />;
 
   // Deteksi multi-lokasi: group orders by customer name
   const allOrders = data.orders || [];

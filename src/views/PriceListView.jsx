@@ -9,6 +9,7 @@ const KAP_ORDER  = { "0.5 PK": 1, "0.75 PK": 2, "1 PK": 3, "1.5 PK": 4, "2 PK": 
 function AcPriceTab({ supabase, currentUser, showNotif, showConfirm, fmt }) {
   const [rows, setRows]           = useState([]);
   const [loading, setLoading]     = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [filterBrand, setFilterBrand] = useState("Semua");
   const [filterTipe, setFilterTipe]   = useState("Semua");
   const [search, setSearch]       = useState("");
@@ -22,10 +23,16 @@ function AcPriceTab({ supabase, currentUser, showNotif, showConfirm, fmt }) {
 
   const load = async () => {
     setLoading(true);
-    const { data, error } = await supabase.from("ac_price_list").select("*").eq("is_active", true).order("brand").order("tipe").order("kapasitas");
-    if (error) showNotif("❌ Gagal load harga AC: " + error.message);
-    else setRows(data || []);
-    setLoading(false);
+    setLoadError("");
+    try {
+      const { data, error } = await supabase.from("ac_price_list").select("*").eq("is_active", true).order("brand").order("tipe").order("kapasitas");
+      if (error) throw error;
+      setRows(data || []);
+    } catch (error) {
+      const message = error?.message || "Data harga AC belum dapat dimuat.";
+      setLoadError(message);
+      showNotif("❌ Gagal load harga AC: " + message);
+    } finally { setLoading(false); }
   };
 
   useEffect(() => { load(); }, []);
@@ -130,7 +137,7 @@ function AcPriceTab({ supabase, currentUser, showNotif, showConfirm, fmt }) {
           style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 8, padding: "8px 12px", color: cs.text, fontSize: 12, cursor: "pointer" }}>
           {tipes.map(t => <option key={t}>{t}</option>)}
         </select>
-        <button onClick={load} style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "8px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>🔄</button>
+        <button type="button" onClick={load} disabled={loading} aria-label="Muat ulang daftar harga AC" title="Muat ulang daftar harga AC" style={{ background: cs.accent + "22", border: "1px solid " + cs.accent + "44", color: cs.accent, padding: "8px 14px", borderRadius: 8, cursor: loading ? "wait" : "pointer", fontSize: 12, fontWeight: 700 }}>🔄</button>
         {canEdit && (
           <button onClick={() => setAddModal(true)}
             style={{ marginLeft: "auto", background: "linear-gradient(135deg,#f59e0b,#d97706)", border: "none", color: "#000", padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
@@ -152,6 +159,11 @@ function AcPriceTab({ supabase, currentUser, showNotif, showConfirm, fmt }) {
       {/* Table */}
       {loading ? (
         <div style={{ textAlign: "center", padding: 40, color: cs.muted }}>Memuat data...</div>
+      ) : loadError ? (
+        <div role="alert" style={{ background: cs.card, borderRadius: 14, padding: 24, textAlign: "center", color: cs.red }}>
+          Gagal memuat harga AC: {loadError}. Daftar tidak dianggap kosong sampai pembacaan berhasil.
+          <div><button type="button" onClick={load} disabled={loading} style={{ marginTop: 10 }}>Coba lagi</button></div>
+        </div>
       ) : filtered.length === 0 ? (
         <div style={{ background: cs.card, borderRadius: 14, padding: 40, textAlign: "center", color: cs.muted }}>Tidak ada item ditemukan</div>
       ) : (
