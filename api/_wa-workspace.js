@@ -1,4 +1,5 @@
 import { validateAndNormalizePhone } from "./_validate.js";
+import { readSelectedWaProvider, sendWithConfiguredWaProvider } from "./_wa-provider.js";
 import { catalogCaption } from "../src/lib/waCatalog.js";
 
 export async function resolveCatalogMessage(db, body) {
@@ -40,7 +41,7 @@ export async function verifyCatalogMedia(url, { fetchImpl = fetch } = {}) {
     }
   } catch (error) {
     if (error.message?.startsWith("Foto katalog")) throw error;
-    throw new Error("URL foto katalog belum bisa diakses Fonnte. Periksa domain publik R2.");
+    throw new Error("URL foto katalog belum bisa diakses gateway WhatsApp. Periksa domain publik R2.");
   }
 }
 
@@ -52,28 +53,28 @@ export async function dispatchWorkspaceMessage(db, id, payload, actor, deliver) 
   try { outcome = await deliver(payload); }
   catch (error) { outcome = { status: "UNCERTAIN", error: error.message || "Koneksi terputus" }; }
   const { data: row, error: finishError } = await db.rpc("finish_wa_send", {
-    p_id: id, p_status: outcome.status, p_error: outcome.error || null, p_provider_id: outcome.provider_id || null,
+    p_id: id, p_status: outcome.status, p_error: outcome.error || null, p_provider_id: outcome.provider_id || null, p_provider: outcome.provider || null,
   });
   // Provider may already have accepted it. Never resend when audit fails.
   if (finishError) return { ...claim.row, status: outcome.status, audit_pending: true, error: `Audit belum tersimpan: ${finishError.message}` };
   return row;
 }
 
-export async function deliverWorkspaceMessage(payload, { token = process.env.FONNTE_TOKEN, fetchImpl = fetch, timeoutMs = 20000 } = {}) {
-  if (!token) return { status: "FAILED", error: "Gateway WhatsApp belum dikonfigurasi" };
+export async function deliverWorkspaceMessage(payload, { token = process.env.FONNTE_TOKEN, fetchImpl = fetch, timeoutMs = 20000, provider: providerOverride } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1000, Math.min(20000, Number(timeoutMs) || 20000)));
   try {
     // Exactly one attempt. A timeout must not trigger a fallback text or duplicate document.
-    const response = await fetchImpl("https://api.fonnte.com/send", {
-      method: "POST", headers: { Authorization: token, "Content-Type": "application/json" },
+    const provider = providerOverride || await readSelectedWaProvider({ fetchImpl });
+    const response = await sendWithConfiguredWaProvider({
+      method: "POST", headers: { Authorization: token || "", "Content-Type": "application/json" },
       body: JSON.stringify({ target: payload.phone, message: payload.message, ...(payload.url ? { url: payload.url, filename: payload.filename } : {}), countryCode: "62" }), signal: controller.signal,
-    });
+    }, { fetchImpl, provider, env: { ...process.env, ...(provider === "fonnte" && token ? { FONNTE_TOKEN: token } : {}) } });
     const body = await response.json();
-    if (response.ok && body.status === true) return { status: "ACCEPTED", provider_id: Array.isArray(body.id) ? body.id.join(",") : String(body.id || "") };
-    if (body.status === false) return { status: "FAILED", error: String(body.reason || "Gateway menolak pesan") };
-    return { status: "UNCERTAIN", error: "Respons gateway tidak memastikan hasil pengiriman" };
-  } catch (error) { return { status: "UNCERTAIN", error: error.name === "AbortError" ? "Gateway melewati batas waktu; periksa WhatsApp sebelum mengirim lagi" : "Koneksi gateway terputus; status pengiriman belum pasti" }; }
+    if (response.ok && body.status === true) return { status: "ACCEPTED", provider, provider_id: Array.isArray(body.id) ? body.id.join(",") : String(body.id || "") };
+    if (body.status === false) return { status: "FAILED", provider, error: String(body.reason || "Gateway menolak pesan") };
+    return { status: "UNCERTAIN", provider, error: "Respons gateway tidak memastikan hasil pengiriman" };
+  } catch (error) { return { status: "UNCERTAIN", provider: providerOverride || null, error: error.name === "AbortError" ? "Gateway melewati batas waktu; periksa WhatsApp sebelum mengirim lagi" : "Koneksi gateway terputus; status pengiriman belum pasti" }; }
   finally { clearTimeout(timer); }
 }
 

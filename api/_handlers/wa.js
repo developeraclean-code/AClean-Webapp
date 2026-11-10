@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { processAraCustomer } from "../_ara-customer.js";
-import { captureWaIngress, downloadIngressMedia, normalizeWaIngress, safeFonnteMediaUrl } from "../_wa-ingress.js";
+import { captureWaIngress, downloadIngressMedia, normalizeWaIngress, safeFonnteMediaUrl, safeWhacenterMediaUrl } from "../_wa-ingress.js";
 // api/_handlers/wa.js — Handler grup WhatsApp (Batch 4 pemecahan router, Jul 2026).
 // Isi blok dipindah APA ADANYA (ekstraksi programatik) dari api/[route].js.
 // receive-wa = webhook Fonnte (jalur paling panas) — di-dispatch oleh router,
@@ -20,6 +20,7 @@ import { md5Buffer, checkImageDuplicate } from "../_image-dedup.js";
 import { parseKasbonText, matchKasbonName, isKasbonApprovalMessage, isKasbonRevisionMessage, resolveKasbonEntry, KASBON_APPROVER_PHONES } from "../_kasbon-parser.js";
 import { parseCarrierFromCaption, matchCarrierName, parseLaporanTeam, matchLaporanToOrder, parseBiayaExtended } from "../_shadow-parsers.js";
 import { normalizeAppBaseUrl } from "../../src/lib/appUrl.js";
+import { readSelectedWaProvider, sendWithConfiguredWaProvider } from "../_wa-provider.js";
 
 // Pencatat biaya AI untuk panggilan Anthropic yang di-fetch langsung di file ini.
 // Sebelumnya 4 titik di bawah TIDAK tercatat sama sekali di ai_usage → biaya "gelap"
@@ -45,8 +46,15 @@ export async function sendWa(req, res) {
       const msg = validateMessage(b.message, 4096);
       if (!msg) return res.status(400).json({ error: "Message is required and must be 1-4096 characters" });
 
-      const FT = process.env.FONNTE_TOKEN;
-      if (!FT) return res.status(500).json({ error: "FONNTE_TOKEN belum diset", detail: "FONNTE_TOKEN_NOT_SET" });
+      const selectedProvider = await readSelectedWaProvider().catch(error => {
+        console.error("[send-wa] provider selection unavailable:", error.message);
+        return null;
+      });
+      if (!selectedProvider) return res.status(503).json({ success: false, error: "Pengaturan provider WA belum tersedia; pesan tidak dikirim" });
+
+      const FT = process.env.FONNTE_TOKEN || "";
+      if (selectedProvider === "fonnte" && !FT) return res.status(503).json({ error: "FONNTE_TOKEN belum dikonfigurasi di server", detail: "FONNTE_TOKEN_NOT_SET" });
+      if (selectedProvider === "whacenter" && !process.env.WHACENTER_DEVICE_ID) return res.status(503).json({ error: "WHACENTER_DEVICE_ID belum dikonfigurasi di server", detail: "WHACENTER_DEVICE_ID_NOT_SET" });
 
       // ── ATTACHMENT: kirim URL langsung ke Fonnte (tanpa re-fetch di server) ──
       // Fonnte support parameter "url" untuk file yang bisa diakses publik.
@@ -54,17 +62,11 @@ export async function sendWa(req, res) {
       // agar Fonnte bisa fetch langsung — jauh lebih cepat, tidak makan waktu serverless.
       const hasAttachment = b.url && typeof b.url === "string" && b.url.startsWith("http");
 
-      // Resolve proxy URL → direct R2 public URL (hanya jika base publik di-set & bucket public access ON)
-      // Jika tidak ada yang di-set, tetap pakai proxy URL (/api/foto) yang sudah PUBLIC_ROUTES.
-      //
-      // Urutan pilihan: R2_CDN_URL (custom domain) > R2_PUBLIC_URL (pub-xxx.r2.dev).
-      // r2.dev di-rate-limit Cloudflare — Fonnte kerap gagal fetch berkas agak besar
-      // lalu jatuh ke fallback teks+link (lihat riwayat debugging PDF-WA). Custom
-      // domain tidak kena rate-limit itu dan di-cache CDN, jadi didahulukan.
+      // Resolve proxy URLs to a provider-fetchable object URL for either provider.
       const resolveDirectUrl = (proxyUrl) => {
         try {
           const r2PublicUrl = (process.env.R2_CDN_URL || "").replace(/\/+$/, "") || process.env.R2_PUBLIC_URL;
-          if (!r2PublicUrl) return proxyUrl; // proxy URL aman — PUBLIC_ROUTES, no auth needed
+          if (!r2PublicUrl) return proxyUrl;
           const u = new URL(proxyUrl);
           const key = u.searchParams.get("key");
           if (!key) return proxyUrl;
@@ -73,6 +75,31 @@ export async function sendWa(req, res) {
         return proxyUrl;
       };
 
+      if (selectedProvider === "whacenter") {
+        let response;
+        try {
+          response = await sendWithConfiguredWaProvider({
+            method: "POST",
+            body: JSON.stringify({ target, message: msg, ...(hasAttachment ? { url: resolveDirectUrl(b.url), filename: b.filename || "dokumen.pdf" } : {}) }),
+          }, { provider: selectedProvider });
+        } catch (error) {
+          console.error("[send-wa] WhaCenter result uncertain:", error.message);
+          return res.status(502).json({ success: false, error: "Status kirim WhaCenter belum pasti; periksa riwayat sebelum mencoba lagi", detail: "WHACENTER_UNCERTAIN" });
+        }
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || body.status === false) {
+          return res.status(502).json({ success: false, error: body.reason || `WhaCenter HTTP ${response.status}`, detail: "WHACENTER_REJECTED" });
+        }
+        return res.status(200).json({ success: true, target, provider: selectedProvider, withAttachment: !!hasAttachment });
+      }
+
+      // Resolve proxy URL → direct R2 public URL (hanya jika base publik di-set & bucket public access ON)
+      // Jika tidak ada yang di-set, tetap pakai proxy URL (/api/foto) yang sudah PUBLIC_ROUTES.
+      //
+      // Urutan pilihan: R2_CDN_URL (custom domain) > R2_PUBLIC_URL (pub-xxx.r2.dev).
+      // r2.dev di-rate-limit Cloudflare — Fonnte kerap gagal fetch berkas agak besar
+      // lalu jatuh ke fallback teks+link (lihat riwayat debugging PDF-WA). Custom
+      // domain tidak kena rate-limit itu dan di-cache CDN, jadi didahulukan.
       // ── Helper: POST ke Fonnte dengan timeout eksplisit + retry ──
       // FONNTE_UNREACHABLE selama ini intermittent (fetch throw / koneksi reset saat
       // Fonnte men-download attachment lewat proxy). AbortController membatasi durasi
@@ -82,12 +109,12 @@ export async function sendWa(req, res) {
           const ctrl = new AbortController();
           const timer = setTimeout(() => ctrl.abort(), timeoutMs);
           try {
-            const r = await fetch("https://api.fonnte.com/send", {
+            const r = await sendWithConfiguredWaProvider({
               method: "POST",
               headers: { "Authorization": FT, "Content-Type": "application/json" },
               body: JSON.stringify(payload),
               signal: ctrl.signal,
-            });
+            }, { provider: selectedProvider });
             clearTimeout(timer);
             return r;
           } catch (fetchErr) {
@@ -151,13 +178,13 @@ export async function sendWa(req, res) {
         }
         const fd = await fallbackRes.json().catch(() => ({}));
         if (!fallbackRes.ok || fd.status === false) return res.status(502).json({ success: false, error: fd.reason || "Fonnte error" });
-        return res.status(200).json({ success: true, target, withAttachment: false, fallback: true, fallbackReason: reason });
+        return res.status(200).json({ success: true, target, provider: selectedProvider, withAttachment: false, fallback: true, fallbackReason: reason });
       }
       if (!fonnteRes.ok || d.status === false) return res.status(502).json({ success: false, error: d.reason || "Fonnte error" });
       if (hasAttachment && !attachmentFellBack) {
         try { Sentry.captureMessage(`[SENDWA_ATTACH_OK] http=${fonnteRes.status} body=${JSON.stringify(d).slice(0, 200)} file=${attachFname}`, "info"); } catch (_) {}
       }
-      return res.status(200).json({ success: true, target, withAttachment: hasAttachment && !attachmentFellBack, fallback: attachmentFellBack });
+      return res.status(200).json({ success: true, target, provider: selectedProvider, withAttachment: hasAttachment && !attachmentFellBack, fallback: attachmentFellBack });
 }
 
     // ── NOTIFY-ABSENCE (authenticated) — info WA ke Owner saat teknisi/helper Ijin/Sakit ──
@@ -173,8 +200,13 @@ export async function notifyAbsence(req, res) {
         return res.status(400).json({ error: "teknisi & status (IJIN/SAKIT/ALPA) wajib" });
       }
 
-      const FT = process.env.FONNTE_TOKEN;
-      if (!FT) return res.status(200).json({ ok: false, skipped: "FONNTE_TOKEN_NOT_SET" });
+      const selectedProvider = await readSelectedWaProvider().catch(error => {
+        console.warn("[notify-absence] provider selection unavailable:", error.message);
+        return null;
+      });
+      if (!selectedProvider) return res.status(503).json({ ok: false, error: "Pengaturan provider WA belum tersedia" });
+      if (selectedProvider === "fonnte" && !process.env.FONNTE_TOKEN) return res.status(200).json({ ok: false, skipped: "FONNTE_TOKEN_NOT_SET" });
+      if (selectedProvider === "whacenter" && !process.env.WHACENTER_DEVICE_ID) return res.status(200).json({ ok: false, skipped: "WHACENTER_DEVICE_ID_NOT_SET" });
 
       // Resolve owner phone + toggle dari app_settings (service key), fallback ke env
       const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
@@ -203,13 +235,13 @@ export async function notifyAbsence(req, res) {
       const msg = `🔔 *INFO ABSEN TIM* — ${tgl}\n\n${META[status]}: *${teknisi}*${role ? " (" + role + ")" : ""}\nAlasan: ${reason || "-"}\n\n⚠️ Anggota ini otomatis keluar dari pool tim hari ini. Cek *Planning Order* untuk reassign bila ada order terdampak.\n\n— Notifikasi otomatis`;
 
       try {
-        const fr = await fetch("https://api.fonnte.com/send", {
+        const fr = await sendWithConfiguredWaProvider({
           method: "POST",
-          headers: { "Authorization": FT, "Content-Type": "application/json" },
+          headers: { "Authorization": process.env.FONNTE_TOKEN || "", "Content-Type": "application/json" },
           body: JSON.stringify({ target, message: msg, delay: "1", countryCode: "62" })
-        });
+        }, { provider: selectedProvider });
         const fd = await fr.json().catch(() => ({}));
-        if (!fr.ok || fd.status === false) return res.status(200).json({ ok: false, error: fd.reason || "Fonnte error" });
+        if (!fr.ok || fd.status === false) return res.status(200).json({ ok: false, error: fd.reason || `${selectedProvider} error` });
         return res.status(200).json({ ok: true, target });
       } catch (e) {
         return res.status(200).json({ ok: false, error: e.message });
@@ -221,10 +253,14 @@ export async function receiveWa(req, res) {
       if (req.method === "GET") return res.status(200).json({ status: "ok", service: "AClean WA Webhook" });
       if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-      // Authenticate before even acknowledging a delivery receipt or touching the
-      // database-backed rate limiter. The self-host runtime requires this secret.
-      // Existing Vercel deployment keeps its opt-in behavior until configured.
-      const webhookSecret = process.env.FONNTE_WEBHOOK_SECRET;
+      const routeProvider = String(req.query?.route || "") === "whacenter-webhook" ? "whacenter" : "fonnte";
+      // Verify the route's own credential before reading settings or touching any
+      // database-backed limiter. The Fonnte route keeps its existing optional secret.
+      // Self-host staging/runtime requires the corresponding secret to be set.
+      const webhookSecret = routeProvider === "whacenter"
+        ? process.env.WHACENTER_WEBHOOK_SECRET
+        : (process.env.FONNTE_WEBHOOK_SECRET || process.env.WA_WEBHOOK_SECRET);
+      if (routeProvider === "whacenter" && !webhookSecret) return res.status(503).json({ error: "WHACENTER_WEBHOOK_SECRET belum dikonfigurasi di server" });
       if (webhookSecret) {
         const provided = req.query?.token || req.headers["x-webhook-token"] || "";
         let ok = false;
@@ -239,7 +275,6 @@ export async function receiveWa(req, res) {
           return res.status(401).json({ error: "Unauthorized webhook" });
         }
       }
-
       // ── OPT-CPU: buang delivery-status callback SEDINI mungkin ──────────────
       // Fonnte kirim callback status untuk SETIAP pesan keluar (sent/delivered/read).
       // Shape nyata: { state: "delivered"|"read"|2|3, device, stateid }  (varian lama: { status, id }).
@@ -249,15 +284,24 @@ export async function receiveWa(req, res) {
       // CPU (Fluid) + bloat DB (21MB). Sekarang: exit ~1ms tanpa DB write, sebelum rate-limit.
       // CATATAN: cara terbaik = matikan "delivery status webhook" di dashboard Fonnte (biar tak
       // dikirim sama sekali). Guard ini tetap ada sebagai jaring pengaman kalau masih terkirim.
+      // Delivery receipts carry no inbound content; this fast path precedes provider lookup.
       {
         const rb = req.body || {};
         const isDeliveryReceipt =
           (rb.state !== undefined || (rb.status !== undefined && !rb.message)) &&
           !rb.message && !rb.sender && !rb.from && !rb.member && !rb.participant && !rb.url && !rb.type;
-        if (isDeliveryReceipt) {
-          return res.status(200).json({ ok: true, ignored: "delivery_receipt" });
-        }
+        if (isDeliveryReceipt) return res.status(200).json({ ok: true, ignored: "delivery_receipt" });
       }
+      const selectedProvider = await readSelectedWaProvider().catch(error => {
+        console.error("[receive-wa] provider selection unavailable:", error.message);
+        return null;
+      });
+      if (!selectedProvider) return res.status(503).json({ error: "Pengaturan provider WA belum tersedia" });
+      if (selectedProvider !== routeProvider) return res.status(409).json({ error: "Webhook provider ini sedang tidak dipilih", selected_provider: selectedProvider });
+      if (selectedProvider === "whacenter" && !process.env.WHACENTER_DEVICE_ID) return res.status(503).json({ error: "WHACENTER_DEVICE_ID belum dikonfigurasi di server" });
+      const waConfigured = selectedProvider === "whacenter"
+        ? !!process.env.WHACENTER_DEVICE_ID
+        : !!process.env.FONNTE_TOKEN;
 
       // SEMUA webhook Fonnte datang dari IP yang SAMA (server Fonnte) → rate-limit per-IP
       // menghitung gabungan SEMUA inbound WA (customer + teknisi + grup) + retry Fonnte
@@ -336,7 +380,7 @@ export async function receiveWa(req, res) {
       // Acknowledge only after the receipt, personal message/conversation and
       // recoverable media reference commit together. Never silently swallow a
       // failed save: non-200 lets the provider retry, while a replay is idempotent.
-      const inboundEvent = normalizeWaIngress(wb);
+      const inboundEvent = normalizeWaIngress(wb, { provider: selectedProvider });
       let inboundCapture;
       try { inboundCapture = await captureWaIngress(inboundEvent); }
       catch (error) {
@@ -363,15 +407,14 @@ export async function receiveWa(req, res) {
       if (!looksLikeGroup && ["PROCESSING", "DONE", "IGNORED", "PENDING_REVIEW", "FAILED_PERMANENT"].includes(inboundCapture.media_job?.status)) {
         return res.status(200).json({ ok: true, skipped: "media-already-recorded", receipt_id: inboundCapture.receipt_id });
       }
-      const isSafeFonnteUrl = url => !!safeFonnteMediaUrl(url);
+      const isSafeFonnteUrl = url => selectedProvider === "whacenter" ? !!safeWhacenterMediaUrl(url) : !!safeFonnteMediaUrl(url);
       // Debug log: setiap webhook hit untuk monitoring (akan ke-log di Vercel runtime logs)
       try { console.log("[WA_WEBHOOK]", JSON.stringify({ sender: senderRaw, member: memberRaw, isGroup: wb.isGroup, type: wb.type, hasMsg: !!wb.message, looksLikeGroup })); } catch (_) {}
       if (looksLikeGroup) {
         // Group messages: proses sebagai input satu arah ke ARA (no AI reply, no personal flow)
         const SU_g = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
         const SK_g = process.env.SUPABASE_SERVICE_KEY;
-        const FT_g = process.env.FONNTE_TOKEN;
-        const OP_g = process.env.OWNER_PHONE;
+          const OP_g = process.env.OWNER_PHONE;
 
         // Step 1: Validasi pengirim (Fonnte: wb.member = nomor anggota grup, wb.participant = alias lama)
         const participantRaw = String(wb.member || wb.participant || "");
@@ -568,10 +611,10 @@ export async function receiveWa(req, res) {
                       });
                       const removedLbl = toRemove.map(r2 => `${r2.teknisi_name} (${Number(r2.amount).toLocaleString("id-ID")})`);
                       console.log("[KASBON_REVISI]", { removed: removedLbl });
-                      if (FT_g) {
-                        fetch("https://api.fonnte.com/send", {
+                      if (waConfigured) {
+                        sendWithConfiguredWaProvider({
                           method: "POST",
-                          headers: { Authorization: FT_g, "Content-Type": "application/json" },
+                          headers: { Authorization: waConfigured, "Content-Type": "application/json" },
                           body: JSON.stringify({ target: participantNorm, message: `♻️ Revisi kasbon diterapkan — dibatalkan dari catatan hari ini:\n${removedLbl.map(n => "• " + n).join("\n")}`, delay: "2", countryCode: "62" })
                         }).catch(() => {});
                       }
@@ -631,10 +674,10 @@ export async function receiveWa(req, res) {
                   }
                 }
                 // Alert Owner: AI mencatat kasbon yang TIDAK ada request-nya di panel teknisi/helper
-                if (noPanelAlerts.length && FT_g && process.env.OWNER_PHONE) {
-                  fetch("https://api.fonnte.com/send", {
+                if (noPanelAlerts.length && waConfigured && process.env.OWNER_PHONE) {
+                  sendWithConfiguredWaProvider({
                     method: "POST",
-                    headers: { Authorization: FT_g, "Content-Type": "application/json" },
+                    headers: { Authorization: waConfigured, "Content-Type": "application/json" },
                     body: JSON.stringify({ target: process.env.OWNER_PHONE, message: `🚨 *Kasbon WA tanpa request panel*\n${noPanelAlerts.map(a => "• " + a).join("\n")}\n\nTetap dicatat (PENDING) dengan flag ⚠️ — verifikasi di menu Biaya sebelum finalisasi.`, delay: "2", countryCode: "62" })
                   }).catch(() => {});
                 }
@@ -644,12 +687,12 @@ export async function receiveWa(req, res) {
                   parsedAmount = kasbonParsed.total;
                   expenseSaved = true;
                   console.log("[KASBON_MULTI_PARSED]", { inserted: insertedNames.length, failed: failedNames, dup: dupNames });
-                  if (FT_g) {
+                  if (waConfigured) {
                     const failMsg = failedNames.length ? `\n⚠️ Gagal match: ${failedNames.join(", ")}` : "";
                     const dupMsg = dupNames.length ? `\n♻️ Sudah tercatat (skip duplikat): ${dupNames.join(", ")}` : "";
-                    fetch("https://api.fonnte.com/send", {
+                    sendWithConfiguredWaProvider({
                       method: "POST",
-                      headers: { Authorization: FT_g, "Content-Type": "application/json" },
+                      headers: { Authorization: waConfigured, "Content-Type": "application/json" },
                       body: JSON.stringify({ target: participantNorm, message: `✅ ${insertedNames.length} kasbon tercatat (PENDING AI):\n${insertedNames.map(n => "• " + n).join("\n")}${dupMsg}${failMsg}\n\nTunggu approve dari Finance/Owner, lalu Owner finalisasi di app.`, delay: "2", countryCode: "62" })
                     }).catch(() => {});
                   }
@@ -659,17 +702,17 @@ export async function receiveWa(req, res) {
                   parsedOk = true;
                   expenseSaved = true;
                   console.log("[KASBON_MULTI_ALL_DUP]", { dup: dupNames });
-                  if (FT_g) {
-                    fetch("https://api.fonnte.com/send", {
+                  if (waConfigured) {
+                    sendWithConfiguredWaProvider({
                       method: "POST",
-                      headers: { Authorization: FT_g, "Content-Type": "application/json" },
+                      headers: { Authorization: waConfigured, "Content-Type": "application/json" },
                       body: JSON.stringify({ target: participantNorm, message: `♻️ Kasbon sudah tercatat sebelumnya (skip duplikat):\n${dupNames.map(n => "• " + n).join("\n")}`, delay: "2", countryCode: "62" })
                     }).catch(() => {});
                   }
-                } else if (failedNames.length > 0 && FT_g) {
-                  fetch("https://api.fonnte.com/send", {
+                } else if (failedNames.length > 0 && waConfigured) {
+                  sendWithConfiguredWaProvider({
                     method: "POST",
-                    headers: { Authorization: FT_g, "Content-Type": "application/json" },
+                    headers: { Authorization: waConfigured, "Content-Type": "application/json" },
                     body: JSON.stringify({ target: participantNorm, message: `⚠️ Kasbon list gagal — semua nama tidak ditemukan di tim aktif: ${failedNames.join(", ")}. Cek ejaan.`, delay: "2", countryCode: "62" })
                   }).catch(() => {});
                 }
@@ -689,10 +732,10 @@ export async function receiveWa(req, res) {
                   || await expenseDuplicateExists({ SU: SU_g, SK: SK_g, teknisiName: matchRes.matched.name, amount: kasbonParsed.amount, date: entryDate1, subcategory: "Kasbon Karyawan" });
                 if (isDupKasbon) {
                   console.log("[KASBON_SINGLE_DUP]", { name: matchRes.matched.name, amount: kasbonParsed.amount, via: resolved1.action });
-                  if (FT_g) {
-                    fetch("https://api.fonnte.com/send", {
+                  if (waConfigured) {
+                    sendWithConfiguredWaProvider({
                       method: "POST",
-                      headers: { Authorization: FT_g, "Content-Type": "application/json" },
+                      headers: { Authorization: waConfigured, "Content-Type": "application/json" },
                       body: JSON.stringify({ target: participantNorm, message: `♻️ Kasbon ${matchRes.matched.name} (${kasbonParsed.amount.toLocaleString("id-ID")}) sudah tercatat${resolved1.action === "skip_linked" ? " (dari request panel)" : " hari ini"} — skip duplikat.`, delay: "2", countryCode: "62" })
                     }).catch(() => {});
                   }
@@ -715,27 +758,27 @@ export async function receiveWa(req, res) {
                   }, { teknisi: matchRes.matched.name, amount: kasbonParsed.amount, date: entryDate1, from: profileName });
                   console.log("[KASBON_PARSED]", { name: matchRes.matched.name, amount: kasbonParsed.amount, date: entryDate1 });
                   // Alert Owner: kasbon terbaca AI tapi tidak ada request dari panel
-                  if (resolved1.alert && FT_g && process.env.OWNER_PHONE) {
-                    fetch("https://api.fonnte.com/send", {
+                  if (resolved1.alert && waConfigured && process.env.OWNER_PHONE) {
+                    sendWithConfiguredWaProvider({
                       method: "POST",
-                      headers: { Authorization: FT_g, "Content-Type": "application/json" },
+                      headers: { Authorization: waConfigured, "Content-Type": "application/json" },
                       body: JSON.stringify({ target: process.env.OWNER_PHONE, message: `🚨 *Kasbon WA tanpa request panel*\n• ${resolved1.alert}\n\nTetap dicatat (PENDING) dengan flag ⚠️ — verifikasi di menu Biaya sebelum finalisasi.`, delay: "2", countryCode: "62" })
                     }).catch(() => {});
                   }
                 }
-              } else if (matchRes.reason === "ambiguous" && FT_g) {
+              } else if (matchRes.reason === "ambiguous" && waConfigured) {
                 // Reply ambiguous ke sender
                 const cands = matchRes.candidates.map(c => `• ${c.name} (${c.role})`).join("\n");
-                fetch("https://api.fonnte.com/send", {
+                sendWithConfiguredWaProvider({
                   method: "POST",
-                  headers: { Authorization: FT_g, "Content-Type": "application/json" },
+                  headers: { Authorization: waConfigured, "Content-Type": "application/json" },
                   body: JSON.stringify({ target: participantNorm, message: `⚠️ Kasbon ambigu — nama "${kasbonParsed.nameRaw}" cocok ke beberapa orang:\n${cands}\n\nKirim ulang dengan nama lengkap.`, delay: "2", countryCode: "62" })
                 }).catch(() => {});
                 console.warn("[KASBON_AMBIGUOUS]", kasbonParsed.nameRaw, matchRes.candidates.map(c => c.name));
-              } else if (matchRes.reason === "none" && FT_g) {
-                fetch("https://api.fonnte.com/send", {
+              } else if (matchRes.reason === "none" && waConfigured) {
+                sendWithConfiguredWaProvider({
                   method: "POST",
-                  headers: { Authorization: FT_g, "Content-Type": "application/json" },
+                  headers: { Authorization: waConfigured, "Content-Type": "application/json" },
                   body: JSON.stringify({ target: participantNorm, message: `⚠️ Kasbon gagal — nama "${kasbonParsed.nameRaw}" tidak ditemukan di tim aktif. Cek ejaan nama teknisi/helper.`, delay: "2", countryCode: "62" })
                 }).catch(() => {});
                 console.warn("[KASBON_NO_MATCH]", kasbonParsed.nameRaw);
@@ -781,10 +824,10 @@ export async function receiveWa(req, res) {
                 parsedType = "kasbon_ack";
                 parsedOk = true;
                 // Reply confirm singkat
-                if (FT_g) {
-                  fetch("https://api.fonnte.com/send", {
+                if (waConfigured) {
+                  sendWithConfiguredWaProvider({
                     method: "POST",
-                    headers: { Authorization: FT_g, "Content-Type": "application/json" },
+                    headers: { Authorization: waConfigured, "Content-Type": "application/json" },
                     body: JSON.stringify({ target: groupId, message: `✅ ${pendings.length} kasbon hari ini di-acknowledge. Owner tinggal final approve di app.`, delay: "2", countryCode: "62" })
                   }).catch(() => {});
                 }
@@ -1061,12 +1104,12 @@ export async function receiveWa(req, res) {
                 });
                 aiStatus = "ok:" + classification.intent;
                 // Material → manual approve. Reply ACK ke teknisi: foto diterima + menunggu review.
-                if (classification.intent === "material" && groupConfig.ai_material_enabled && FT_g) {
+                if (classification.intent === "material" && groupConfig.ai_material_enabled && waConfigured) {
                   const items = (classification.data?.items || []).map(i => `${i.type}${i.brand ? " " + i.brand : ""}${i.size ? " " + i.size : ""}`).filter(Boolean).join(", ");
                   const matReply = `✅ Foto material diterima${items ? `\n📦 ${items}` : ""}\n🕐 Menunggu review Admin/Owner di tab Pending Material.`;
-                  fetch("https://api.fonnte.com/send", {
+                  sendWithConfiguredWaProvider({
                     method: "POST",
-                    headers: { Authorization: FT_g, "Content-Type": "application/json" },
+                    headers: { Authorization: waConfigured, "Content-Type": "application/json" },
                     body: JSON.stringify({ target: participantNorm, message: matReply, delay: "2", countryCode: "62" })
                   }).catch(() => {});
                 }
@@ -1130,7 +1173,7 @@ export async function receiveWa(req, res) {
                   aiTextStatus = "ok:" + textCls.intent + (matchResult?.action ? ":" + matchResult.action : "");
 
                   // Reply WA ke teknisi kalau selesai
-                  if (textCls.intent === "selesai" && FT_g && matchResult) {
+                  if (textCls.intent === "selesai" && waConfigured && matchResult) {
                     let replyMsg = null;
                     if (matchResult.action === "auto") {
                       const o = matchResult.matched;
@@ -1145,9 +1188,9 @@ export async function receiveWa(req, res) {
                       replyMsg = `❓ Tidak ketemu customer "${textCls.data.customer_name || "?"}" di jadwal kamu hari ini. Cek nama lagi atau hubungi admin.`;
                     }
                     if (replyMsg) {
-                      fetch("https://api.fonnte.com/send", {
+                      sendWithConfiguredWaProvider({
                         method: "POST",
-                        headers: { Authorization: FT_g, "Content-Type": "application/json" },
+                        headers: { Authorization: waConfigured, "Content-Type": "application/json" },
                         body: JSON.stringify({ target: participantNorm, message: replyMsg, delay: "2", countryCode: "62" })
                       }).catch(() => {});
                     }
@@ -1251,11 +1294,11 @@ export async function receiveWa(req, res) {
                       } else { aiMatStatus = "skip_confirmed"; }
 
                       // ACK ke teknisi
-                      if (FT_g && (aiMatStatus.startsWith("new") || aiMatStatus.startsWith("merged"))) {
+                      if (waConfigured && (aiMatStatus.startsWith("new") || aiMatStatus.startsWith("merged"))) {
                         const summ = newItems.map(i => `${i.label} ${i.qty}${i.unit}${i.per_job[0].job_id ? " → " + (i.per_job[0].customer || "job") : " (job?)"}`).join("\n");
-                        fetch("https://api.fonnte.com/send", {
+                        sendWithConfiguredWaProvider({
                           method: "POST",
-                          headers: { Authorization: FT_g, "Content-Type": "application/json" },
+                          headers: { Authorization: waConfigured, "Content-Type": "application/json" },
                           body: JSON.stringify({ target: participantNorm, message: `📝 Draft pemakaian material dicatat:\n${summ}\n\n🕐 Menunggu konfirmasi Admin/Owner di *Konfirmasi Material*.`, delay: "2", countryCode: "62" })
                         }).catch(() => {});
                       }
@@ -1271,15 +1314,15 @@ export async function receiveWa(req, res) {
 
         // Step 4: Notif owner — kalau parsed (biaya/stok_alert), forward_to_owner, atau keyword match
         const shouldNotifyOwner = (parsedType === "biaya" || parsedType === "stok_alert") || fwdToOwner || kwMatched;
-        if (shouldNotifyOwner && FT_g && OP_g) {
+        if (shouldNotifyOwner && waConfigured && OP_g) {
           let prefix = "📋 *Laporan Grup*";
           if (kwMatched) prefix = "🔔 *Alert Keyword*";
           else if (fwdToOwner && parsedType === "general") prefix = "📥 *Pesan Grup*";
           const ownerMsg = prefix + "\n📛 " + (groupName || groupId) + "\n👤 " + profileName + ": " + message
             + (parsedOk ? "\n✅ Dicatat otomatis" : "");
-          fetch("https://api.fonnte.com/send", {
+          sendWithConfiguredWaProvider({
             method: "POST",
-            headers: { Authorization: FT_g, "Content-Type": "application/json" },
+            headers: { Authorization: waConfigured, "Content-Type": "application/json" },
             body: JSON.stringify({ target: OP_g, message: ownerMsg, delay: "1", countryCode: "62" })
           }).catch(() => {});
         }
@@ -1287,7 +1330,6 @@ export async function receiveWa(req, res) {
         return res.status(200).json({ status: "group_processed", type: parsedType, logged: shouldLog, ai: aiStatus, aiText: aiTextStatus, aiMat: aiMatStatus });
       }
 
-      const FT = process.env.FONNTE_TOKEN;
       const OP = process.env.OWNER_PHONE;
       const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
       const SK = process.env.SUPABASE_SERVICE_KEY;
@@ -1465,7 +1507,7 @@ export async function receiveWa(req, res) {
                     }, { phone: sender, amount: extracted.amount, bank: extracted.bank });
                     if (!suggestionWrite?.ok) console.warn("[PAY_SUGGEST_TEXT_SAVE] Bukti teks belum tersimpan; perlu review/replay", { sender, status: suggestionWrite?.status || null });
                     // Notif WA ke owner — agar tidak terlewat saat webapp tidak dibuka
-                    if (suggestionWrite?.ok && FT && OP) {
+                    if (suggestionWrite?.ok && waConfigured && OP) {
                       const ownerNotif = "💰 *Bukti Bayar Masuk (Teks)*\n"
                         + "Dari: " + senderName + " (" + sender + ")\n"
                         + (extracted.amount ? "Nominal: Rp" + Number(extracted.amount).toLocaleString("id-ID") + "\n" : "")
@@ -1473,9 +1515,9 @@ export async function receiveWa(req, res) {
                         + (matchedInvoiceId ? "Invoice: " + matchedInvoiceId + "\n" : "")
                         + (matchedOrderId ? "Order: " + matchedOrderId + "\n" : "")
                         + "\nPesan: \"" + message.slice(0,100) + "\"\n\n_Cek & konfirmasi di menu Invoice → WA Monitor_";
-                      fetch("https://api.fonnte.com/send", {
+                      sendWithConfiguredWaProvider({
                         method: "POST",
-                        headers: { Authorization: FT, "Content-Type": "application/json" },
+                        headers: { Authorization: waConfigured, "Content-Type": "application/json" },
                         body: JSON.stringify({ target: OP, message: ownerNotif, delay: "1", countryCode: "62" })
                       }).catch(() => {});
                     }
@@ -1645,7 +1687,7 @@ export async function receiveWa(req, res) {
                     } catch(saveErr) { console.error("[TOOL_BAG_SAVE]", saveErr.message); }
 
                     // Kirim WA Warning ke Owner jika ada masalah — cek warning_sent agar tidak duplikat
-                    if ((checkStatus === "WARNING" || checkStatus === "CRITICAL") && FT && OP) {
+                    if ((checkStatus === "WARNING" || checkStatus === "CRITICAL") && waConfigured && OP) {
                       // Cek apakah warning sudah pernah dikirim untuk record ini
                       const warnCheckRes = await fetch(
                         SU + "/rest/v1/tool_bag_checks?id=eq." + (checkRecordId || "none") + "&warning_sent=eq.true&select=id&limit=1",
@@ -1673,16 +1715,16 @@ export async function receiveWa(req, res) {
                         if (priorityList) warnMsg += `*Alat WAJIB tidak terdeteksi:*\n${priorityList}\n\n`;
                         if (normalList) warnMsg += `*Alat lain tidak terdeteksi:*\n${normalList}\n\n`;
                         warnMsg += `_Cek detail di webapp → Inventori → Tas Teknisi_`;
-                        await fetch("https://api.fonnte.com/send", {
+                        await sendWithConfiguredWaProvider({
                           method: "POST",
-                          headers: { Authorization: FT, "Content-Type": "application/json" },
+                          headers: { Authorization: waConfigured, "Content-Type": "application/json" },
                           body: JSON.stringify({ target: OP, message: warnMsg, delay: "1", countryCode: "62" })
                         }).catch(()=>{});
                       }
                     }
 
                     // Konfirmasi balik ke teknisi — cek reply_sent agar tidak duplikat saat Fonnte retry
-                    if (FT) {
+                    if (waConfigured) {
                       const replyCheckRes = await fetch(
                         SU + "/rest/v1/tool_bag_checks?id=eq." + (checkRecordId || "none") + "&reply_sent=eq.true&select=id&limit=1",
                         { headers: { apikey: SK, Authorization: "Bearer " + SK } }
@@ -1726,9 +1768,9 @@ export async function receiveWa(req, res) {
                         } else {
                           konfirMsg = `📸 *${bagId} — ${sessionLabel}*${updateLabel}\n\n📋 *List Alat ${bagId}:*\n${checklistList}\n\n🔍 *Alat Terdeteksi AI:*\n${foundList}\n\n❌ *Alat Tidak Terdeteksi AI:*\n${missingList}\n\n📝 *Note:* Foto ulang yang jelas agar terbaca dengan benar. Pastikan semua alat terlihat di foto.`;
                         }
-                        await fetch("https://api.fonnte.com/send", {
+                        await sendWithConfiguredWaProvider({
                           method: "POST",
-                          headers: { Authorization: FT, "Content-Type": "application/json" },
+                          headers: { Authorization: waConfigured, "Content-Type": "application/json" },
                           body: JSON.stringify({ target: sender, message: konfirMsg, delay: "2", countryCode: "62" })
                         }).catch(()=>{});
                       }
@@ -1745,8 +1787,8 @@ export async function receiveWa(req, res) {
             const failKind = /unduh foto/i.test(tbErr.message) ? "jaringan/Fonnte lambat"
               : /ai vision/i.test(tbErr.message) ? "AI sedang sibuk"
               : /aborted|timeout/i.test(tbErr.message) ? "jaringan lambat" : "kendala sistem";
-            if (FT && sender) fetch("https://api.fonnte.com/send", {
-              method: "POST", headers: { Authorization: FT, "Content-Type": "application/json" },
+            if (waConfigured && sender) sendWithConfiguredWaProvider({
+              method: "POST", headers: { Authorization: waConfigured, "Content-Type": "application/json" },
               body: JSON.stringify({ target: sender, message: `⚠️ Foto ${toolBagCaption.bagId} gagal diproses (${failKind}). Mohon *kirim ulang* fotonya ya. 🙏`, delay: "1", countryCode: "62" })
             }).catch(() => {});
             // 3) Catat ke Sentry biar kelihatan (sebelumnya senyap total).
@@ -1754,9 +1796,9 @@ export async function receiveWa(req, res) {
           }
         } else if (toolBagCaption && !toolBagCaption.bagId) {
           // Nomor tas di luar range 1-10
-          if (FT) fetch("https://api.fonnte.com/send", {
+          if (waConfigured) sendWithConfiguredWaProvider({
             method: "POST",
-            headers: { Authorization: FT, "Content-Type": "application/json" },
+            headers: { Authorization: waConfigured, "Content-Type": "application/json" },
             body: JSON.stringify({
               target: sender,
               message: `❓ Nomor tas "${toolBagCaption.bagNumRaw}" tidak valid.\nMohon kirim ulang dengan format:\n"Pagi Tas 1" atau "Pulang Tas 5"\n\nNomor tas yang terdaftar: Tas 1 - Tas 10`,
@@ -1794,8 +1836,8 @@ export async function receiveWa(req, res) {
           ).catch(() => null);
           const prof = (profRes?.ok ? await profRes.json() : [])[0] || null;
           if (!prof) {
-            if (FT) await fetch("https://api.fonnte.com/send", {
-              method: "POST", headers: { Authorization: FT, "Content-Type": "application/json" },
+            if (waConfigured) await sendWithConfiguredWaProvider({
+              method: "POST", headers: { Authorization: waConfigured, "Content-Type": "application/json" },
               body: JSON.stringify({ target: sender, message: "❓ Nomor Anda belum terdaftar sebagai teknisi. Hubungi admin, atau input lewat app menu *Material Harian*.", delay: "1", countryCode: "62" })
             }).catch(() => {});
             return res.status(200).json({ ok: true, skipped: "unknown-teknisi" });
@@ -1893,20 +1935,20 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
           }).catch(() => {});
 
           // Reply ke teknisi
-          if (FT) {
+          if (waConfigured) {
             const sLabel = session === "pagi" ? "Pagi 🌅" : "Pulang 🌇";
             const msg = aiStatus === "UNREADABLE"
               ? `⚠️ Foto material *${sLabel}* tidak terbaca jelas — foto ulang yang terang & dekat ya. Lalu input jumlah (pipa meter, kabel meter, freon kg) di app → menu *Material Harian*.`
               : `📥 Foto material *${sLabel}* diterima.\nTerdeteksi: ${aiDetected.tabung_count || 0} tabung, ${aiDetected.roll_count || 0} roll.\n\nJangan lupa input angka (pipa meter, kabel meter, freon kg) di app → menu *Material Harian* agar bisa dicocokkan. Terima kasih!`;
-            await fetch("https://api.fonnte.com/send", {
-              method: "POST", headers: { Authorization: FT, "Content-Type": "application/json" },
+            await sendWithConfiguredWaProvider({
+              method: "POST", headers: { Authorization: waConfigured, "Content-Type": "application/json" },
               body: JSON.stringify({ target: sender, message: msg, delay: "2", countryCode: "62" })
             }).catch(() => {});
           }
           // Alert Owner hanya bila foto tak terbaca
-          if (aiStatus === "UNREADABLE" && FT && OP) {
-            await fetch("https://api.fonnte.com/send", {
-              method: "POST", headers: { Authorization: FT, "Content-Type": "application/json" },
+          if (aiStatus === "UNREADABLE" && waConfigured && OP) {
+            await sendWithConfiguredWaProvider({
+              method: "POST", headers: { Authorization: waConfigured, "Content-Type": "application/json" },
               body: JSON.stringify({ target: OP, message: `⚠️ Foto material ${tekName} (${session}, ${today}) tidak terbaca AI. Minta foto ulang / cek manual.`, delay: "1", countryCode: "62" })
             }).catch(() => {});
           }
@@ -1929,7 +1971,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                 })
               : null;
             if (stagedMedia && !stagedMedia.ok) throw new Error(stagedMedia.error);
-              const media = await downloadIngressMedia(mediaUrl);
+              const media = await downloadIngressMedia(mediaUrl, { provider: selectedProvider });
               const imgBuf = media.buffer, mimeType = media.mimeType;
               // Durability invariant: mirror ke R2 + tulis retry job SEBELUM memanggil AI.
               // URL Fonnte bersifat sementara; tanpa urutan ini timeout AI membuat bukti hilang.
@@ -2138,10 +2180,10 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                           })
                         }).catch(sentryCatch("agent_log_pay_suggest_fail", { phone: sender, invoice_id: matchedInvoiceId }));
                         // Alert owner kalau bukti ada tapi gagal disimpan — biar tidak hilang
-                        if (FT && OP && savedImageUrl) {
-                          fetch("https://api.fonnte.com/send", {
+                        if (waConfigured && OP && savedImageUrl) {
+                          sendWithConfiguredWaProvider({
                             method: "POST",
-                            headers: { Authorization: FT, "Content-Type": "application/json" },
+                            headers: { Authorization: waConfigured, "Content-Type": "application/json" },
                             body: JSON.stringify({
                               target: OP,
                               message: "⚠️ *Bukti Bayar GAGAL Tersimpan*\nDari: " + senderName + " (" + sender + ")\n"
@@ -2164,7 +2206,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                     }
 
                     // Notif WA ke owner — selalu konfirmasi manual
-                    if (FT && OP && paymentSaved && paymentInserted) {
+                    if (waConfigured && OP && paymentSaved && paymentInserted) {
                       const ownerNotifImg = "💰 *Bukti Bayar Masuk (Foto)*\n"
                         + "Dari: " + senderName + " (" + sender + ")\n"
                         + (classified.amount ? "Nominal: Rp" + Number(classified.amount).toLocaleString("id-ID") + "\n" : "Nominal: tidak terbaca\n")
@@ -2172,9 +2214,9 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                         + (invoiceMatch?.kind === "multi" ? "Saran alokasi: " + invoiceMatch.invoices.map(i => i.id).join(" + ") + "\n"
                             : matchedInvoiceId ? "Invoice: " + matchedInvoiceId + " (" + (matchedInvoice?.status || "UNPAID") + ")\n" : "⚠️ Pilih invoice secara manual; belum ada kecocokan nominal yang unik\n")
                         + "\n📷 Foto bukti tersimpan otomatis.\n✅ Periksa bukti & alokasi di *WhatsApp → Verifikasi bayar* sebelum konfirmasi.";
-                      fetch("https://api.fonnte.com/send", {
+                      sendWithConfiguredWaProvider({
                         method: "POST",
-                        headers: { Authorization: FT, "Content-Type": "application/json" },
+                        headers: { Authorization: waConfigured, "Content-Type": "application/json" },
                         body: JSON.stringify({ target: OP, message: ownerNotifImg, delay: "1", countryCode: "62" })
                       }).catch(() => {});
                     }
@@ -2186,7 +2228,7 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                       const conf = (classified.amount && classified.bank && invoiceMatch?.invoices.length) ? "HIGH"
                                  : (classified.amount && (classified.bank || matchedInvoiceId)) ? "MEDIUM"
                                  : "LOW";
-                      if (FT && conf !== "LOW" && paymentSaved && paymentInserted) {
+                      if (waConfigured && conf !== "LOW" && paymentSaved && paymentInserted) {
                         const tgtRes = await fetch(
                           SU + "/rest/v1/wa_monitored_groups?select=group_id,group_name,ai_forward_min_conf&ai_forward_target=eq.true&enabled=eq.true",
                           { headers: { apikey: SK, Authorization: "Bearer " + SK } }
@@ -2207,9 +2249,9 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                               + (invoiceMatch?.invoices.length ? "Saran: " + invoiceMatch.invoices.map(i => i.id).join(" + ") + "\n" : "⚠️ Pilih invoice secara manual\n")
                               + "Confidence: " + conf + "\n"
                               + "\n✅ Verify di app menu Invoice → Pending AI";
-                            fetch("https://api.fonnte.com/send", {
+                            sendWithConfiguredWaProvider({
                               method: "POST",
-                              headers: { Authorization: FT, "Content-Type": "application/json" },
+                              headers: { Authorization: waConfigured, "Content-Type": "application/json" },
                               body: JSON.stringify({
                                 target: tgt.group_id,
                                 message: fwdCaption,
@@ -2267,11 +2309,11 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
 
       // Forward ke Owner — hanya jika toggle ON, pesan tidak di-auto-reply,
       // dan pesan bukan dari Owner itu sendiri (cegah loop)
-      if (!reply && fwdOn && FT && OP && sender !== OP.replace(/^0/, "62").replace(/[^0-9]/g, "")) {
+      if (!reply && fwdOn && waConfigured && OP && sender !== OP.replace(/^0/, "62").replace(/[^0-9]/g, "")) {
         const fwdMsg = "📲 *WA Masuk*\nDari: " + senderName + " (" + sender + ")\nPesan: " + message + "\n\n_Balas langsung di app WA Monitor_";
-        fetch("https://api.fonnte.com/send", {
+        sendWithConfiguredWaProvider({
           method: "POST",
-          headers: { Authorization: FT, "Content-Type": "application/json" },
+          headers: { Authorization: waConfigured, "Content-Type": "application/json" },
           body: JSON.stringify({ target: OP, message: fwdMsg, delay: "2", countryCode: "62" })
         }).catch(err => console.error("[WA_FORWARD_FAILED]", err.message));
       }
@@ -2284,6 +2326,12 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
 export async function waGroups(req, res) {
       if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
       const action = String(req.query.action || "");
+      const selectedProvider = await readSelectedWaProvider().catch(error => {
+        console.warn("[wa-groups] provider selection unavailable:", error.message);
+        return null;
+      });
+      if (!selectedProvider) return res.status(503).json({ ok: false, error: "Pengaturan provider WA belum tersedia" });
+      if (selectedProvider !== "fonnte") return res.status(409).json({ ok: false, error: "Sinkronisasi daftar grup otomatis hanya tersedia melalui Fonnte; pesan grup WhaCenter memakai nama grup yang sudah dipetakan." });
       const FT = process.env.FONNTE_TOKEN;
       if (!FT) return res.status(500).json({ error: "FONNTE_TOKEN belum diset" });
       if (action === "fonnte-list") {

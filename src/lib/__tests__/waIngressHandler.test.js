@@ -6,15 +6,18 @@ vi.mock("../../../api/_payment-media.js", async original => ({ ...await original
   classifyPaymentMedia: mocks.classify, ensurePaymentSuggestion: mocks.suggestion, updatePaymentMediaJob: mocks.update, registerPaymentMediaReference: mocks.register }));
 import { receiveWa } from "../../../api/_handlers/wa.js";
 import { checkRateLimit } from "../../../api/_auth.js";
+import { clearWaProviderCache } from "../../../api/_wa-provider.js";
 
-let requests, captureResult, captureFailure;
+let requests, captureResult, captureFailure, selectedProvider;
 const response = () => ({ status(code) { this.code = code; return this; }, json(body) { this.body = body; return this; }, setHeader: vi.fn() });
 const body = { sender: "628000000002", type: "image", url: "https://api.fonnte.com/t/synthetic.jpg", timestamp: "1792197446" };
 beforeEach(() => {
+  clearWaProviderCache();
   vi.mocked(checkRateLimit).mockClear();
   vi.stubEnv("SUPABASE_URL", "https://db.invalid");vi.stubEnv("SUPABASE_SERVICE_KEY", "synthetic");vi.stubEnv("FONNTE_TOKEN", "");vi.stubEnv("FONNTE_WEBHOOK_SECRET", "");
+  vi.stubEnv("WHACENTER_DEVICE_ID", "synthetic-device");vi.stubEnv("WHACENTER_WEBHOOK_SECRET", "synthetic-whacenter-secret");
   vi.stubEnv("AUTOREPLY_ENABLED", "false");vi.stubEnv("FORWARD_TO_OWNER", "false");
-  requests=[];captureFailure=false;
+  requests=[];captureFailure=false;selectedProvider="fonnte";
   captureResult={receipt_id:"raw-1",received_at:"2026-10-17T00:37:26Z",duplicate:false,message_id:"msg-1",intake_status:"MEDIA_QUEUED",sender_is_internal:false,payment_detect_enabled:true,
     media_job:{id:"job-1",status:"RECEIVED",phone:body.sender}};
   mocks.stage.mockReset().mockImplementation(async () => { requests.push({stage:"R2"});return {ok:true,url:"/api/foto?key=synthetic",job:{...captureResult.media_job,r2_url:"/api/foto?key=synthetic"}}; });
@@ -25,6 +28,7 @@ beforeEach(() => {
   vi.stubGlobal("fetch",vi.fn(async (raw,options={})=>{
     const url=new URL(raw);requests.push({origin:url.origin,path:url.pathname,method:options.method||"GET",body:options.body?JSON.parse(options.body):null});
     if(url.origin==="https://db.invalid" && url.pathname==="/rest/v1/rpc/capture_wa_webhook_214")return new Response(JSON.stringify(captureFailure?{error:"unavailable"}:captureResult),{status:captureFailure?503:200});
+    if(url.origin==="https://db.invalid" && url.pathname==="/rest/v1/app_settings" && url.searchParams.get("key")==="eq.wa_provider")return new Response(JSON.stringify([{key:"wa_provider",value:selectedProvider}]));
     if(url.origin==="https://db.invalid" && url.pathname==="/rest/v1/app_settings")return new Response(JSON.stringify([{key:"wa_autoreply_enabled",value:"false"},{key:"wa_forward_to_owner",value:"false"},{key:"wa_chatbot_enabled",value:"false"},{key:"wa_payment_detect",value:"true"}]));
     if(url.origin==="https://api.fonnte.com" && url.pathname==="/t/synthetic.jpg")return new Response(Buffer.alloc(500,1),{headers:{"content-type":"image/jpeg"}});
     if(url.origin==="https://db.invalid" && url.pathname==="/rest/v1/wa_messages" && options.method==="PATCH")return new Response(JSON.stringify([{id:"msg-1"}]));
@@ -46,10 +50,10 @@ it("commits intake before download, secures media before AI, and keeps failures 
 });
 it("returns retryable 503 rather than falsely acknowledging a failed intake commit",async()=>{
   captureFailure=true;const res=await run(body);expect(res.code).toBe(503);expect(res.body.code).toBe("WA_INGRESS_NOT_DURABLE");
-  expect(res.setHeader).toHaveBeenCalledWith("Retry-After","60");expect(mocks.stage).not.toHaveBeenCalled();expect(mocks.classify).not.toHaveBeenCalled();expect(requests).toHaveLength(1);
+  expect(res.setHeader).toHaveBeenCalledWith("Retry-After","60");expect(mocks.stage).not.toHaveBeenCalled();expect(mocks.classify).not.toHaveBeenCalled();expect(requests.filter(r=>r.path?.endsWith("capture_wa_webhook_214"))).toHaveLength(1);
 });
 it("does not redownload or rerun AI on a replay of already queued media",async()=>{
-  captureResult.duplicate=true;const res=await run(body);expect(res.body.skipped).toBe("duplicate-webhook");expect(mocks.classify).not.toHaveBeenCalled();expect(requests).toHaveLength(1);
+  captureResult.duplicate=true;const res=await run(body);expect(res.body.skipped).toBe("duplicate-webhook");expect(mocks.classify).not.toHaveBeenCalled();expect(requests.filter(r=>r.path?.endsWith("capture_wa_webhook_214"))).toHaveLength(1);
 });
 it("does not spend AI quota before the R2 copy is safe",async()=>{
   mocks.stage.mockResolvedValue({ok:false,error:"synthetic R2 unavailable"});const res=await run(body);
@@ -109,7 +113,7 @@ it("preserves the captured payment toggle when the later settings refresh is una
   captureResult.payment_detect_enabled=false;captureResult.media_job=null;captureResult.intake_status="RECORDED";
   const originalFetch=globalThis.fetch.getMockImplementation();
   globalThis.fetch.mockImplementation(async(raw,options)=>{
-    if(new URL(raw).pathname==="/rest/v1/app_settings")return new Response("{}",{status:503});
+    if(new URL(raw).pathname==="/rest/v1/app_settings" && new URL(raw).searchParams.get("key")!=="eq.wa_provider")return new Response("{}",{status:503});
     return originalFetch(raw,options);
   });
   const res=await run({...body,type:"text",url:undefined,message:"Sudah transfer pembayaran Rp 985000"});
@@ -117,22 +121,22 @@ it("preserves the captured payment toggle when the later settings refresh is una
   expect(requests.some(request=>/anthropic\.com|openai\.com/.test(request.origin||""))).toBe(false);
 });
 it("does not rerun a terminal media job under a fresh provider event ID",async()=>{
-  captureResult.media_job.status="DONE";const res=await run(body);expect(res.body.skipped).toBe("media-already-recorded");expect(mocks.classify).not.toHaveBeenCalled();expect(requests).toHaveLength(1);
+  captureResult.media_job.status="DONE";const res=await run(body);expect(res.body.skipped).toBe("media-already-recorded");expect(mocks.classify).not.toHaveBeenCalled();expect(requests.filter(r=>r.path?.endsWith("capture_wa_webhook_214"))).toHaveLength(1);
 });
 it("records video without a caption and acknowledges it without AI or an endless HTTP400 loop",async()=>{
   captureResult.intake_status="RECORDED";captureResult.media_job=null;
-  const res=await run({...body,type:"video"});expect(res.code).toBe(200);expect(res.body.automated_reply).toBe(false);expect(mocks.classify).not.toHaveBeenCalled();expect(requests).toHaveLength(1);
+  const res=await run({...body,type:"video"});expect(res.code).toBe(200);expect(res.body.automated_reply).toBe(false);expect(mocks.classify).not.toHaveBeenCalled();expect(requests.filter(r=>r.path?.endsWith("capture_wa_webhook_214"))).toHaveLength(1);
 });
 it("retains unresolved media identity for review instead of dropping it or guessing a customer",async()=>{
   captureResult.intake_status="REVIEW";captureResult.media_job=null;captureResult.message_id=null;
-  const res=await run({...body,sender:"98765432112345@lid"});expect(res.code).toBe(200);expect(res.body.needs_review).toBe(true);expect(requests[0].body.p_event.phone).toBeNull();
+  const res=await run({...body,sender:"98765432112345@lid"});expect(res.code).toBe(200);expect(res.body.needs_review).toBe(true);expect(requests.find(r=>r.path?.endsWith("capture_wa_webhook_214")).body.p_event.phone).toBeNull();
 });
 it("accepts the alternate from shape through the actual handler",async()=>{
-  await run({...body,sender:undefined,from:body.sender+"@s.whatsapp.net"});expect(requests[0].body.p_event.phone).toBe(body.sender);expect(mocks.stage).toHaveBeenCalledOnce();
+  await run({...body,sender:undefined,from:body.sender+"@s.whatsapp.net"});expect(requests.find(r=>r.path?.endsWith("capture_wa_webhook_214")).body.p_event.phone).toBe(body.sender);expect(mocks.stage).toHaveBeenCalledOnce();
 });
 it("does not confuse a photo with missing sender and status metadata with a delivery receipt",async()=>{
   captureResult.intake_status="REVIEW";captureResult.media_job=null;captureResult.message_id=null;
-  const res=await run({...body,sender:undefined,status:true});expect(res.body.needs_review).toBe(true);expect(requests).toHaveLength(1);
+  const res=await run({...body,sender:undefined,status:true});expect(res.body.needs_review).toBe(true);expect(requests.filter(r=>r.path?.endsWith("capture_wa_webhook_214"))).toHaveLength(1);
 });
 it("still ignores genuine outgoing delivery receipts without DB writes",async()=>{
   const res=await run({state:"delivered",device:"628000000001",stateid:"synthetic"});expect(res.body.ignored).toBe("delivery_receipt");expect(requests).toHaveLength(0);
@@ -154,9 +158,23 @@ it("accepts an authenticated delivery receipt without a database call",async()=>
   expect(res.code).toBe(200);expect(res.body.ignored).toBe("delivery_receipt");
   expect(requests).toHaveLength(0);expect(checkRateLimit).not.toHaveBeenCalled();
 });
+it("authenticates WhaCenter before reading app_settings and accepts only its selected route",async()=>{
+  const unauthenticated=response();
+  await receiveWa({method:"POST",headers:{},query:{route:"whacenter-webhook"},body:{from:body.sender,message:"halo"}},unauthenticated);
+  expect(unauthenticated.code).toBe(401);expect(requests).toHaveLength(0);
+  selectedProvider="whacenter";clearWaProviderCache();
+  const accepted=response();
+  await receiveWa({method:"POST",headers:{},query:{route:"whacenter-webhook",token:"synthetic-whacenter-secret"},body:{from:body.sender,message:"halo",timestamp:"1792197447"}},accepted);
+  expect(accepted.code).toBe(200);
+  expect(requests.find(r=>r.path?.endsWith("capture_wa_webhook_214")).body.p_event.payload.provider).toBe("whacenter");
+  const fonnteRoute=response();
+  await receiveWa({method:"POST",headers:{},query:{route:"receive-wa"},body:{from:body.sender,message:"halo"}},fonnteRoute);
+  expect(fonnteRoute.code).toBe(409);
+});
 it("routes the old Settings URL to the same public webhook without exposing another unauthenticated handler",async()=>{
   const {default:router}=await import("../../../api/[route].js");
   const res=response();await router({method:"GET",headers:{},query:{route:"fonnte-webhook"}},res);expect(res.code).toBe(200);expect(res.body.service).toBe("AClean WA Webhook");expect(requests).toHaveLength(0);
+  const whacenterRes=response();await router({method:"GET",headers:{},query:{route:"whacenter-webhook"}},whacenterRes);expect(whacenterRes.code).toBe(200);expect(whacenterRes.body.service).toBe("AClean WA Webhook");
 });
 it("does not invoke inherited Object methods as API handlers",async()=>{
   vi.stubEnv("INTERNAL_API_SECRET","synthetic-internal-token");

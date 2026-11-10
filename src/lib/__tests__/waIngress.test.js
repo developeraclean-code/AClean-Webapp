@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { captureWaIngress, downloadIngressMedia, normalizeWaIngress, readWaIngressHealth, safeFonnteMediaUrl } from "../../../api/_wa-ingress.js";
+import { captureWaIngress, downloadIngressMedia, normalizeWaIngress, readWaIngressHealth, safeFonnteMediaUrl, safeWhacenterMediaUrl } from "../../../api/_wa-ingress.js";
 
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const sample = { device: "628000000001", sender: "628000000002", type: "image", url: "https://api.fonnte.com/t/proof.jpg", timestamp: "1792197446" };
@@ -33,6 +33,14 @@ describe("inbound WA normalization", () => {
       const event = normalizeWaIngress({ ...sample, url });
       expect(event.review_reason).toBeTruthy(); expect(event.processable).toBe(false); expect(event.media_url).toBeNull();
     }
+  });
+  it("normalizes WhaCenter from/media payloads and restricts media hosts", () => {
+    const event = normalizeWaIngress({ from: "628000000002", to: "device-1", media: "https://cdn.whacenter.com/uploads/proof.jpg", timestamp: "1792197447" }, { provider: "whacenter" });
+    expect(event).toMatchObject({ phone: "628000000002", type: "image", capture_media: true, processable: true });
+    expect(event.payload.provider).toBe("whacenter");
+    expect(event.media_url).toBe("https://cdn.whacenter.com/uploads/proof.jpg");
+    expect(safeWhacenterMediaUrl("https://cdn.whacenter.com/a.jpg")).toBe("https://cdn.whacenter.com/a.jpg");
+    expect(safeWhacenterMediaUrl("https://evil.example/a.jpg")).toBeNull();
   });
   it("recognizes safe image URLs in legacy text messages", () => {
     expect(normalizeWaIngress({ sender: sample.sender, type: "text", message: sample.url })).toMatchObject({ type: "image", capture_media: true });

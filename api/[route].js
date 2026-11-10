@@ -5,7 +5,7 @@ import { customerVouchers, validateVoucher, claimVoucher, adminVouchers, cancelV
 import { monitor } from "./_handlers/monitor.js";
 import { paymentMediaHealth, requestPaymentMediaRetry } from "./_payment-health.js";
 import { customerStatus, submitRating, generateCustomerToken } from "./_handlers/customer.js";
-import { testConnection, health, getLlmConfig, getApiToken, manageUser } from "./_handlers/auth-token.js";
+import { testConnection, setWaProvider, health, getLlmConfig, getApiToken, manageUser } from "./_handlers/auth-token.js";
 import { projectDelete, maintenance, mPortal, projectPortal } from "./_handlers/portal.js";
 import { sendWa, notifyAbsence, receiveWa, waGroups } from "./_handlers/wa.js";
 import { waWorkspaceSend } from "./_handlers/wa-workspace.js";
@@ -13,7 +13,7 @@ import { uploadFoto, foto, portalFoto, syncFotos } from "./_handlers/foto.js";
 import { araChat, cronReminder } from "./_handlers/misc.js";
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
 // upload-foto & monitor sengaja TIDAK di sini — memerlukan auth (validateInternalToken)
-const PUBLIC_ROUTES = ["receive-wa", "fonnte-webhook", "test-connection", "_auth", "foto", "portal-foto", "get-llm-config", "get-api-token", "customer-status", "submit-rating", "customer-vouchers", "health", "m-portal", "project-portal"];
+const PUBLIC_ROUTES = ["receive-wa", "fonnte-webhook", "whacenter-webhook", "test-connection", "_auth", "foto", "portal-foto", "get-llm-config", "get-api-token", "customer-status", "submit-rating", "customer-vouchers", "health", "m-portal", "project-portal"];
 
 // ── HANDLER MAP: route → modul di api/_handlers/ (pemecahan router bertahap) ──
 const HANDLERS = {
@@ -29,6 +29,7 @@ const HANDLERS = {
   "submit-rating": submitRating,
   "generate-customer-token": generateCustomerToken,
   "test-connection": testConnection,
+  "set-wa-provider": setWaProvider,
   "health": health,
   "get-llm-config": getLlmConfig,
   "get-api-token": getApiToken,
@@ -44,6 +45,7 @@ const HANDLERS = {
   // Compatibility with the old URL previously displayed in Settings. The same
   // webhook-secret validation and durable intake apply to both paths.
   "fonnte-webhook": receiveWa,
+  "whacenter-webhook": receiveWa,
   "wa-groups": waGroups,
   "upload-foto": uploadFoto,
   "foto": foto,
@@ -72,6 +74,7 @@ export default async function handler(req, res) {
 
   } catch(err) {
     console.error("[api/" + route + "] Error:", err.message);
+    const safeRequestUrl = String(req.url || "").replace(/([?&]token=)[^&]*/gi, "$1[redacted]");
 
     // Capture error to Sentry
     Sentry.captureException(err, {
@@ -80,7 +83,7 @@ export default async function handler(req, res) {
         method: req.method,
       },
       extra: {
-        url: req.url,
+        url: safeRequestUrl,
         // Don't log sensitive data like phone numbers
       },
     });

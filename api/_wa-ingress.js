@@ -11,11 +11,25 @@ export function safeFonnteMediaUrl(value) {
   } catch { return null; }
 }
 
-const TYPES = { image: "image", photo: "image", imagemessage: "image", document: "document", file: "document", documentmessage: "document", video: "video", videomessage: "video", audio: "audio", ptt: "audio", sticker: "sticker", text: "text", chat: "text", conversation: "text" };
-const FIELDS = ["device", "sender", "from", "member", "participant", "group", "isGroup", "type", "name", "message", "text", "caption", "url", "filename", "extension", "mimetype", "timestamp", "inboxid", "id", "message_id"];
+export function safeWhacenterMediaUrl(value, { env = process.env } = {}) {
+  if (typeof value !== "string" || value.length > 4096) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password || url.port) return null;
+    const configured = String(env.WHACENTER_MEDIA_HOSTS || "").split(",").map(host => host.trim().toLowerCase()).filter(Boolean);
+    const allowed = configured.length ? configured : ["whacenter.com", "app.whacenter.com"];
+    if (!allowed.some(host => url.hostname === host || (host === "whacenter.com" && url.hostname.endsWith(".whacenter.com")))) return null;
+    url.hash = "";
+    return url.toString();
+  } catch { return null; }
+}
 
-export function normalizeWaIngress(body = {}) {
+const TYPES = { image: "image", photo: "image", imagemessage: "image", document: "document", file: "document", documentmessage: "document", video: "video", videomessage: "video", audio: "audio", ptt: "audio", sticker: "sticker", text: "text", chat: "text", conversation: "text" };
+const FIELDS = ["provider", "device", "sender", "from", "to", "member", "participant", "group", "isGroup", "type", "name", "message", "text", "caption", "url", "media", "filename", "extension", "mimetype", "timestamp", "inboxid", "id", "message_id"];
+
+export function normalizeWaIngress(body = {}, { provider = "fonnte" } = {}) {
   const raw = body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  const providerName = provider === "whacenter" ? "whacenter" : "fonnte";
   const senderRaw = String(raw.sender || raw.from || raw.group || "").slice(0, 100);
   const memberRaw = String(raw.member || raw.participant || "").slice(0, 100);
   const isGroup = !!memberRaw || raw.isGroup === true || raw.isGroup === "true" || senderRaw.includes("@g.us") || /^\d+-\d+/.test(senderRaw);
@@ -23,7 +37,9 @@ export function normalizeWaIngress(body = {}) {
   const identity = [raw.sender, raw.from].find(value => value && !/@lid\b/i.test(String(value)));
   const identityText = String(identity || "");
   const phone = isGroup || (identityText.includes("@") && !/@(?:s\.whatsapp\.net|c\.us)$/i.test(identityText)) ? null : validateAndNormalizePhone(identityText.replace(/@(?:s\.whatsapp\.net|c\.us)$/i, ""));
-  const sourceUrl = safeFonnteMediaUrl(raw.url) || safeFonnteMediaUrl(raw.message);
+  const sourceUrl = providerName === "whacenter"
+    ? (safeWhacenterMediaUrl(raw.media || raw.url) || safeWhacenterMediaUrl(raw.message))
+    : (safeFonnteMediaUrl(raw.url) || safeFonnteMediaUrl(raw.message));
   const originalType = String(raw.type || "").toLowerCase().replace(/[^a-z]/g, "");
   let type = TYPES[originalType] || (!originalType && sourceUrl ? (/\.pdf(?:\?|$)/i.test(sourceUrl) ? "document" : "image") : originalType || "text");
   if (type === "text" && sourceUrl && /\.(png|jpe?g|webp|gif|pdf)(?:\?|$)/i.test(sourceUrl)) type = /\.pdf(?:\?|$)/i.test(sourceUrl) ? "document" : "image";
@@ -31,7 +47,7 @@ export function normalizeWaIngress(body = {}) {
   const message = validateMessage(candidate) || (sourceUrl ? `[${type}] ${sourceUrl}` : isGroup ? "(empty/system message)" : null);
   let reviewReason = !isGroup && !phone ? "Identitas pengirim belum dapat dipastikan; jangan menebak nomor dari LID." : null;
   if (!isGroup && !message) reviewReason ||= "Pesan/media kosong atau format belum dikenali; periksa arsip WA.";
-  if (!isGroup && ["image", "document"].includes(type) && !sourceUrl) reviewReason ||= "Foto/dokumen diterima tanpa URL Fonnte yang aman; file belum dapat diunduh.";
+  if (!isGroup && ["image", "document"].includes(type) && !sourceUrl) reviewReason ||= `Foto/dokumen diterima tanpa URL media ${providerName} yang diizinkan; file belum dapat diunduh.`;
   if (candidate.length > 4096) reviewReason ||= "Pesan melebihi 4096 karakter; perlu diperiksa manual.";
   const payload = {};
   for (const key of FIELDS) {
@@ -41,8 +57,9 @@ export function normalizeWaIngress(body = {}) {
   }
   // Provider IDs/timestamps survive retries. Without any stable identity, keep
   // both identical messages instead of silently dropping a legitimate second one.
+  payload.provider = providerName;
   const stableId = raw.inboxid || raw.id || raw.message_id || raw.timestamp || sourceUrl || randomUUID();
-  const eventKey = "wa_" + createHash("sha256").update(JSON.stringify([String(raw.device || ""), phone || senderRaw, memberRaw, String(stableId), type, candidate, sourceUrl])).digest("hex");
+  const eventKey = "wa_" + createHash("sha256").update(JSON.stringify([providerName, String(raw.device || raw.to || ""), phone || senderRaw, memberRaw, String(stableId), type, candidate, sourceUrl])).digest("hex");
   const caption = candidate.trim();
   const operationalPhoto = /^(pagi|pulang|sore|selesai|morning)\s+tas\s*\d{1,2}$/i.test(caption) || /^material\s+(pagi|pulang)$/i.test(caption);
   return {
@@ -67,10 +84,11 @@ export async function captureWaIngress(event, { supabaseUrl = process.env.SUPABA
   return result;
 }
 
-export async function downloadIngressMedia(url, { fetchImpl = fetch, maxBytes = 10 * 1024 * 1024 } = {}) {
-  if (!safeFonnteMediaUrl(url)) throw new Error("URL media tidak aman");
-  const response = await fetchImpl(url, { signal: AbortSignal.timeout(10000), redirect: "error" });
-  if (!response.ok) throw new Error(`Fonnte media HTTP ${response.status}`);
+export async function downloadIngressMedia(url, { fetchImpl = fetch, maxBytes = 10 * 1024 * 1024, provider = "fonnte" } = {}) {
+  const safeUrl = provider === "whacenter" ? safeWhacenterMediaUrl(url) : safeFonnteMediaUrl(url);
+  if (!safeUrl) throw new Error("URL media tidak aman atau host belum diizinkan");
+  const response = await fetchImpl(safeUrl, { signal: AbortSignal.timeout(10000), redirect: "error" });
+  if (!response.ok) throw new Error(`${provider === "whacenter" ? "WhaCenter" : "Fonnte"} media HTTP ${response.status}`);
   if (Number(response.headers.get("content-length")) > maxBytes) throw new Error("Media melebihi batas 10 MB; periksa file asli di WA");
   const reader = response.body?.getReader?.();
   const chunks = []; let size = 0;

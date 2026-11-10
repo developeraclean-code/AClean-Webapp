@@ -1473,7 +1473,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
   const [lockoutUntil, setLockoutUntil] = useState(() => _ls("lockoutUntil", 0));
 
   // ── Settings state ──
-  const [waProvider, setWaProvider] = useState(() => _ls("waProvider", "fonnte"));
+  const [waProvider, setWaProvider] = useState("fonnte");
   // B.5 SECURITY: WA token di sessionStorage (tidak persistent) daripada localStorage
   const [waToken, setWaToken] = useState(() => sessionStorage.getItem("aclean_waToken") || "");
   const [waDevice, setWaDevice] = useState(() => _ls("waDevice", ""));
@@ -2532,16 +2532,9 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
   useEffect(() => { _lsSave("ollamaUrl", ollamaUrl); }, [ollamaUrl]);
   useEffect(() => { _lsSave("brainMd", brainMd); }, [brainMd]);
   useEffect(() => { _lsSave("brainMdCustomer", brainMdCustomer); }, [brainMdCustomer]);
-  useEffect(() => { _lsSave("waProvider", waProvider); }, [waProvider]);
-  // Sync waProvider to Supabase app_settings for global consistency
-  useEffect(() => {
-    if (!isLoggedIn || !waProvider) return;
-    (async () => {
-      try {
-        await supabase.from("app_settings").upsert({ key: "wa_provider", value: waProvider }, { onConflict: "key" });
-      } catch (e) { console.warn("[Settings] Failed to sync waProvider:", e.message); }
-    })();
-  }, [waProvider, isLoggedIn]);
+  // Provider WhatsApp bersumber dari app_settings. Perubahan hanya ditulis
+  // setelah tes provider berhasil di SettingsView; jangan sync localStorage
+  // otomatis karena nilai lokal lama dapat menimpa pilihan global Owner.
   // B.5 SECURITY: WA token di sessionStorage (hilang saat browser ditutup)
   useEffect(() => { if (waToken) sessionStorage.setItem("aclean_waToken", waToken); }, [waToken]);
   useEffect(() => { _lsSave("waDevice", waDevice); }, [waDevice]);
@@ -3028,12 +3021,12 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
   };
 
   // ── Helpers ──
-  // ── WA: kirim via Fonnte backend, fallback wa.me ──
-  // opts.url + opts.filename → Fonnte Premium attachment (opsional)
-  const sendWA = async (phone, message, opts = {}) => {
+  // ── Semua pengiriman otomatis lewat provider aktif di server. ──
+  // opts.url + opts.filename adalah lampiran opsional.
+  const sendWAWithResult = async (phone, message, opts = {}) => {
     if (!phone || !message) {
       console.warn("sendWA skip: phone/message kosong", { phone, message: message?.slice(0, 30) });
-      return false;
+      return { success: false, provider: null };
     }
     try {
       const body = { phone, message, currentUserRole: currentUser?.role || "Unknown" };
@@ -3046,38 +3039,42 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
       const d = await r.json().catch(() => ({}));
       if (r.ok && d.success) {
         console.log("[sendWA] OK — withAttachment:", d.withAttachment);
-        return true;
+        return { success: true, provider: d.provider || waProvider || null };
       }
       // Log error detail — informasi berguna untuk debugging
       const errMsg = d.detail || d.error || String(r.status);
       console.warn("sendWA failed:", d.error || "", "| detail:", d.detail || "—", "| target:", phone);
       // Tampilkan notif hanya untuk error kritis (bukan quota/device)
-      if (errMsg.includes("FONNTE_TOKEN") || errMsg.includes("belum diset")) {
-        showNotif("⚠️ WA tidak terkirim: FONNTE_TOKEN belum diset di Vercel");
-      } else if (errMsg.includes("FONNTE_UNREACHABLE") || errMsg.includes("fetch failed") || errMsg.includes("timeout")) {
-        showNotif("⚠️ WA tidak terkirim: server Fonnte tidak bisa dihubungi (down/timeout) — coba lagi nanti");
+      if (errMsg.includes("FONNTE_TOKEN") || errMsg.includes("WHACENTER_DEVICE_ID")) {
+        showNotif(`⚠️ WA tidak terkirim: konfigurasi ${waProvider === "whacenter" ? "WhaCenter" : "Fonnte"} belum tersedia di server`);
+      } else if (errMsg.includes("fetch failed") || errMsg.includes("timeout")) {
+        showNotif(`⚠️ WA tidak terkirim: gateway ${waProvider === "whacenter" ? "WhaCenter" : "Fonnte"} tidak merespons — periksa status sebelum mencoba lagi`);
       } else if (errMsg.includes("offline") || errMsg.includes("device")) {
-        showNotif("⚠️ WA tidak terkirim: Device Fonnte offline — scan ulang QR");
+        showNotif(`⚠️ WA tidak terkirim: perangkat ${waProvider === "whacenter" ? "WhaCenter" : "Fonnte"} offline`);
       }
-      return false;
+      return { success: false, provider: d.provider || waProvider || null, error: errMsg,
+        uncertain: ["WHACENTER_UNCERTAIN", "FONNTE_UNREACHABLE"].includes(d.detail) };
     } catch (err) {
       console.warn("sendWA error:", err.message);
-      return false;
+      return { success: false, provider: waProvider || null, error: err.message, uncertain: true };
     }
   };
+  const sendWA = async (phone, message, opts = {}) => (await sendWAWithResult(phone, message, opts)).success;
 
   const openWA = async (phone, msg) => {
     if (!phone) { showNotif("❌ Nomor HP tidak tersedia"); return; }
     // Normalisasi nomor — pastikan format 628xxx
     const normPhone = String(phone).replace(/^0/, "62").replace(/[^0-9]/g, "");
     if (msg) {
-      // Coba kirim via Fonnte dulu
-      const sent = await sendWA(normPhone, msg);
-      if (sent) {
+      // Coba kirim lewat provider WhatsApp yang aktif.
+      const result = await sendWAWithResult(normPhone, msg);
+      if (result.success) {
         showNotif("✅ Pesan WA terkirim ke " + normPhone);
+      } else if (result.uncertain) {
+        showNotif("⚠️ Status kirim belum pasti — periksa percakapan WhatsApp sebelum mencoba lagi agar tidak terkirim ganda.");
       } else {
-        // Fonnte gagal → fallback buka wa.me agar teknisi tetap bisa kirim manual
-        showNotif("⚠️ Kirim otomatis gagal — membuka WhatsApp manual...");
+        // Hanya kegagalan definitif yang membuka WhatsApp manual.
+        showNotif("⚠️ Kirim otomatis ditolak — membuka WhatsApp manual...");
         const waUrl = "https://wa.me/" + normPhone + "?text=" + encodeURIComponent(msg);
         window.open(waUrl, "_blank");
       }
@@ -3135,14 +3132,15 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
 
   // Satu pintu pengiriman dokumen customer. Provider WA harus sukses lebih dulu;
   // setelah itu marker dicatat lewat RPC atomik dan state semua role diperbarui.
-  const sendDocumentWA = async ({ documentType, ids, phone, message, attachment = {}, mode = "single", batchInfo = null, method = "fonnte" }) => {
+  const sendDocumentWA = async ({ documentType, ids, phone, message, attachment = {}, mode = "single", batchInfo = null, method = null }) => {
     if (!['invoice', 'report_card'].includes(documentType)) {
       return { ok: false, audited: false, error: "unknown_document_type" };
     }
     const documentIds = (Array.isArray(ids) ? ids : [ids]).filter(Boolean);
     if (documentIds.length === 0) return { ok: false, audited: false, error: "missing_document_id" };
-    const sent = await sendWA(phone, message, attachment);
-    if (!sent) return { ok: false, audited: false, error: "send_failed" };
+    const sendResult = await sendWAWithResult(phone, message, attachment);
+    if (!sendResult.success) return { ok: false, audited: false, error: "send_failed" };
+    const auditMethod = method || sendResult.provider || waProvider || "fonnte";
 
     const actorName = currentUser?.name || currentUser?.role || "Unknown";
     if (documentType === "invoice") {
@@ -3152,7 +3150,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
         p_mode: mode,
         p_batch: batchInfo,
         p_actor_name: actorName,
-        p_method: method,
+        p_method: auditMethod,
       });
       if (error) {
         showNotif("⚠️ Dokumen terkirim, tetapi audit pengiriman gagal disimpan: " + error.message);
@@ -3171,7 +3169,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
         p_report_id: reportId,
         p_mode: mode,
         p_actor_name: actorName,
-        p_method: method,
+        p_method: auditMethod,
       });
       if (error) {
         showNotif("⚠️ Report Card terkirim, tetapi audit pengiriman gagal disimpan: " + error.message);
@@ -3328,7 +3326,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
       mode: "approval",
     });
     if (result.ok) showNotif(`✅ Invoice ${inv.id} diapprove & terkirim ke WA ${inv.customer}${invoiceUrl ? " 📎" : ""}${appSettings?.customer_portal_enabled === "true" && !portalLink ? " — ⚠️ tautan portal gagal dibuat" : ""}`);
-    else showNotif(`✅ Invoice ${inv.id} diapprove — WA gagal terkirim (cek koneksi Fonnte)`);
+    else showNotif(`✅ Invoice ${inv.id} diapprove — WA gagal terkirim (cek koneksi provider WhatsApp)`);
 
     setModalApproveInv(false); setPendingApproveInv(null);
   };
