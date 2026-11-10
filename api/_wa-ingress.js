@@ -109,29 +109,69 @@ export async function captureWaIngress(event, { supabaseUrl = process.env.SUPABA
   return result;
 }
 
+function mediaDownloadError(code, message) {
+  const error = new Error(`${message} [WA_MEDIA_${code}]`);
+  error.waMediaCode = `WA_MEDIA_${code}`;
+  return error;
+}
+
+function mediaTransportError(error) {
+  const known = new Set(["ENOTFOUND", "EAI_AGAIN", "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "ENETUNREACH",
+    "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET", "CERT_HAS_EXPIRED", "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    "SELF_SIGNED_CERT_IN_CHAIN", "DEPTH_ZERO_SELF_SIGNED_CERT", "ERR_TLS_CERT_ALTNAME_INVALID"]);
+  const candidate = error?.cause?.code || error?.code;
+  const code = ["AbortError", "TimeoutError"].includes(error?.name) ? "TIMEOUT" : known.has(candidate) ? candidate : "FETCH_FAILED";
+  return mediaDownloadError(code, "Unduhan media provider gagal");
+}
+
 export async function downloadIngressMedia(url, { fetchImpl = fetch, maxBytes = 10 * 1024 * 1024, provider = "fonnte", env = process.env, timeoutMs = 10000 } = {}) {
-  if (!["fonnte", "whacenter"].includes(provider)) throw new Error("Provider media tidak dikenal");
+  if (!["fonnte", "whacenter"].includes(provider)) throw mediaDownloadError("PROVIDER_REJECTED", "Provider media tidak dikenal");
   const safeUrl = provider === "whacenter" ? safeWhacenterMediaUrl(url, { env }) : safeFonnteMediaUrl(url);
-  if (!safeUrl) throw new Error("URL media tidak aman atau host belum diizinkan");
-  const response = await fetchImpl(safeUrl, { signal: AbortSignal.timeout(timeoutMs), redirect: "error" });
-  if (!response.ok) throw new Error(`${provider === "whacenter" ? "WhaCenter" : "Fonnte"} media HTTP ${response.status}`);
-  if (Number(response.headers.get("content-length")) > maxBytes) throw new Error("Media melebihi batas 10 MB; periksa file asli di WA");
+  if (!safeUrl) throw mediaDownloadError("URL_REJECTED", "URL media tidak aman atau host belum diizinkan");
+  const signal = AbortSignal.timeout(timeoutMs);
+  let target = safeUrl, response;
+  // WhaCenter's media gateway redirects to object storage. Validate every hop
+  // before making the next request; no auth headers, cookies or TLS bypass.
+  for (let redirects = 0; ; redirects++) {
+    try { response = await fetchImpl(target, { signal, redirect: provider === "whacenter" ? "manual" : "error" }); }
+    catch (error) { throw mediaTransportError(error); }
+    if (provider !== "whacenter" || ![301, 302, 303, 307, 308].includes(response.status)) break;
+    try { await response.body?.cancel(); } catch { /* release redirect response */ }
+    if (redirects >= 3) throw mediaDownloadError("REDIRECT_LIMIT", "Redirect media melebihi batas tiga kali");
+    const location = response.headers.get("location");
+    if (!location) throw mediaDownloadError("REDIRECT_LOCATION_MISSING", "Redirect media tidak memiliki tujuan");
+    let next;
+    try { next = new URL(location, target).toString(); }
+    catch { throw mediaDownloadError("REDIRECT_REJECTED", "Tujuan redirect media tidak valid"); }
+    target = safeWhacenterMediaUrl(next, { env });
+    if (!target) throw mediaDownloadError("REDIRECT_HOST_REJECTED", "Host redirect media belum diizinkan; periksa WHACENTER_MEDIA_HOSTS");
+  }
+  if (!response.ok) {
+    try { await response.body?.cancel(); } catch { /* release failure response */ }
+    throw mediaDownloadError(`HTTP_${response.status}`, `${provider === "whacenter" ? "WhaCenter" : "Fonnte"} media HTTP ${response.status}`);
+  }
+  if (Number(response.headers.get("content-length")) > maxBytes) {
+    try { await response.body?.cancel(); } catch { /* release oversized response */ }
+    throw mediaDownloadError("TOO_LARGE", "Media melebihi batas 10 MB; periksa file asli di WA");
+  }
   const reader = response.body?.getReader?.();
   const chunks = []; let size = 0;
-  if (reader) {
-    try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        size += value.byteLength;
-        if (size > maxBytes) { await reader.cancel(); throw new Error("Media melebihi batas 10 MB; periksa file asli di WA"); }
-        chunks.push(Buffer.from(value));
-      }
-    } finally { reader.releaseLock(); }
-  } else {
-    const bytes = Buffer.from(await response.arrayBuffer()); size = bytes.length; chunks.push(bytes);
-  }
-  if (!size || size > maxBytes) throw new Error(size ? "Media melebihi batas 10 MB" : "File media kosong; perlu retry");
+  try {
+    if (reader) {
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > maxBytes) { await reader.cancel(); throw mediaDownloadError("TOO_LARGE", "Media melebihi batas 10 MB"); }
+          chunks.push(Buffer.from(value));
+        }
+      } finally { reader.releaseLock(); }
+    } else {
+      const bytes = Buffer.from(await response.arrayBuffer()); size = bytes.length; chunks.push(bytes);
+    }
+  } catch (error) { throw error.waMediaCode ? error : mediaTransportError(error); }
+  if (!size || size > maxBytes) throw mediaDownloadError(size ? "TOO_LARGE" : "EMPTY", size ? "Media melebihi batas 10 MB" : "File media kosong; perlu retry");
   return { buffer: Buffer.concat(chunks), mimeType: (response.headers.get("content-type") || "image/jpeg").split(";")[0].trim() };
 }
 

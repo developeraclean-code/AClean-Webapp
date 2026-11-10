@@ -153,6 +153,38 @@ try {
     await db.exec('SET ROLE service_role');
     try {assert.equal((await capture(wha(907))).media_job.provider,'whacenter');}finally{await db.exec('RESET ROLE');}
   });
+  await check('reproduces missing chat preview for a file already stored in R2 staging',async()=>{
+    const saved=await capture(wha(9001));
+    await db.query("UPDATE wa_payment_media_jobs SET r2_key='wa-staging/2026-11/preview.jpg',r2_url='/api/foto?key=wa-staging%2F2026-11%2Fpreview.jpg' WHERE id=$1",[saved.media_job.id]);
+    assert.equal((await one('SELECT image_url FROM wa_messages WHERE id::text=$1',[saved.message_id])).image_url,null);
+  });
+  await check('234 repairs existing staged previews idempotently without changing finance or manual attachments',async()=>{
+    const migration=readFileSync(new URL('../migrations/234_wa_staged_media_chat_preview.sql',import.meta.url),'utf8');
+    await db.exec(migration);await db.exec(migration);
+    const saved=await capture(wha(9001));
+    assert.equal((await one('SELECT image_url FROM wa_messages WHERE id::text=$1',[saved.message_id])).image_url,'/api/foto?key=wa-staging%2F2026-11%2Fpreview.jpg');
+    assert.equal((await one('SELECT image_url FROM wa_messages WHERE webhook_event_key=$1',[event(0).event_key])).image_url,'/api/foto?key=manual-proof');
+  });
+  await check('staging preview links before OCR and advances atomically when proof is archived',async()=>{
+    const saved=await capture(wha(9002));const id=saved.media_job.id;
+    const staged='/api/foto?key=wa-staging%2F2026-11%2Fphoto.jpg';const archived='/api/foto?key=wa-inbox%2F2026-11%2Fphoto.jpg';
+    await db.query('UPDATE wa_payment_media_jobs SET r2_url=$1 WHERE id=$2',[staged,id]);
+    assert.equal((await one('SELECT image_url FROM wa_messages WHERE id::text=$1',[saved.message_id])).image_url,staged);
+    await db.query('UPDATE wa_payment_media_jobs SET r2_url=$1 WHERE id=$2',[archived,id]);
+    assert.equal((await one('SELECT image_url FROM wa_messages WHERE id::text=$1',[saved.message_id])).image_url,archived);
+    await db.exec('BEGIN');await db.query('UPDATE wa_payment_media_jobs SET r2_url=$1 WHERE id=$2',[staged,id]);await db.exec('ROLLBACK');
+    assert.equal((await one('SELECT image_url FROM wa_messages WHERE id::text=$1',[saved.message_id])).image_url,archived);
+  });
+  await check('preview trigger rejects external references and requires the exact customer/message/phone link',async()=>{
+    const saved=await capture(wha(9003));const id=saved.media_job.id;
+    await db.query('UPDATE wa_payment_media_jobs SET r2_url=$1 WHERE id=$2',['https://evil.invalid/file.jpg',id]);
+    assert.equal((await one('SELECT image_url FROM wa_messages WHERE id::text=$1',[saved.message_id])).image_url,null);
+    await db.query("UPDATE wa_payment_media_jobs SET phone='628000000099',r2_url='/api/foto?key=wa-staging%2Fx.jpg' WHERE id=$1",[id]);
+    assert.equal((await one('SELECT image_url FROM wa_messages WHERE id::text=$1',[saved.message_id])).image_url,null);
+    await db.query("UPDATE wa_payment_media_jobs SET phone='628000000008',wa_message_id=NULL WHERE id=$1",[id]);
+    await db.query('UPDATE wa_payment_media_jobs SET wa_message_id=$1 WHERE id=$2',[saved.message_id,id]);
+    assert.equal((await one('SELECT image_url FROM wa_messages WHERE id::text=$1',[saved.message_id])).image_url,'/api/foto?key=wa-staging%2Fx.jpg');
+  });
   assert.equal((await one('SELECT count(*)::int n FROM invoice_payments')).n,0);
   assert.deepEqual(await q('SELECT * FROM invoices'),[{id:'KEEP',status:'UNPAID',total:'985000'}]);
   console.log(JSON.stringify({passed,syntheticDeliveries:200,syntheticReplays:200,productionWrites:0,aiCalls:0,paymentWrites:0}));

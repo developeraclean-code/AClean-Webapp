@@ -190,7 +190,7 @@ it.each(["jpg", "pdf"])("processes authenticated WhaCenter %s through intake, bo
   const source=`https://app.whacenter.com/media/synthetic.${extension}`;
   const originalFetch=globalThis.fetch.getMockImplementation();
   globalThis.fetch.mockImplementation(async(raw, options={})=>{
-    if(String(raw)===source){requests.push({path:new URL(source).pathname,stage:"DOWNLOAD"});expect(options.redirect).toBe("error");return new Response(Buffer.alloc(500,1),{headers:{"content-type":extension==="pdf"?"application/pdf":"image/jpeg"}});}
+    if(String(raw)===source){requests.push({path:new URL(source).pathname,stage:"DOWNLOAD"});expect(options.redirect).toBe("manual");return new Response(Buffer.alloc(500,1),{headers:{"content-type":extension==="pdf"?"application/pdf":"image/jpeg"}});}
     return originalFetch(raw,options);
   });
   const res=response();
@@ -232,4 +232,19 @@ it("keeps database group discovery available with WhaCenter and no Fonnte creden
   expect(res.code).toBe(200);expect(res.body.count).toBe(1);
   const unsupported=response();await waGroups({method:"GET",query:{action:"fonnte-list"}},unsupported);
   expect(unsupported.code).toBe(409);
+});
+
+it.each(["kerusakan_ac", "dokumen", "tidak_relevan"])("links the staged chat preview before AI decides the photo is %s", async category => {
+  mocks.classify.mockResolvedValue({ok:true,classification:{category,amount:null}});
+  const res=await run(body);expect(res.code).toBe(200);
+  const patch=requests.find(r=>r.path==="/rest/v1/wa_messages" && r.method==="PATCH");
+  expect(patch?.body.image_url).toBe('/api/foto?key=synthetic');
+  expect(mocks.suggestion).not.toHaveBeenCalled();
+  expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({patch:expect.objectContaining({status:"IGNORED"})}));
+});
+it("keeps a chat preview available when payment AI times out",async()=>{
+  const res=await run(body);expect(res.code).toBe(200);
+  const patchIndex=requests.findIndex(r=>r.path==="/rest/v1/wa_messages" && r.method==="PATCH");
+  expect(patchIndex).toBeGreaterThan(requests.findIndex(r=>r.stage==="R2"));
+  expect(patchIndex).toBeLessThan(requests.findIndex(r=>r.stage==="AI"));
 });

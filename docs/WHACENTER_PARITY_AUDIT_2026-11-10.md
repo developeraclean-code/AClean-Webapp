@@ -1,5 +1,7 @@
 # Audit paritas WhatsApp — 10 November 2026
 
+Pembaruan setelah rilis `8d210b0`: probe container Owner membuktikan redirect media WhaCenter ke `sin1.contabostorage.com`. Perbaikan unduhan/preview lanjutan dan migrasi 234 dijelaskan di [WHATSAPP_MEDIA_PREVIEW_2026-11-10.md](WHATSAPP_MEDIA_PREVIEW_2026-11-10.md).
+
 ## Temuan dan perbaikan
 
 Dasar patch: `077d617` di branch staging, penerus fitur `9669f2f`.
@@ -12,7 +14,7 @@ webhook aktif; version health berasal dari environment, bukan inspeksi SHA image
 | Jalur | Hasil audit/perubahan |
 | --- | --- |
 | Webhook teks/foto/PDF | Migrasi 233 memperbarui RPC lama, dengan overload terpisah untuk host CDN tambahan yang berasal dari environment server. RPC lama tetap bekerja untuk deployment Fonnte sebelumnya. |
-| Validasi URL | HTTPS dan domain provider yang sesuai; host tambahan WhaCenter bersifat tambahan, bukan mengganti domain bawaan. Tolak credential, port selain HTTPS standar, IP, domain tiruan dan wildcard. Batas media 10 MB dan redirect tidak diikuti. |
+| Validasi URL | HTTPS dan domain provider yang sesuai; host tambahan WhaCenter bersifat tambahan, bukan mengganti domain bawaan. Tolak credential, port selain HTTPS standar, IP, domain tiruan dan wildcard. Batas media 10 MB. Rilis 8d210b0 belum mengikuti redirect; patch lanjutan mengikuti redirect WhaCenter secara manual hanya ke host yang diizinkan (maksimum tiga hop). |
 | Antrean/retry media | `wa_payment_media_jobs.provider` menyimpan gateway asal; lease worker mengembalikannya. Retry tidak mengikuti perubahan provider global. Mirroring R2 mendahului AI, tanpa mutasi pembayaran otomatis. |
 | Notifikasi operasional | Biaya lapangan, tas teknisi, rating rendah dan pengingat legacy menggunakan adaptor provider yang sama dengan workspace/cron. Tidak lagi membutuhkan token Fonnte saat WhaCenter dipilih. |
 | Balasan webhook/AI | Seluruh balasan satu request memakai snapshot provider yang sudah diautentikasi. Pergantian provider saat pemrosesan tidak mengalihkan balasan itu. |
@@ -57,7 +59,7 @@ pada lease worker. Tes JavaScript memeriksa handler WhaCenter foto/PDF sampai st
 sebelum AI, retry provider asal setelah selector berubah, balasan yang tetap pada provider
 awal, notifikasi tanpa token Fonnte, timeout tanpa fallback, dan audit outbox saat putus.
 
-Hasil akhir patch lokal: **1.763 tes Vitest / 155 file lulus**, lint, typecheck,
+Hasil pengujian rilis `8d210b0`: **1.763 tes Vitest / 155 file lulus**, lint, typecheck,
 check:migrations dan build lulus. PostgreSQL/WASM: **18 kelompok ingress** (termasuk
 200 penerimaan dan 200 replay), **13 kelompok worker** (200 pipeline media), dan
 **13 kelompok workspace** lulus. Adapter self-host **14/14 lulus**. Uji self-host awal

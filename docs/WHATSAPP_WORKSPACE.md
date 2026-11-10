@@ -82,6 +82,8 @@ Hasil verifikasi lokal setelah perbaikan identitas Customer, 6 Oktober 2026:
 
 ### Provider pengiriman WhatsApp
 
+Preview foto sementara dan PDF: lihat [WHATSAPP_MEDIA_PREVIEW_2026-11-10.md](WHATSAPP_MEDIA_PREVIEW_2026-11-10.md). Migrasi **234** menautkan hasil staging ke chat sebelum klasifikasi pembayaran; jalankan setelah 233.
+
 Laporan Owner pada sesi 10 November berikutnya: 231/232 juga dijalankan manual di produksi; screenshot menunjukkan webhook teks WhaCenter RECORDED setelah koreksi secret. Status ini berasal dari laporan/log Owner, bukan inspeksi ulang skema produksi oleh patch ini.
 
 Audit/perbaikan 10 November 2026: lihat [WHACENTER_PARITY_AUDIT_2026-11-10.md](WHACENTER_PARITY_AUDIT_2026-11-10.md). Migrasi tambahan **233** diperlukan untuk media WhaCenter; 231/232 saja belum cukup. Jalankan 233 sebelum deploy patch paritas.

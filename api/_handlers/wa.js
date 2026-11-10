@@ -407,7 +407,10 @@ export async function receiveWa(req, res) {
       }
       console.info("[WA_INGRESS_CAPTURED]", JSON.stringify({ event_key: inboundEvent.event_key, receipt_id: inboundCapture.receipt_id,
         route: routeProvider, selected_provider: selectedProvider, token_source: tokenSource, token_present: Boolean(provided),
-        type: inboundEvent.type, status: inboundCapture.intake_status, duplicate: inboundCapture.duplicate, queued: !!inboundCapture.media_job?.id }));
+        type: inboundEvent.type, media_field_present: !!wb.media, media_url_allowed: !!inboundEvent.media_url,
+        capture_media_requested: inboundEvent.capture_media, sender_is_internal: inboundCapture.sender_is_internal ?? null,
+        payment_detect_enabled: inboundCapture.payment_detect_enabled ?? null,
+        status: inboundCapture.intake_status, duplicate: inboundCapture.duplicate, queued: !!inboundCapture.media_job?.id }));
       const senderRaw = inboundEvent.sender, memberRaw = inboundEvent.member;
       const looksLikeGroup = inboundEvent.is_group, sender = inboundEvent.phone;
       const message = inboundEvent.message;
@@ -1401,8 +1404,10 @@ export async function receiveWa(req, res) {
             headers: { "Content-Type": "application/json", apikey: SK, Authorization: "Bearer " + SK, Prefer: "return=representation" },
             body: JSON.stringify({ image_url: imageUrl }), signal: AbortSignal.timeout(5000),
           });
-          if (!patched.ok || !(await patched.json())?.length) console.warn("[WA_IMG_PATCH_MISS]", patched.status, filter);
-        } catch (error) { console.warn("[WA_IMG_PATCH_FAIL]", error.message); }
+          const linked = patched.ok && !!(await patched.json())?.length;
+          if (!linked) console.warn("[WA_IMG_PATCH_MISS]", { status: patched.status, message_id: savedWaMessageId });
+          return linked;
+        } catch { console.warn("[WA_IMG_PATCH_FAIL]", { message_id: savedWaMessageId }); return false; }
       };
 
       // Conversation/unread was committed atomically with this message above.
@@ -2001,6 +2006,16 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
                 console.warn("[WA_IMG_STAGE_FAIL]", stagedMedia.error);
                 try { Sentry.captureMessage(`WA payment media staging gagal: ${stagedMedia.error}`, "warning"); } catch (_) {}
                 throw new Error(stagedMedia.error || "Media belum aman di R2; AI ditunda");
+              }
+
+              // A chat preview is independent of payment classification. Staging
+              // stays temporary; only recognized evidence is archived later.
+              if (stagedMedia?.ok && stagedMedia.url) {
+                const previewLinked = await patchWaMessageImage(stagedMedia.url);
+                console.info("[WA_MEDIA_STORED]", JSON.stringify({ route: routeProvider,
+                  receipt_id: inboundCapture.receipt_id, message_id: savedWaMessageId,
+                  media_job_id: stagedMedia.job?.id || null, r2_reference_saved: true,
+                  chat_preview_linked: previewLinked, storage_area: "wa-staging" }));
               }
 
               console.log("[WA_IMG_STEP4] calling Vision", { mimeType, staged: !!stagedMedia?.ok });

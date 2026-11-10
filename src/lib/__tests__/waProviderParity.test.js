@@ -64,7 +64,7 @@ describe("gateway parity across operational notifications and media", () => {
     const source = "https://app.whacenter.com/media/expired.jpg";
     const fetchImpl = vi.fn(async (url, init) => {
       if (String(url).includes("claim_wa_payment_media")) return json({ id: "job-1", provider: "whacenter", source_url: source, phone: "628000000001", attempts: 3 });
-      if (String(url) === source) { expect(init.redirect).toBe("error"); return json({}, 404); }
+      if (String(url) === source) { expect(init.redirect).toBe("manual"); return json({}, 404); }
       if (init.method === "PATCH") return json([{ id: "job-1" }]);
       throw new Error("Unexpected request: " + url);
     });
@@ -73,12 +73,12 @@ describe("gateway parity across operational notifications and media", () => {
     expect(fetchImpl.mock.calls.some(([url]) => String(url) === source)).toBe(true);
     expect(fetchImpl.mock.calls.some(([url]) => /fonnte|app_settings/.test(String(url)))).toBe(false);
   });
-  it("blocks cross-provider sources, redirect following and oversized WhaCenter downloads", async () => {
+  it("blocks cross-provider sources and oversized WhaCenter downloads while inspecting redirects", async () => {
     const fetchImpl = vi.fn(async () => new Response("x", { headers: { "content-length": "11000000" } }));
     await expect(downloadIngressMedia("https://api.fonnte.com/a.jpg", { provider: "whacenter", fetchImpl })).rejects.toThrow("URL media");
     expect(fetchImpl).not.toHaveBeenCalled();
     await expect(downloadIngressMedia("https://app.whacenter.com/a.jpg", { provider: "whacenter", fetchImpl })).rejects.toThrow("10 MB");
-    expect(fetchImpl.mock.calls[0][1].redirect).toBe("error");
+    expect(fetchImpl.mock.calls[0][1].redirect).toBe("manual");
   });
   it("reports WhaCenter device health independently of Fonnte configuration", async () => {
     const fetchImpl = vi.fn(async url => String(url).includes("statusDevice") ? json({ status: true, data: { status: "CONNECTED" } }) : json({}));
@@ -112,4 +112,35 @@ it.each(["empty-json", "non-json", "server-error"])("keeps an unconfirmed WhaCen
   expect(result).toMatchObject({ status: "UNCERTAIN", provider: "whacenter" });
   expect(fetchImpl).toHaveBeenCalledTimes(1);
   expect(String(fetchImpl.mock.calls[0][0])).toBe("https://app.whacenter.com/api/send");
+});
+
+it("follows the observed WhaCenter 302 to explicitly allowed Contabo storage without credentials",async()=>{
+  const storage="https://sin1.contabostorage.com/synthetic/test.jpg?signature=PRIVATE";
+  const fetchImpl=vi.fn(async(url,options)=>String(url).startsWith('https://app.whacenter.com/')
+    ? new Response(null,{status:302,headers:{location:storage}})
+    : new Response(Buffer.alloc(500,1),{headers:{'content-type':'image/jpeg'}}));
+  const result=await downloadIngressMedia('https://app.whacenter.com/media/test.jpg',{provider:'whacenter',env:{WHACENTER_MEDIA_HOSTS:'sin1.contabostorage.com'},fetchImpl});
+  expect(result.buffer.length).toBe(500);expect(fetchImpl).toHaveBeenCalledTimes(2);
+  expect(fetchImpl.mock.calls[1][0]).toBe(storage);
+  expect(fetchImpl.mock.calls[0][1].signal).toBe(fetchImpl.mock.calls[1][1].signal);
+  expect(fetchImpl.mock.calls[1][1]).toMatchObject({redirect:'manual'});
+  expect(fetchImpl.mock.calls[1][1].headers).toBeUndefined();
+  expect(fetchImpl.mock.calls[1][1].dispatcher).toBeUndefined();
+});
+it.each(['https://sin1.contabostorage.com/file.jpg','http://app.whacenter.com/file.jpg','https://user:pass@app.whacenter.com/file.jpg','https://app.whacenter.com.evil.com/file.jpg'])("blocks unapproved redirect before any second request: %s",async location=>{
+  const fetchImpl=vi.fn(async()=>new Response(null,{status:302,headers:{location}}));
+  await expect(downloadIngressMedia('https://app.whacenter.com/media/test.jpg',{provider:'whacenter',env:{},fetchImpl})).rejects.toThrow('WA_MEDIA_REDIRECT_HOST_REJECTED');
+  expect(fetchImpl).toHaveBeenCalledTimes(1);
+});
+it("bounds relative WhaCenter redirects and keeps the complete transfer on one deadline",async()=>{
+  const fetchImpl=vi.fn(async()=>new Response(null,{status:302,headers:{location:'/loop.jpg'}}));
+  await expect(downloadIngressMedia('https://app.whacenter.com/media/test.jpg',{provider:'whacenter',fetchImpl})).rejects.toThrow('WA_MEDIA_REDIRECT_LIMIT');
+  expect(fetchImpl).toHaveBeenCalledTimes(4);
+  expect(new Set(fetchImpl.mock.calls.map(call=>call[1].signal)).size).toBe(1);
+});
+it("preserves a safe TLS failure code without leaking the source URL or bypassing certificate verification",async()=>{
+  const fetchImpl=vi.fn(async()=>{throw Object.assign(new Error('https://private.invalid/?token=SECRET'),{cause:{code:'UNABLE_TO_VERIFY_LEAF_SIGNATURE'}});});
+  const failure=await downloadIngressMedia('https://app.whacenter.com/media/test.jpg',{provider:'whacenter',fetchImpl}).catch(error=>error);
+  expect(failure.waMediaCode).toBe('WA_MEDIA_UNABLE_TO_VERIFY_LEAF_SIGNATURE');
+  expect(failure.message).not.toMatch(/SECRET|private\.invalid/);
 });

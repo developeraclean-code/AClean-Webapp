@@ -1,5 +1,6 @@
 import { fetchWaPaymentContext, waMediaUrl } from "../lib/waPaymentContext.js";
 import AraReviewPanel from "./AraReviewPanel.jsx";
+import WaMessageAttachment from "../components/WaMessageAttachment.jsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { normalizePhone, samePhone, formatPhone } from "../lib/phone.js";
 import { createWaOrderDraft, customerRecords, fetchWaCustomers, waCustomerTitle, fetchWaHistory, invoiceBalance, matchesConversation, paymentReminder, waMoney } from "../lib/waWorkspace.js";
@@ -385,7 +386,7 @@ export default function WaPanel({
                     {(index === 0 || dayKey(msg.created_at) !== dayKey(visibleMessages[index - 1].created_at)) && <div className="wa-date-divider"><span>{dateLabel(msg.created_at)}</span></div>}
                     <div className={`wa-message-row ${out ? "outgoing" : "incoming"}`}><div className="wa-bubble">
                       {out && <strong className="wa-sender">{msg.role === "ara" ? "ARA · Asisten" : msg.name || "Admin"}</strong>}
-                      {safeUrl(msg.image_url) && <a href={safeUrl(msg.image_url)} target="_blank" rel="noopener noreferrer" className="wa-media"><img src={safeUrl(msg.image_url)} alt="Lampiran pesan WhatsApp" loading="lazy" onError={e => { e.currentTarget.hidden = true; }} /><span>Buka lampiran ↗</span></a>}
+                      {msg.image_url && <WaMessageAttachment key={msg.image_url} value={msg.image_url} />}
                       <div className="wa-message-content">{msg.content}</div><div className="wa-message-time">{timeLabel(msg.created_at)}{out ? " · Keluar" : ""}</div>
                     </div></div>
                   </div>;

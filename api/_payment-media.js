@@ -369,7 +369,8 @@ export async function retryOnePaymentMediaJob({ supabaseUrl, serviceKey, apiKey 
       media = job.r2_key
         ? await downloadBufferFromR2(job.r2_key, { timeoutMs: 7000 })
         : { ok: true, ...await downloadIngressMedia(job.source_url, { provider: job.provider || "fonnte", timeoutMs: 7000 }) };
-    } catch { media = { ok: false, err: "Unduhan media provider gagal; host, ukuran, atau respons perlu diperiksa" }; }
+    } catch (error) { media = { ok: false, err: error.waMediaCode
+      ? error.message : "Unduhan media provider gagal [WA_MEDIA_FETCH_FAILED]" }; }
     if (media.ok && !job.r2_key) {
       const staged = await stagePaymentMedia({
         supabaseUrl, serviceKey, sourceUrl: job.source_url, phone: job.phone,

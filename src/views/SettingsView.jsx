@@ -689,7 +689,7 @@ function SettingsView({
             </> : <>
               <b>WhaCenter memakai jalur terpisah.</b> Set <code>WHACENTER_DEVICE_ID</code> dan <code>WHACENTER_WEBHOOK_SECRET</code> di environment server sebelum mengaktifkannya. Nilai rahasia tidak disimpan di browser atau <code>app_settings</code>.
               <div style={{ marginTop: 6 }}>Webhook WhaCenter: <code>{normalizeAppBaseUrl(window.location.origin)}/api/whacenter-webhook?token=&lt;WHACENTER_WEBHOOK_SECRET&gt;</code></div>
-              <div style={{ marginTop: 6 }}>Webhook media hanya menerima host WhaCenter. Host tambahan harus dimasukkan secara eksplisit ke <code>WHACENTER_MEDIA_HOSTS</code>.</div>
+              <div style={{ marginTop: 6 }}>Webhook media menerima host WhaCenter. Host storage tujuan redirect (misalnya sin1.contabostorage.com) harus dimasukkan secara eksplisit ke <code>WHACENTER_MEDIA_HOSTS</code>.</div>
             </>}
             <div style={{ marginTop: 6 }}>Provider baru hanya menjadi aktif setelah tes koneksi berhasil. Pengiriman tidak otomatis dialihkan ke provider lain bila hasilnya gagal/tidak pasti, untuk mencegah pesan ganda.</div>
           </div>
