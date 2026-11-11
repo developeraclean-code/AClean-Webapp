@@ -10,12 +10,13 @@ import { StatusPill } from "../components/Bits.jsx";
 import Modal from "../components/Modal.jsx";
 import { supabase } from "../../supabaseClient.js";
 import { reportError } from "../../lib/reportError.js";
+import { loadDailyReportPhotos, safePdfFilename } from "../utils/dailyReportPdf.js";
 
 // Foto R2 — logika bersama di src/lib/fotoUrl.js (CDN kalau di-set, kalau tidak proxy).
 const fotoProxySrc = (url) => fotoUrl(url);
 
 export default function ProjectHarianView() {
-  const { db, can, today, upsertHarian, patchRow, uploadPhotos, deleteRow } = useProject();
+  const { db, can, today, upsertHarian, patchRow, uploadPhotos, deleteRow, appSettings } = useProject();
   const { openForm, openContent, close, toast } = useModal();
   const [activeTab, setActiveTab] = useState("berita_acara");
 
@@ -210,20 +211,21 @@ export default function ProjectHarianView() {
       )}
 
       {activeTab === "berita_acara" && (
-        <BeritaAcaraTab db={db} can={can} toast={toast} />
+        <BeritaAcaraTab db={db} can={can} toast={toast} appSettings={appSettings} />
       )}
     </div>
   );
 }
 
 // ── Tab Berita Acara Harian (dari project_daily_reports) ──
-function BeritaAcaraTab({ db, can, toast }) {
+function BeritaAcaraTab({ db, can, toast, appSettings }) {
   const [rows, setRows]       = useState([]);
   const [loading, setLoading] = useState(true);
   const [filterPid, setFilterPid] = useState("all");
   const [viewRow, setViewRow] = useState(null);
   const [editRow, setEditRow] = useState(null);
   const [busy, setBusy]       = useState("");
+  const [pdfBusy, setPdfBusy] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -240,6 +242,43 @@ function BeritaAcaraTab({ db, can, toast }) {
   useEffect(() => { load(); }, [load]);
 
   const projName = (pid) => (db.projects.find((p) => p.id === pid) || {}).nama || pid;
+
+  const downloadPdf = async (row) => {
+    if (pdfBusy) return;
+    setPdfBusy(row.id);
+    toast("⏳ Menyiapkan PDF laporan...");
+    try {
+      const [{ pdf }, { default: ProjectDailyReportPDF }, { loadLogo }] = await Promise.all([
+        import("@react-pdf/renderer"),
+        import("../components/ProjectDailyReportPDF.jsx"),
+        import("../components/ProjectPaperPDF.jsx"),
+      ]);
+      const project = db.projects.find((p) => p.id === row.project_id) || { id: row.project_id, nama: projName(row.project_id) };
+      const photoUrls = (Array.isArray(row.foto_urls) ? row.foto_urls : [])
+        .filter((url) => typeof url === "string" && url.trim())
+        .slice(0, 20);
+      const photos = await loadDailyReportPhotos(photoUrls);
+      const failedPhotos = photos.filter((photo) => !photo.src).length;
+      const logoUrl = await loadLogo();
+      const blob = await pdf(
+        <ProjectDailyReportPDF report={row} project={project} appSettings={appSettings} logoUrl={logoUrl} photos={photos} />,
+      ).toBlob();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = `Laporan_Project_${safePdfFilename(project.nama)}_${safePdfFilename(row.tanggal)}.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
+      toast(failedPhotos ? `✅ PDF diunduh, ${failedPhotos} foto gagal dimuat dan ditandai di lampiran` : "✅ PDF laporan berhasil diunduh");
+    } catch (error) {
+      reportError("project.beritaAcara.pdf", error, { id: row.id });
+      toast(`❌ PDF gagal dibuat: ${error?.message || "periksa koneksi foto dan coba lagi"}`);
+    } finally {
+      setPdfBusy("");
+    }
+  };
 
   const verify = async (row, newStatus, note) => {
     setBusy(row.id);
@@ -343,6 +382,10 @@ function BeritaAcaraTab({ db, can, toast }) {
                       ✏️ Edit
                     </button>
                   )}
+                  <button disabled={Boolean(pdfBusy)} onClick={() => downloadPdf(r)}
+                    style={{ padding: "5px 12px", borderRadius: 8, border: `1px solid ${cs.accent}66`, background: `${cs.accent}12`, color: cs.accent, fontSize: 12, cursor: pdfBusy ? "wait" : "pointer" }}>
+                    {pdfBusy === r.id ? "⏳ Membuat PDF..." : "⬇ Simpan PDF"}
+                  </button>
                   {can.verify && r.status === "PENDING" && (
                     <>
                       <button disabled={busy === r.id} onClick={() => setViewRow(r)}
