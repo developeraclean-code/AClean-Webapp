@@ -3,6 +3,32 @@
 -- a trigger-maintained table stores only fields intended for team scheduling.
 BEGIN;
 
+-- The existing view is owned by supabase_admin on the self-hosted instance.
+-- Fail before creating anything unless this session owns the view or is a
+-- superuser; CREATE OR REPLACE VIEW cannot be delegated through table grants.
+DO $$
+DECLARE
+  view_owner text;
+  caller_is_superuser boolean;
+BEGIN
+  SELECT pg_get_userbyid(c.relowner)
+  INTO view_owner
+  FROM pg_class AS c
+  JOIN pg_namespace AS n ON n.oid = c.relnamespace
+  WHERE n.nspname = 'public' AND c.relname = 'lab_team_directory' AND c.relkind = 'v';
+
+  SELECT rolsuper INTO caller_is_superuser
+  FROM pg_roles WHERE rolname = current_user;
+
+  IF NOT coalesce(caller_is_superuser, false)
+     AND view_owner IS DISTINCT FROM current_user THEN
+    RAISE EXCEPTION 'Migration 236 must run as view owner (%) or a superuser; current role is %',
+      coalesce(view_owner, '<view not found>'), current_user
+      USING ERRCODE = '42501';
+  END IF;
+END
+$$;
+
 CREATE TABLE public.team_directory_safe (
   id uuid PRIMARY KEY,
   name text,
@@ -93,6 +119,12 @@ WHERE NOT EXISTS (
   SELECT 1 FROM public.user_profiles AS profile
   WHERE profile.id = directory.id AND profile.active IS TRUE
 );
+
+-- Keep the trigger-maintained projection and its SECURITY DEFINER function
+-- under the ordinary database owner even when this migration runs as the
+-- superuser that owns the existing view.
+ALTER TABLE public.team_directory_safe OWNER TO postgres;
+ALTER FUNCTION public.sync_team_directory_safe_236() OWNER TO postgres;
 
 CREATE OR REPLACE VIEW public.lab_team_directory
 WITH (security_barrier = true, security_invoker = true)
