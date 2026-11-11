@@ -1,4 +1,10 @@
 // Shared by the API and UI: legacy/stale/incomplete quota snapshots are not green.
+// These are application alert thresholds, not provider quotas or VPS capacity.
+export const INFRA_THRESHOLDS = Object.freeze({
+  databaseBytes: 500 * 1024 ** 2,
+  r2Bytes: 10 * 1024 ** 3,
+});
+
 export function normalizeInfraSnapshot(raw, now = Date.now()) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const valid = n => typeof n === 'number' && Number.isFinite(n) && n >= 0;

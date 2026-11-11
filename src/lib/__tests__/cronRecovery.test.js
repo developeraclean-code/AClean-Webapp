@@ -220,6 +220,16 @@ describe('bounded infra scan and read-only integrity audit', () => {
     expect(await taskInfraUsageAlert({db,measureR2,now})).toMatchObject({has_more:false,level:'ok'});
     expect(measureR2.mock.calls[1][0].checkpoint.continuationToken).toBe('NEXT');
   });
+  it('continues an incomplete R2 scan across a WIB date boundary', async () => {
+    const {db,settings}=database(); const measureR2=vi.fn().mockResolvedValueOnce({ok:true,complete:false,bytes:100,objects:2,requests:1,continuationToken:'NEXT'})
+      .mockResolvedValueOnce({ok:true,complete:true,bytes:200,objects:4,requests:2});
+    const firstNow=now();
+    await taskInfraUsageAlert({db,measureR2,now:()=>firstNow});
+    const second=await taskInfraUsageAlert({db,measureR2,now:()=>firstNow+86400_000});
+    expect(second).toMatchObject({has_more:false,scan_complete:true});
+    expect(measureR2.mock.calls[1][0].checkpoint).toMatchObject({continuationToken:'NEXT',objects:2});
+    expect(JSON.parse(settings.get('infra_usage_snapshot')).r2_storage.scan_started_on).toBe('2026-10-18');
+  });
   it('measurement failures stay visible; no fake green or advancing a failed cursor', async () => {
     const {db,settings}=database({failRpc:'get_infra_database_size'});
     expect(await taskInfraUsageAlert({db,measureR2:async()=>({ok:false,err:'offline'}),now})).toMatchObject({level:'unknown',error:'RPC unavailable'});

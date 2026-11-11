@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily AClean production backup to encrypted R2
+
+[Timer]
+OnCalendar=*-*-* 02:15:00 Asia/Jakarta
+RandomizedDelaySec=15m
+Persistent=true
+Unit=aclean-prod-r2-backup.service
+
+[Install]
+WantedBy=timers.target

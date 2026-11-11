@@ -2,6 +2,7 @@ import { sb, isCronJobEnabled, OWNER_PHONE } from './_shared.js';
 import { getR2BucketUsage } from '../_r2-upload.js';
 import { sendOpsOwnerAlert } from '../_ops-alert.js';
 import { strictCronEnabled } from '../_cron-toggle.js';
+import { INFRA_THRESHOLDS } from '../../src/lib/infraHealth.js';
 
 const parse = value => { try { const parsed=JSON.parse(value || '{}'); return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}; } catch { return {}; } };
 export async function taskInfraUsageAlert({ db = sb, measureR2 = getR2BucketUsage, ownerPhone = OWNER_PHONE,
@@ -13,7 +14,9 @@ export async function taskInfraUsageAlert({ db = sb, measureR2 = getR2BucketUsag
   if (!isCronJobEnabled(settings, 'infra_usage_alert_enabled') || !strictCronEnabled(settings, 'infra_usage_alert_enabled')) return { skipped: true, reason: 'infra_usage_alert_off' };
   const date = new Date(now() + 7 * 3600_000).toISOString().slice(0, 10);
   const saved = parse(settings.infra_usage_scan_checkpoint);
-  const checkpoint = saved.date === date && typeof saved.continuationToken === 'string'
+  // A large bucket can take more than one WIB day to list. Keep the last
+  // confirmed cursor across midnight instead of restarting at page one.
+  const checkpoint = typeof saved.continuationToken === 'string' && saved.continuationToken.length > 0
     && ['bytes','objects','requests'].every(k => Number.isSafeInteger(saved[k]) && saved[k] >= 0) ? saved : {};
   const [database, r2] = await Promise.all([
     db.rpc('get_infra_database_size').abortSignal(AbortSignal.timeout(3000)),
@@ -24,19 +27,20 @@ export async function taskInfraUsageAlert({ db = sb, measureR2 = getR2BucketUsag
   const complete = r2.ok && r2.complete !== false;
   const r2Bytes = complete ? r2.bytes : null;
   const percent = (n, limit) => n == null ? null : Math.round(n / limit * 1000) / 10;
-  const dbPercent = percent(dbBytes, 500 * 1024 ** 2), r2Percent = percent(r2Bytes, 10 * 1024 ** 3);
+  const dbPercent = percent(dbBytes, INFRA_THRESHOLDS.databaseBytes), r2Percent = percent(r2Bytes, INFRA_THRESHOLDS.r2Bytes);
   const values = [dbPercent, r2Percent];
   const level = values.some(v => v != null && v >= critical) ? 'critical' : values.some(v => v != null && v >= warn) ? 'warning' : values.some(v => v == null) ? 'unknown' : 'ok';
   const snapshot = { measured_at: new Date(now()).toISOString(), level, warn_percent: warn, critical_percent: critical,
-    supabase_database: { bytes: dbBytes, percent: dbPercent, limit_bytes: 500 * 1024 ** 2, error: database.error?.message || null },
-    r2_storage: { bytes: r2Bytes, percent: r2Percent, limit_bytes: 10 * 1024 ** 3, objects: complete ? r2.objects : null,
-      scanning: r2.ok && !complete, scanned_objects: r2.objects || 0, requests: r2.requests || 0, error: r2.ok ? null : r2.err },
+    supabase_database: { bytes: dbBytes, percent: dbPercent, limit_bytes: INFRA_THRESHOLDS.databaseBytes, error: database.error?.message || null },
+    r2_storage: { bytes: r2Bytes, percent: r2Percent, limit_bytes: INFRA_THRESHOLDS.r2Bytes, objects: complete ? r2.objects : null,
+      scanning: r2.ok && !complete, scan_started_on: checkpoint.date || date,
+      scanned_objects: r2.objects || 0, requests: r2.requests || 0, error: r2.ok ? null : r2.err },
     external_dashboards: { supabase_egress: 'unavailable', vercel_usage: 'unavailable' } };
   const writes = [{ key: 'infra_usage_snapshot', value: JSON.stringify(snapshot) }];
-  if (r2.ok) writes.push({ key: 'infra_usage_scan_checkpoint', value: complete ? '{}' : JSON.stringify({ date,
+  if (r2.ok) writes.push({ key: 'infra_usage_scan_checkpoint', value: complete ? '{}' : JSON.stringify({ date: checkpoint.date || date,
     continuationToken: r2.continuationToken, bytes: r2.bytes, objects: r2.objects, requests: r2.requests }) });
   else if (r2.checkpoint?.continuationToken && ['bytes','objects','requests'].every(k => Number.isSafeInteger(r2.checkpoint[k]) && r2.checkpoint[k] >= 0)) {
-    writes.push({ key: 'infra_usage_scan_checkpoint', value: JSON.stringify({ date, ...r2.checkpoint }) });
+    writes.push({ key: 'infra_usage_scan_checkpoint', value: JSON.stringify({ date: checkpoint.date || date, ...r2.checkpoint }) });
   }
   const persisted = await db.from('app_settings').upsert(writes, { onConflict: 'key' });
   if (persisted.error) throw new Error('Snapshot kuota gagal disimpan: ' + persisted.error.message);
@@ -44,7 +48,7 @@ export async function taskInfraUsageAlert({ db = sb, measureR2 = getR2BucketUsag
   const previous = parse(settings.infra_usage_last_alert);
   if (['warning', 'critical'].includes(level) && (previous.level !== level || now() - Date.parse(previous.at) >= 7 * 86400_000 || !previous.at)) {
     const sent = await alert(db, { key: 'infra:' + date + ':' + level, phone: ownerPhone, toggleKey: 'infra_usage_alert_enabled',
-      message: `🚨 *ALARM KUOTA ACLEAN*\nSupabase DB: ${dbPercent ?? 'belum tersedia'}%\nR2: ${r2Percent ?? 'belum selesai dipindai'}%\nBatas warning ${warn}% / kritis ${critical}%. Periksa Monitoring.` });
+      message: `🚨 *ALARM KAPASITAS ACLEAN*\nDatabase Supabase: ${dbPercent ?? 'belum tersedia'}% dari ambang aplikasi ${Math.round(INFRA_THRESHOLDS.databaseBytes / 1024 ** 2)} MiB\nR2: ${r2Percent ?? 'belum selesai dipindai'}% dari ambang aplikasi ${INFRA_THRESHOLDS.r2Bytes / 1024 ** 3} GiB\nPeringatan ${warn}% / kritis ${critical}%. Ini bukan ukuran disk VPS atau kuota paket provider. Periksa Monitoring.` });
     if (sent?.status === 'SKIPPED') return { checked: true, has_more: !complete, alerted: false, level, stopped: 'toggle_off' };
     const recorded = await db.from('app_settings').upsert({ key: 'infra_usage_last_alert', value: JSON.stringify({ level, at: new Date(now()).toISOString() }) }, { onConflict: 'key' });
     if (recorded.error) throw new Error('Alert diterima provider; pencatatan status gagal');

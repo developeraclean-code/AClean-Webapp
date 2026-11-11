@@ -14,7 +14,7 @@ import {
 import { applyOrderInvoiceReconciliation } from "../data/writes.js";
 import { auditInvoices, auditQuoteDeviation } from "../lib/invoicing.js";
 import RecoveryStatusPanel from './RecoveryStatusPanel.jsx';
-import { normalizeInfraSnapshot } from '../lib/infraHealth.js';
+import { INFRA_THRESHOLDS, normalizeInfraSnapshot } from '../lib/infraHealth.js';
 
 // ─────────────────────────────────────────────
 // Helpers
@@ -167,22 +167,22 @@ function TabOverview({ data, onRefresh, supabase, currentUser, onNavigate }) {
       )}
 
       <div style={{ background: cs.card, border: `1px solid ${cs.border}`, borderRadius: 14, padding: 16 }}>
-        <div style={{ fontWeight: 700, color: cs.text, marginBottom: 4, fontSize: 14 }}>📦 Kuota Infrastruktur</div>
+        <div style={{ fontWeight: 700, color: cs.text, marginBottom: 4, fontSize: 14 }}>📦 Ukuran Database & Penggunaan R2</div>
         <div style={{ fontSize: 11, color: cs.muted, marginBottom: 12 }}>
-          {infra?.measured_at ? `Diukur ${new Date(infra.measured_at).toLocaleString("id-ID")}` : "Belum ada snapshot — jalankan cron infra-usage-alert setelah migration 166."}
+          {infra?.measured_at ? `Diukur ${new Date(infra.measured_at).toLocaleString("id-ID")} · database pada koneksi aplikasi` : "Belum ada snapshot — jalankan cron infra-usage-alert setelah migration 166."}
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 12 }}>
-          <Card label="Supabase Database" value={infra?.supabase_database?.percent != null ? `${infra.supabase_database.percent}% · ${fmtBytes(infra.supabase_database.bytes)}` : "Belum tersedia"}
+          <Card label="Database Supabase · ambang 500 MiB" value={infra?.supabase_database?.percent != null ? `${infra.supabase_database.percent}% · ${fmtBytes(infra.supabase_database.bytes)}` : "Belum tersedia"}
             color={infra?.supabase_database?.percent == null ? cs.muted : (infra.supabase_database.percent || 0) >= (infra?.critical_percent || 85) ? cs.red : (infra.supabase_database.percent || 0) >= (infra?.warn_percent || 70) ? cs.yellow : cs.green} />
-          <Card label="Cloudflare R2" value={infra?.r2_storage?.percent != null ? `${infra.r2_storage.percent}% · ${fmtBytes(infra.r2_storage.bytes)}` : "Belum tersedia"}
+          <Card label="Cloudflare R2 · ambang 10 GiB" value={infra?.r2_storage?.percent != null ? `${infra.r2_storage.percent}% · ${fmtBytes(infra.r2_storage.bytes)}` : "Belum tersedia"}
             color={infra?.r2_storage?.percent == null ? cs.muted : (infra.r2_storage.percent || 0) >= (infra?.critical_percent || 85) ? cs.red : (infra.r2_storage.percent || 0) >= (infra?.warn_percent || 70) ? cs.yellow : cs.green} />
           <Card label="Objek R2" value={infra?.r2_storage?.objects?.toLocaleString?.("id-ID") || "—"} color={cs.accent} />
         </div>
         {infra?.stale && <p style={{ color: cs.yellow, fontSize: 12 }}>Snapshot kuota sudah lama/tanggal tidak valid. Jangan gunakan sebagai status terbaru.</p>}
-        {infra?.r2_storage?.scanning && <p style={{ color: cs.yellow, fontSize: 12 }}>Pemindaian R2 bertahap: {infra.r2_storage.scanned_objects || 0} objek diperiksa. Angka total belum final.</p>}
+        {infra?.r2_storage?.scanning && <p style={{ color: cs.yellow, fontSize: 12 }}>Pemindaian R2 bertahap sejak {infra.r2_storage.scan_started_on || "tanggal tidak diketahui"}: {infra.r2_storage.scanned_objects || 0} objek diperiksa. Angka total belum final.</p>}
         {infra?.r2_storage?.error && <p style={{ color: cs.yellow, fontSize: 12 }}>Pengukuran R2 belum berhasil: {infra.r2_storage.error}</p>}
         <div style={{ marginTop: 10, fontSize: 11, color: cs.muted, lineHeight: 1.5 }}>
-          Alarm WA: peringatan {infra?.warn_percent || 70}% · kritis {infra?.critical_percent || 85}%. Egress Supabase dan pemakaian Vercel tetap diperiksa di dashboard provider karena tidak tersedia dari runtime aplikasi.
+          Persentase dibandingkan dengan ambang aplikasi (DB {Math.round(INFRA_THRESHOLDS.databaseBytes / 1024 ** 2)} MiB, R2 {INFRA_THRESHOLDS.r2Bytes / 1024 ** 3} GiB), bukan kuota provider atau kapasitas disk VPS. Disk, RAM, WAL, dan kesehatan host VPS tidak diukur panel ini. Alarm WA: peringatan {infra?.warn_percent || 70}% · kritis {infra?.critical_percent || 85}%. Egress Supabase dan pemakaian Vercel tetap diperiksa di dashboard provider.
         </div>
       </div>
 
