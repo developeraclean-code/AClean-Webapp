@@ -12,6 +12,7 @@ try {
   await db.exec(`
     CREATE ROLE authenticated NOLOGIN;
     CREATE ROLE anon NOLOGIN;
+    CREATE ROLE migration_reader NOLOGIN;
     CREATE SCHEMA auth;
     CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$
       SELECT nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
@@ -48,15 +49,40 @@ try {
       ('00000000-0000-0000-0000-000000000004', 'Teknisi Fixture', 'Teknisi', 'active', true, '#444', null, ARRAY['repair'], 'TEKNISI-BANK-SECRET'),
       ('00000000-0000-0000-0000-000000000005', 'Helper Fixture', 'Helper', 'active', true, '#555', null, ARRAY['cleaning'], 'HELPER-BANK-SECRET'),
       ('00000000-0000-0000-0000-000000000006', 'Inactive Fixture', 'Teknisi', 'inactive', false, '#666', null, ARRAY['inactive'], 'INACTIVE-BANK-SECRET');
+    CREATE ROLE supabase_admin SUPERUSER LOGIN;
+    SET ROLE supabase_admin;
+    CREATE VIEW public.lab_team_directory WITH (security_barrier = true) AS
+      SELECT id, name, role, status, active, color, avatar, skills
+      FROM public.user_profiles
+      WHERE active IS TRUE
+        AND (SELECT auth.uid()) IS NOT NULL
+        AND (SELECT public.get_my_role()) IN ('Owner', 'Admin', 'Finance', 'Teknisi', 'Helper');
+    REVOKE ALL ON public.lab_team_directory FROM PUBLIC, anon;
+    GRANT SELECT ON public.lab_team_directory TO authenticated;
+    RESET ROLE;
+    SET ROLE supabase_admin;
   `);
 
   await db.exec(migration);
+  await db.exec('RESET ROLE');
 
   const viewOptions = await db.query(`
     SELECT reloptions FROM pg_class
     WHERE oid = 'public.lab_team_directory'::regclass
   `);
   assert.ok(viewOptions.rows[0].reloptions.includes('security_invoker=true'));
+
+  const cacheOwner = await db.query(`
+    SELECT pg_get_userbyid(relowner) AS owner
+    FROM pg_class WHERE oid = 'public.team_directory_safe'::regclass
+  `);
+  assert.equal(cacheOwner.rows[0].owner, 'postgres', 'safe cache should use the ordinary database owner');
+
+  const triggerFunctionOwner = await db.query(`
+    SELECT pg_get_userbyid(proowner) AS owner
+    FROM pg_proc WHERE oid = 'public.sync_team_directory_safe_236()'::regprocedure
+  `);
+  assert.equal(triggerFunctionOwner.rows[0].owner, 'postgres', 'trigger definer should not be a superuser');
 
   const safeColumns = await db.query(`
     SELECT column_name FROM information_schema.columns
@@ -134,6 +160,20 @@ try {
     '00000000-0000-0000-0000-000000000003',
     '00000000-0000-0000-0000-000000000004',
   ], 'profile deletion must remove its directory projection');
+
+  await db.exec('SET ROLE migration_reader');
+  await assert.rejects(
+    db.exec(migration),
+    /must run as view owner \(supabase_admin\) or a superuser; current role is migration_reader/,
+    'ordinary postgres role should fail before the migration creates or changes objects',
+  );
+  await db.exec('ROLLBACK; RESET ROLE');
+  const stillInstalled = await db.query(`
+    SELECT to_regclass('public.team_directory_safe') IS NOT NULL AS cache_exists,
+           to_regprocedure('public.sync_team_directory_safe_236()') IS NOT NULL AS function_exists
+  `);
+  assert.equal(stillInstalled.rows[0].cache_exists, true);
+  assert.equal(stillInstalled.rows[0].function_exists, true);
 
   console.log('PASS team directory security_invoker, RLS, safe columns, and trigger synchronization');
 } finally {
