@@ -13,7 +13,7 @@ import { uploadFoto, foto, syncFotos } from "./_handlers/foto.js";
 import { araChat, cronReminder } from "./_handlers/misc.js";
 export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
 // upload-foto & monitor sengaja TIDAK di sini — memerlukan auth (validateInternalToken)
-const PUBLIC_ROUTES = ["receive-wa", "fonnte-webhook", "whacenter-webhook", "test-connection", "_auth", "foto", "get-llm-config", "get-api-token", "customer-status", "submit-rating", "customer-vouchers", "health", "m-portal", "project-portal"];
+const PUBLIC_ROUTES = ["receive-wa", "fonnte-webhook", "whacenter-webhook", "wablas-webhook", "test-connection", "_auth", "foto", "get-llm-config", "get-api-token", "customer-status", "submit-rating", "customer-vouchers", "health", "m-portal", "project-portal"];
 
 // ── HANDLER MAP: route → modul di api/_handlers/ (pemecahan router bertahap) ──
 const HANDLERS = {
@@ -45,6 +45,7 @@ const HANDLERS = {
   // webhook-secret validation and durable intake apply to both paths.
   "fonnte-webhook": receiveWa,
   "whacenter-webhook": receiveWa,
+  "wablas-webhook": receiveWa,
   "wa-groups": waGroups,
   "upload-foto": uploadFoto,
   "foto": foto,

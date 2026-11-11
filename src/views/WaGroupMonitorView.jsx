@@ -11,7 +11,7 @@ import { cs } from "../theme/cs.js";
 // - showNotif
 // - showConfirm
 // - auditUserName
-export default function WaGroupMonitorView({ currentUser, supabase, showNotif, showConfirm, auditUserName, apiHeaders }) {
+export default function WaGroupMonitorView({ currentUser, supabase, showNotif, showConfirm, auditUserName, apiHeaders, waProvider = "fonnte" }) {
   const isOwner = currentUser?.role === "Owner";
   const [activeTab, setActiveTab] = useState("personal"); // personal (inbox) | groups | discovery | logs
 
@@ -457,12 +457,12 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
               {groups.length} grup terdaftar · {groups.filter(g => g.enabled).length} aktif
             </div>
             <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={fetchFonnteGroups} disabled={syncing} style={{
+              <button onClick={fetchFonnteGroups} disabled={syncing || waProvider !== "fonnte"} title={waProvider === "fonnte" ? "Ambil daftar grup dari perangkat Fonnte" : "Provider ini belum menyediakan sinkronisasi daftar grup otomatis di aplikasi; tambahkan group ID secara manual"} style={{
                 background: "#10b98122", border: "1px solid #10b98155", color: "#10b981", borderRadius: 8,
-                padding: "8px 14px", fontSize: 12, cursor: syncing ? "not-allowed" : "pointer", fontWeight: 700,
-                opacity: syncing ? 0.6 : 1,
+                padding: "8px 14px", fontSize: 12, cursor: syncing || waProvider !== "fonnte" ? "not-allowed" : "pointer", fontWeight: 700,
+                opacity: syncing || waProvider !== "fonnte" ? 0.45 : 1,
               }}>
-                {syncing ? "⏳ Sync..." : "🔄 Sync dari Fonnte"}
+                {syncing ? "⏳ Sync..." : waProvider === "fonnte" ? "🔄 Sync dari Fonnte" : `🔒 Sync otomatis khusus Fonnte`}
               </button>
               <button onClick={() => setAddForm({ group_id: "", group_name: "", description: "", capture_all: false, forward_to_owner: false, notify_keywords: "" })}
                 style={{
@@ -473,6 +473,9 @@ export default function WaGroupMonitorView({ currentUser, supabase, showNotif, s
               </button>
             </div>
           </div>
+          {waProvider !== "fonnte" && <div role="note" style={{ fontSize: 11, color: cs.muted, padding: "0 2px" }}>
+            {waProvider === "wablas" ? "WABLAS: masukkan group ID melalui Tambah Manual. Pesan masuk tetap mengikuti daftar grup yang diaktifkan." : "WhaCenter: masukkan group ID dan nama grup melalui Tambah Manual."}
+          </div>}
 
           {/* Form tambah */}
           {addForm && (

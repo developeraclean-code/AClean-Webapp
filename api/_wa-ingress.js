@@ -20,6 +20,12 @@ export function whacenterMediaHosts(env = process.env) {
     .filter(host => SAFE_MEDIA_HOST.test(host)))].slice(0, 32);
 }
 
+export function wablasMediaHosts(env = process.env) {
+  return [...new Set(String(env.WABLAS_MEDIA_HOSTS || "").split(",")
+    .map(host => host.trim().toLowerCase())
+    .filter(host => SAFE_MEDIA_HOST.test(host)))].slice(0, 32);
+}
+
 export function safeWhacenterMediaUrl(value, { env = process.env } = {}) {
   if (typeof value !== "string" || value.length > 4096) return null;
   try {
@@ -33,12 +39,40 @@ export function safeWhacenterMediaUrl(value, { env = process.env } = {}) {
   } catch { return null; }
 }
 
+export function safeWablasMediaUrl(value, { env = process.env } = {}) {
+  if (typeof value !== "string" || value.length > 4096) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password || url.port || !SAFE_MEDIA_HOST.test(url.hostname)) return null;
+    const builtin = url.hostname === "wablas.com" || url.hostname.endsWith(".wablas.com");
+    if (!builtin && !wablasMediaHosts(env).includes(url.hostname)) return null;
+    url.hash = "";
+    const normalized = url.toString();
+    return normalized.length <= 4096 ? normalized : null;
+  } catch { return null; }
+}
+
 const TYPES = { image: "image", photo: "image", imagemessage: "image", document: "document", file: "document", documentmessage: "document", video: "video", videomessage: "video", audio: "audio", ptt: "audio", sticker: "sticker", text: "text", chat: "text", conversation: "text" };
-const FIELDS = ["provider", "device", "sender", "from", "to", "member", "participant", "group", "isGroup", "type", "name", "message", "text", "caption", "url", "media", "filename", "extension", "mimetype", "timestamp", "inboxid", "id", "message_id"];
+const FIELDS = ["provider", "device", "sender", "from", "to", "member", "participant", "group", "isGroup", "type", "name", "message", "text", "caption", "url", "media", "filename", "extension", "mimetype", "timestamp", "inboxid", "id", "message_id", "deviceId", "isFromMe", "groupSubject"];
 
 export function normalizeWaIngress(body = {}, { provider = "fonnte", env = process.env } = {}) {
-  const raw = body && typeof body === "object" && !Array.isArray(body) ? body : {};
-  const providerName = provider === "whacenter" ? "whacenter" : "fonnte";
+  const input = body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  // WABLAS uses a distinct envelope: `phone` is the customer or group ID,
+  // `sender` is the connected device, and a group participant is nested in
+  // `group.sender`. Normalize here before the shared ingress pipeline.
+  const raw = provider === "wablas" ? {
+    ...input,
+    from: input.isGroup === true || input.isGroup === "true" ? input.group?.sender : input.phone,
+    sender: input.isGroup === true || input.isGroup === "true" ? input.phone : undefined,
+    member: input.isGroup === true || input.isGroup === "true" ? input.group?.sender : undefined,
+    group: input.isGroup === true || input.isGroup === "true" ? input.phone : undefined,
+    name: input.pushName,
+    type: input.messageType,
+    filename: input.file,
+    mimetype: input.mimeType,
+    groupSubject: input.group?.subject,
+  } : input;
+  const providerName = ["fonnte", "whacenter", "wablas"].includes(provider) ? provider : "fonnte";
   const explicitGroup = [raw.group, raw.sender, raw.from].find(value => typeof value === "string" && (value.endsWith("@g.us") || /^\d+-\d+$/.test(value)));
   const senderRaw = String(explicitGroup || raw.sender || raw.from || raw.group || "").slice(0, 100);
   const memberRaw = String(raw.member || raw.participant || (explicitGroup && raw.from !== explicitGroup ? raw.from : "") || "").slice(0, 100);
@@ -47,9 +81,10 @@ export function normalizeWaIngress(body = {}, { provider = "fonnte", env = proce
   const identity = [raw.sender, raw.from].find(value => value && !/@lid\b/i.test(String(value)));
   const identityText = String(identity || "");
   const phone = isGroup || (identityText.includes("@") && !/@(?:s\.whatsapp\.net|c\.us)$/i.test(identityText)) ? null : validateAndNormalizePhone(identityText.replace(/@(?:s\.whatsapp\.net|c\.us)$/i, ""));
-  const sourceUrl = providerName === "whacenter"
-    ? (safeWhacenterMediaUrl(raw.media, { env }) || safeWhacenterMediaUrl(raw.url, { env }) || safeWhacenterMediaUrl(raw.message, { env }))
-    : (safeFonnteMediaUrl(raw.url) || safeFonnteMediaUrl(raw.message));
+  const safeProviderUrl = providerName === "whacenter" ? value => safeWhacenterMediaUrl(value, { env })
+    : providerName === "wablas" ? value => safeWablasMediaUrl(value, { env })
+      : safeFonnteMediaUrl;
+  const sourceUrl = safeProviderUrl(raw.media) || safeProviderUrl(raw.url) || safeProviderUrl(raw.message);
   const originalType = String(raw.type || "").toLowerCase().replace(/[^a-z]/g, "");
   const fileName = String(raw.filename || (sourceUrl ? new URL(sourceUrl).pathname : ""));
   const mime = String(raw.mimetype || "").toLowerCase();
@@ -90,7 +125,8 @@ export function normalizeWaIngress(body = {}, { provider = "fonnte", env = proce
 
 export async function captureWaIngress(event, { supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL, serviceKey = process.env.SUPABASE_SERVICE_KEY, fetchImpl = fetch, env = process.env } = {}) {
   if (!supabaseUrl || !serviceKey) throw new Error("Penyimpanan webhook belum dikonfigurasi");
-  const extraHosts = event.media_url && event.payload?.provider === "whacenter" ? whacenterMediaHosts(env) : [];
+  const extraHosts = event.media_url && event.payload?.provider === "whacenter" ? whacenterMediaHosts(env)
+    : event.media_url && event.payload?.provider === "wablas" ? wablasMediaHosts(env) : [];
   const response = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/capture_wa_webhook_214`, {
     method: "POST", headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({ p_event: event, ...(extraHosts.length ? { p_media_hosts: extraHosts } : {}) }), signal: AbortSignal.timeout(7000),
@@ -101,7 +137,7 @@ export async function captureWaIngress(event, { supabaseUrl = process.env.SUPABA
     const code = /^[A-Z0-9]{5,12}$/.test(String(detail.code || "")) ? detail.code : "unknown";
     // Return only known static diagnostics: database messages can contain private payloads.
     const reason = detail.message === "URL media tidak aman" ? "URL media ditolak database" : "RPC penerimaan gagal";
-    throw new Error(`Penerimaan webhook belum tersimpan (HTTP ${response.status}, code=${code}, ${reason}); periksa migrasi 214/233`);
+    throw new Error(`Penerimaan webhook belum tersimpan (HTTP ${response.status}, code=${code}, ${reason}); periksa migrasi 214/233/235`);
   }
   const result = await response.json();
   if (!result?.receipt_id || !result?.received_at || typeof result.duplicate !== "boolean") throw new Error("Respons penyimpanan webhook tidak valid");
@@ -125,17 +161,19 @@ function mediaTransportError(error) {
 }
 
 export async function downloadIngressMedia(url, { fetchImpl = fetch, maxBytes = 10 * 1024 * 1024, provider = "fonnte", env = process.env, timeoutMs = 10000 } = {}) {
-  if (!["fonnte", "whacenter"].includes(provider)) throw mediaDownloadError("PROVIDER_REJECTED", "Provider media tidak dikenal");
-  const safeUrl = provider === "whacenter" ? safeWhacenterMediaUrl(url, { env }) : safeFonnteMediaUrl(url);
+  if (!["fonnte", "whacenter", "wablas"].includes(provider)) throw mediaDownloadError("PROVIDER_REJECTED", "Provider media tidak dikenal");
+  const safeUrl = provider === "whacenter" ? safeWhacenterMediaUrl(url, { env })
+    : provider === "wablas" ? safeWablasMediaUrl(url, { env }) : safeFonnteMediaUrl(url);
   if (!safeUrl) throw mediaDownloadError("URL_REJECTED", "URL media tidak aman atau host belum diizinkan");
   const signal = AbortSignal.timeout(timeoutMs);
   let target = safeUrl, response;
-  // WhaCenter's media gateway redirects to object storage. Validate every hop
+  const allowsRedirect = provider === "whacenter" || provider === "wablas";
+  // Some provider media gateways redirect to object storage. Validate every hop
   // before making the next request; no auth headers, cookies or TLS bypass.
   for (let redirects = 0; ; redirects++) {
-    try { response = await fetchImpl(target, { signal, redirect: provider === "whacenter" ? "manual" : "error" }); }
+    try { response = await fetchImpl(target, { signal, redirect: allowsRedirect ? "manual" : "error" }); }
     catch (error) { throw mediaTransportError(error); }
-    if (provider !== "whacenter" || ![301, 302, 303, 307, 308].includes(response.status)) break;
+    if (!allowsRedirect || ![301, 302, 303, 307, 308].includes(response.status)) break;
     try { await response.body?.cancel(); } catch { /* release redirect response */ }
     if (redirects >= 3) throw mediaDownloadError("REDIRECT_LIMIT", "Redirect media melebihi batas tiga kali");
     const location = response.headers.get("location");
@@ -143,12 +181,12 @@ export async function downloadIngressMedia(url, { fetchImpl = fetch, maxBytes = 
     let next;
     try { next = new URL(location, target).toString(); }
     catch { throw mediaDownloadError("REDIRECT_REJECTED", "Tujuan redirect media tidak valid"); }
-    target = safeWhacenterMediaUrl(next, { env });
-    if (!target) throw mediaDownloadError("REDIRECT_HOST_REJECTED", "Host redirect media belum diizinkan; periksa WHACENTER_MEDIA_HOSTS");
+    target = provider === "whacenter" ? safeWhacenterMediaUrl(next, { env }) : safeWablasMediaUrl(next, { env });
+    if (!target) throw mediaDownloadError("REDIRECT_HOST_REJECTED", `Host redirect media belum diizinkan; periksa ${provider === "whacenter" ? "WHACENTER_MEDIA_HOSTS" : "WABLAS_MEDIA_HOSTS"}`);
   }
   if (!response.ok) {
     try { await response.body?.cancel(); } catch { /* release failure response */ }
-    throw mediaDownloadError(`HTTP_${response.status}`, `${provider === "whacenter" ? "WhaCenter" : "Fonnte"} media HTTP ${response.status}`);
+    throw mediaDownloadError(`HTTP_${response.status}`, `${provider === "whacenter" ? "WhaCenter" : provider === "wablas" ? "WABLAS" : "Fonnte"} media HTTP ${response.status}`);
   }
   if (Number(response.headers.get("content-length")) > maxBytes) {
     try { await response.body?.cancel(); } catch { /* release oversized response */ }
@@ -191,6 +229,6 @@ export async function readWaIngressHealth({ supabaseUrl, serviceKey, fetchImpl =
         created_at: Number.isFinite(Date.parse(row.created_at)) ? new Date(row.created_at).toISOString() : null })) };
   } catch {
     // An unavailable capture monitor must be visible, not mistaken for no gaps.
-    return { available: false, error: "Status penerimaan webhook belum tersedia; periksa koneksi/migrasi 214" };
+    return { available: false, error: "Status penerimaan webhook belum tersedia; periksa koneksi/migrasi 214/235" };
   }
 }

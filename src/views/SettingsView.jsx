@@ -330,8 +330,9 @@ function SettingsView({
 
   // ── Tab kategori (biar tidak scroll panjang) ─────────────────────────────────
   const [activeTab, setActiveTab] = useState("bisnis");
-  const [waProviderDraft, setWaProviderDraft] = useState(waProvider === "whacenter" ? "whacenter" : "fonnte");
-  useEffect(() => { setWaProviderDraft(waProvider === "whacenter" ? "whacenter" : "fonnte"); }, [waProvider]);
+  const normalizeWaProviderDraft = value => ["fonnte", "whacenter", "wablas"].includes(value) ? value : "fonnte";
+  const [waProviderDraft, setWaProviderDraft] = useState(() => normalizeWaProviderDraft(waProvider));
+  useEffect(() => { setWaProviderDraft(normalizeWaProviderDraft(waProvider)); }, [waProvider]);
   const SETTINGS_TABS = [
     { id: "bisnis",  icon: "🏢", label: "Bisnis" },
     { id: "ai",      icon: "🤖", label: "AI & Brain" },
@@ -411,7 +412,8 @@ function SettingsView({
       if (!r.ok || !d.success || !d.provider_saved) throw new Error(d.message || d.error || "Koneksi gateway gagal");
       setWaProvider(d.provider);
       setWaStatus("connected");
-      showNotif(`✅ ${d.message}. Provider aktif: ${d.provider === "whacenter" ? "WhaCenter" : "Fonnte"}`);
+      const providerName = d.provider === "whacenter" ? "WhaCenter" : d.provider === "wablas" ? "WABLAS" : "Fonnte";
+      showNotif(`✅ ${d.message}. Provider aktif: ${providerName}`);
     } catch (e) {
       setWaStatus("not_connected");
       showNotif("❌ Provider tidak diubah: " + e.message);
@@ -678,6 +680,7 @@ function SettingsView({
             <select id="wa-provider-select" value={waProviderDraft} onChange={e => { setWaProviderDraft(e.target.value); setWaStatus("not_connected"); }} style={settingsInputStyle}>
               <option value="fonnte">Fonnte (existing)</option>
               <option value="whacenter">WhaCenter</option>
+              <option value="wablas">WABLAS</option>
             </select>
           </div>
 
@@ -685,10 +688,14 @@ function SettingsView({
             {waProviderDraft === "fonnte" ? <>
               <b>Fonnte tetap tersedia.</b> Token tetap dibaca dari environment server <code>FONNTE_TOKEN</code>; pilihan di sini tidak mengubah token atau device Fonnte.
               <div style={{ marginTop: 6 }}>Webhook Fonnte: <code>{window.location.origin}/api/receive-wa</code></div>
-            </> : <>
+            </> : waProviderDraft === "whacenter" ? <>
               <b>WhaCenter memakai jalur terpisah.</b> Set <code>WHACENTER_DEVICE_ID</code> dan <code>WHACENTER_WEBHOOK_SECRET</code> di environment server sebelum mengaktifkannya. Nilai rahasia tidak disimpan di browser atau <code>app_settings</code>.
               <div style={{ marginTop: 6 }}>Webhook WhaCenter: <code>{window.location.origin}/api/whacenter-webhook?token=&lt;WHACENTER_WEBHOOK_SECRET&gt;</code></div>
               <div style={{ marginTop: 6 }}>Webhook media menerima host WhaCenter. Host storage tujuan redirect (misalnya sin1.contabostorage.com) harus dimasukkan secara eksplisit ke <code>WHACENTER_MEDIA_HOSTS</code>.</div>
+            </> : <>
+              <b>WABLAS mendukung pesan teks (maks. 1024 karakter), PDF, grup, pesan masuk, media, dan callback status.</b> Set <code>WABLAS_TOKEN</code>, <code>WABLAS_SECRET_KEY</code>, serta <code>WABLAS_WEBHOOK_SECRET</code> di environment server. Opsional: <code>WABLAS_DEVICE_ID</code>, <code>WABLAS_API_BASE_URL</code>, dan <code>WABLAS_MEDIA_HOSTS</code>. Rahasia tidak disimpan di browser atau <code>app_settings</code>. Sinkronisasi daftar grup otomatis tetap khusus Fonnte; untuk WABLAS, daftarkan group ID secara manual di Monitor WA.
+              <div style={{ marginTop: 6 }}>Pasang URL ini sebagai webhook pesan masuk dan tracking di pengaturan device WABLAS: <code>{window.location.origin}/api/wablas-webhook?token=&lt;WABLAS_WEBHOOK_SECRET&gt;</code></div>
+              <div style={{ marginTop: 6 }}>Host media WABLAS default diizinkan. Host CDN tambahan atau tujuan redirect harus ditambahkan ke <code>WABLAS_MEDIA_HOSTS</code>.</div>
             </>}
             <div style={{ marginTop: 6 }}>Provider baru hanya menjadi aktif setelah tes koneksi berhasil. Pengiriman tidak otomatis dialihkan ke provider lain bila hasilnya gagal/tidak pasti, untuk mencegah pesan ganda.</div>
           </div>
@@ -696,7 +703,7 @@ function SettingsView({
           <div style={{ display: "flex", gap: 8 }}>
             <button onClick={testWA}
               style={{ flex: 2, background: "linear-gradient(135deg," + cs.green + ",#059669)", border: "none", color: "#fff", padding: "10px", borderRadius: 8, cursor: "pointer", fontWeight: 800, fontSize: 13 }}>
-              {waStatus === "testing" ? "⏳ Testing..." : `🔌 Test & Aktifkan ${waProviderDraft === "whacenter" ? "WhaCenter" : "Fonnte"}`}
+              {waStatus === "testing" ? "⏳ Testing..." : `🔌 Test & Aktifkan ${waProviderDraft === "whacenter" ? "WhaCenter" : waProviderDraft === "wablas" ? "WABLAS" : "Fonnte"}`}
             </button>
             <button onClick={() => { setWaStatus("not_connected"); showNotif("Koneksi WA direset"); }}
               style={{ flex: 1, background: cs.surface, border: "1px solid " + cs.border, color: cs.muted, padding: "10px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}>Reset</button>

@@ -16,6 +16,7 @@ beforeEach(() => {
   vi.mocked(checkRateLimit).mockClear();
   vi.stubEnv("SUPABASE_URL", "https://db.invalid");vi.stubEnv("SUPABASE_SERVICE_KEY", "synthetic");vi.stubEnv("FONNTE_TOKEN", "");vi.stubEnv("FONNTE_WEBHOOK_SECRET", "");
   vi.stubEnv("WHACENTER_DEVICE_ID", "synthetic-device");vi.stubEnv("WHACENTER_WEBHOOK_SECRET", "synthetic-whacenter-secret");
+  vi.stubEnv("WABLAS_TOKEN", "synthetic-wablas-token");vi.stubEnv("WABLAS_SECRET_KEY", "synthetic-wablas-secret");vi.stubEnv("WABLAS_WEBHOOK_SECRET", "synthetic-wablas-hook");
   vi.stubEnv("AUTOREPLY_ENABLED", "false");vi.stubEnv("FORWARD_TO_OWNER", "false");
   requests=[];captureFailure=false;selectedProvider="fonnte";
   captureResult={receipt_id:"raw-1",received_at:"2026-10-17T00:37:26Z",duplicate:false,message_id:"msg-1",intake_status:"MEDIA_QUEUED",sender_is_internal:false,payment_detect_enabled:true,
@@ -180,6 +181,39 @@ it("authenticates WhaCenter before reading app_settings and accepts only its sel
   const fonnteRoute=response();
   await receiveWa({method:"POST",headers:{},query:{route:"receive-wa"},body:{from:body.sender,message:"halo"}},fonnteRoute);
   expect(fonnteRoute.code).toBe(409);
+});
+it("rejects unauthenticated WABLAS callbacks before writing provider logs", async () => {
+  const res = response();
+  await receiveWa({ method: "POST", headers: {}, query: { route: "wablas-webhook", token: "wrong-secret" }, body: {
+    id: "forged-status", status: "delivered", phone: body.sender, deviceId: "synthetic-device",
+  } }, res);
+  expect(res.code).toBe(401);
+  expect(requests).toHaveLength(0);
+});
+it("authenticates WABLAS callbacks and routes its documented inbound media envelope through durable intake", async () => {
+  selectedProvider = "wablas";clearWaProviderCache();
+  const source = "https://media.wablas.com/proof.jpg";
+  const originalFetch = globalThis.fetch.getMockImplementation();
+  globalThis.fetch.mockImplementation(async (raw, options = {}) => {
+    if (String(raw) === source) { requests.push({ path: "/proof.jpg", stage: "DOWNLOAD" });expect(options.redirect).toBe("manual");return new Response(Buffer.alloc(500, 1), { headers: { "content-type": "image/jpeg" } }); }
+    return originalFetch(raw, options);
+  });
+  const res = response();
+  await receiveWa({ method: "POST", headers: {}, query: { route: "wablas-webhook", token: "synthetic-wablas-hook" }, body: {
+    id: "wablas-inbound-1", pushName: "Synthetic", isGroup: false, phone: body.sender, message: "Bukti transfer",
+    messageType: "image", file: "proof.jpg", url: source, mimeType: "image/jpeg", sender: "628000000001",
+    deviceId: "synthetic-device", isFromMe: false, timestamp: "2026-11-11T10:00:00Z",
+  } }, res);
+  expect(res.code).toBe(200);
+  expect(requests.find(r => r.path?.endsWith("capture_wa_webhook_214")).body.p_event.payload.provider).toBe("wablas");
+  expect(mocks.stage).toHaveBeenCalledWith(expect.objectContaining({ provider: "wablas", sourceUrl: source }));
+  const callback = response();
+  await receiveWa({ method: "POST", headers: {}, query: { route: "wablas-webhook", token: "synthetic-wablas-hook" }, body: {
+    id: "wablas-outbound-1", status: "delivered", phone: body.sender, deviceId: "synthetic-device", note: "delivered",
+  } }, callback);
+  expect(callback.code).toBe(200);
+  expect(callback.body).toMatchObject({ ok: true, type: "tracking_callback", processed: true });
+  expect(requests.some(r => r.path === "/rest/v1/agent_logs" && r.body?.action === "WA_DELIVERY_STATUS")).toBe(true);
 });
 it("routes the old Settings URL to the same public webhook without exposing another unauthenticated handler",async()=>{
   const {default:router}=await import("../../../api/[route].js");

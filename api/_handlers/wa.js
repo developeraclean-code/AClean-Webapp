@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { processAraCustomer } from "../_ara-customer.js";
-import { captureWaIngress, downloadIngressMedia, normalizeWaIngress, safeFonnteMediaUrl, safeWhacenterMediaUrl } from "../_wa-ingress.js";
+import { captureWaIngress, downloadIngressMedia, normalizeWaIngress, safeFonnteMediaUrl, safeWhacenterMediaUrl, safeWablasMediaUrl } from "../_wa-ingress.js";
 // api/_handlers/wa.js — Handler grup WhatsApp (Batch 4 pemecahan router, Jul 2026).
 // Isi blok dipindah APA ADANYA (ekstraksi programatik) dari api/[route].js.
 // receive-wa = webhook Fonnte (jalur paling panas) — di-dispatch oleh router,
@@ -55,6 +55,7 @@ export async function sendWa(req, res) {
       const FT = process.env.FONNTE_TOKEN || "";
       if (selectedProvider === "fonnte" && !FT) return res.status(503).json({ error: "FONNTE_TOKEN belum dikonfigurasi di server", detail: "FONNTE_TOKEN_NOT_SET" });
       if (selectedProvider === "whacenter" && !process.env.WHACENTER_DEVICE_ID) return res.status(503).json({ error: "WHACENTER_DEVICE_ID belum dikonfigurasi di server", detail: "WHACENTER_DEVICE_ID_NOT_SET" });
+      if (selectedProvider === "wablas" && (!process.env.WABLAS_TOKEN || !process.env.WABLAS_SECRET_KEY)) return res.status(503).json({ error: "WABLAS_TOKEN dan WABLAS_SECRET_KEY belum dikonfigurasi di server", detail: "WABLAS_CREDENTIALS_NOT_SET" });
 
       // ── ATTACHMENT: kirim URL langsung ke Fonnte (tanpa re-fetch di server) ──
       // Fonnte support parameter "url" untuk file yang bisa diakses publik.
@@ -98,6 +99,24 @@ export async function sendWa(req, res) {
           return res.status(502).json({ success: false, error: body.reason || `WhaCenter HTTP ${response.status}`, detail: "WHACENTER_REJECTED" });
         }
         return res.status(200).json({ success: true, target, provider: selectedProvider, withAttachment: !!hasAttachment });
+      }
+
+      if (selectedProvider === "wablas") {
+        let response;
+        try {
+          response = await sendWithConfiguredWaProvider({
+            method: "POST",
+            body: JSON.stringify({ target, message: msg, ...(hasAttachment ? { url: resolveDirectUrl(b.url, b.filename || "dokumen.pdf"), filename: b.filename || "dokumen.pdf" } : {}) }),
+          }, { provider: selectedProvider });
+        } catch (error) {
+          console.error("[send-wa] WABLAS result uncertain:", error.message);
+          return res.status(502).json({ success: false, error: "Status kirim WABLAS belum pasti; periksa riwayat sebelum mencoba lagi", detail: "WABLAS_UNCERTAIN" });
+        }
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || body.status !== true) {
+          return res.status(502).json({ success: false, error: body.reason || body.message || `WABLAS HTTP ${response.status}`, detail: "WABLAS_REJECTED" });
+        }
+        return res.status(200).json({ success: true, target, provider: selectedProvider, providerId: body.id || null, withAttachment: !!hasAttachment, queued: true });
       }
 
       // Resolve proxy URL → direct R2 public URL (hanya jika base publik di-set & bucket public access ON)
@@ -214,6 +233,7 @@ export async function notifyAbsence(req, res) {
       if (!selectedProvider) return res.status(503).json({ ok: false, error: "Pengaturan provider WA belum tersedia" });
       if (selectedProvider === "fonnte" && !process.env.FONNTE_TOKEN) return res.status(200).json({ ok: false, skipped: "FONNTE_TOKEN_NOT_SET" });
       if (selectedProvider === "whacenter" && !process.env.WHACENTER_DEVICE_ID) return res.status(200).json({ ok: false, skipped: "WHACENTER_DEVICE_ID_NOT_SET" });
+      if (selectedProvider === "wablas" && (!process.env.WABLAS_TOKEN || !process.env.WABLAS_SECRET_KEY)) return res.status(200).json({ ok: false, skipped: "WABLAS_CREDENTIALS_NOT_SET" });
 
       // Resolve owner phone + toggle dari app_settings (service key), fallback ke env
       const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
@@ -260,24 +280,25 @@ export async function receiveWa(req, res) {
       if (req.method === "GET") return res.status(200).json({ status: "ok", service: "AClean WA Webhook" });
       if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-      const routeProvider = String(req.query?.route || "") === "whacenter-webhook" ? "whacenter" : "fonnte";
-      // Verify the route's own credential before reading settings or touching any
-      // database-backed limiter. The Fonnte route keeps its existing optional secret.
-      const webhookSecret = routeProvider === "whacenter"
-        ? process.env.WHACENTER_WEBHOOK_SECRET
-        : (process.env.FONNTE_WEBHOOK_SECRET || process.env.WA_WEBHOOK_SECRET);
+      const routeName = String(req.query?.route || "");
+      const routeProvider = routeName === "whacenter-webhook" ? "whacenter" : routeName === "wablas-webhook" ? "wablas" : "fonnte";
+      // Verify a provider-specific secret before reading settings or touching
+      // any database-backed limiter. The legacy Fonnte secret remains optional.
+      const webhookSecret = routeProvider === "whacenter" ? process.env.WHACENTER_WEBHOOK_SECRET
+        : routeProvider === "wablas" ? process.env.WABLAS_WEBHOOK_SECRET
+          : (process.env.FONNTE_WEBHOOK_SECRET || process.env.WA_WEBHOOK_SECRET);
       const queryToken = req.query?.token;
       const headerToken = req.headers["x-webhook-token"];
       const provided = queryToken || headerToken || "";
       const tokenSource = queryToken ? "query" : headerToken ? "header" : "missing";
-      if (routeProvider === "whacenter" && !webhookSecret) {
+      if (routeProvider !== "fonnte" && !webhookSecret) {
         console.warn("[receive-wa] webhook secret missing", JSON.stringify({
           route: routeProvider,
           token_source: tokenSource,
           token_present: Boolean(provided),
           secret_configured: false,
         }));
-        return res.status(503).json({ error: "WHACENTER_WEBHOOK_SECRET belum dikonfigurasi di server" });
+        return res.status(503).json({ error: `${routeProvider === "wablas" ? "WABLAS" : "WHACENTER"}_WEBHOOK_SECRET belum dikonfigurasi di server` });
       }
       if (webhookSecret) {
         let ok = false;
@@ -297,6 +318,34 @@ export async function receiveWa(req, res) {
           return res.status(401).json({ error: "Unauthorized webhook" });
         }
       }
+      const earlyBody = req.body && typeof req.body === "object" && !Array.isArray(req.body) ? req.body : {};
+      // WABLAS sends tracking and device callbacks to the configured URLs. They
+      // contain no inbound chat content and must not enter the message pipeline.
+      const wablasTrackingStatus = routeProvider === "wablas" && earlyBody.id && earlyBody.status
+        && !earlyBody.message && !earlyBody.messageType && !earlyBody.url && !earlyBody.file;
+      const wablasDeviceStatus = routeProvider === "wablas" && earlyBody.deviceId && earlyBody.status
+        && !earlyBody.id && !earlyBody.message && !earlyBody.messageType && !earlyBody.url;
+      if (wablasTrackingStatus || wablasDeviceStatus) {
+        const SU_cb = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+        const SK_cb = process.env.SUPABASE_SERVICE_KEY;
+        if (SU_cb && SK_cb) {
+          const status = String(earlyBody.status).toLowerCase().slice(0, 40);
+          const id = String(earlyBody.id || earlyBody.deviceId).slice(0, 100);
+          const phone = String(earlyBody.phone || earlyBody.sender || "").replace(/[^0-9]/g, "").slice(0, 20);
+          const note = String(earlyBody.note || "").slice(0, 180);
+          await fetch(`${SU_cb}/rest/v1/agent_logs`, {
+            method: "POST",
+            headers: { apikey: SK_cb, Authorization: `Bearer ${SK_cb}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ action: wablasTrackingStatus ? "WA_DELIVERY_STATUS" : "WA_DEVICE_STATUS",
+              severity: ["rejected", "cancel", "disconnected"].includes(status) ? "warn" : "info", category: "wa",
+              status: ["rejected", "cancel", "disconnected"].includes(status) ? "WARNING" : "SUCCESS",
+              detail: `provider=wablas status=${status} id=${id} phone=${phone} ${note}`.slice(0, 300),
+              metadata: { provider: "wablas", status, id, phone, deviceId: String(earlyBody.deviceId || "").slice(0, 80) },
+              time: new Date().toISOString() }),
+          }).catch(error => console.warn("[receive-wa] WABLAS callback log failed:", error.message));
+        }
+        return res.status(200).json({ ok: true, type: wablasTrackingStatus ? "tracking_callback" : "device_callback", processed: true });
+      }
       // Delivery receipts carry no inbound content and never write anything.
       // Keep this fast path ahead of the provider setting lookup as well.
       {
@@ -313,10 +362,11 @@ export async function receiveWa(req, res) {
       if (!selectedProvider) return res.status(503).json({ error: "Pengaturan provider WA belum tersedia" });
       if (selectedProvider !== routeProvider) return res.status(409).json({ error: "Webhook provider ini sedang tidak dipilih", selected_provider: selectedProvider });
       if (selectedProvider === "whacenter" && !process.env.WHACENTER_DEVICE_ID) return res.status(503).json({ error: "WHACENTER_DEVICE_ID belum dikonfigurasi di server" });
+      if (selectedProvider === "wablas" && (!process.env.WABLAS_TOKEN || !process.env.WABLAS_SECRET_KEY)) return res.status(503).json({ error: "Kredensial WABLAS belum dikonfigurasi di server" });
       const sendWebhookWa = init => sendWithConfiguredWaProvider(init, { provider: selectedProvider });
-      const waConfigured = selectedProvider === "whacenter"
-        ? !!process.env.WHACENTER_DEVICE_ID
-        : !!process.env.FONNTE_TOKEN;
+      const waConfigured = selectedProvider === "whacenter" ? !!process.env.WHACENTER_DEVICE_ID
+        : selectedProvider === "wablas" ? !!(process.env.WABLAS_TOKEN && process.env.WABLAS_SECRET_KEY)
+          : !!process.env.FONNTE_TOKEN;
 
       // SEMUA webhook Fonnte datang dari IP yang SAMA (server Fonnte) → rate-limit per-IP
       // menghitung gabungan SEMUA inbound WA (customer + teknisi + grup) + retry Fonnte
@@ -396,6 +446,9 @@ export async function receiveWa(req, res) {
       // recoverable media reference commit together. Never silently swallow a
       // failed save: non-200 lets the provider retry, while a replay is idempotent.
       const inboundEvent = normalizeWaIngress(wb, { provider: selectedProvider });
+      if (selectedProvider === "wablas" && (wb.isFromMe === true || wb.isFromMe === "true")) {
+        return res.status(200).json({ ok: true, ignored: "own-message" });
+      }
       let inboundCapture;
       try { inboundCapture = await captureWaIngress(inboundEvent); }
       catch (error) {
@@ -434,7 +487,8 @@ export async function receiveWa(req, res) {
       if (!looksLikeGroup && ["PROCESSING", "DONE", "IGNORED", "PENDING_REVIEW", "FAILED_PERMANENT"].includes(inboundCapture.media_job?.status)) {
         return res.status(200).json({ ok: true, skipped: "media-already-recorded", receipt_id: inboundCapture.receipt_id });
       }
-      const isSafeFonnteUrl = url => selectedProvider === "whacenter" ? !!safeWhacenterMediaUrl(url) : !!safeFonnteMediaUrl(url);
+      const isSafeFonnteUrl = url => selectedProvider === "whacenter" ? !!safeWhacenterMediaUrl(url)
+        : selectedProvider === "wablas" ? !!safeWablasMediaUrl(url) : !!safeFonnteMediaUrl(url);
       // Debug log: setiap webhook hit untuk monitoring (akan ke-log di Vercel runtime logs)
       try { console.log("[WA_WEBHOOK]", JSON.stringify({ sender: senderRaw, member: memberRaw, isGroup: wb.isGroup, type: wb.type, hasMsg: !!wb.message, looksLikeGroup })); } catch (_) {}
       if (looksLikeGroup) {
@@ -2368,7 +2422,7 @@ export async function waGroups(req, res) {
         return null;
       });
       if (!selectedProvider) return res.status(503).json({ ok: false, error: "Pengaturan provider WA belum tersedia" });
-      if (action === "fonnte-list" && selectedProvider !== "fonnte") return res.status(409).json({ ok: false, error: "Sinkronisasi daftar grup otomatis hanya tersedia melalui Fonnte; pesan grup WhaCenter memakai nama grup yang sudah dipetakan." });
+      if (action === "fonnte-list" && selectedProvider !== "fonnte") return res.status(409).json({ ok: false, error: `Sinkronisasi daftar grup otomatis hanya tersedia melalui Fonnte; ${selectedProvider === "wablas" ? "daftarkan group ID WABLAS secara manual di Monitor WA." : "pesan grup WhaCenter memakai nama grup yang sudah dipetakan."}` });
       const FT = process.env.FONNTE_TOKEN;
       if (action === "fonnte-list") {
         if (!FT) return res.status(503).json({ error: "FONNTE_TOKEN belum diset" });

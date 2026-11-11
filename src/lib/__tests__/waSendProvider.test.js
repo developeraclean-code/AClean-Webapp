@@ -141,4 +141,24 @@ describe("send-wa provider routing", () => {
     expect(requests[0].options.headers.get("Authorization")).toBe("fonnte-test-token");
     expect(JSON.parse(requests[0].options.body)).toMatchObject({ target: "6281234567890", message: "halo" });
   });
+
+  it("routes a selected WABLAS send and PDF only through WABLAS V2", async () => {
+    selectedProvider = "wablas";
+    vi.stubEnv("WABLAS_TOKEN", "wablas-test-token");
+    vi.stubEnv("WABLAS_SECRET_KEY", "wablas-test-secret");
+    const requests = [];
+    vi.stubGlobal("fetch", vi.fn(async (url, options = {}) => {
+      if (String(url).includes("/rest/v1/app_settings")) return new Response(JSON.stringify([{ value: "wablas" }]), { status: 200 });
+      requests.push({ url: String(url), options });
+      return new Response(JSON.stringify({ status: true, data: { messages: [{ id: "wablas-accepted" }] } }), { status: 200 });
+    }));
+    const res = response();
+    await sendWa({ method: "POST", body: { phone: "081234567890", message: "Report Card", url: "https://files.example.test/report.pdf", filename: "Report.pdf" } }, res);
+    expect(res.code).toBe(200);
+    expect(res.body).toMatchObject({ success: true, provider: "wablas", providerId: "wablas-accepted", withAttachment: true, queued: true });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].url).toBe("https://wablas.com/api/v2/send-document");
+    expect(requests[0].options.headers.get("Authorization")).toBe("wablas-test-token.wablas-test-secret");
+    expect(JSON.parse(requests[0].options.body).data[0]).toMatchObject({ phone: "6281234567890", document: "https://files.example.test/report.pdf" });
+  });
 });

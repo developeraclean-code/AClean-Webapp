@@ -3035,15 +3035,15 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
       const errMsg = d.detail || d.error || String(r.status);
       console.warn("sendWA failed:", d.error || "", "| detail:", d.detail || "—", "| target:", phone);
       // Tampilkan notif hanya untuk error kritis (bukan quota/device)
-      if (errMsg.includes("FONNTE_TOKEN") || errMsg.includes("WHACENTER_DEVICE_ID")) {
-        showNotif(`⚠️ WA tidak terkirim: konfigurasi ${waProvider === "whacenter" ? "WhaCenter" : "Fonnte"} belum tersedia di server`);
+      if (errMsg.includes("FONNTE_TOKEN") || errMsg.includes("WHACENTER_DEVICE_ID") || errMsg.includes("WABLAS_TOKEN") || errMsg.includes("WABLAS_SECRET_KEY")) {
+        showNotif(`⚠️ WA tidak terkirim: konfigurasi ${waProvider === "whacenter" ? "WhaCenter" : waProvider === "wablas" ? "WABLAS" : "Fonnte"} belum tersedia di server`);
       } else if (errMsg.includes("fetch failed") || errMsg.includes("timeout")) {
-        showNotif(`⚠️ WA tidak terkirim: gateway ${waProvider === "whacenter" ? "WhaCenter" : "Fonnte"} tidak merespons — periksa status sebelum mencoba lagi`);
+        showNotif(`⚠️ WA tidak terkirim: gateway ${waProvider === "whacenter" ? "WhaCenter" : waProvider === "wablas" ? "WABLAS" : "Fonnte"} tidak merespons — periksa status sebelum mencoba lagi`);
       } else if (errMsg.includes("offline") || errMsg.includes("device")) {
-        showNotif(`⚠️ WA tidak terkirim: perangkat ${waProvider === "whacenter" ? "WhaCenter" : "Fonnte"} offline`);
+        showNotif(`⚠️ WA tidak terkirim: perangkat ${waProvider === "whacenter" ? "WhaCenter" : waProvider === "wablas" ? "WABLAS" : "Fonnte"} offline`);
       }
       return { success: false, provider: d.provider || waProvider || null, error: errMsg,
-        uncertain: ["WHACENTER_UNCERTAIN", "FONNTE_UNREACHABLE"].includes(d.detail) };
+        uncertain: ["WHACENTER_UNCERTAIN", "WABLAS_UNCERTAIN", "FONNTE_UNREACHABLE"].includes(d.detail) };
     } catch (err) {
       console.warn("sendWA error:", err.message);
       return { success: false, provider: waProvider || null, error: err.message, uncertain: true };
@@ -4201,7 +4201,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
   );
 
   const renderWaGroupMonitor = () => (
-    <WaGroupMonitorView currentUser={currentUser} supabase={supabase} showNotif={showNotif} showConfirm={showConfirm} auditUserName={auditUserName} apiHeaders={_apiHeaders} />
+    <WaGroupMonitorView currentUser={currentUser} supabase={supabase} showNotif={showNotif} showConfirm={showConfirm} auditUserName={auditUserName} apiHeaders={_apiHeaders} waProvider={waProvider} />
   );
 
   // ── Commission PIN Protection ──

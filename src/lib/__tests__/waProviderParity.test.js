@@ -73,6 +73,19 @@ describe("gateway parity across operational notifications and media", () => {
     expect(fetchImpl.mock.calls.some(([url]) => String(url) === source)).toBe(true);
     expect(fetchImpl.mock.calls.some(([url]) => /fonnte|app_settings/.test(String(url)))).toBe(false);
   });
+  it("retries WABLAS media using its recorded provider and never current Fonnte settings", async () => {
+    const source = "https://media.wablas.com/media/receipt.jpg";
+    const fetchImpl = vi.fn(async (url, init) => {
+      if (String(url).includes("claim_wa_payment_media")) return json({ id: "wablas-job", provider: "wablas", source_url: source, phone: "628000000009", attempts: 2 });
+      if (String(url) === source) { expect(init.redirect).toBe("manual"); return json({}, 404); }
+      if (init.method === "PATCH") return json([{ id: "wablas-job" }]);
+      throw new Error("Unexpected request: " + url);
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+    expect(await retryOnePaymentMediaJob({ supabaseUrl: env.SUPABASE_URL, serviceKey: "synthetic" })).toMatchObject({ checked: 1, failed: 1 });
+    expect(fetchImpl.mock.calls.some(([url]) => String(url) === source)).toBe(true);
+    expect(fetchImpl.mock.calls.some(([url]) => /fonnte|app_settings/.test(String(url)))).toBe(false);
+  });
   it("blocks cross-provider sources and oversized WhaCenter downloads while inspecting redirects", async () => {
     const fetchImpl = vi.fn(async () => new Response("x", { headers: { "content-length": "11000000" } }));
     await expect(downloadIngressMedia("https://api.fonnte.com/a.jpg", { provider: "whacenter", fetchImpl })).rejects.toThrow("URL media");
@@ -84,6 +97,14 @@ describe("gateway parity across operational notifications and media", () => {
     const fetchImpl = vi.fn(async url => String(url).includes("statusDevice") ? json({ status: true, data: { status: "CONNECTED" } }) : json({}));
     const result = await createHealthCheck({ fetchImpl })(env);
     expect(result.checks).toMatchObject({ whacenter: "ok", fonnte: "not_configured" });
+  });
+  it("reports WABLAS health independently of Fonnte configuration", async () => {
+    const wablasEnv = { ...env, WABLAS_TOKEN: "synthetic-token", WABLAS_SECRET_KEY: "synthetic-secret" };
+    const fetchImpl = vi.fn(async () => json({ status: true, data: { active: true, status: "connected" } }));
+    const result = await createHealthCheck({ fetchImpl })(wablasEnv);
+    expect(result.checks).toMatchObject({ wablas: "ok", fonnte: "not_configured" });
+    expect(String(fetchImpl.mock.calls[3][0])).toContain("/api/device/info?token=synthetic-token");
+    expect(JSON.stringify(result)).not.toContain("synthetic-token");
   });
   it("keeps every runtime send behind the provider adapter", () => {
     const root = new URL("../../../api/", import.meta.url);

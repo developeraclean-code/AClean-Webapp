@@ -167,7 +167,7 @@ export async function loadAllData({
             setLlmModel(validModel);
             _lsSave("llmModel", validModel);
             // Load wa_provider (WhatsApp provider) from DB — global setting for Owner/Admin
-            const VALID_WA_PROVIDERS = ["fonnte", "whacenter"];
+            const VALID_WA_PROVIDERS = ["fonnte", "whacenter", "wablas"];
             if (sMap.wa_provider && VALID_WA_PROVIDERS.includes(sMap.wa_provider)) {
               setWaProvider(sMap.wa_provider);
             }

@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 const SETTINGS_KEY = "wa_provider";
 const SUPABASE_URL = () => process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
 const SERVICE_KEY = () => process.env.SUPABASE_SERVICE_KEY || "";
@@ -6,8 +8,20 @@ let providerCache = { value: null, expiresAt: 0, pending: null };
 
 export function normalizeWaProvider(value) {
   const provider = String(value || "").trim().toLowerCase();
-  if (provider === "fonnte" || provider === "whacenter") return provider;
+  if (["fonnte", "whacenter", "wablas"].includes(provider)) return provider;
   return null;
+}
+
+export function wablasApiBase(env = process.env) {
+  const raw = String(env.WABLAS_API_BASE_URL || "https://wablas.com").trim();
+  let url;
+  try { url = new URL(raw); } catch { throw new Error("WABLAS_API_BASE_URL tidak valid"); }
+  if (url.protocol !== "https:" || url.username || url.password || url.port || url.search || url.hash
+    || (url.pathname !== "/" && url.pathname !== "")
+    || !(url.hostname === "wablas.com" || url.hostname.endsWith(".wablas.com"))) {
+    throw new Error("WABLAS_API_BASE_URL harus origin HTTPS WABLAS, mis. https://wablas.com");
+  }
+  return url.origin;
 }
 
 export function clearWaProviderCache() {
@@ -87,6 +101,53 @@ export async function sendWithConfiguredWaProvider(init = {}, {
     return fetchImpl("https://api.fonnte.com/send", { ...init, headers });
   }
 
+  if (provider === "wablas") {
+    const token = String(env.WABLAS_TOKEN || "").trim();
+    const secret = String(env.WABLAS_SECRET_KEY || "").trim();
+    if (!token || !secret) return jsonResponse({ status: false, reason: "WABLAS_TOKEN dan WABLAS_SECRET_KEY wajib dikonfigurasi di server" }, 503);
+    let payload;
+    try { payload = typeof init.body === "string" ? JSON.parse(init.body) : init.body || {}; }
+    catch { return jsonResponse({ status: false, reason: "Payload WhatsApp tidak valid" }, 400); }
+    const target = String(payload.target || payload.number || payload.phone || "").trim();
+    const message = String(payload.message || "");
+    if (!target || !message) return jsonResponse({ status: false, reason: "Nomor tujuan dan pesan wajib diisi" }, 400);
+    if (Array.from(message).length > 1024) return jsonResponse({ status: false, reason: "Pesan WABLAS maksimal 1024 karakter" }, 400);
+
+    const hasDocument = String(payload.url || payload.file || "").trim() !== "";
+    const requestId = String(payload.ref_id || payload.requestId || payload.outbox_id || payload.id || randomUUID()).slice(0, 100);
+    const group = payload.isGroup === true || payload.isGroup === "true" || /@g\.us$/i.test(target)
+      || /^\d+-\d{5,}$/.test(target) || /^\d{16,}$/.test(target);
+    const filename = String(payload.filename || "").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 60);
+    const item = hasDocument
+      ? { phone: target, document: String(payload.url || payload.file).trim(), caption: message, ...(filename ? { filename } : {}), isGroup: group, ref_id: requestId }
+      : { phone: target, message, isGroup: group, ref_id: requestId };
+    const headers = new Headers({
+      Authorization: `${token}.${secret}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    });
+    if (env.WABLAS_DEVICE_ID) headers.set("X-Device-ID", String(env.WABLAS_DEVICE_ID).trim());
+
+    let base;
+    try { base = wablasApiBase(env); }
+    catch (error) { return jsonResponse({ status: false, reason: error.message }, 503); }
+    const endpoint = hasDocument ? "/api/v2/send-document" : "/api/v2/send-message";
+    const response = await fetchImpl(`${base}${endpoint}`, {
+      method: "POST", headers, body: JSON.stringify({ data: [item] }), signal: init.signal || AbortSignal.timeout(20000),
+    });
+    const raw = await response.clone().json().catch(() => null);
+    if (!response.ok || raw?.status !== true) {
+      const rejected = raw?.status === false || (response.status >= 400 && response.status < 500 && response.status !== 408);
+      if (!rejected) throw new Error("Hasil kirim WABLAS belum pasti; periksa riwayat sebelum mencoba lagi");
+      return jsonResponse({ status: false, reason: String(raw?.message || raw?.error || `WABLAS HTTP ${response.status}`), ref_id: requestId }, response.status);
+    }
+    const resultSet = Array.isArray(raw.data) ? raw.data : [raw.data || {}];
+    const messages = resultSet.flatMap(entry => Array.isArray(entry?.messages) ? entry.messages : entry?.messages ? [entry.messages] : []);
+    const providerIds = messages.map(entry => String(entry?.id || "")).filter(Boolean);
+    if (!providerIds.length && raw.id) providerIds.push(String(raw.id));
+    return jsonResponse({ ...raw, status: true, id: providerIds.length === 1 ? providerIds[0] : providerIds, ref_id: requestId }, response.status);
+  }
+
   const deviceId = String(env.WHACENTER_DEVICE_ID || "").trim();
   if (!deviceId) return jsonResponse({ status: false, reason: "WHACENTER_DEVICE_ID belum dikonfigurasi di server" }, 503);
   let payload;
@@ -138,7 +199,7 @@ export async function sendWithConfiguredWaProvider(init = {}, {
 
 export async function testWaProvider(provider, { fetchImpl = fetch, env = process.env } = {}) {
   const selected = normalizeWaProvider(provider);
-  if (!selected) return { ok: false, success: false, message: "Pilih Fonnte atau WhaCenter" };
+  if (!selected) return { ok: false, success: false, message: "Pilih Fonnte, WhaCenter, atau WABLAS" };
   if (selected === "fonnte") {
     const token = env.FONNTE_TOKEN;
     if (!token) return { ok: false, success: false, message: "FONNTE_TOKEN belum dikonfigurasi di server" };
@@ -154,6 +215,30 @@ export async function testWaProvider(provider, { fetchImpl = fetch, env = proces
           : String(body.reason || `Fonnte HTTP ${response.status}`);
       return { ok, success: ok, provider: selected, message };
     } catch (error) { return { ok: false, success: false, provider: selected, message: error.name === "AbortError" ? "Fonnte timeout" : "Tidak dapat menghubungi Fonnte" }; }
+  }
+
+  if (selected === "wablas") {
+    const token = String(env.WABLAS_TOKEN || "").trim();
+    const secret = String(env.WABLAS_SECRET_KEY || "").trim();
+    if (!token || !secret) return { ok: false, success: false, provider: selected, message: "WABLAS_TOKEN dan WABLAS_SECRET_KEY belum dikonfigurasi di server" };
+    let base;
+    try { base = wablasApiBase(env); }
+    catch (error) { return { ok: false, success: false, provider: selected, message: error.message };
+    }
+    try {
+      // Device Info documents token-in-query authentication. Keep this request
+      // server-only and never log its URL because it contains the WABLAS token.
+      const url = new URL(`${base}/api/device/info`);
+      url.searchParams.set("token", token);
+      const response = await fetchImpl(url, { signal: AbortSignal.timeout(10000), redirect: "error" });
+      const body = await response.json().catch(() => ({}));
+      const connected = response.ok && body.status === true && body.data?.active === true
+        && String(body.data?.status || "").toLowerCase() === "connected";
+      return { ok: connected, success: connected, provider: selected,
+        message: connected ? "WABLAS terhubung" : String(body.message || body.data?.status || `WABLAS HTTP ${response.status}`) };
+    } catch (error) {
+      return { ok: false, success: false, provider: selected, message: error.name === "AbortError" ? "WABLAS timeout" : "Tidak dapat menghubungi WABLAS" };
+    }
   }
 
   const deviceId = String(env.WHACENTER_DEVICE_ID || "").trim();

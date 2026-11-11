@@ -80,6 +80,10 @@ Hasil verifikasi lokal setelah perbaikan identitas Customer, 6 Oktober 2026:
 
 ## Penerapan ke lingkungan nyata
 
+### Provider WABLAS
+
+Sebelum mengaktifkan WABLAS, siapkan `WABLAS_TOKEN`, `WABLAS_SECRET_KEY`, dan token acak `WABLAS_WEBHOOK_SECRET` di environment server; pasang URL callback yang sama pada pengaturan webhook dan tracking WABLAS. Jika URL media/redirect tidak berada di `*.wablas.com`, tambahkan nama host tepatnya ke `WABLAS_MEDIA_HOSTS`. Terapkan migrasi `235_wablas_provider_parity.sql` setelah 233/234. Setelah deploy, uji koneksi, satu pesan teks, satu PDF, webhook masuk pribadi/grup, status callback, media, serta pergantian provider. WABLAS mengembalikan status antrean awal; itu bukan bukti pesan sudah delivered/read. Pengiriman dengan hasil tidak pasti tidak diulang otomatis agar tidak menghasilkan pesan ganda. Catatan ini menjelaskan implementasi lokal dan tidak menyatakan migrasi atau deploy produksi telah dilakukan.
+
 Migrasi **193 dan 194 sudah diterapkan pada produksi pada 5 Oktober 2026 (WIB)** dan dicatat dalam `supabase_migrations.schema_migrations`. Uji transaksi pada schema produksi sebelum/sesudah migrasi lulus dengan rollback: planning Owner/Admin, penolakan Teknisi/RLS, benturan slot, retry, reschedule, pembatalan, pembayaran parsial, serta finalisasi outbox dan audit dokumen. Tidak ada pesan Fonnte yang dikirim atau data uji yang dipertahankan. Frontend/backend dipublikasikan melalui commit rilis ini. Urutan untuk lingkungan lain:
 
 1. Pastikan lingkungan tujuan sudah memiliki schema/fungsi sebelumnya, khususnya `record_invoice_wa_sent`, `record_report_card_wa_sent` (170/171), pembayaran atomik (173), tabel WhatsApp/payment suggestions, dan `customers.last_rating_request` (031).

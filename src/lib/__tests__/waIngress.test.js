@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { captureWaIngress, downloadIngressMedia, normalizeWaIngress, readWaIngressHealth, safeFonnteMediaUrl, safeWhacenterMediaUrl } from "../../../api/_wa-ingress.js";
+import { captureWaIngress, downloadIngressMedia, normalizeWaIngress, readWaIngressHealth, safeFonnteMediaUrl, safeWhacenterMediaUrl, safeWablasMediaUrl } from "../../../api/_wa-ingress.js";
 
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const sample = { device: "628000000001", sender: "628000000002", type: "image", url: "https://api.fonnte.com/t/proof.jpg", timestamp: "1792197446" };
@@ -41,6 +41,16 @@ describe("inbound WA normalization", () => {
     expect(event.media_url).toBe("https://cdn.whacenter.com/uploads/proof.jpg");
     expect(safeWhacenterMediaUrl("https://cdn.whacenter.com/a.jpg")).toBe("https://cdn.whacenter.com/a.jpg");
     expect(safeWhacenterMediaUrl("https://evil.example/a.jpg")).toBeNull();
+  });
+  it("normalizes WABLAS personal and group webhooks, including safe payment media", () => {
+    const env = { WABLAS_MEDIA_HOSTS: "cdn.example.test" };
+    const personal = normalizeWaIngress({ phone: "628000000002", sender: "device-1", pushName: "Pelanggan", messageType: "image", file: "proof.jpg", url: "https://cdn.example.test/proof.jpg", mimeType: "image/jpeg", id: "wablas-message-1" }, { provider: "wablas", env });
+    expect(personal).toMatchObject({ phone: "628000000002", name: "Pelanggan", type: "image", capture_media: true, processable: true });
+    expect(personal.payload.provider).toBe("wablas");
+    const group = normalizeWaIngress({ phone: "120363012345678901@g.us", isGroup: true, pushName: "Operator", group: { sender: "628000000003", subject: "Finance" }, messageType: "text", message: "expense" }, { provider: "wablas", env });
+    expect(group).toMatchObject({ is_group: true, phone: null, sender: "120363012345678901@g.us", member: "628000000003", processable: true });
+    expect(safeWablasMediaUrl("https://cdn.example.test/proof.jpg", { env })).toBe("https://cdn.example.test/proof.jpg");
+    expect(safeWablasMediaUrl("https://cdn.example.test.evil.invalid/proof.jpg", { env })).toBeNull();
   });
   it("recognizes safe image URLs in legacy text messages", () => {
     expect(normalizeWaIngress({ sender: sample.sender, type: "text", message: sample.url })).toMatchObject({ type: "image", capture_media: true });

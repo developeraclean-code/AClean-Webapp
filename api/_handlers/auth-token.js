@@ -9,7 +9,7 @@ import { clearWaProviderCache, normalizeWaProvider, testWaProvider } from "../_w
 export async function testConnection(req, res) {
   const type = (req.query&&req.query.type) || (req.body&&req.body.type) || "";
 
-  if (type === "wa" || type === "fonnte") {
+  if (type === "wa" || ["fonnte", "whacenter", "wablas"].includes(type)) {
     const requested = normalizeWaProvider(req.body?.provider || "fonnte");
     const result = await testWaProvider(requested || req.body?.provider);
     return res.status(200).json(result);
@@ -83,7 +83,7 @@ export async function setWaProvider(req, res) {
   res.setHeader("Cache-Control", "no-store");
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   const provider = normalizeWaProvider(req.body?.provider);
-  if (!provider) return res.status(400).json({ success: false, error: "Provider harus Fonnte atau WhaCenter" });
+  if (!provider) return res.status(400).json({ success: false, error: "Provider harus Fonnte, WhaCenter, atau WABLAS" });
 
   let callerRole = req.appClaims?.role || "";
   if (!callerRole && req.authUser?.id) {
@@ -101,11 +101,13 @@ export async function setWaProvider(req, res) {
   }
   if (callerRole !== "Owner") return res.status(403).json({ error: "Hanya Owner yang dapat mengganti provider WhatsApp" });
 
-  if (provider === "whacenter" && !process.env.WHACENTER_WEBHOOK_SECRET) {
-    return res.status(409).json({ success: false, provider_saved: false, provider, error: "WHACENTER_WEBHOOK_SECRET belum dikonfigurasi di server" });
+  const webhookSecretName = provider === "whacenter" ? "WHACENTER_WEBHOOK_SECRET"
+    : provider === "wablas" ? "WABLAS_WEBHOOK_SECRET" : null;
+  if (webhookSecretName && !process.env[webhookSecretName]) {
+    return res.status(409).json({ success: false, provider_saved: false, provider, error: `${webhookSecretName} belum dikonfigurasi di server` });
   }
-  if (provider === "whacenter" && /https?:\/\/|\s|[?&]token=|["']/i.test(process.env.WHACENTER_WEBHOOK_SECRET)) {
-    return res.status(409).json({ success: false, provider_saved: false, provider, error: "WHACENTER_WEBHOOK_SECRET harus berisi token saja, tanpa URL, tanda kutip, atau spasi" });
+  if (webhookSecretName && /https?:\/\/|\s|[?&]token=|["']/i.test(process.env[webhookSecretName])) {
+    return res.status(409).json({ success: false, provider_saved: false, provider, error: `${webhookSecretName} harus berisi token saja, tanpa URL, tanda kutip, atau spasi` });
   }
   const connection = await testWaProvider(provider);
   if (!connection.success) return res.status(409).json({ ...connection, provider_saved: false });

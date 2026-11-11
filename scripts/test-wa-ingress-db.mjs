@@ -1,7 +1,7 @@
 // Isolated PostgreSQL + actual capture function. Synthetic contacts only.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { normalizeWaIngress, safeWhacenterMediaUrl, safeFonnteMediaUrl } from '../api/_wa-ingress.js';
+import { normalizeWaIngress, safeWhacenterMediaUrl, safeFonnteMediaUrl, safeWablasMediaUrl } from '../api/_wa-ingress.js';
 const { PGlite } = await import(process.env.WA_PGLITE_MODULE || '@electric-sql/pglite');
 const db = new PGlite(); let passed = 0;
 const q = async (sql, args=[]) => (await db.query(sql,args)).rows;
@@ -19,6 +19,12 @@ try {
     CREATE TABLE invoices(id text,status text,total numeric);INSERT INTO invoices VALUES('KEEP','UNPAID',985000);
     CREATE TABLE invoice_payments(id text,amount numeric);
     CREATE TABLE payment_suggestions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),status text,validation_status text DEFAULT 'PENDING');
+    CREATE TABLE wa_outbox(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),phone text NOT NULL,actor text NOT NULL,message text NOT NULL,
+      kind text NOT NULL,document_id text,customer_id text,attachment_url text,status text NOT NULL,provider text,
+      provider_id text,message_id bigint,error text,finished_at timestamptz);
+    ALTER TABLE wa_outbox ADD CONSTRAINT wa_outbox_provider_check CHECK(provider IS NULL OR provider IN ('fonnte','whacenter'));
+    CREATE SCHEMA auth;
+    CREATE FUNCTION auth.role() RETURNS text LANGUAGE sql STABLE AS $$ SELECT 'service_role'::text $$;
     INSERT INTO app_settings VALUES('wa_payment_detect','true');`);
   await db.exec(readFileSync(new URL('../migrations/188_durable_wa_payment_media_queue.sql',import.meta.url),'utf8'));
   const migration = readFileSync(new URL('../migrations/214_durable_wa_ingress.sql',import.meta.url),'utf8');
@@ -89,6 +95,7 @@ try {
     }
   });
   const wha = n => normalizeWaIngress({from:'628000000008',to:'628000000001',type:'image',media:`https://app.whacenter.com/media/receipt-${n}.jpg`,timestamp:String(1792197446+n)}, {provider:'whacenter'});
+  const wablas = n => normalizeWaIngress({phone:'628000000009',sender:'628000000001',pushName:'Synthetic customer',messageType:'image',file:`proof-${n}.jpg`,url:`https://media.wablas.com/proof-${n}.jpg`,mimeType:'image/jpeg',id:`wablas-${n}`,timestamp:`2026-11-11T10:00:${String(n%60).padStart(2,'0')}Z`}, {provider:'wablas'});
   await check('reproduces WhaCenter media rejection by 214 before the forward fix',async()=>{
     await assert.rejects(capture(wha(900)),/URL media tidak aman/);
   });
@@ -184,6 +191,40 @@ try {
     await db.query("UPDATE wa_payment_media_jobs SET phone='628000000008',wa_message_id=NULL WHERE id=$1",[id]);
     await db.query('UPDATE wa_payment_media_jobs SET wa_message_id=$1 WHERE id=$2',[saved.message_id,id]);
     assert.equal((await one('SELECT image_url FROM wa_messages WHERE id::text=$1',[saved.message_id])).image_url,'/api/foto?key=wa-staging%2Fx.jpg');
+  });
+  await check('235 is idempotent, adds WABLAS to constraints and preserves old stored finance rows',async()=>{
+    const before=await q('SELECT * FROM invoices');
+    const migration=readFileSync(new URL('../migrations/235_wablas_provider_parity.sql',import.meta.url),'utf8');
+    await db.exec(migration);await db.exec(migration);
+    assert.deepEqual(await q('SELECT * FROM invoices'),before);
+    await db.query("INSERT INTO wa_outbox(phone,actor,message,kind,status,provider) VALUES('628000000001','Owner','ok','TEXT','ACCEPTED','wablas')");
+    await db.query("UPDATE wa_payment_media_jobs SET provider='wablas' WHERE id=(SELECT id FROM wa_payment_media_jobs LIMIT 1)");
+    await assert.rejects(db.query("UPDATE wa_outbox SET provider='unknown' WHERE provider='wablas'"),/wa_outbox_provider_check/);
+  });
+  await check('WABLAS media URL policy accepts only WABLAS hosts or explicit exact extras',async()=>{
+    const extra=['cdn.example.test'];
+    for(const value of ['https://media.wablas.com/photo.jpg','https://wablas.com/photo.pdf','https://cdn.example.test/photo.jpg']){
+      const safe=safeWablasMediaUrl(value,{env:{WABLAS_MEDIA_HOSTS:extra.join(',')}});
+      assert.equal((await one('SELECT wa_media_url_allowed_233($1,$2,$3) ok',[safe,'wablas',extra])).ok,true);
+    }
+    for(const value of ['https://media.wablas.com.evil.test/a.jpg','https://api.fonnte.com/a.jpg','https://cdn.example.test.evil.test/a.jpg']){
+      const safe=safeWablasMediaUrl(value,{env:{WABLAS_MEDIA_HOSTS:extra.join(',')}});
+      assert.equal(safe,null);
+      assert.equal((await one('SELECT wa_media_url_allowed_233($1,$2,$3) ok',[value,'wablas',extra])).ok,false);
+    }
+  });
+  await check('WABLAS webhook commits provider-tagged media once and supports per-request storage hosts',async()=>{
+    const value={...wablas(930),media_url:'https://cdn.example.test/proof-930.jpg'};const extra=['cdn.example.test'];
+    await assert.rejects(capture(value),/URL media tidak aman/);
+    const saved=(await one('SELECT capture_wa_webhook_214($1::jsonb,$2::text[]) result',[JSON.stringify(value),extra])).result;
+    assert.equal(saved.intake_status,'MEDIA_QUEUED');assert.equal(saved.media_job.provider,'wablas');
+    assert.equal((await one('SELECT capture_wa_webhook_214($1::jsonb,$2::text[]) result',[JSON.stringify(value),extra])).result.duplicate,true);
+    assert.equal((await one('SELECT provider FROM wa_payment_media_jobs WHERE id=$1',[saved.media_job.id])).provider,'wablas');
+  });
+  await check('WABLAS delivery acceptance stores its provider and ID through finish_wa_send',async()=>{
+    const inserted=await one("INSERT INTO wa_outbox(phone,actor,message,kind,status) VALUES('628000000001','Owner','WABLAS queued','TEXT','SENDING') RETURNING id");
+    const result=(await one('SELECT finish_wa_send($1::uuid,$2,$3,$4,$5) result',[inserted.id,'ACCEPTED',null,'wablas-message-1','wablas'])).result;
+    assert.equal(result.provider,'wablas');assert.equal(result.provider_id,'wablas-message-1');assert.equal(result.status,'ACCEPTED');
   });
   assert.equal((await one('SELECT count(*)::int n FROM invoice_payments')).n,0);
   assert.deepEqual(await q('SELECT * FROM invoices'),[{id:'KEEP',status:'UNPAID',total:'985000'}]);

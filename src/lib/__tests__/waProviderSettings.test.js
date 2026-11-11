@@ -12,8 +12,12 @@ beforeEach(() => {
   vi.stubEnv("SUPABASE_SERVICE_KEY", "service-test-key");
   vi.stubEnv("WHACENTER_DEVICE_ID", "device-test-id");
   vi.stubEnv("WHACENTER_WEBHOOK_SECRET", "webhook-test-secret");
+  vi.stubEnv("WABLAS_TOKEN", "wablas-test-token");
+  vi.stubEnv("WABLAS_SECRET_KEY", "wablas-test-secret");
+  vi.stubEnv("WABLAS_WEBHOOK_SECRET", "wablas-hook-secret");
   vi.stubGlobal("fetch", vi.fn(async url => {
     if (String(url).includes("statusDevice")) return new Response(JSON.stringify({ status: true, data: { status: "CONNECTED" } }), { status: 200 });
+    if (String(url).includes("device/info")) return new Response(JSON.stringify({ status: true, data: { active: true, status: "connected" } }), { status: 200 });
     return new Response(null, { status: 201 });
   }));
 });
@@ -52,6 +56,15 @@ describe("Owner WhatsApp provider setting", () => {
     expect(res.code).toBe(409);
     expect(res.body.provider_saved).toBe(false);
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("saves WABLAS only after connectivity succeeds and keeps secrets server-side", async () => {
+    const res = response();
+    await setWaProvider({ method: "POST", appClaims: { role: "Owner" }, body: { provider: "wablas" } }, res);
+    expect(res.code).toBe(200);
+    expect(res.body).toMatchObject({ provider: "wablas", provider_saved: true, success: true });
+    expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ key: "wa_provider", value: "wablas" });
+    expect(JSON.stringify(res.body)).not.toMatch(/wablas-test-token|wablas-test-secret|wablas-hook-secret/);
   });
 });
 

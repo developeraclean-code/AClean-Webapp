@@ -50,7 +50,7 @@ export async function dispatchWorkspaceMessage(db, id, payload, actor, deliver) 
   if (error) throw new Error(error.message);
   if (!claim.claimed) return { ...claim.row, replayed: true };
   let outcome;
-  try { outcome = await deliver(payload); }
+  try { outcome = await deliver({ ...payload, outbox_id: id }); }
   catch (error) { outcome = { status: "UNCERTAIN", error: error.message || "Koneksi terputus" }; }
   const { data: row, error: finishError } = await db.rpc("finish_wa_send", {
     p_id: id, p_status: outcome.status, p_error: outcome.error || null, p_provider_id: outcome.provider_id || null, p_provider: outcome.provider || null,

@@ -1,3 +1,5 @@
+import { wablasApiBase } from "./_wa-provider.js";
+
 // Bound public monitoring work and coalesce simultaneous pings per warm instance.
 // This cache is local to the function instance, never a global service SLA.
 export function createHealthCheck({ fetchImpl = (...args) => fetch(...args), now = Date.now,
@@ -31,7 +33,7 @@ export function createHealthCheck({ fetchImpl = (...args) => fetch(...args), now
       const started = now();
       const url = env.SUPABASE_URL || env.VITE_SUPABASE_URL, key = env.SUPABASE_SERVICE_KEY;
       const authKey = env.SUPABASE_ANON_KEY || env.VITE_SUPABASE_ANON_KEY || key;
-      const [supabase, auth, fonnte, whacenter] = await Promise.all([
+      const [supabase, auth, fonnte, whacenter, wablas] = await Promise.all([
         url && key ? probe(url + '/rest/v1/agent_logs?select=id&limit=1', {
           headers: { apikey: key, Authorization: `Bearer ${key}` },
         }) : 'not_configured',
@@ -43,6 +45,13 @@ export function createHealthCheck({ fetchImpl = (...args) => fetch(...args), now
         }, body => body?.status === true && body.device_status === 'connect') : 'not_configured',
         env.WHACENTER_DEVICE_ID ? probe(`https://app.whacenter.com/api/statusDevice?device_id=${encodeURIComponent(env.WHACENTER_DEVICE_ID)}`, {},
           body => body?.status === true && String(body.data?.status).toUpperCase() === 'CONNECTED') : 'not_configured',
+        env.WABLAS_TOKEN && env.WABLAS_SECRET_KEY ? (() => {
+          let url;
+          try { url = `${wablasApiBase(env)}/api/device/info?token=${encodeURIComponent(env.WABLAS_TOKEN)}`; }
+          catch { return Promise.resolve('fail:configuration'); }
+          return probe(url, { redirect: 'error' }, body => body?.status === true && body.data?.active === true
+            && String(body.data?.status || '').toLowerCase() === 'connected');
+        })() : 'not_configured',
       ]);
       const providers = [['ANTHROPIC_API_KEY','claude'],['OPENAI_API_KEY','openai'],['GROQ_API_KEY','groq'],['GEMINI_API_KEY','gemini']]
         .filter(([name]) => env[name]).map(([, name]) => name);
@@ -52,7 +61,7 @@ export function createHealthCheck({ fetchImpl = (...args) => fetch(...args), now
         : supabase !== 'ok' ? 'database_api_or_postgrest' : 'auth_service';
       cached = { status: diagnosis === 'none' ? 'healthy' : 'unhealthy', diagnosis,
         timestamp: new Date(now()).toISOString(), duration_ms: now() - started,
-        checks: { supabase, database: supabase, auth, fonnte, whacenter,
+        checks: { supabase, database: supabase, auth, fonnte, whacenter, wablas,
           ai: providers.length ? `ok:${providers.join(',')}` : 'not_configured' },
         version: (env.ACLEAN_BUILD_SHA || env.VERCEL_GIT_COMMIT_SHA)?.slice(0, 7) || 'dev' };
       expiresAt = now() + ttlMs;

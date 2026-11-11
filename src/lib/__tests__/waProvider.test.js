@@ -7,6 +7,9 @@ const env = {
   FONNTE_TOKEN: "fonnte-test-token",
   WHACENTER_DEVICE_ID: "device-test-id",
   WHACENTER_WEBHOOK_SECRET: "webhook-test-secret",
+  WABLAS_TOKEN: "wablas-test-token",
+  WABLAS_SECRET_KEY: "wablas-test-secret",
+  WABLAS_WEBHOOK_SECRET: "wablas-hook-secret",
 };
 
 afterEach(() => clearWaProviderCache());
@@ -74,5 +77,58 @@ describe("WhatsApp provider selection and delivery", () => {
     expect(missing.status).toBe(503);
     const failedFetch = vi.fn(async () => new Response(JSON.stringify({ status: false, message: "offline" }), { status: 200 }));
     await expect(testWaProvider("whacenter", { fetchImpl: failedFetch, env })).resolves.toMatchObject({ ok: false, success: false });
+  });
+
+  it("sends WABLAS text through V2 with provider credentials, reference, and group flag", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: true, data: { messages: [{ id: "wablas-id-1", status: "pending" }] } }), { status: 200 }));
+    const response = await sendWithConfiguredWaProvider({ method: "POST", body: JSON.stringify({
+      target: "120363012345678901@g.us", message: "laporan", outbox_id: "outbox-1",
+    }) }, { provider: "wablas", fetchImpl, env });
+    const [url, options] = fetchImpl.mock.calls[0];
+    expect(String(url)).toBe("https://wablas.com/api/v2/send-message");
+    expect(options.headers.get("Authorization")).toBe("wablas-test-token.wablas-test-secret");
+    expect(JSON.parse(options.body)).toEqual({ data: [{
+      phone: "120363012345678901@g.us", message: "laporan", isGroup: true, ref_id: "outbox-1",
+    }] });
+    expect(await response.json()).toMatchObject({ status: true, id: "wablas-id-1", ref_id: "outbox-1" });
+  });
+
+  it("recognizes WABLAS bare numeric group IDs from its inbound webhook shape", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: true, data: { messages: [{ id: "group-id" }] } }), { status: 200 }));
+    await sendWithConfiguredWaProvider({ method: "POST", body: JSON.stringify({ target: "120363064449269123", message: "group reply" }) }, { provider: "wablas", fetchImpl, env });
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body).data[0]).toMatchObject({ phone: "120363064449269123", isGroup: true });
+  });
+
+  it("sends WABLAS PDFs through the document endpoint and keeps timeout uncertain", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: true, data: { messages: [{ id: "pdf-id" }] } }), { status: 200 }));
+    const response = await sendWithConfiguredWaProvider({ method: "POST", body: JSON.stringify({
+      target: "628123456789", message: "Service report", url: "https://files.example.test/report.pdf",
+      filename: "Report Card.pdf", outbox_id: "outbox-pdf",
+    }) }, { provider: "wablas", fetchImpl, env });
+    expect(String(fetchImpl.mock.calls[0][0])).toBe("https://wablas.com/api/v2/send-document");
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body).data[0]).toMatchObject({
+      phone: "628123456789", document: "https://files.example.test/report.pdf", caption: "Service report",
+      filename: "Report_Card.pdf", isGroup: false, ref_id: "outbox-pdf",
+    });
+    expect((await response.json()).id).toBe("pdf-id");
+    const timeout = vi.fn(async () => { throw new Error("connection reset"); });
+    await expect(sendWithConfiguredWaProvider({ method: "POST", body: JSON.stringify({ target: "628123456789", message: "test" }) }, { provider: "wablas", fetchImpl: timeout, env })).rejects.toThrow("connection reset");
+    expect(timeout).toHaveBeenCalledTimes(1);
+  });
+
+  it("tests WABLAS device connectivity without exposing its token in diagnostics", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: true, data: { active: true, status: "connected" } }), { status: 200 }));
+    const result = await testWaProvider("wablas", { fetchImpl, env });
+    expect(result).toMatchObject({ success: true, provider: "wablas", message: "WABLAS terhubung" });
+    expect(String(fetchImpl.mock.calls[0][0])).toContain("/api/device/info?token=wablas-test-token");
+    expect(JSON.stringify(result)).not.toContain("wablas-test-token");
+  });
+
+  it("rejects messages over WABLAS's documented limit before sending", async () => {
+    const fetchImpl = vi.fn();
+    const response = await sendWithConfiguredWaProvider({ method: "POST", body: JSON.stringify({ target: "628123456789", message: "x".repeat(1025) }) }, { provider: "wablas", fetchImpl, env });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ status: false, reason: expect.stringContaining("1024") });
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

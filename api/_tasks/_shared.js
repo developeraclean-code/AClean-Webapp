@@ -23,10 +23,9 @@ export async function sendWAWithResult(phone, message, { retries = 0, timeoutMs 
   try { selectedProvider = await readSelectedWaProvider(); }
   catch (error) { return { ok: false, attempts: 0, error: error.message || "Pengaturan provider WhatsApp tidak tersedia" }; }
 
-  // WhaCenter is intentionally single-attempt: a timeout may mean it already
-  // accepted the message, so retrying could create a duplicate. Preserve the
-  // existing Fonnte retry behavior.
-  const maxAttempts = selectedProvider === "whacenter" ? 1 : Math.max(1, Math.min(3, Number(retries) + 1));
+  // WhaCenter and WABLAS are intentionally single-attempt: a timeout may mean
+  // the gateway already accepted the message, so retrying could duplicate it.
+  const maxAttempts = ["whacenter", "wablas"].includes(selectedProvider) ? 1 : Math.max(1, Math.min(3, Number(retries) + 1));
   let lastError = "Provider WA tidak merespons sukses";
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const controller = new AbortController();
