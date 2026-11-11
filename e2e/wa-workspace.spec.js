@@ -22,7 +22,7 @@ const chooseMaya = page => page.locator('.wa-conversation[data-phone="6281234567
 test("Workspace refreshes on Sunday night while visible and stops when closed",async({page})=>{
   await page.clock.install({time:new Date('2026-10-18T16:00:00Z')});
   await page.goto('https://wa-workspace.test/');
-  await expect(page.getByText('Refresh daftar aktif saat panel terlihat · termasuk malam hari',{exact:true})).toBeVisible();
+  await expect(page.getByText(/Terakhir diperbarui/)).toBeVisible();
   const before=await page.evaluate(()=>window.waTest.calls.filter(call=>call.type==='conversation-load').length);
   await page.evaluate(()=>{window.waTest.conversations[0]={...window.waTest.conversations[0],last_message:'Pesan masuk malam hari (simulasi)'};});
   await page.clock.fastForward(61000);
