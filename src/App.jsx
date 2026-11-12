@@ -2874,7 +2874,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
     // yang sudah no-op — wa_conversations/wa_messages tidak ada di publication realtime).
     const _waMonitorOn = appSettings?.wa_monitor_enabled === "true";
     const _pollWa = _waMonitorOn ? startAdaptivePolling({ canRun: _shouldPoll, intervalMs: POLL_MS,
-      load: signal => fetchWaConversations(supabase, 100).abortSignal(signal),
+      load: signal => fetchWaConversations(supabase).abortSignal(signal),
       onError: () => _reportPollHealth("wa", false),
       onResult: res => {
         _reportPollHealth("wa", true);

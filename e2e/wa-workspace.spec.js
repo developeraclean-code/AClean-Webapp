@@ -719,3 +719,54 @@ test('hourly grid shows the approximate area and planning lets admin correct it'
   await expect(page.getByLabel('Timeline harian').locator('.team-time-lane').filter({has:page.locator('button[data-area="BSD"]')}).locator('.team-time-slot-area')).toContainText('📍 BSD');
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
+
+
+test('inbox loads 200 contacts and resolves registered technician/helper names on desktop and mobile', async ({page}) => {
+  await page.evaluate(() => {
+    const state=window.waTest;
+    state.conversations[2].name=state.conversations[2].phone;
+    state.staff.push({id:'tech',name:'Rian Saputra',phone:'081234567892',role:'Teknisi',active:true});
+    for(let i=3;i<205;i++) state.conversations.push({id:'extra-'+i,phone:'62819999'+String(i).padStart(4,'0'),name:'Kontak '+i});
+    state.staff.push({id:'helper',name:'Danu Pratama',phone:state.conversations[199].phone,role:'Helper',active:true});
+    state.staff.push({id:'inactive',name:'Staf nonaktif',phone:state.conversations[198].phone,role:'Helper',active:false});
+  });
+  await page.getByRole('button',{name:'Muat ulang percakapan',exact:true}).click();
+  await expect(page.getByText('AClean · Fonnte · 200 percakapan dimuat')).toBeVisible();
+  await expect(page.locator('.wa-conversation')).toHaveCount(200);
+  expect(await page.evaluate(()=>window.waTest.calls.filter(c=>c.type==='conversation-load').at(-1).limit)).toBe(200);
+  const tech=page.locator('.wa-conversation[data-phone="6281234567892"]');
+  await expect(tech).toContainText('Rian Saputra');
+  await expect(tech).toContainText('Teknisi terdaftar');
+  await tech.click();
+  await expect(page.locator('.wa-chat-header h3')).toHaveText('Rian Saputra');
+  await page.getByLabel('Pesan WhatsApp').fill('Uji staf');
+  await page.getByRole('button',{name:'Kirim ↗',exact:true}).click();
+  expect(await page.evaluate(()=>window.waTest.calls.find(c=>c.type==='send').phone)).toBe('6281234567892');
+  await page.getByLabel('Cari percakapan').fill('Pratama');
+  await expect(page.locator('.wa-conversation')).toHaveCount(1);
+  await expect(page.locator('.wa-conversation')).toContainText('Helper terdaftar');
+  await page.getByLabel('Hapus pencarian').click();
+  await page.getByRole('button',{name:'Baru',exact:true}).click();
+  await expect(page.locator('.wa-conversation').filter({hasText:'Rian Saputra'})).toHaveCount(0);
+  await expect(page.locator('.wa-conversation').filter({hasText:'Danu Pratama'})).toHaveCount(0);
+  await page.getByRole('button',{name:'Semua',exact:true}).click();
+  await page.setViewportSize({width:390,height:844});
+  await page.getByRole('button',{name:'Kembali ke daftar chat',exact:true}).click();
+  await page.getByLabel('Cari percakapan').fill('Rian');
+  await expect(tech).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.screenshot({path:'/tmp/aclean-wa-staff-mobile.png'});
+  const before=await page.evaluate(()=>window.waTest.calls.filter(c=>c.type==='staff-lookup').length);
+  await page.clock.install(); await page.clock.fastForward(61000);
+  expect(await page.evaluate(()=>window.waTest.calls.filter(c=>c.type==='staff-lookup').length)).toBe(before);
+});
+
+test('staff lookup failure is visible and manual refresh recovers', async ({page}) => {
+  await page.evaluate(()=>{window.waTest.staffLookupError=true;});
+  await page.getByRole('button',{name:'Muat ulang percakapan',exact:true}).click();
+  await expect(page.getByRole('alert').filter({hasText:'Nama teknisi/helper'})).toBeVisible();
+  await page.evaluate(()=>{window.waTest.staffLookupError=false;window.waTest.staff.push({id:'helper',name:'Danu Pratama',phone:'081234567892',role:'Helper',active:true});});
+  await page.getByRole('button',{name:'Coba lagi nama staf'}).click();
+  await expect(page.getByRole('alert').filter({hasText:'Nama teknisi/helper'})).toHaveCount(0);
+  await expect(page.locator('.wa-conversation[data-phone="6281234567892"]')).toContainText('Danu Pratama');
+});

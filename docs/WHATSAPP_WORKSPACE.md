@@ -6,6 +6,8 @@ Buka tombol **WhatsApp** dari dashboard/sidebar (Owner/Admin, pengaturan `wa_mon
 - Layar lebih kecil: ringkasan dapat dibuka melalui **Aksi pelanggan**. Di HP, tombol kembali menampilkan daftar chat.
 - Cari nama, nomor, atau cuplikan pesan dari percakapan yang dimuat. Filter **Belum dibaca** dan **Baru** membantu memilah kontak.
 - Nama utama inbox/header mengikuti daftar **Customer** berdasarkan kecocokan nomor, meskipun menu Customer belum dibuka. Nomor tujuan tetap terlihat; alias WhatsApp menjadi keterangan tambahan. Nama beberapa lokasi ditampilkan bersama sampai lokasi dipilih. Pencarian Customer hanya mengambil nomor dalam inbox saat panel dibuka atau di-refresh, tanpa polling tambahan. Jika gagal, tampil peringatan dan pembuatan customer/jadwal ditahan sampai verifikasi berhasil.
+- Daftar inbox memuat maksimal **200 percakapan terbaru**. Batas yang sama dipakai saat bootstrap, polling latar belakang, dan refresh panel; pembaruan tidak memangkas kembali ke 100. Polling panel tetap 60 detik ketika terlihat.
+- Nomor profil **Teknisi/Helper aktif** memakai nama terdaftar di inbox/header, dengan label **Teknisi terdaftar** atau **Helper terdaftar**, dapat dicari berdasarkan nama, dan tidak masuk filter **Baru**. Lookup `user_profiles` hanya membaca `id,name,phone,role` melalui sesi Owner/Admin dan RLS, sekali saat panel dibuka/manual refresh; tidak menambah kontak ke `lab_team_directory`/`team_directory_safe`. Pencocokan memakai nomor lengkap ternormalisasi. Staf diprioritaskan pada judul, sementara pilihan lokasi Customer eksplisit tetap dihormati. Nomor tujuan dan konteks invoice/order tetap memakai data pelanggan yang sudah ada. Kegagalan lookup staf ditampilkan dengan tombol coba lagi.
 - Riwayat dimulai dari 100 pesan terbaru; **Muat pesan sebelumnya** menambah riwayat. Percakapan aktif diperbarui setiap 15 detik saat tab terlihat.
 - Draf terpisah per nomor selama sesi panel. Balasan cepat menambahkan teks ke draf; pesan baru dikirim lewat **Kirim** atau Enter di desktop. Shift+Enter membuat baris baru. Di HP, Enter selalu membuat baris baru.
 - Jika nomor memiliki beberapa lokasi pelanggan, pilih lokasi sebelum membuat jadwal/reorder atau melihat tagihan.
@@ -92,3 +94,19 @@ Migrasi **193 dan 194 sudah diterapkan pada produksi pada 5 Oktober 2026 (WIB)**
 4. Di staging, uji akun Owner/Admin dan akun yang ditolak, satu nomor uji yang disetujui, PDF invoice/laporan, pembayaran parsial, dua admin bersamaan, serta reminder manual/cron. Pastikan status gateway dan audit database sesuai.
 
 Schema produksi dan transaksi inti sudah diuji. Pengiriman Fonnte nyata, upload PDF, dan race lintas koneksi/jalur lama masih perlu uji terkontrol. Preview lokal tetap simulasi. Outbox memakai UUID permintaan dan menyimpan ID pesan bigint yang dibuat database; retry finalisasi tidak membuat pesan/audit ganda. Bukti bayar ditautkan ke ledger melalui catatan suggestion dan receipt alokasi, tanpa mengandalkan kolom `invoice_payments.payment_id` yang tidak ada.
+
+## Perubahan lokal 12 November 2026 — nama staf dan inbox 200
+
+Implementasi di atas lulus 1.736 tes Vitest, 42 tes browser terisolasi, lint,
+typecheck, build, dan pemeriksaan nomor migrasi. Tidak membutuhkan migrasi baru.
+Skema/RLS produksi diperiksa read-only; simulasi Owner/Admin masing-masing dapat
+membaca 16 profil lapangan aktif. Ini belum login browser staf nyata atau rilis
+produksi. Pada tahap implementasi awal tidak ada commit, push, deploy, perubahan
+konfigurasi VPS, atau mutasi bisnis. Status persiapan rilis berikutnya dicatat
+di laporan kapasitas. Pengukuran kapasitas dan batas kesimpulannya ada di
+[WA_WORKSPACE_CAPACITY_2026-11-12.md](WA_WORKSPACE_CAPACITY_2026-11-12.md).
+
+Persiapan kandidat rilis berikutnya memakai `main` GitHub `960e98c` dan branch
+`codex/wa-staff-inbox-200`; pengujian ulang menghasilkan 1.750 tes unit dan 42
+tes browser lulus. Ini belum bukti deployment. Metadata sumber Coolify belum
+bisa diverifikasi karena token API tersimpan menerima HTTP 401.
