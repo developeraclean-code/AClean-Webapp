@@ -59,6 +59,7 @@ window.waTest = { sendResult: true, sendDelay: 0, delays: {}, calls: [], history
 window.waTest.proofs = demoProofs;
 window.waTest.invoices = demoInvoices;
 window.waTest.customers = customers;
+window.waTest.staff = [];
 window.waTest.conversations = conversations;
 window.waTest.presets = presets;
 window.waTest.rosters = rosters;
@@ -111,7 +112,7 @@ const db = {
     const q = { mode: "read", phone: null, payload: null, date: null, from: null, to: null,
       select() { return this; }, eq(key, value) { if (key === "phone") this.phone = value; if(key==="date")this.date=value; if(key==="id")this.id=value; return this; },
       in(key,values) { if(key==="phone")this.phones=values; return this; }, gte(key,value) { if(key==="date")this.from=value; return this; }, neq() { return this; }, ilike() { return this; }, or() { return this; },
-      lte(key,value) { if(key==="date")this.to=value; return this; }, order() { return this; }, limit() { return this; }, single() { return this; },
+      lte(key,value) { if(key==="date")this.to=value; return this; }, order() { return this; }, limit(value) { this.rowLimit=value; return this; }, single() { return this; },
       range(start,end) { this.pageStart=start;this.pageEnd=end;return this; },
       update(value) { this.mode = "update"; this.payload = value; return this; },
       insert(value) { this.mode = "insert"; this.payload = value; return this; },
@@ -129,6 +130,9 @@ const db = {
             window.waTest.calls.push({type:"customer-lookup",phones:this.phones});
             await new Promise(r=>setTimeout(r,window.waTest.customerDelay || 0));
             resolve(window.waTest.customerLookupError?{error:{message:"Daftar Customer tidak tersedia"}}:{data:customers.filter(c=>!this.phones || this.phones.includes(c.phone)).slice(this.pageStart || 0,(this.pageEnd ?? 199)+1)});
+          } else if (this.mode === "read" && table === "user_profiles") {
+            window.waTest.calls.push({type:'staff-lookup'});
+            resolve(window.waTest.staffLookupError ? {error:{message:'Staf tidak tersedia'}} : {data:window.waTest.staff.filter(s=>s.active && ['Teknisi','Helper'].includes(s.role)).slice(this.pageStart || 0,(this.pageEnd ?? 199)+1)});
           } else if (this.mode === "insert" && table === "orders") {
             window.waTest.calls.push({ type: "planning-save", row: this.payload });
             if (window.waTest.planningSaveError) resolve({ error: { message: "Database tidak tersedia" } });
@@ -151,7 +155,7 @@ const db = {
             const rows=table==="orders"?demoOrders:table==="daily_team_slots"?rosters:table==="technician_availability"?absences:presets;
             resolve(window.waTest.scheduleError?{error:{message:"Jadwal gagal dimuat"}}:{data:rows.filter(o=>(!this.date||o.date===this.date)&&(!this.from||o.date>=this.from)&&(!this.to||o.date<=this.to))});
           }
-          else if(table==="wa_conversations") { window.waTest.calls.push({type:"conversation-load"});resolve(window.waTest.conversationError?{error:{message:"Daftar WA terputus"}}:{data:[...conversations]}); }
+          else if(table==="wa_conversations") { window.waTest.calls.push({type:"conversation-load",limit:this.rowLimit});resolve(window.waTest.conversationError?{error:{message:"Daftar WA terputus"}}:{data:conversations.slice(0,this.rowLimit)}); }
           else resolve({ data: [] });
         } catch (error) { reject(error); }
       },

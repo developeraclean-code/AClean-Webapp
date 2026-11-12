@@ -87,10 +87,27 @@ export async function fetchWaCustomers(supabase, phones) {
   return [...rows.values()];
 }
 
-export function waCustomerTitle(conv, locations = [], selectedId = '') {
+export function waCustomerTitle(conv, locations = [], selectedId = '', staff = []) {
   const matches = locations.filter(c => samePhone(c.phone, conv?.phone));
   const selected = matches.find(c => String(c.id) === String(selectedId));
   if (selected?.name?.trim()) return selected.name.trim();
+  const staffNames = [...new Set(staff.filter(s => samePhone(s.phone, conv?.phone)).map(s => s.name?.trim()).filter(Boolean))];
+  if (staffNames.length) return staffNames.join(' / ');
   const names = [...new Set(matches.map(c => c.name?.trim()).filter(Boolean))].sort((a,b) => a.localeCompare(b,'id'));
   return names.join(' / ') || conv?.name?.trim() || conv?.phone || 'Kontak WhatsApp';
+}
+
+// Owner/Admin workspace only; keep profile contacts out of the shared scheduling view.
+// Read the small active roster once per open/manual refresh, with caller RLS.
+export async function fetchWaStaff(supabase) {
+  const rows = [];
+  for (let from = 0; ; from += 200) {
+    const { data, error } = await supabase.from('user_profiles')
+      .select('id,name,phone,role').eq('active', true).in('role', ['Teknisi', 'Helper'])
+      .order('id').range(from, from + 199);
+    if (error) throw new Error(error.message || 'Nama staf gagal dimuat');
+    rows.push(...(data || []));
+    if ((data || []).length < 200) break;
+  }
+  return rows.filter(row => row.name?.trim() && /^\d{8,15}$/.test(normalizePhone(row.phone)));
 }

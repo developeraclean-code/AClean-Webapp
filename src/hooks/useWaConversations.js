@@ -9,7 +9,7 @@ export function useWaConversations({ supabase, enabled, onData }) {
   useEffect(() => {
     if (!enabled) return;
     const poll = startWaConversationPolling({ load: async () => {
-      const { data, error } = await fetchWaConversations(supabase, 100);
+      const { data, error } = await fetchWaConversations(supabase);
       if (error) throw new Error(error.message || "Gagal membaca percakapan");
       return data || [];
     }, onData: rows => callback.current(rows), onState: update => setState(previous => ({ ...previous, ...update })) });

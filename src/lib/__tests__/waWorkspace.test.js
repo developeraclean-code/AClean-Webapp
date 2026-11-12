@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createWaOrderDraft, createWaPlanningForm, customerRecords, fetchWaCustomers, waCustomerTitle, fetchWaHistory, invoiceBalance, matchesConversation, paymentReminder } from "../waWorkspace.js";
+import { createWaOrderDraft, createWaPlanningForm, customerRecords, fetchWaCustomers, fetchWaStaff, waCustomerTitle, fetchWaHistory, invoiceBalance, matchesConversation, paymentReminder } from "../waWorkspace.js";
 
 const customers = [
   { id: "a", name: "Bapak Andi Rumah", phone: "081234567890", address: "Rumah" },
@@ -102,5 +102,31 @@ describe('WhatsApp customer identity lookup', () => {
     const from=vi.fn(); expect(await fetchWaCustomers({from},['','bad'])).toEqual([]);expect(from).not.toHaveBeenCalled();
     const q={select:()=>q,in:()=>q,order:()=>q,range:async()=>({error:{message:'offline'}})};
     await expect(fetchWaCustomers({from:()=>q},['6281234567890'])).rejects.toThrow('offline');
+  });
+});
+
+describe('WhatsApp registered field staff', () => {
+  it('uses exact normalized staff numbers and names without changing customer billing identity', () => {
+    const conv = { phone: '6281234567890', name: '6281234567890' };
+    const staff = [{ id: 't', name: 'Rian Saputra', phone: '081234567890', role: 'Teknisi' }];
+    expect(waCustomerTitle(conv, customers, '', staff)).toBe('Rian Saputra');
+    expect(waCustomerTitle(conv, customers, 'a', staff)).toBe('Bapak Andi Rumah');
+    expect(waCustomerTitle({ ...conv, phone: '6281234567899' }, [], '', staff)).toBe(conv.name);
+    expect(matchesConversation(conv, staff, 'saputra')).toBe(true);
+    expect(conv.phone).toBe('6281234567890');
+    expect(customerRecords([{customer_id:'a'}], customers[0], conv.phone, customers)).toHaveLength(1);
+  });
+  it('reads only active field staff contact fields under caller permissions and surfaces errors', async () => {
+    const q = {select:vi.fn().mockReturnThis(),eq:vi.fn().mockReturnThis(),in:vi.fn().mockReturnThis(),order:vi.fn().mockReturnThis(),range:vi.fn().mockResolvedValue({data:[
+      {id:'h',name:'Danu',phone:'+62 812-3456-7890',role:'Helper'},
+      {id:'empty',name:' ',phone:'081234567890',role:'Helper'},
+      {id:'bad',name:'Invalid',phone:'',role:'Helper'},
+    ]})};
+    expect(await fetchWaStaff({from:()=>q})).toHaveLength(1);
+    expect(q.select).toHaveBeenCalledWith('id,name,phone,role');
+    expect(q.eq).toHaveBeenCalledWith('active',true);
+    expect(q.in).toHaveBeenCalledWith('role',['Teknisi','Helper']);
+    q.range.mockResolvedValue({error:{message:'offline'}});
+    await expect(fetchWaStaff({from:()=>q})).rejects.toThrow('offline');
   });
 });

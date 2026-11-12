@@ -119,7 +119,7 @@ export async function loadAllData({
         const _pUsers = read(() => fetchUserAccounts(supabase));
         const _pTek = _pUsers;
         const _pUA = _pUsers;
-        const _pWA = criticalBootstrap ? Promise.resolve({ data: null }) : read(() => fetchWaConversations(supabase, 100));
+        const _pWA = criticalBootstrap ? Promise.resolve({ data: null }) : read(() => fetchWaConversations(supabase));
         const _pPL = read(() => fetchPriceList(supabase));
         const _pBrain = criticalBootstrap ? Promise.resolve({ data: null }) : read(() => fetchAraBrain(supabase));
 

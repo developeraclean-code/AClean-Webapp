@@ -3,7 +3,7 @@ import AraReviewPanel from "./AraReviewPanel.jsx";
 import WaMessageAttachment from "../components/WaMessageAttachment.jsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { normalizePhone, samePhone, formatPhone } from "../lib/phone.js";
-import { createWaOrderDraft, customerRecords, fetchWaCustomers, waCustomerTitle, fetchWaHistory, invoiceBalance, matchesConversation, paymentReminder, waMoney } from "../lib/waWorkspace.js";
+import { createWaOrderDraft, customerRecords, fetchWaCustomers, fetchWaStaff, waCustomerTitle, fetchWaHistory, invoiceBalance, matchesConversation, paymentReminder, waMoney } from "../lib/waWorkspace.js";
 import "./WaPanel.css";
 import WaOperationsPanel from "./WaOperationsPanel.jsx";
 import { WA_STATES, SEND_STATES, isDue } from "../lib/waOperations.js";
@@ -26,6 +26,7 @@ export default function WaPanel({
   technicians = [], duration, reports = [], onAppliedPayments, onSendDocument, sendWorkspaceMessage, onOpenCatalog, priceListData = [],
 }) {
   const [customerLookup, setCustomerLookup] = useState({ rows: [], verified: [], error: '' });
+  const [staffLookup, setStaffLookup] = useState({ rows: [], error: '' });
   const [customerRefresh, setCustomerRefresh] = useState(0);
   const [paymentContext, setPaymentContext] = useState({ phone: null, suggestions: [], invoices: [], loading: true, error: "" });
   const [followups, setFollowups] = useState({});
@@ -91,6 +92,27 @@ export default function WaPanel({
     });
     return()=>{cancelled=true;};
   },[open,isOwnerAdmin,supabase,contactPhones,customerRefresh]);
+  useEffect(() => {
+    if (!open || !isOwnerAdmin) return;
+    let cancelled = false;
+    setStaffLookup({ rows: [], error: '' });
+    fetchWaStaff(supabase).then(rows => {
+      if (!cancelled) setStaffLookup({ rows, error: '' });
+    }).catch(error => {
+      if (!cancelled) setStaffLookup({ rows: [], error: error.message });
+    });
+    return () => { cancelled = true; };
+  }, [open, isOwnerAdmin, supabase, customerRefresh]);
+  const staffByPhone = useMemo(() => {
+    const map = new Map();
+    staffLookup.rows.forEach(row => {
+      const key = normalizePhone(row.phone);
+      map.set(key, [...(map.get(key) || []), row]);
+    });
+    return map;
+  }, [staffLookup.rows]);
+  const selectedStaff = staffByPhone.get(normalizePhone(phone)) || [];
+  const staffLabel = rows => [...new Set(rows.map(row => row.role))].join(' / ') + ' terdaftar';
   const verifiedPhones = useMemo(()=>new Set(customerLookup.verified),[customerLookup.verified]);
   const contextCustomers = useMemo(()=>{
     const rows = new Map(customersData.filter(c=>!verifiedPhones.has(normalizePhone(c.phone))).map(c=>[c.id,c]));
@@ -137,8 +159,9 @@ export default function WaPanel({
   const unreadCount = waConversations.filter(c => c.unread > 0).length;
   const filtered = waConversations.filter(conv => {
     const known = byPhone.get(normalizePhone(conv.phone)) || [];
-    return (filter !== "due" || isDue(followups[conv.phone])) && (filter !== "open" || followups[conv.phone]?.status !== "DONE") && (filter !== "unread" || conv.unread > 0) && (filter !== "new" || (verifiedPhones.has(normalizePhone(conv.phone)) && !known.length)) &&
-      matchesConversation(conv, known, waSearch);
+    const staff = staffByPhone.get(normalizePhone(conv.phone)) || [];
+    return (filter !== "due" || isDue(followups[conv.phone])) && (filter !== "open" || followups[conv.phone]?.status !== "DONE") && (filter !== "unread" || conv.unread > 0) && (filter !== "new" || (verifiedPhones.has(normalizePhone(conv.phone)) && !known.length && !staff.length)) &&
+      matchesConversation(conv, [...known, ...staff], waSearch);
   });
   const inboxLoading = conversationFeed.loading && !conversationFeed.updatedAt;
   const inboxUnavailable = Boolean(conversationFeed.error && !conversationFeed.updatedAt);
@@ -329,7 +352,7 @@ export default function WaPanel({
 
   if (!open || !isOwnerAdmin) return null;
   const visibleMessages = waMessages.filter(m => samePhone(m.phone, phone));
-  const person = waCustomerTitle(selectedConv,locations,customerId);
+  const person = waCustomerTitle(selectedConv,locations,customerId,selectedStaff);
   const selectedCatalog = draftContext?.kind === "CATALOG" ? catalogItems.find(item => item.id === draftContext.catalog_id) : null;
   const selectedCatalogPrice = selectedCatalog ? catalogPrice(selectedCatalog, priceListData, catalogAcPrices) : undefined;
 
@@ -353,18 +376,20 @@ export default function WaPanel({
               <div className="wa-filters">{[["all", "Semua"], ["unread", "Belum dibaca"], ["new", "Baru"], ["open", "Belum selesai"], ["due", "Jatuh follow-up"]].map(([key, label]) => <button key={key} aria-pressed={filter === key} className={filter === key ? "active" : ""} onClick={() => setFilter(key)}>{label}</button>)}</div>
             </div>
             {customerLookup.error && <p className="wa-ops-error" role="alert">Nama Customer belum dapat diverifikasi: {customerLookup.error} <button onClick={()=>setCustomerRefresh(k=>k+1)}>Coba lagi nama pelanggan</button></p>}
+            {staffLookup.error && <p className="wa-ops-error" role="alert">Nama teknisi/helper belum dapat diverifikasi: {staffLookup.error} <button onClick={()=>setCustomerRefresh(k=>k+1)}>Coba lagi nama staf</button></p>}
             {opsError && <p className="wa-ops-error" role="alert">{opsError} <button onClick={()=>setRefreshKey(k=>k+1)}>Muat ulang</button></p>}
             <div className="wa-conversations">
               {!filtered.length && <div className="wa-empty" role={inboxUnavailable ? "alert" : inboxLoading ? "status" : undefined}><span>⌕</span><strong>{inboxLoading ? "Memuat percakapan…" : inboxUnavailable ? "Percakapan belum dapat dimuat" : waSearch || filter !== "all" ? "Tidak ada percakapan yang cocok" : "Belum ada pesan masuk"}</strong><p>{inboxLoading ? "Daftar WhatsApp sedang diperbarui." : inboxUnavailable ? "Coba muat ulang setelah koneksi pulih." : waSearch || filter !== "all" ? "Ubah pencarian atau filter untuk melihat chat lainnya." : "Percakapan dari gateway WhatsApp akan muncul di sini."}</p></div>}
               {filtered.map(conv => {
                 const known = byPhone.get(normalizePhone(conv.phone)) || [];
-                const name = waCustomerTitle(conv,known);
+                const staff = staffByPhone.get(normalizePhone(conv.phone)) || [];
+                const name = waCustomerTitle(conv,known,'',staff);
                 const verified = verifiedPhones.has(normalizePhone(conv.phone));
                 return <button data-phone={normalizePhone(conv.phone)} key={conv.id || conv.phone} className={`wa-conversation ${phone === conv.phone ? "active" : ""}`} onClick={() => selectConversation(conv)} aria-pressed={phone === conv.phone}>
-                  <span className={`wa-avatar ${known.length ? "known" : ""}`}>{initials(name)}</span>
+                  <span className={`wa-avatar ${known.length || staff.length ? "known" : ""}`}>{initials(name)}</span>
                   <span className="wa-conversation-copy"><span className="wa-conversation-title"><strong title={name}>{name}</strong><small>{timeLabel(conv.updated_at)}</small></span>
                     <span className="wa-conversation-phone">{formatPhone(conv.phone)}</span>
-                    <span className="wa-customer-label">{!verified ? (customerLookup.error ? 'Nama belum terverifikasi' : 'Memeriksa pelanggan…') : known.length > 1 ? `${known.length} lokasi pelanggan · pilih lokasi` : known.length ? 'Pelanggan terdaftar' : 'Kontak baru'}</span>
+                    <span className="wa-customer-label">{staff.length ? staffLabel(staff) : !verified ? (customerLookup.error ? 'Nama belum terverifikasi' : 'Memeriksa pelanggan…') : known.length > 1 ? `${known.length} lokasi pelanggan · pilih lokasi` : known.length ? 'Pelanggan terdaftar' : 'Kontak baru'}</span>
                     {followups[conv.phone] && <span className="wa-customer-label">{isDue(followups[conv.phone])?"⏰ ":""}{WA_STATES[followups[conv.phone].status]}{followups[conv.phone].assignee?` · ${followups[conv.phone].assignee}`:""}</span>}
                     <span className="wa-conversation-preview"><span>{conv.last_message || conv.last || conv.last_reply || "Belum ada pesan"}</span>{conv.unread > 0 && <b className="wa-unread">{conv.unread > 99 ? "99+" : conv.unread}</b>}</span>
                   </span>
@@ -374,7 +399,7 @@ export default function WaPanel({
           </aside>
           <main className="wa-chat" aria-label="Percakapan WhatsApp">
             {!selectedConv ? <div className="wa-welcome"><div className="wa-welcome-icon">◉</div><span className="wa-eyebrow">WHATSAPP × ACLEAN</span><h2>Setiap chat, langkah berikutnya.</h2><p>Pilih percakapan untuk membalas pelanggan, menjadwalkan servis, dan menindaklanjuti pembayaran.</p><div className="wa-welcome-features"><span>↗ Jadwalkan servis</span><span>↻ Reorder</span><span>↗ Pembayaran</span></div><small>Riwayat yang tersedia berasal dari gateway WhatsApp AClean.</small></div> : <>
-              <header className="wa-chat-header"><button className="wa-icon-button wa-back" onClick={() => selectConversation(null)} aria-label="Kembali ke daftar chat">‹</button><span className="wa-avatar known">{initials(person)}</span><div className="wa-grow"><h3>{person}</h3><p>{formatPhone(phone)} <span>· {!customerVerified ? "Nama belum terverifikasi" : locations.length ? "Pelanggan terdaftar" : "Kontak baru"}</span></p>{selectedConv.name && selectedConv.name !== person && <small className="wa-whatsapp-alias">Nama WhatsApp: {selectedConv.name}</small>}</div><button className="wa-context-toggle" aria-expanded={contextOpen} onClick={() => setContextOpen(v => !v)}>Aksi pelanggan ☷</button></header>
+              <header className="wa-chat-header"><button className="wa-icon-button wa-back" onClick={() => selectConversation(null)} aria-label="Kembali ke daftar chat">‹</button><span className="wa-avatar known">{initials(person)}</span><div className="wa-grow"><h3>{person}</h3><p>{formatPhone(phone)} <span>· {selectedStaff.length ? staffLabel(selectedStaff) : !customerVerified ? "Nama belum terverifikasi" : locations.length ? "Pelanggan terdaftar" : "Kontak baru"}</span></p>{selectedConv.name && selectedConv.name !== person && <small className="wa-whatsapp-alias">Nama WhatsApp: {selectedConv.name}</small>}</div><button className="wa-context-toggle" aria-expanded={contextOpen} onClick={() => setContextOpen(v => !v)}>Aksi pelanggan ☷</button></header>
               <div className="wa-action-strip"><span className="wa-connected">● {customer?.name || (needsLocation ? "Pilih lokasi di panel aksi" : "WhatsApp AClean")}</span><button disabled={needsLocation || !customerVerified} onClick={() => createOrder(null)}>+ Jadwalkan</button><button disabled={!previousOrder || needsLocation || !customerVerified} onClick={() => createOrder(previousOrder)}>↻ Reorder</button><button onClick={() => { setContextOpen(true); document.getElementById("wa-payments")?.scrollIntoView({ block: "nearest" }); }}>Pembayaran {invoices.length ? `(${invoices.length})` : ""}</button></div>
               <AraReviewPanel key={phone} supabase={supabase} phone={phone} onCopy={text => insertDraft(text)} />
               {historyError && <div className="wa-error" role="alert">{historyError} <button onClick={() => setRefreshKey(k => k + 1)}>Coba lagi</button></div>}
