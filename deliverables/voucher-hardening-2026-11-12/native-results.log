@@ -1,0 +1,10 @@
+PASS simultaneous same request has one save and one replay
+PASS one voucher raced across two invoices has one winner
+PASS concurrent different requests for one invoice cannot overwrite a saved version
+PASS blocked invoice times out rather than waits indefinitely
+PASS PPh amount is grossed up with the supported legacy alternate rate
+PASS payment ledger independently blocks discounting even if invoice cache is stale
+PASS loyalty baseline includes only PAID and normalized phone without historic awards
+PASS crossed milestone is issued exactly once under concurrent task calls
+PASS winback is independent, normalized, avoids active orders and duplicates
+{"passed":9,"failed":0,"scope":"native PostgreSQL; concurrent independent connections; fictional records only"}

@@ -1,0 +1,8 @@
+
+ RUN  v4.1.7 /private/tmp/aclean-voucher-hardening-20261112
+
+
+ Test Files  156 passed (156)
+      Tests  1791 passed (1791)
+   Start at  08:14:51
+   Duration  2.86s (transform 3.09s, setup 0ms, import 8.00s, tests 4.26s, environment 7ms)

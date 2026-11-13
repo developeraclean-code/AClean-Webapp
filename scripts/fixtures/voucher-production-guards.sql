@@ -143,4 +143,3 @@ CREATE TRIGGER auto_fix_invoice_materials_update BEFORE UPDATE ON public.invoice
 CREATE TRIGGER trg_guard_combined_transfer_229 BEFORE DELETE OR UPDATE ON public.invoices FOR EACH ROW EXECUTE FUNCTION guard_combined_transfer_229();
 CREATE TRIGGER trg_guard_invoice_total_against_payments BEFORE UPDATE OF total ON public.invoices FOR EACH ROW WHEN ((new.total IS DISTINCT FROM old.total)) EXECUTE FUNCTION guard_invoice_total_against_payments();
 CREATE TRIGGER trg_guard_reviewed_withholding_212 BEFORE INSERT OR DELETE OR UPDATE ON public.invoices FOR EACH ROW EXECUTE FUNCTION guard_reviewed_withholding_212();
-

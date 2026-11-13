@@ -2,7 +2,7 @@
   "checked_at": "2026-11-13T01:17:05.191197+00:00",
   "base_commit": "d03d85ea7a3e9c558fc40e370a46d94c92a60def",
   "branch": "codex/voucher-hardening",
-  "candidate_sha256": "abf05818c710803ac4d98b9eedfa23a5f912a29f83844305a739832780e1c2a9",
+  "candidate_sha256": "34da0b1390ff0fe7abed1c8454b5f2b4838c125b0f3e41a7b54afba4fb825699",
   "source_files": {
     "CLAUDE.md": "08b2bf2232784787005f0170a6eb0b0322c149476b97eee83542e3a8491b1fee",
     "Dockerfile": "2a07187bdc447d9f05e54a2e573ed1edadc38583b9a04bc2102d37db460861f5",
@@ -20,7 +20,7 @@
     "migrations/241_voucher_atomic_security.sql": "0a4413b926cb24b0ebdf848ff98f3800a55976befc22ed00b2530520cede8c5b",
     "scripts/check-sentry-ingestion.mjs": "d4a4b1dd47779d56266c28acf021bc40b69e615d10738cd19ab0b06b51098ae4",
     "scripts/fixtures/voucher-modal.jsx": "0bec82da91c0253067ac3209f39d60354c8dc2fc8560ffca12c42dd68cced3e0",
-    "scripts/fixtures/voucher-production-guards.sql": "c949896ca6f76dc7158cbdc43c686f7fde3b19442565ed4d58a49613f1037825",
+    "scripts/fixtures/voucher-production-guards.sql": "4c9789f517f9d1e62cd3c89a6b6e4ebeb502a52e0205cf75238a31df8568176b",
     "scripts/test-voucher-browser.mjs": "3887c7877a5fd2fc8ef55f2dd682aeced52657cc1d0bc1f20d56b9bbe214b826",
     "scripts/test-voucher-concurrency.mjs": "30b9617e0344e3445ea093f389d808c30d2844d6c9ee17f5573589b95e12f4e2",
     "scripts/test-voucher-db.mjs": "2612d355072f72cea875144c4abb827905d999fdc36d1d2a5b8b04529a4e74b6",

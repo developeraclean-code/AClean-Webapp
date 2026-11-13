@@ -1,0 +1,60 @@
+TAP version 13
+# Subtest: API tidak jatuh ke SPA dan query/body diteruskan
+ok 1 - API tidak jatuh ke SPA dan query/body diteruskan
+  ---
+  duration_ms: 13.313959
+  type: 'test'
+  ...
+# Subtest: entrypoint langsung tetap terpisah dari router gabungan
+ok 2 - entrypoint langsung tetap terpisah dari router gabungan
+  ---
+  duration_ms: 0.729458
+  type: 'test'
+  ...
+# [selfhost-api] Handler returned without a response: health
+# Subtest: handler yang diam tidak berubah menjadi sukses palsu
+ok 3 - handler yang diam tidak berubah menjadi sukses palsu
+  ---
+  duration_ms: 1.991416
+  type: 'test'
+  ...
+# [selfhost-api] Handler returned without a response: health
+# Subtest: handler yang mengirim header tanpa mengakhiri respons tidak menggantung koneksi
+ok 4 - handler yang mengirim header tanpa mengakhiri respons tidak menggantung koneksi
+  ---
+  duration_ms: 2.111
+  type: 'test'
+  ...
+# Subtest: exception API tidak membocorkan detail internal ke klien
+ok 5 - exception API tidak membocorkan detail internal ke klien
+  ---
+  duration_ms: 1.411292
+  type: 'test'
+  ...
+# Subtest: frontend SPA dan asset dilayani dengan cache berbeda
+ok 6 - frontend SPA dan asset dilayani dengan cache berbeda
+  ---
+  duration_ms: 3.197542
+  type: 'test'
+  ...
+# Subtest: body rusak atau terlalu besar tidak diteruskan ke handler
+ok 7 - body rusak atau terlalu besar tidak diteruskan ke handler
+  ---
+  duration_ms: 1.064958
+  type: 'test'
+  ...
+# Subtest: handler health asli merespons tanpa database pada probe app
+ok 8 - handler health asli merespons tanpa database pada probe app
+  ---
+  duration_ms: 22.482125
+  type: 'test'
+  ...
+1..8
+# tests 8
+# suites 0
+# pass 8
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 169.224583

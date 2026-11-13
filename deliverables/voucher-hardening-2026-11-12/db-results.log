@@ -1,0 +1,19 @@
+PASS preview is read-only; percentage excludes materials
+PASS technician and inactive actor rejected
+PASS save claims voucher and invoice atomically
+PASS same request ID returns replay, changed payload rejected
+PASS direct authenticated metadata edit cannot bypass via custom GUC
+PASS table and RPC grants deny direct authenticated/anon mutation
+PASS only active Owner/Admin can SELECT voucher table
+PASS free unit reduces cheapest Cleaning unit and preserves materials
+PASS best discount refuses a voucher that adds no benefit
+PASS expired/wrong phone/paid invoice all rejected without claim
+PASS tracking failure rolls back invoice, redemption and operation
+PASS active no-expiry pagination and cancelled counts agree
+PASS free service saves only labor discount with production invoice guards enabled
+PASS redeemed invoice cannot be financially edited through a direct client UPDATE
+PASS cancel rejects missing/claimed rows and is idempotent for unused vouchers
+PASS SQL rejects missing summaries and unsupported tax rates independently of API
+PASS admin totals and pages cover more than 200 vouchers without truncation
+PASS full voucher settles an approved receivable at zero without creating cash income
+{"passed":18,"failed":0,"scope":"local PostgreSQL/WASM; no live services"}
