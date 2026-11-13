@@ -27,7 +27,7 @@ export async function taskRetryPaymentMedia() {
 
 export async function taskPaymentMediaWatchdog() {
   const health = await readPaymentMediaHealth({ supabaseUrl: process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL,
-    serviceKey: process.env.SUPABASE_SERVICE_KEY });
+    serviceKey: process.env.SUPABASE_SERVICE_KEY, includeWorkerRun: true });
   if (!health.enabled) return { skipped: true, reason: "wa_payment_detect_off" };
   const state = paymentWorkerState(health);
   if (state.level === "ok" && !health.recent_failed) return { checked: 1, alerts: 0 };

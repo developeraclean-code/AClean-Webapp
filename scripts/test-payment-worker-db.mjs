@@ -157,5 +157,19 @@ try {
   for(const role of ['anon','authenticated'])assert.equal((await one('SELECT has_function_privilege($1,$2,$3) ok',[role,'requeue_failed_payment_media_237(uuid)','EXECUTE'])).ok,false);
   assert.equal((await one('SELECT has_function_privilege($1,$2,$3) ok',['service_role','requeue_failed_payment_media_237(uuid)','EXECUTE'])).ok,true);
  });
+ await check('242 processes a verified manual R2 proof before throttled WA downloads',async()=>{
+  await db.exec('DELETE FROM payment_suggestions;DELETE FROM wa_payment_media_jobs');
+  await insert(901,{status:'FAILED_RETRYABLE',stored:false,age:60});
+  await insert(902,{status:'STORED',stored:true,age:10});
+  await db.query("UPDATE wa_payment_media_jobs SET provider='whacenter',last_error='[WA_MEDIA_HTTP_429]' WHERE id=$1",[id(901)]);
+  await db.query("UPDATE wa_payment_media_jobs SET provider='manual' WHERE id=$1",[id(902)]);
+  const migration242=readFileSync(new URL('../migrations/242_payment_media_manual_priority.sql',import.meta.url),'utf8');
+  await db.exec(migration242);await db.exec(migration242);
+  const first=await claim(9002);assert.equal(first.id,id(902));assert.equal(first.provider,'manual');
+  const second=await claim(9003);assert.equal(second.id,id(901));
+  assert.equal((await one('SELECT count(*)::int n FROM invoice_payments')).n,0);
+  for(const role of ['anon','authenticated'])assert.equal((await one('SELECT has_function_privilege($1,$2,$3) ok',[role,'claim_wa_payment_media(uuid)','EXECUTE'])).ok,false);
+  assert.equal((await one('SELECT has_function_privilege($1,$2,$3) ok',['service_role','claim_wa_payment_media(uuid)','EXECUTE'])).ok,true);
+ });
  console.log(JSON.stringify({passed,syntheticMediaTested:200,productionWrites:0,aiCalls:0,whatsAppSends:0}));
 }finally{await db.close();}

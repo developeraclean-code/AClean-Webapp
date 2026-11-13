@@ -67,6 +67,14 @@ it("shows disabled detection and missing/stale workers explicitly", () => {
   expect(paymentWorkerState({ enabled: true, last_worker_at: new Date().toISOString(), overdue: 0 }).level).toBe("ok");
 });
 
+it("uses a failed media run as proof the scheduler executed", () => {
+  const now = Date.parse("2026-11-13T10:45:00Z");
+  const health = { enabled: true, overdue: 18, last_worker_at: "2026-11-13T01:50:00Z",
+    last_run: { status: "FAILED", started_at: "2026-11-13T10:44:00Z", checked: 1, failed: 1 } };
+  expect(paymentWorkerState(health, now)).toMatchObject({ level: "warning", label: expect.stringContaining("berjalan") });
+  expect(paymentWorkerResult(health, now)).toMatchObject({ level: "error", label: expect.stringContaining("media gagal") });
+});
+
 it.each(["invalid", "2026-10-17T02:00:00Z", "2026-10-16T22:00:00Z", null])("does not mark invalid, future or stale heartbeat healthy: %s", timestamp => {
   expect(paymentWorkerState({ enabled: true, last_worker_at: timestamp }, Date.parse("2026-10-17T01:00:00Z")).level).toBe("error");
 });
