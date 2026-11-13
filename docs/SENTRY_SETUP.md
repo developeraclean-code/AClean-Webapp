@@ -7,11 +7,16 @@ konfigurasi runtime yang benar-benar telah diperiksa.
 
 Pemeriksaan awal 12 November menemukan DSN tidak terpasang pada container/build
 produksi. Ini sudah diperbaiki pada rilis **e91b6c6**, 13 November 2026.
+Produksi kemudian dipromosikan paralel ke **18c6103** dari PR pemulihan media.
+Metadata build frontend diselaraskan tanpa mengubah kode/pin tersebut; browser,
+health, dan receipt kedua proyek diverifikasi ulang. Bukti paling baru:
+[production-current-monitoring.json](../deliverables/voucher-hardening-2026-11-12/production-current-monitoring.json).
+
 DSN frontend diisi saat build; backend saat runtime. Release dan environment
 terverifikasi dari browser/container serta event yang dibaca kembali di akun
 Sentry `aclean-service`:
 
-| Komponen produksi | Proyek | Event INFO yang terverifikasi |
+| Bukti rilis awal e91b6c6 | Proyek | Event INFO yang terverifikasi |
 | --- | --- | --- |
 | Frontend | javascript-react | `773215db07bb4724bb23e57092312b6a` |
 | Backend | aclean-backend | `b885272bdd6543dd83c5205eb6c9a30b` |

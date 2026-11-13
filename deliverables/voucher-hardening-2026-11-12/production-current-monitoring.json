@@ -1,0 +1,57 @@
+{
+  "checked_date": "2026-11-13",
+  "source_commit": "18c61039551c014c1e1779324bf77335da44a7da",
+  "receipts": [
+    {
+      "tool": "SENTRY_RETRIEVE_PROJECT_EVENT_BY_ID",
+      "success": true,
+      "event_id": "1c8668f5e30341fc8b0d619786aeb36c",
+      "project_id": "4511453804691456",
+      "release": "18c61039551c014c1e1779324bf77335da44a7da",
+      "tags": [
+        {
+          "key": "component",
+          "value": "production-browser-probe"
+        },
+        {
+          "key": "environment",
+          "value": "production"
+        }
+      ],
+      "has_user_identity": false
+    },
+    {
+      "tool": "SENTRY_RETRIEVE_PROJECT_EVENT_BY_ID",
+      "success": true,
+      "event_id": "90daed0c7a28402093b1c27b280ed894",
+      "project_id": "4511453821861888",
+      "release": "18c61039551c014c1e1779324bf77335da44a7da",
+      "tags": [
+        {
+          "key": "component",
+          "value": "production-current-backend-probe"
+        },
+        {
+          "key": "environment",
+          "value": "production"
+        }
+      ],
+      "has_user_identity": false
+    },
+    {
+      "tool": "UPTIMEROBOT_GET_MONITORS",
+      "success": true,
+      "monitors": [
+        {
+          "id": 803163682,
+          "url": "https://app.aclean.id/api/health",
+          "status": 2,
+          "interval": 300,
+          "contact_ids": [
+            "8464743"
+          ]
+        }
+      ]
+    }
+  ]
+}

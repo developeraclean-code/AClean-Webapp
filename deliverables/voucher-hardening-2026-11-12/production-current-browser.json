@@ -1,0 +1,36 @@
+{
+  "environment": "production",
+  "passed": true,
+  "uncaught_errors": 0,
+  "route_errors": 0,
+  "unexpected_mutations": [],
+  "benefits": [],
+  "api_requests": [],
+  "outbound_wa_requests": 0,
+  "expected_source": "18c61039551c014c1e1779324bf77335da44a7da",
+  "frontend_sentry": {
+    "configured": true,
+    "release": "18c61039551c014c1e1779324bf77335da44a7da",
+    "environment": "production",
+    "event_id": "1c8668f5e30341fc8b0d619786aeb36c",
+    "flushed": true
+  },
+  "health": {
+    "app": {
+      "http_status": 200,
+      "version": "18c6103",
+      "status": "healthy"
+    },
+    "auth": {
+      "http_status": 200,
+      "version": "18c6103",
+      "status": "healthy"
+    },
+    "database": {
+      "http_status": 200,
+      "version": "18c6103",
+      "status": "healthy"
+    }
+  },
+  "mobile_overflow": false
+}

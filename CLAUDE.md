@@ -302,15 +302,18 @@ Jika hanya cek salah satu → WA bisa bocor ke customer saat toggle OFF.
 
 ## Voucer / monitoring — rilis 13 November 2026
 
-PR #12 sudah di-merge ke main (461e74f); Coolify staging dan produksi dipin
-ke **e91b6c6**, Finished/Healthy. Migrasi forward 241 sudah applied pada keduanya,
-fingerprint enam tabel bisnis produksi tidak berubah. Loyalty hanya order PAID.
-Semua otomasi voucer OFF; auto-deploy/preview OFF untuk mempertahankan pin yang
-sudah diuji. Owner browser staging bertransaksi hanya pada fixture yang sudah
-dibersihkan; produksi diuji baca-saja. Sentry frontend/backend production
-terverifikasi di dashboard dengan release/environment tepat. UptimeRobot
-monitor existing kini ke app.aclean.id/api/health, UP, interval/contact sama.
+PR #12 sudah di-merge (461e74f); voucer e91b6c6 lulus staging transaksi dan
+produksi baca-saja, migrasi 241 applied pada keduanya tanpa mengubah fingerprint
+enam tabel bisnis. Loyalty hanya order PAID; otomasi voucer OFF. Fixture staging
+sudah dibersihkan. Sentry frontend/backend dan UptimeRobot sudah dipulihkan.
 
-Kontrak dan bukti: [catatan rilis](docs/VOUCHER_HARDENING_2026-11-12.md),
+Setelahnya, pekerjaan paralel mempromosikan PR #13 payment-media recovery sebagai
+produksi **18c6103**; rilis tersebut tidak dikembalikan. Kode inti voucer dan
+logika admin identik dengan e91b6c6, staging voucer tetap e91b6c6. Pin/runtime
+harus dibaca ulang; auto-deploy/preview OFF dan main terbaru tidak otomatis live.
+Saat mengganti source, samakan ACLEAN_BUILD_SHA build arg untuk release frontend
+Sentry dengan SOURCE_COMMIT runtime yang baru, lalu verifikasi kembali.
+
+Bukti dan batas: [catatan rilis](docs/VOUCHER_HARDENING_2026-11-12.md),
 [panduan Sentry](docs/SENTRY_SETUP.md), dan
-[uptime](docs/SUPABASE_ALERTING.md). Snapshot bertanggal lebih lama tetap historis.
+[uptime](docs/SUPABASE_ALERTING.md). Snapshot lama tetap historis.
