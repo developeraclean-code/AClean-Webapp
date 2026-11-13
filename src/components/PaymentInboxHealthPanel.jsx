@@ -103,7 +103,7 @@ export function PaymentInboxHealthView({ health, error, busy, onRefresh, onOpenP
           <div style={{ color: cs.muted, fontSize: 11 }}>{item.detail}</div>
         </div>)}
       </div>
-      <div style={{ color: cs.muted, marginTop: 8, fontSize: 11 }}>Pemicu terakhir terpantau: {wibTime(health.last_worker_at)} · Data status: {wibTime(health.generated_at)}. Perbarui status hanya membaca data, bukan menjalankan retry atau AI.</div>
+      <div style={{ color: cs.muted, marginTop: 8, fontSize: 11 }}>Percobaan worker terakhir: {wibTime(health.last_run?.started_at)} · Run sukses terakhir: {wibTime(health.last_worker_at)} · Data status: {wibTime(health.generated_at)}. Perbarui status hanya membaca data, bukan menjalankan retry atau AI.</div>
       <div style={{ marginTop: 8, padding: 10, border: `1px solid ${cs.border}`, borderRadius: 8 }} aria-label="Status penerimaan webhook">
         <strong style={{ color: cs.text }}>Penerimaan dari Fonnte</strong>
         {health.ingress?.available ? <>

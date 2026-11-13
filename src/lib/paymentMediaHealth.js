@@ -27,10 +27,18 @@ export function paymentMediaState(job = {}) {
 
 export function paymentWorkerState(health, now = Date.now()) {
   if (health?.enabled === false) return { level: "warning", label: "Deteksi bukti bayar dimatikan di Pengaturan" };
-  const lastWorker = Date.parse(health?.last_worker_at);
+  if (health?.last_run_error) return { level: "warning", label: "Hasil pemicu retry terbaru belum dapat dibaca" };
+  // last_worker_at in migration 210 records only SUCCESS/SKIPPED runs. A worker
+  // that actually claimed media but received HTTP 429 has a FAILED cron run;
+  // use that attempt to judge scheduler liveness, while showing its failure
+  // separately in paymentWorkerResult.
+  const lastRun = health?.last_run_error ? NaN : Date.parse(health?.last_run?.started_at);
+  const lastSuccess = Date.parse(health?.last_worker_at);
+  const lastWorker = Number.isFinite(lastRun) ? Math.max(lastRun, Number.isFinite(lastSuccess) ? lastSuccess : 0) : lastSuccess;
   if (!Number.isFinite(lastWorker) || lastWorker > now + 5 * 60_000 || now - lastWorker > 45 * 60_000) {
     return { level: "error", label: "Pemicu retry belum berjalan dalam 45 menit terakhir" };
   }
+  if (["FAILED", "TIMEOUT"].includes(health?.last_run?.status)) return { level: "warning", label: "Pemicu retry berjalan; pemrosesan media bermasalah" };
   if (Number(health.overdue) > 0) return { level: "warning", label: "Ada media menunggu lebih dari 30 menit" };
   return { level: "ok", label: "Pemicu retry aktif · pemeriksaan berkala 24 jam" };
 }
@@ -50,8 +58,8 @@ export function paymentWorkerResult(health, now = Date.now()) {
   };
   if (["FAILED", "TIMEOUT"].includes(run.status)) return {
     level: run.pendingReview > 0 ? "warning" : "error",
-    label: run.pendingReview > 0 ? "Pemrosesan belum tuntas · masuk tinjauan admin" : run.status === "TIMEOUT" ? "Pemeriksaan melewati batas waktu" : "Pemeriksaan terakhir gagal",
-    detail: run.pendingReview > 0 ? "Kandidat tinjauan manual tersedia. Periksa media sebelum memverifikasi pembayaran." : "Periksa rincian antrean di bawah. Status ini tidak mengubah pembayaran atau invoice.",
+    label: run.pendingReview > 0 ? "Pemrosesan belum tuntas · masuk tinjauan admin" : run.status === "TIMEOUT" ? "Pemeriksaan melewati batas waktu" : Number(run.checked) > 0 && Number(run.failed) > 0 ? "Worker berjalan; media gagal diunduh atau diproses" : "Pemeriksaan terakhir gagal",
+    detail: run.pendingReview > 0 ? "Kandidat tinjauan manual tersedia. Periksa media sebelum memverifikasi pembayaran." : "Periksa rincian antrean dan error media. Status ini tidak mengubah pembayaran atau invoice.",
   };
   if (run.status !== "SUCCESS") return { level: "warning", label: "Hasil pemeriksaan belum dikenali", detail: "Perbarui status; hasil belum dapat dinyatakan berhasil." };
   if (run.pendingReview > 0) return { level: "warning", label: "Media masuk tinjauan admin", detail: "Pemrosesan selesai, tetapi media masih perlu diperiksa manual." };
