@@ -300,11 +300,17 @@ if (!isCronJobEnabled(togMap, "my_feature_enabled") || togMap["my_feature_enable
 ```
 Jika hanya cek salah satu → WA bisa bocor ke customer saat toggle OFF.
 
-## Kandidat voucer / monitoring — 12 November 2026
+## Voucer / monitoring — rilis 13 November 2026
 
-Perbaikan transaksi voucer atomik, role, manfaat dan otomasi ada pada branch
-`codex/voucher-hardening`, migrasi forward 241. **Belum dianggap deployed.**
-Kontrak, pengujian, urutan rilis dan batas rollback dijelaskan dalam
-[catatan kandidat](docs/VOUCHER_HARDENING_2026-11-12.md). Sentry memerlukan DSN
-build/runtime Coolify; [panduan](docs/SENTRY_SETUP.md) membedakan hasil probe
-ingestion lokal dari keterhubungan produksi dan alert dashboard.
+PR #12 sudah di-merge ke main (461e74f); Coolify staging dan produksi dipin
+ke **e91b6c6**, Finished/Healthy. Migrasi forward 241 sudah applied pada keduanya,
+fingerprint enam tabel bisnis produksi tidak berubah. Loyalty hanya order PAID.
+Semua otomasi voucer OFF; auto-deploy/preview OFF untuk mempertahankan pin yang
+sudah diuji. Owner browser staging bertransaksi hanya pada fixture yang sudah
+dibersihkan; produksi diuji baca-saja. Sentry frontend/backend production
+terverifikasi di dashboard dengan release/environment tepat. UptimeRobot
+monitor existing kini ke app.aclean.id/api/health, UP, interval/contact sama.
+
+Kontrak dan bukti: [catatan rilis](docs/VOUCHER_HARDENING_2026-11-12.md),
+[panduan Sentry](docs/SENTRY_SETUP.md), dan
+[uptime](docs/SUPABASE_ALERTING.md). Snapshot bertanggal lebih lama tetap historis.

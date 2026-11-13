@@ -1,0 +1,219 @@
+{
+  "production_browser": {
+    "environment": "production",
+    "passed": true,
+    "uncaught_errors": 0,
+    "route_errors": 0,
+    "unexpected_mutations": [],
+    "benefits": [],
+    "api_requests": [],
+    "outbound_wa_requests": 0,
+    "expected_source": "e91b6c6d70aee8e6a80761717e1e65567f627f10",
+    "frontend_sentry": {
+      "configured": true,
+      "release": "e91b6c6d70aee8e6a80761717e1e65567f627f10",
+      "environment": "production",
+      "event_id": "773215db07bb4724bb23e57092312b6a",
+      "flushed": true
+    },
+    "health": {
+      "app": {
+        "http_status": 200,
+        "version": "e91b6c6",
+        "status": "healthy"
+      },
+      "auth": {
+        "http_status": 200,
+        "version": "e91b6c6",
+        "status": "healthy"
+      },
+      "database": {
+        "http_status": 200,
+        "version": "e91b6c6",
+        "status": "healthy"
+      }
+    },
+    "mobile_overflow": false
+  },
+  "staging_browser": {
+    "environment": "staging",
+    "passed": true,
+    "uncaught_errors": 0,
+    "route_errors": 0,
+    "unexpected_mutations": [],
+    "benefits": [
+      {
+        "id": "QA241-PCT-20261113",
+        "total": 230000,
+        "discount": 20000,
+        "operations": 1,
+        "voucher_code": "ACL-QA241-PCT"
+      },
+      {
+        "id": "QA241-UNIT-20261113",
+        "total": 150000,
+        "discount": 100000,
+        "operations": 1,
+        "voucher_code": "ACL-QA241-UNIT"
+      }
+    ],
+    "api_requests": [
+      "/api/get-api-token",
+      "/api/validate-voucher",
+      "/api/apply-invoice-voucher",
+      "/api/apply-invoice-voucher",
+      "/api/validate-voucher",
+      "/api/apply-invoice-voucher",
+      "/api/apply-invoice-voucher",
+      "/api/cancel-voucher"
+    ],
+    "outbound_wa_requests": 0,
+    "expected_source": "e91b6c6d70aee8e6a80761717e1e65567f627f10",
+    "frontend_sentry": {
+      "configured": true,
+      "release": "e91b6c6d70aee8e6a80761717e1e65567f627f10",
+      "environment": "staging",
+      "event_id": "2b66c08a94a742bdae336bef70733e03",
+      "flushed": true
+    },
+    "portal": {
+      "status": 200,
+      "codes": []
+    },
+    "mobile_overflow": false
+  },
+  "monitoring": {
+    "checked_date": "2026-11-13",
+    "receipts": [
+      {
+        "tool": "SENTRY_RETRIEVE_PROJECT_EVENT_BY_ID",
+        "success": true,
+        "event_id": "773215db07bb4724bb23e57092312b6a",
+        "project_id": "4511453804691456",
+        "release": "e91b6c6d70aee8e6a80761717e1e65567f627f10",
+        "tags": [
+          {
+            "key": "component",
+            "value": "production-browser-probe"
+          },
+          {
+            "key": "environment",
+            "value": "production"
+          }
+        ],
+        "has_user_identity": false
+      },
+      {
+        "tool": "SENTRY_RETRIEVE_PROJECT_EVENT_BY_ID",
+        "success": true,
+        "event_id": "b885272bdd6543dd83c5205eb6c9a30b",
+        "project_id": "4511453821861888",
+        "release": "e91b6c6d70aee8e6a80761717e1e65567f627f10",
+        "tags": [
+          {
+            "key": "component",
+            "value": "production-backend-probe"
+          },
+          {
+            "key": "environment",
+            "value": "production"
+          }
+        ],
+        "has_user_identity": false
+      },
+      {
+        "tool": "UPTIMEROBOT_GET_MONITORS",
+        "success": true,
+        "monitors": [
+          {
+            "id": 803163682,
+            "url": "https://app.aclean.id/api/health",
+            "status": 2,
+            "interval": 300,
+            "contact_ids": [
+              "8464743"
+            ],
+            "last_log": {
+              "datetime": 1794533436,
+              "duration": 3627,
+              "reason": {
+                "code": "200",
+                "detail": "OK"
+              },
+              "type": 2
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "release_source": "e91b6c6d70aee8e6a80761717e1e65567f627f10",
+  "verified_at": "2026-11-13T02:36:27.293236+00:00",
+  "apps": [
+    {
+      "uuid": "zqd3lrbkv7b44kzb9fwisulu",
+      "source_pin": "e91b6c6d70aee8e6a80761717e1e65567f627f10",
+      "branch": "codex/voucher-hardening",
+      "status": "running:healthy",
+      "auto_deploy": false,
+      "preview": false
+    },
+    {
+      "uuid": "xsehtou4dfqqmjwca1irjkmz",
+      "source_pin": "e91b6c6d70aee8e6a80761717e1e65567f627f10",
+      "branch": "main",
+      "status": "running:healthy",
+      "auto_deploy": false,
+      "preview": false
+    }
+  ],
+  "database_readonly": {
+    "toggles": {
+      "voucher_loyalty_enabled": "false",
+      "voucher_winback_enabled": "false",
+      "voucher_expiry_reminder_enabled": "false"
+    },
+    "vouchers": 0,
+    "anon_read": false,
+    "operations": 0,
+    "redemptions": 0,
+    "authenticated_rpc": false,
+    "authenticated_write": false
+  },
+  "services": {
+    "aclean-production-tick.service": {
+      "Result": "exit-code",
+      "ExecMainExitTimestamp": "Fri 2026-11-13 09:35:27 WIB",
+      "ExecMainStatus": "1"
+    },
+    "aclean-prod-r2-backup.service": {
+      "Result": "success",
+      "ExecMainExitTimestamp": "Fri 2026-11-13 02:23:26 WIB",
+      "ExecMainStatus": "0"
+    }
+  },
+  "resources": {
+    "memory_available_mb": 4160,
+    "cpu_count": 2,
+    "load_1m": 3.408203125,
+    "disk_available_gb": 51.2
+  },
+  "fixture_cleanup": {
+    "fixture_cleaned": true,
+    "business_data_matches_before_migration": true,
+    "checked_at": "2026-11-13T02:27:48.690824+00:00"
+  },
+  "known_issues": [
+    {
+      "task": "payment-media-retry",
+      "provider": "WhaCenter",
+      "error_code": "WA_MEDIA_HTTP_429",
+      "first_observed_before_release": "2026-11-13T00:25:27.028Z",
+      "present_before_release": true,
+      "handler_source_changed_by_release": false,
+      "manual_replay_performed": false,
+      "scope": "Pre-existing provider throttling; voucher and monitoring acceptance passed independently."
+    }
+  ],
+  "verification_scope": "Voucher release, browser/health/ACL and Sentry/UptimeRobot acceptance. Does not assert every scheduled integration task succeeded."
+}

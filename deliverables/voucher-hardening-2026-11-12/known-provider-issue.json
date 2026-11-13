@@ -1,0 +1,10 @@
+{
+  "task": "payment-media-retry",
+  "provider": "WhaCenter",
+  "error_code": "WA_MEDIA_HTTP_429",
+  "first_observed_before_release": "2026-11-13T00:25:27.028Z",
+  "present_before_release": true,
+  "handler_source_changed_by_release": false,
+  "manual_replay_performed": false,
+  "scope": "Pre-existing provider throttling; voucher and monitoring acceptance passed independently."
+}

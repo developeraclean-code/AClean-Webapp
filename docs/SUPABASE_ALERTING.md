@@ -41,10 +41,18 @@ VPS self-hosted, periksa metrik VPS, Docker, PostgreSQL, dan proxy.
 Email baru aktif setelah monitor eksternal dan alamat penerimanya dikonfigurasi;
 perubahan kode saja tidak mengirim email.
 
-## Pemeriksaan 12 November 2026
+## Pemeriksaan dan perbaikan 13 November 2026
 
-Ketiga endpoint di atas merespons HTTP 200 saat diperiksa langsung. Belum ada
-akses terverifikasi ke akun layanan uptime eksternal, sehingga URL monitor,
-status aktif, histori incident dan penerima notifikasi belum dinyatakan benar.
-Tidak ditemukannya container Uptime Kuma di VPS juga tidak membuktikan monitor
-eksternal mati. Bukti: [monitoring-readonly.json](../deliverables/voucher-hardening-2026-11-12/monitoring-readonly.json).
+Akun UptimeRobot terhubung dengan izin Owner. Monitor existing 803163682 masih
+mengarah ke Vercel lama dan berstatus DOWN. Owner mengizinkan perubahan URL ke
+`https://app.aclean.id/api/health`; read-back menunjukkan **UP/HTTP200**, interval
+300 detik, contact ID 8464743 tetap sama. Riwayat downtime lama tidak direset.
+Nama sekarang `AClean - Aplikasi dan Supabase`.
+
+Yang aktif adalah **satu monitor gabungan**; tabel tiga endpoint di atas adalah
+opsi pemisahan diagnosis, bukan klaim tiga monitor baru sudah dibuat. Ketiga
+endpoint tetap HTTP200 sesudah deployment e91b6c6. Tidak mematikan produksi
+untuk membuat alarm percobaan, dan tidak mengklaim delivery email inbox hanya
+dari konfigurasi penerima.
+
+Bukti: [receipt produksi](../deliverables/voucher-hardening-2026-11-12/production-monitoring-receipts.json).

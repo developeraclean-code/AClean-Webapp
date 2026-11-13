@@ -1,11 +1,10 @@
 {
-  "checked_at": "2026-11-13T01:17:05.191197+00:00",
+  "checked_at": "2026-11-13T02:33:44.934122+00:00",
   "base_commit": "d03d85ea7a3e9c558fc40e370a46d94c92a60def",
   "branch": "codex/voucher-hardening",
-  "candidate_sha256": "34da0b1390ff0fe7abed1c8454b5f2b4838c125b0f3e41a7b54afba4fb825699",
+  "candidate_sha256": "24ad7fa5311fa7ed18c32663ed16b28263ee4ecd245e2e43b91aa1ede4921ae6",
   "source_files": {
-    "CLAUDE.md": "08b2bf2232784787005f0170a6eb0b0322c149476b97eee83542e3a8491b1fee",
-    "Dockerfile": "2a07187bdc447d9f05e54a2e573ed1edadc38583b9a04bc2102d37db460861f5",
+    "Dockerfile": "f795b2d47813893e610e37a05a0fac6aa383a15155ddef461c337373e8b6f977",
     "api/[route].js": "c960f27080f2c4bc6c66fe62f73b45affc0020084fc318d06969498c5b8b5e44",
     "api/_handlers/auth-token.js": "a2f0124f8c3ce8bdefad783ce6ccb040bfebd61d8ff1661f22482b026e68464f",
     "api/_handlers/voucher.js": "6d6d0773bf9873a160c2689b0213fefaa4fb835698bb04139cb15d7af1587132",
@@ -14,16 +13,13 @@
     "api/_tasks/vouchers.js": "fb67dde43170c5f6b57c30a875889095cb418bf683fda78e9a172f7270baaed6",
     "api/cron-reminder.js": "f01fe01991826c5edd7341f8037231c06055fa75b5a015f7ce9f185097f6a04d",
     "api/sentry-init.js": "f1dc6249931e1e3eec9cea23baf573a85dae3470a573b66fa47fcc9b377301bf",
-    "docs/SENTRY_SETUP.md": "0c30869ca8897650d440470901e0f6c1e860b1f03ad39ee539ad1bdb6ffddd56",
-    "docs/SUPABASE_ALERTING.md": "589c4ebaa48339b6bedb4e14188766fcd36090b97e0b2ca06e34e46831261515",
-    "docs/VOUCHER_HARDENING_2026-11-12.md": "498457157a6e4a44b9fa373cd5d79f4e8c1a3681116d663a843b2dd0f954a964",
-    "migrations/241_voucher_atomic_security.sql": "0a4413b926cb24b0ebdf848ff98f3800a55976befc22ed00b2530520cede8c5b",
+    "migrations/241_voucher_atomic_security.sql": "c8c6163537381511e7b11e38782bf92c08d4afacd9a80286b15e83ff479e87b7",
     "scripts/check-sentry-ingestion.mjs": "d4a4b1dd47779d56266c28acf021bc40b69e615d10738cd19ab0b06b51098ae4",
     "scripts/fixtures/voucher-modal.jsx": "0bec82da91c0253067ac3209f39d60354c8dc2fc8560ffca12c42dd68cced3e0",
     "scripts/fixtures/voucher-production-guards.sql": "4c9789f517f9d1e62cd3c89a6b6e4ebeb502a52e0205cf75238a31df8568176b",
-    "scripts/test-voucher-browser.mjs": "3887c7877a5fd2fc8ef55f2dd682aeced52657cc1d0bc1f20d56b9bbe214b826",
-    "scripts/test-voucher-concurrency.mjs": "30b9617e0344e3445ea093f389d808c30d2844d6c9ee17f5573589b95e12f4e2",
-    "scripts/test-voucher-db.mjs": "2612d355072f72cea875144c4abb827905d999fdc36d1d2a5b8b04529a4e74b6",
+    "scripts/test-voucher-browser.mjs": "a0a57a000f903d0580c6f4b7842e401c04b3c2ca9a09a326a47ecc798971c854",
+    "scripts/test-voucher-concurrency.mjs": "7f74029e62743be214eca24220152f478a9089d64bd51f74f9467c638a203ed5",
+    "scripts/test-voucher-db.mjs": "06580165b8add7c26d6afa7c442aa4fdc36cffe5752c19ec9dba3b09a83dafaf",
     "server/http-app.mjs": "3128972ab3212c21bff33e36f29134b3219559a63e751bdd8104f6c8e7f199f1",
     "src/data/reads.js": "61b59aa0dabe5023ed5a6b10e833ed470e61579f980d3a2421394d7d3a8379ce",
     "src/lib/__tests__/cronTickIntegration.test.js": "efb776bf0c5225ed4559793929b1b9b2ee935166315ccb2260302ca45c6cc5be",
@@ -38,7 +34,7 @@
     "src/main.jsx": "01d145c3cf32a06b210f1400e40fb975b03c575602cfe1270decf1ae5e3be2c6",
     "src/views/CustomerPortalView.jsx": "565e34c41ce65cc15e8bd1a091275ffcb3826845ae8bd001aac59a43a0d3747e",
     "src/views/EditInvoiceModal.jsx": "97380af0218284c8bf2416cb209a740fb50c0045151cbb217e12e3bdf0b95ec3",
-    "src/views/InvoiceView.jsx": "e2ae823a5151054b5417ac2b3c8936e52e37f9fcd73013f180be770031582bcc",
+    "src/views/InvoiceView.jsx": "b6caf441bb5278356a118eaad78b550366cb784b504b70c71bd1a5619c7219e7",
     "src/views/SettingsView.jsx": "acbdb28487ed99c6d741a6d608a0bb7f2c3ad374e391f502093615778acb0c60"
   },
   "checks": {
@@ -54,16 +50,22 @@
     "migration_lint": "pass; existing/reserved numbering gaps documented"
   },
   "deployment": {
-    "staging_applied": false,
-    "production_applied": false,
+    "staging_applied": true,
+    "production_applied": true,
     "automation_enabled": false,
-    "whatsapp_sent": false
+    "whatsapp_sent": false,
+    "production_business_mutations": false,
+    "auto_deploy_enabled": false,
+    "preview_enabled": false
   },
-  "confidence_scope": "Local tested flows; production acceptance requires staging and authorized release.",
+  "confidence_scope": "Local/CI/staging voucher flows and production read-only acceptance passed; this is not a statistical zero-bug guarantee.",
   "decisions": {
     "loyalty": "PAID only",
     "discount_policy": "best eligible labor benefit; no stacking",
     "release_authorization": "13 November 2026, staging then production if passing",
     "automation": "OFF"
-  }
+  },
+  "release_source_commit": "e91b6c6d70aee8e6a80761717e1e65567f627f10",
+  "main_code_merge_commit": "461e74fed31360c62cb45f2a4e85fd8638a06956",
+  "source_files_scope": "Files from release_source_commit; operational documentation may be newer."
 }

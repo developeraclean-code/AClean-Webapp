@@ -1,0 +1,60 @@
+{
+  "after": {
+    "orders": {
+      "md5": "786a168bd09f0aeffd79bd5d20dc2d57",
+      "count": 3295
+    },
+    "invoices": {
+      "md5": "26061d5bb95e9cb1262ccace4640b65a",
+      "count": 3128
+    },
+    "payments": {
+      "md5": "d15c109311303729af7839fbb2cbd0d6",
+      "count": 1831
+    },
+    "customers": {
+      "md5": "8382cfca591860e62b975d0237600287",
+      "count": 1637
+    },
+    "service_reports": {
+      "md5": "967a7251dff3838f6457bf48d6d067a0",
+      "count": 3225
+    },
+    "invoice_payments": {
+      "md5": "67d45de6aec39c0db25cac3e1d83927b",
+      "count": 754
+    }
+  },
+  "before": {
+    "orders": {
+      "md5": "786a168bd09f0aeffd79bd5d20dc2d57",
+      "count": 3295
+    },
+    "invoices": {
+      "md5": "26061d5bb95e9cb1262ccace4640b65a",
+      "count": 3128
+    },
+    "payments": {
+      "md5": "d15c109311303729af7839fbb2cbd0d6",
+      "count": 1831
+    },
+    "customers": {
+      "md5": "8382cfca591860e62b975d0237600287",
+      "count": 1637
+    },
+    "service_reports": {
+      "md5": "967a7251dff3838f6457bf48d6d067a0",
+      "count": 3225
+    },
+    "invoice_payments": {
+      "md5": "67d45de6aec39c0db25cac3e1d83927b",
+      "count": 754
+    }
+  },
+  "environment": "production",
+  "container": "aclean-live-db",
+  "migration": "241",
+  "source_sha256": "c8c6163537381511e7b11e38782bf92c08d4afacd9a80286b15e83ff479e87b7",
+  "applied_at": "2026-11-13T02:20:28.008964+00:00",
+  "business_data_unchanged": true
+}

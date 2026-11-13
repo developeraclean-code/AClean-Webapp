@@ -1,0 +1,37 @@
+{
+  "environment": "staging",
+  "source_commit": "e91b6c6d70aee8e6a80761717e1e65567f627f10",
+  "environment_flags": [
+    {
+      "key": "VITE_SENTRY_DSN",
+      "build": true,
+      "runtime": false
+    },
+    {
+      "key": "SENTRY_DSN",
+      "build": false,
+      "runtime": true
+    },
+    {
+      "key": "VITE_SENTRY_ENVIRONMENT",
+      "build": true,
+      "runtime": false
+    },
+    {
+      "key": "SENTRY_ENVIRONMENT",
+      "build": false,
+      "runtime": true
+    },
+    {
+      "key": "ACLEAN_BUILD_SHA",
+      "build": true,
+      "runtime": true
+    }
+  ],
+  "deployment": {
+    "message": "Application aclean-web-staging deployment queued.",
+    "resource_uuid": "zqd3lrbkv7b44kzb9fwisulu",
+    "deployment_uuid": "gmtkm88ed3nb63kzgj7ax7tu"
+  },
+  "started_at": "2026-11-13T01:50:46.468925+00:00"
+}

@@ -1,0 +1,37 @@
+{
+  "environment": "production",
+  "source_commit": "e91b6c6d70aee8e6a80761717e1e65567f627f10",
+  "environment_flags": [
+    {
+      "key": "VITE_SENTRY_DSN",
+      "build": true,
+      "runtime": false
+    },
+    {
+      "key": "SENTRY_DSN",
+      "build": false,
+      "runtime": true
+    },
+    {
+      "key": "VITE_SENTRY_ENVIRONMENT",
+      "build": true,
+      "runtime": false
+    },
+    {
+      "key": "SENTRY_ENVIRONMENT",
+      "build": false,
+      "runtime": true
+    },
+    {
+      "key": "ACLEAN_BUILD_SHA",
+      "build": true,
+      "runtime": true
+    }
+  ],
+  "deployment": {
+    "message": "Application aclean-web-production deployment queued.",
+    "resource_uuid": "xsehtou4dfqqmjwca1irjkmz",
+    "deployment_uuid": "endqn3fwbsnprs0ascnyp66b"
+  },
+  "started_at": "2026-11-13T02:22:40.433751+00:00"
+}

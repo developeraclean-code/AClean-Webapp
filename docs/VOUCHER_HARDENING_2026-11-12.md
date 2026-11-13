@@ -1,10 +1,14 @@
 # Perbaikan voucer — kandidat lokal 12 November 2026
 
-Kandidat berada pada branch `codex/voucher-hardening`, berbasis release main
-`d03d85e`. Belum diterapkan ke database, staging, atau produksi. Perubahan lokal
-milik user pada worktree utama tetap dipertahankan. Migrasi 241 menggunakan
-nomor setelah 237–240 yang sedang dipakai worktree keamanan terpisah; tidak
-bergantung pada migrasi tersebut dan tidak menyalinnya ke kandidat ini.
+Rilis terverifikasi **13 November 2026**. PR #12 di-merge ke main sebagai
+`461e74f`; staging dan produksi menjalankan pin **e91b6c6**. Kode aplikasi main
+cocok dengan kandidat yang diuji. Migrasi 241 sudah diterapkan pada keduanya.
+Enam tabel bisnis produksi memiliki fingerprint sama sebelum/sesudah migrasi.
+Worktree utama user tetap tidak diubah; nomor 237–240 tetap milik pekerjaan
+keamanan terpisah dan bukan dependensi migrasi ini.
+
+Otomasi voucer tetap **OFF**. Auto-deploy serta preview deployment juga **OFF**
+agar push berikutnya tidak melewati persetujuan dan pin rilis yang diuji.
 
 ## Kontrak produk yang diimplementasikan
 
@@ -104,3 +108,40 @@ sedangkan produksi dimiliki postgres. Migrasi memeriksa pemilik dan grant di
 awal; objek baru selalu dimiliki postgres. Percobaan awal staging dengan role
 postgres di-rollback tanpa perubahan schema/data. Uji native mencakup operator
 supabase_admin, pemilik objek baru, dan eksekusi RPC sebagai service_role.
+
+## Penerimaan staging dan produksi — 13 November 2026
+
+- Staging: login Owner lab nyata, diskon 10% jasa Rp20.000, gratis unit Rp100.000,
+  retry dengan request sama, pembatalan+pergantian filter, portal, mobile lulus.
+  Nol error browser, nol request WA. Fixture dibersihkan; fingerprint enam
+  tabel bisnis kembali sama dengan sebelum migrasi.
+- Staging menemukan race filter setelah cancel serta release frontend kosong;
+  e91b6c6 menutup race dan mengisi release frontend melalui ACLEAN_BUILD_SHA.
+- Produksi: deployment `endqn3fwbsnprs0ascnyp66b` Finished/Healthy. Browser Owner
+  baca-saja/menu voucer/mobile lulus; tiga endpoint health HTTP200 versi e91b6c6.
+  Tidak membuat redemption, pembayaran, WA, atau fixture bisnis produksi.
+- Produksi tetap 0 voucer, 0 redemption, 0 operasi voucer saat pemeriksaan;
+  tiga toggle OFF. authenticated tidak memiliki hak tulis/RPC atomik langsung.
+- Sentry frontend dan backend produksi sama-sama terverifikasi di akun
+  aclean-service, release e91b6c6, environment production. Event sintetis INFO
+  tidak memuat identitas user. Dua workflow email issue prioritas tinggi aktif;
+  tidak sengaja memicu email error untuk menguji inbox.
+- UptimeRobot monitor 803163682 diperbarui dengan izin Owner dari Vercel lama
+  ke https://app.aclean.id/api/health. Status UP, interval tetap 300 detik,
+  contact existing tetap sama. Riwayat monitor lama dipertahankan.
+- Coolify token mengizinkan konfigurasi dan deploy tetapi menolak DELETE env
+  preview dengan 403; tidak dilewati. Salinan DSN preview tidak dipakai karena
+  preview deployment OFF. Tidak ada secret produksi baru yang disalin ke repo.
+
+Bukti JSON produksi/staging dan receipt akun monitoring berada dalam
+[folder verifikasi](../deliverables/voucher-hardening-2026-11-12/README.md).
+
+## Catatan operasional terpisah
+
+Task `payment-media-retry` menerima `WhaCenter media HTTP 429`. Riwayat pertama
+yang dibaca 13 November 07:25 WIB, sebelum deployment rilis ini selesai
+09:25 WIB; handler media tidak diubah oleh patch. Tick berikutnya 09:40 WIB
+sukses, tetapi itu tidak membuktikan retry media sudah pulih. Tidak dilakukan
+replay manual, perubahan pembayaran, atau perubahan penjadwal untuk menutupi
+kegagalan provider. Bukti: `known-provider-issue.json`. Ini tetap catatan
+operasional, terpisah dari penerimaan alur voucer/Sentry/UptimeRobot.
