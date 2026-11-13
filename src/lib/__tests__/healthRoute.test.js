@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../api/_health.js', async importOriginal => ({
   ...(await importOriginal()),
@@ -20,12 +20,16 @@ beforeEach(() => {
     checks: { database: 'fail:504', auth: 'ok' } });
 });
 
+afterEach(()=>vi.unstubAllEnvs());
+
 describe('component health route', () => {
-  it('checks Vercel reachability without calling Supabase', async () => {
+  it('checks app reachability and actual Coolify SHA without calling Supabase', async () => {
+    vi.stubEnv('SOURCE_COMMIT','1234567-current');vi.stubEnv('ACLEAN_BUILD_SHA','stale-version');
     const res = response();
     await health({ method: 'GET', query: { component: 'app' } }, res);
     expect(res.status).toHaveBeenCalledWith(200);
     expect(checkHealth).not.toHaveBeenCalled();
+    expect(res.json.mock.calls[0][0].version).toBe('1234567');
   });
 
   it('keeps healthy Auth distinct from failing database API', async () => {

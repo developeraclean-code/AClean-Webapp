@@ -1,7 +1,7 @@
 // api/[route].js - AClean Unified API Router
 import { setCorsHeaders, validateInternalToken } from "./_auth.js";
 import * as Sentry from "@sentry/node";
-import { customerVouchers, validateVoucher, claimVoucher, adminVouchers, cancelVoucher } from "./_handlers/voucher.js";
+import { customerVouchers, validateVoucher, claimVoucher, adminVouchers, cancelVoucher, applyInvoiceVoucher } from "./_handlers/voucher.js";
 import { monitor } from "./_handlers/monitor.js";
 import { paymentMediaHealth } from "./_payment-health.js";
 import { customerStatus, submitRating, generateCustomerToken } from "./_handlers/customer.js";
@@ -22,6 +22,7 @@ const HANDLERS = {
   "customer-vouchers": customerVouchers,
   "validate-voucher": validateVoucher,
   "claim-voucher": claimVoucher,
+  "apply-invoice-voucher": applyInvoiceVoucher,
   "admin-vouchers": adminVouchers,
   "cancel-voucher": cancelVoucher,
   "customer-status": customerStatus,

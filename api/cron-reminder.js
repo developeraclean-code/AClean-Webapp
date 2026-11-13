@@ -16,7 +16,8 @@ import { taskBackupRetention } from "./_tasks/ops.js";
 import { taskFieldReportReminder } from "./_tasks/field-reports.js";
 import { sb, sendWA, log, OWNER_PHONE } from "./_tasks/_shared.js";
 import { taskCleanup, taskR2Cleanup90d, taskExpenseFotoCleanup30d, taskPaymentProofCleanup90d, taskSnapshotCleanup, taskWaCleanup, taskLogCleanup } from "./_tasks/cleanup.js";
-import { taskReminder, taskDaily, taskStock, taskServisReminder, taskVoucherExpiryReminder, taskLaporanStaleAlert, taskMaterialPulangReminder, taskWeeklyReport, taskMorningDispatch, taskRatingPrompt } from "./_tasks/reminders.js";
+import { taskReminder, taskDaily, taskStock, taskServisReminder, taskLaporanStaleAlert, taskMaterialPulangReminder, taskWeeklyReport, taskMorningDispatch, taskRatingPrompt } from "./_tasks/reminders.js";
+import { taskVoucherExpiryReminder, taskVoucherLoyalty, taskVoucherWinback } from "./_tasks/vouchers.js";
 import { taskWaSnapshot, taskWaBackfill, taskScanBuktiBayar, taskRetryPaymentMedia, taskPaymentMediaWatchdog } from "./_tasks/wa-ai.js";
 import { taskProjectAlerts, taskBackupData, taskPayrollWA, taskBonusEligible, taskMaintenanceContractExpiry, taskMaintenanceFollowupAlert, taskMaintenancePmDue, taskMediaGapAlert, taskDataIntegrityAudit, taskInfraUsageAlert } from "./_tasks/ops.js";
 
@@ -68,7 +69,9 @@ async function taskTickWithLease({ cleanupOnly = false } = {}) {
     { t: "project-alerts",           fn: taskProjectAlerts,          h: 9 },
     { t: "morning-dispatch",         fn: taskMorningDispatch,        h: 9 },
     { t: "reminder",                 fn: taskReminder,               h: 10 },
-    { t: "voucher-expiry",           fn: taskVoucherExpiryReminder,  h: 10 },
+    { t: "voucher-expiry", fn: taskVoucherExpiryReminder, h: 10, continuable: true, budgetMs: 24000, minimumMs: 22000 },
+    { t: "voucher-loyalty", fn: taskVoucherLoyalty, h: 10, continuable: true, budgetMs: 24000, minimumMs: 22000 },
+    { t: "voucher-winback", fn: taskVoucherWinback, h: 10, continuable: true, budgetMs: 24000, minimumMs: 22000 },
     { t: "laporan-stale",              fn: taskLaporanStaleAlert,          h: 10 },
     { t: "maintenance-followup-alert", fn: taskMaintenanceFollowupAlert,   h: 10 },
     { t: "maintenance-contract-expiry", fn: taskMaintenanceContractExpiry, h: 10, dow: 1 },
@@ -141,7 +144,17 @@ export default async function handler(req, res) {
       // Accept App Token (HMAC-signed JWT dari _auth.js signAppToken)
       if (iToken.split(".").length === 3) {
         const claims = verifyAppToken(iToken);
-        if (claims) authorized = true;
+        if (claims) {
+          if (!['Owner','Admin'].includes(claims.role) || !/^[0-9a-f-]{36}$/i.test(claims.userId || '')) return res.status(403).json({error:'Hanya Owner/Admin aktif dapat menjalankan otomasi'});
+          let profile;
+          try {
+            const result=await sb.from('user_profiles').select('id,role,active').eq('id',claims.userId).maybeSingle().abortSignal(AbortSignal.timeout(5000));
+            if(result.error) return res.status(503).json({error:'Pemeriksaan akses otomasi tidak tersedia'});
+            profile=result.data;
+          } catch {return res.status(503).json({error:'Pemeriksaan akses otomasi tidak tersedia'});}
+          if(!profile || profile.id!==claims.userId || profile.active!==true || !['Owner','Admin'].includes(profile.role)) return res.status(403).json({error:'Hanya Owner/Admin aktif dapat menjalankan otomasi'});
+          authorized = true;
+        }
       } else {
         const tBuf = Buffer.from(iToken, "utf-8");
         const sBuf = Buffer.from(internalSecret, "utf-8");
@@ -199,6 +212,8 @@ export default async function handler(req, res) {
       "rating-prompt":    taskRatingPrompt,
       "servis-reminder":  taskServisReminder,
       "voucher-expiry":   taskVoucherExpiryReminder,
+      "voucher-loyalty": taskVoucherLoyalty,
+      "voucher-winback": taskVoucherWinback,
       "laporan-stale":              taskLaporanStaleAlert,
       "maintenance-followup-alert":  taskMaintenanceFollowupAlert,
       "maintenance-contract-expiry": taskMaintenanceContractExpiry,

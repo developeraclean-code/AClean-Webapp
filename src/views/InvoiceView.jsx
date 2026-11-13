@@ -809,19 +809,22 @@ const [voucherStats, setVoucherStats]   = useState(null);
 const [voucherFilter, setVoucherFilter] = useState("active"); // "all" | "active" | "claimed" | "expired"
 const [voucherSearch, setVoucherSearch] = useState("");
 const [voucherLoading, setVoucherLoading] = useState(false);
-
-const loadVouchers = async (filter = voucherFilter, search = voucherSearch) => {
-  setVoucherLoading(true);
+const [voucherError, setVoucherError] = useState("");
+const [voucherPage, setVoucherPage] = useState({offset:0,limit:50,total_filtered:0,has_more:false});
+const voucherSequence = useRef(0);
+const loadVouchers = async (filter = voucherFilter, search = voucherSearch, offset = 0) => {
+  const sequence=++voucherSequence.current;
+  setVoucherLoading(true);setVoucherError("");
   try {
-    const hdrs = await apiHeaders();
-    const params = new URLSearchParams({ status: filter });
-    if (search.trim()) params.set("search", search.trim());
-    const r = await fetch("/api/admin-vouchers?" + params.toString(), { headers: hdrs });
-    const d = r.ok ? await r.json() : {};
-    setVoucherList(d.vouchers || []);
-    setVoucherStats(d.stats || null);
-  } catch { /* silent */ }
-  finally { setVoucherLoading(false); }
+    const params=new URLSearchParams({status:filter,search:search.trim(),offset:String(offset),limit:"50"});
+    const r=await fetch("/api/admin-vouchers?"+params,{headers:await apiHeaders(),signal:AbortSignal.timeout(15000)});
+    const d=await r.json();
+    if(!r.ok || !Array.isArray(d.vouchers) || !d.stats) throw new Error(d.error||"Respons daftar voucher tidak valid");
+    if(sequence!==voucherSequence.current) return;
+    setVoucherList(d.vouchers);setVoucherStats(d.stats);
+    setVoucherPage({offset:d.offset,limit:d.limit,total_filtered:d.total_filtered,has_more:d.has_more});
+  } catch(error) { if(sequence===voucherSequence.current) setVoucherError(error.message||"Gagal memuat voucher. Coba lagi."); }
+  finally { if(sequence===voucherSequence.current) setVoucherLoading(false); }
 };
 const [quoPDFData, setQuoPDFData] = useState(null); // quotation untuk preview PDF
 const [quoLogoUrl, setQuoLogoUrl] = useState(null);  // logo AClean (data URL) untuk PDF quotation
@@ -1012,7 +1015,7 @@ return (
       ].map(t => (
         <button key={t.key} onClick={() => {
           setInvoiceSubTab(t.key);
-          if (t.key === "voucher") loadVouchers("active", "");
+          if (t.key === "voucher") {setVoucherFilter("active");setVoucherSearch("");loadVouchers("active", "");}
         }}
           style={{ padding: "7px 18px", borderRadius: "8px 8px 0 0", border: "none", cursor: "pointer", fontSize: 13, fontWeight: invoiceSubTab === t.key ? 800 : 500,
             background: invoiceSubTab === t.key ? cs.accent + "22" : "transparent",
@@ -1116,6 +1119,8 @@ return (
         voucherSearch={voucherSearch}
         setVoucherSearch={setVoucherSearch}
         voucherLoading={voucherLoading}
+        voucherError={voucherError}
+        voucherPage={voucherPage}
         loadVouchers={loadVouchers}
         apiHeaders={apiHeaders}
         showNotif={showNotif}
@@ -1940,7 +1945,7 @@ return (
             {inv.invoice_type !== "ac_unit_sale" && inv.status !== "PAID" &&
               (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
                 <button onClick={() => {
-                  setEditInvoiceData(inv); setEditInvoiceForm({ labor: inv.labor, material: inv.material, discount: inv.discount || 0, trade_in: inv.trade_in || false, trade_in_amount: inv.trade_in_amount || 250000, pph23: inv.pph23 || false, pph23_rate: selectedPph23Rate(inv.labor, inv.pph23_amount), notes: "" }); const _allItems = parseMD(inv.materials_detail).map((m, idx) => ({ ...m, _idx: idx }));
+                  setEditInvoiceData(inv); setEditInvoiceForm({ labor: inv.labor, material: inv.material, discount: (inv.voucher_id ? inv.voucher_manual_discount : inv.discount) || 0, trade_in: inv.trade_in || false, trade_in_amount: inv.trade_in_amount || 250000, pph23: inv.pph23 || false, pph23_rate: selectedPph23Rate(inv.labor, inv.pph23_amount), notes: "" }); const _allItems = parseMD(inv.materials_detail).map((m, idx) => ({ ...m, _idx: idx }));
                   // Split via kategori billing (bukan tebak-nama): LABOR/FEE → section jasa, sisanya → material
                   const _jasaItems = _allItems.filter(m => categoryOf(m) === LINE_CATEGORY.LABOR);
                   const _matItems = _allItems.filter(m => categoryOf(m) !== LINE_CATEGORY.LABOR);
@@ -2716,7 +2721,7 @@ return (
 }
 
 // ── Voucher Admin Tab ──────────────────────────────────────────────────────────
-function VoucherAdminTab({ voucherList, voucherStats, voucherFilter, setVoucherFilter, voucherSearch, setVoucherSearch, voucherLoading, loadVouchers, apiHeaders, showNotif, fmt }) {
+function VoucherAdminTab({ voucherError, voucherPage, voucherList, voucherStats, voucherFilter, setVoucherFilter, voucherSearch, setVoucherSearch, voucherLoading, loadVouchers, apiHeaders, showNotif, fmt }) {
   const [cancellingId, setCancellingId] = useState(null);
 
   const handleCancel = async (v) => {
@@ -2725,15 +2730,16 @@ function VoucherAdminTab({ voucherList, voucherStats, voucherFilter, setVoucherF
     try {
       const hdrs = await apiHeaders();
       const r = await fetch("/api/cancel-voucher", { method: "POST", headers: hdrs, body: JSON.stringify({ id: v.id }) });
-      if (r.ok) {
+      const result=await r.json();
+      if (r.ok && result.ok) {
         showNotif(`✅ Voucher ${v.code} dibatalkan`);
         loadVouchers(voucherFilter, voucherSearch);
-      } else showNotif("❌ Gagal membatalkan voucher", "error");
+      } else showNotif(result.error || "❌ Gagal membatalkan voucher", "error");
     } catch { showNotif("❌ Gagal membatalkan voucher", "error"); }
     finally { setCancellingId(null); }
   };
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateWIB();
   const getVoucherStatus = (v) => {
     if (v.claimed_at) return { label: "Diklaim", color: "#22c55e", bg: "#f0fdf4" };
     if (!v.is_valid)  return { label: "Dibatalkan", color: "#94a3b8", bg: "#f1f5f9" };
@@ -2745,15 +2751,16 @@ function VoucherAdminTab({ voucherList, voucherStats, voucherFilter, setVoucherF
     : v.type === "free_unit" ? `${v.value} Unit Gratis` : v.type;
 
   return (
-    <div style={{ display: "grid", gap: 14 }}>
+    <fieldset disabled={cancellingId !== null} style={{ display: "grid", gap: 14, border:0, padding:0, margin:0, minWidth:0 }}>
       {/* Stats */}
       {voucherStats && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(90px, 1fr))", gap: 8 }}>
           {[
             { label: "Total", val: voucherStats.total, color: cs.text },
             { label: "Aktif", val: voucherStats.active, color: "#0ea5e9" },
             { label: "Diklaim", val: voucherStats.claimed, color: "#22c55e" },
             { label: "Expired", val: voucherStats.expired, color: "#f87171" },
+            { label: "Dibatalkan", val: voucherStats.cancelled, color: cs.muted },
           ].map(s => (
             <div key={s.label} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
               <div style={{ fontSize: 20, fontWeight: 800, color: s.color }}>{s.val}</div>
@@ -2765,11 +2772,11 @@ function VoucherAdminTab({ voucherList, voucherStats, voucherFilter, setVoucherF
 
       {/* Filter + Search */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <div style={{ display: "flex", gap: 4 }}>
-          {["active","claimed","expired","all"].map(f => (
+        <div style={{ display: "flex", gap: 4, flexWrap:"wrap" }}>
+          {["active","claimed","expired","cancelled","all"].map(f => (
             <button key={f} onClick={() => { setVoucherFilter(f); loadVouchers(f, voucherSearch); }}
               style={{ padding: "6px 14px", borderRadius: 20, border: "1px solid " + (voucherFilter === f ? cs.accent : cs.border), background: voucherFilter === f ? cs.accent + "22" : "transparent", color: voucherFilter === f ? cs.accent : cs.muted, cursor: "pointer", fontSize: 12, fontWeight: voucherFilter === f ? 700 : 400 }}>
-              {{ active: "Aktif", claimed: "Diklaim", expired: "Expired", all: "Semua" }[f]}
+              {{ active: "Aktif", claimed: "Diklaim", expired: "Expired", cancelled: "Dibatalkan", all: "Semua" }[f]}
             </button>
           ))}
         </div>
@@ -2783,10 +2790,11 @@ function VoucherAdminTab({ voucherList, voucherStats, voucherFilter, setVoucherF
         </button>
       </div>
 
+      {voucherError && <div role="alert" style={{color:cs.red}}>Daftar voucher belum berhasil diperbarui: {voucherError} <button onClick={()=>loadVouchers(voucherFilter,voucherSearch,voucherPage.offset)}>Coba lagi</button></div>}
       {/* List */}
       {voucherLoading ? (
         <div style={{ textAlign: "center", padding: 32, color: cs.muted }}>Memuat voucher...</div>
-      ) : voucherList.length === 0 ? (
+      ) : voucherError ? null : voucherList.length === 0 ? (
         <div style={{ textAlign: "center", padding: 32, color: cs.muted }}>Tidak ada voucher ditemukan</div>
       ) : (
         <div style={{ display: "grid", gap: 6 }}>
@@ -2819,7 +2827,12 @@ function VoucherAdminTab({ voucherList, voucherStats, voucherFilter, setVoucherF
           })}
         </div>
       )}
-    </div>
+      {!voucherError && <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
+        <button disabled={voucherLoading || voucherPage.offset===0} onClick={()=>loadVouchers(voucherFilter,voucherSearch,Math.max(0,voucherPage.offset-voucherPage.limit))}>Sebelumnya</button>
+        <span>{voucherPage.total_filtered ? voucherPage.offset+1 : 0}–{Math.min(voucherPage.offset+voucherPage.limit,voucherPage.total_filtered)} dari {voucherPage.total_filtered}</span>
+        <button disabled={voucherLoading || !voucherPage.has_more} onClick={()=>loadVouchers(voucherFilter,voucherSearch,voucherPage.offset+voucherPage.limit)}>Berikutnya</button>
+      </div>}
+    </fieldset>
   );
 }
 

@@ -1,3 +1,4 @@
+import Sentry, { initSentry } from "../api/sentry-init.js";
 // Local/self-hosted HTTP adapter for the existing Vercel-style API handlers.
 // This module deliberately does not load .env files or start a listener on import.
 import http from 'node:http';
@@ -133,6 +134,10 @@ export function createAppServer({ unifiedHandler, directHandlers = {}, staticDir
     } catch (error) {
       // Exception messages may contain a signed URL or token. Keep console output minimal;
       // handlers/Sentry own the detailed, access-controlled diagnostics.
+      if (!error.statusCode) {
+        initSentry();
+        Sentry.captureException(error, {tags:{route:pathname,method:req.method,component:'selfhost-api'}});
+      }
       if (!error.statusCode) console.error('[selfhost-api] Handler failed', {
         route,
         errorType: error instanceof Error ? error.name : 'UnknownError',

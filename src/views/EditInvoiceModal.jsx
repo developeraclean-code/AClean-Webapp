@@ -1,6 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { cs } from "../theme/cs.js";
 import { summarize, checkInvoiceConsistency, describeInconsistency, normalizeLines, categoryOf, LINE_CATEGORY, computePph23, PPH23_RATE, PPH23_RATE_ALT, selectedPph23Rate } from "../lib/invoicing.js";
+
+import { voucherEditDraft, voucherRequest } from '../lib/voucherClient.js';
 
 const PPH23_OPTIONS = [PPH23_RATE, PPH23_RATE_ALT];
 
@@ -23,14 +25,25 @@ export default function EditInvoiceModal({
   const [voucherCheckLoading, setVoucherCheckLoading] = useState(false);
   const [voucherApplied, setVoucherApplied] = useState(null);
   const [editSaving, setEditSaving] = useState(false);
+  const [saveUncertain, setSaveUncertain] = useState(false);
+  const saveRequest = useRef(null);
+  const checkSequence = useRef(0);
+  const draftVersion = JSON.stringify([editInvoiceForm,editInvoiceItems,editJasaItems]);
+  useEffect(() => {
+    checkSequence.current++;setVoucherCheckLoading(false);
+    if (!saveUncertain && !editSaving) {
+      setVoucherApplied(null); setVoucherCheckResult(null); saveRequest.current = null;
+    }
+  }, [draftVersion]);
 
   useEffect(() => {
+    checkSequence.current++;
     if (open) {
       setEditAddType(""); setEditAddSearch("");
-      setVoucherCheckCode(""); setVoucherCheckResult(null);
-      setVoucherCheckLoading(false); setVoucherApplied(null);
+      setVoucherCheckCode(editInvoiceData?.voucher_code || ""); setVoucherCheckResult(null);
+      setVoucherCheckLoading(false); setVoucherApplied(null); setSaveUncertain(false); saveRequest.current=null;
     }
-  }, [open]);
+  }, [open, editInvoiceData?.id]);
 
   if (!open || !editInvoiceData) return null;
 
@@ -70,12 +83,37 @@ export default function EditInvoiceModal({
     : selectedPph23Rate(editInvoiceData.labor, editInvoiceData.pph23_amount);
 
   const handleClose = () => {
+    if (editSaving || saveUncertain) return;
     setEditAddType(""); setEditAddSearch("");
     onClose();
   };
 
   const handleSave = async () => {
     if (editSaving) return;
+    if (voucherApplied || editInvoiceData.voucher_id || saveUncertain) {
+      if (!saveRequest.current && !voucherApplied?.quote) { showNotif('Validasi dan terapkan kembali voucher sebelum menyimpan perubahan.'); return; }
+      if (!saveRequest.current) saveRequest.current = {
+        request_id: crypto.randomUUID(), invoice_id: editInvoiceData.id, code: voucherApplied.code,
+        edit: voucherEditDraft(editInvoiceData,editInvoiceForm,editJasaItems,editInvoiceItems),
+        expected_updated_at: voucherApplied.quote.expected_updated_at, quote_hash: voucherApplied.quote.quote_hash,
+      };
+      setEditSaving(true);
+      try {
+        const result = await voucherRequest('/api/apply-invoice-voucher',saveRequest.current,_apiHeaders);
+        const row=result.invoice;
+        if (!result.ok || !row || row.id!==editInvoiceData.id || row.voucher_code!==saveRequest.current.code) throw Object.assign(new Error('Hasil invoice belum terkonfirmasi'),{uncertain:true});
+        let details=row.materials_detail;try{if(typeof details==='string')details=JSON.parse(details);}catch{details=[];}
+        setInvoicesData(previous=>previous.map(i=>i.id===row.id?{...i,...row,materials_detail:details}:i));
+        setSaveUncertain(false);saveRequest.current=null;
+        addAgentLog('INVOICE_VOUCHER_SAVED',`Invoice ${row.id} dan voucher tersimpan atomik`,'SUCCESS');
+        showNotif('✅ Invoice dan penggunaan voucher berhasil disimpan.');onClose();
+      } catch(error) {
+        setSaveUncertain(Boolean(error.uncertain));
+        if(!error.uncertain){saveRequest.current=null;setVoucherApplied(null);setVoucherCheckResult(null);}
+        showNotif('⚠️ '+error.message);
+      } finally {setEditSaving(false);}
+      return;
+    }
     const discountFinal = parseInt(editInvoiceForm.discount || 0) || 0;
     const tradeInFinal = !!editInvoiceForm.trade_in;
     const tradeInAmtFinal = tradeInFinal ? (parseInt(editInvoiceForm.trade_in_amount) || 0) : 0;
@@ -141,7 +179,7 @@ export default function EditInvoiceModal({
           <button onClick={handleClose} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>×</button>
         </div>
 
-        <div style={{ display: "grid", gap: 14 }}>
+        <fieldset disabled={editSaving || saveUncertain} style={{ display: "grid", gap: 14, border:0, padding:0, margin:0, minWidth:0 }}>
 
           {/* Atas Nama Invoice */}
           <div style={{ background: cs.card, border: "1px solid " + cs.accent + "33", borderRadius: 10, padding: "12px 14px", display: "grid", gap: 10 }}>
@@ -314,33 +352,36 @@ export default function EditInvoiceModal({
                     <strong style={{ color: "#15803d" }}>{voucherApplied.code}</strong>
                     <span style={{ color: "#16a34a", marginLeft: 6 }}>{voucherApplied.type_label}</span>
                   </div>
-                  <button onClick={() => { setVoucherApplied(null); setVoucherCheckResult(null); setVoucherCheckCode(""); setEditInvoiceForm(f => ({ ...f, discount: 0 })); }}
+                  <button disabled={Boolean(editInvoiceData.voucher_id)} onClick={() => { setVoucherApplied(null); setVoucherCheckResult(null); setVoucherCheckCode("");  }}
                     style={{ fontSize: 11, color: "#94a3b8", background: "none", border: "none", cursor: "pointer" }}>Hapus</button>
                 </div>
               ) : (
                 <div style={{ display: "flex", gap: 6 }}>
                   <input value={voucherCheckCode}
-                    onChange={e => { setVoucherCheckCode(e.target.value.toUpperCase()); setVoucherCheckResult(null); }}
+                    onChange={e => { checkSequence.current++;setVoucherCheckLoading(false);setVoucherCheckCode(e.target.value.toUpperCase()); setVoucherCheckResult(null); }}
                     placeholder="Kode voucher (cth: ACL-K3M9P2)"
                     style={{ flex: 1, background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7, padding: "6px 10px", color: cs.text, fontSize: 12, fontFamily: "monospace" }} />
                   <button disabled={voucherCheckLoading || !voucherCheckCode.trim()}
                     onClick={async () => {
                       if (!voucherCheckCode.trim() || !editInvoiceData?.phone) return;
+                      const sequence=++checkSequence.current;
                       setVoucherCheckLoading(true); setVoucherCheckResult(null);
                       try {
-                        const hdrs = await _apiHeaders();
-                        const r = await fetch("/api/validate-voucher", { method: "POST", headers: hdrs, body: JSON.stringify({ code: voucherCheckCode.trim(), phone: editInvoiceData.phone, invoice_id: editInvoiceData.id }) });
-                        const d = await r.json();
-                        if (r.ok && d.valid) setVoucherCheckResult({ valid: true, voucher: d.voucher });
-                        else setVoucherCheckResult({ error: d.error || "Voucher tidak valid" });
-                      } catch { setVoucherCheckResult({ error: "Gagal cek voucher" }); }
-                      finally { setVoucherCheckLoading(false); }
+                        const d = await voucherRequest('/api/validate-voucher',{code:voucherCheckCode.trim(),invoice_id:editInvoiceData.id,edit:voucherEditDraft(editInvoiceData,editInvoiceForm,editJasaItems,editInvoiceItems)},_apiHeaders);
+                        if(sequence!==checkSequence.current)return;
+                        if (d.valid && d.quote) setVoucherCheckResult({ valid:true,voucher:d.voucher,quote:d.quote });
+                        else setVoucherCheckResult({error:'Voucher belum dapat divalidasi'});
+                      } catch (error) { if(sequence===checkSequence.current)setVoucherCheckResult({ error: error.message || "Gagal cek voucher" }); }
+                      finally { if(sequence===checkSequence.current)setVoucherCheckLoading(false); }
                     }}
                     style={{ padding: "6px 14px", borderRadius: 7, border: "none", background: voucherCheckLoading ? cs.border : "#f43f5e", color: "#fff", cursor: voucherCheckLoading ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700 }}>
                     {voucherCheckLoading ? "..." : "Cek"}
                   </button>
                 </div>
               )}
+              <div style={{fontSize:11,color:cs.muted}}>Voucher baru digunakan setelah invoice berhasil disimpan. Manfaat dihitung dari jasa bersih setelah potongan baris/trade-in, tanpa material/biaya tetap. Gunakan potongan terbaik tanpa menumpuk diskon manual; unit gratis memakai Cleaning termurah.</div>
+              {editInvoiceData.voucher_id && !voucherApplied && <div role="status" style={{fontSize:11,color:cs.yellow}}>Invoice sudah memakai {editInvoiceData.voucher_code}. Validasi ulang sebelum menyimpan perubahan.</div>}
+              {voucherApplied?.quote && <div style={{fontSize:12,color:'#16a34a'}}>Potongan final {fmt(voucherApplied.quote.discount)} · Total setelah voucher {fmt(voucherApplied.quote.total)}</div>}
               {voucherCheckResult?.error && (
                 <div style={{ marginTop: 6, fontSize: 11, color: "#f87171", padding: "6px 10px", background: "#fef2f2", borderRadius: 6 }}>❌ {voucherCheckResult.error}</div>
               )}
@@ -348,17 +389,9 @@ export default function EditInvoiceModal({
                 <div style={{ marginTop: 6, background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 8, padding: "8px 12px" }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: "#15803d", marginBottom: 4 }}>✅ Voucher Valid — {voucherCheckResult.voucher.type_label}</div>
                   <div style={{ fontSize: 11, color: "#16a34a" }}>{voucherCheckResult.voucher.customer_name} · {voucherCheckResult.voucher.description}</div>
-                  <button onClick={async () => {
-                    const v = voucherCheckResult.voucher;
-                    let discountAmt = 0;
-                    if (v.type === "discount_pct") discountAmt = Math.round((newTotal * v.value) / 100);
-                    setEditInvoiceForm(f => ({ ...f, discount: discountAmt }));
-                    setVoucherApplied(v);
+                  <button onClick={() => {
+                    setVoucherApplied({...voucherCheckResult.voucher,quote:voucherCheckResult.quote});
                     setVoucherCheckResult(null);
-                    try {
-                      const hdrs = await _apiHeaders();
-                      await fetch("/api/claim-voucher", { method: "POST", headers: hdrs, body: JSON.stringify({ code: v.code, invoice_id: editInvoiceData.id }) });
-                    } catch { /* silent */ }
                   }}
                     style={{ marginTop: 8, padding: "7px 0", width: "100%", borderRadius: 8, border: "none", background: "#16a34a", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
                     Terapkan Voucher
@@ -409,7 +442,7 @@ export default function EditInvoiceModal({
                     <div style={{ marginTop: 8, fontSize: 12, color: cs.muted, display: "grid", gap: 3 }}>
                       <div style={{ display: "flex", justifyContent: "space-between" }}><span>Nilai Jasa (DPP)</span><b style={{ color: cs.text, fontFamily: "monospace" }}>{fmt(pph.dpp)}</b></div>
                       <div style={{ display: "flex", justifyContent: "space-between" }}><span>PPh 23 dipotong</span><b style={{ color: "#0ea5e9", fontFamily: "monospace" }}>- {fmt(pph.amount)}</b></div>
-                      <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid " + cs.border, paddingTop: 3 }}><span>Diterima AClean (Total tidak berubah)</span><b style={{ color: cs.green, fontFamily: "monospace" }}>{fmt(newTotal)}</b></div>
+                      <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid " + cs.border, paddingTop: 3 }}><span>Diterima AClean (Total tidak berubah)</span><b style={{ color: cs.green, fontFamily: "monospace" }}>{fmt(voucherApplied?.quote?.total ?? newTotal)}</b></div>
                     </div>
                   )}
                 </div>
@@ -420,7 +453,7 @@ export default function EditInvoiceModal({
           {/* Total preview */}
           <div style={{ background: cs.accent + "12", border: "1px solid " + cs.accent + "33", borderRadius: 10, padding: 14 }}>
             <div style={{ fontSize: 12, color: cs.muted, marginBottom: 4 }}>Total Invoice Baru</div>
-            <div style={{ fontWeight: 800, fontSize: 22, color: cs.accent, fontFamily: "monospace" }}>{fmt(newTotal)}</div>
+            <div style={{ fontWeight: 800, fontSize: 22, color: cs.accent, fontFamily: "monospace" }}>{fmt(voucherApplied?.quote?.total ?? newTotal)}</div>
             {(editDiscount > 0 || editTradeIn) && (
               <div style={{ fontSize: 11, color: "#f43f5e", marginTop: 4 }}>
                 Potongan: {editDiscount > 0 ? `Discount ${fmt(editDiscount)}` : ""}{editDiscount > 0 && editTradeIn ? " + " : ""}{editTradeIn ? `Trade-In ${fmt(editTradeInAmt)}` : ""}
@@ -441,15 +474,18 @@ export default function EditInvoiceModal({
               style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "10px 12px", color: cs.text, fontSize: 13 }} />
           </div>
 
+        </fieldset>
+        {saveUncertain && <p role="alert" style={{color:'#fbbf24'}}>Hasil simpan belum terkonfirmasi. Form dikunci; konfirmasi ulang memakai ID transaksi yang sama.</p>}
+        <div style={{ display:'grid',gap:14 }}>
           {/* Buttons */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10 }}>
-            <button onClick={handleClose} disabled={editSaving}
+            <button onClick={handleClose} disabled={editSaving || saveUncertain}
               style={{ padding: "11px", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 10, color: cs.text, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>
               Batal
             </button>
             <button onClick={handleSave} disabled={editSaving}
               style={{ padding: "11px", background: "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", borderRadius: 10, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
-              {editSaving ? "⏳ Menyimpan…" : "💾 Simpan Perubahan"}
+              {editSaving ? "⏳ Menyimpan…" : saveUncertain ? "Konfirmasi ulang hasil simpan" : "💾 Simpan Perubahan"}
             </button>
           </div>
         </div>

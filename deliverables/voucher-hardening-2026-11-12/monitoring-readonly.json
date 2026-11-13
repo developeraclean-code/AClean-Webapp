@@ -1,0 +1,39 @@
+{
+  "checked_at": "2026-11-12T13:52:08.425120+00:00",
+  "scope": "read-only production runtime and public health; external uptime account not inspected",
+  "production": {
+    "source_commit": "d03d85ea7a3e9c558fc40e370a46d94c92a60def",
+    "health": "healthy",
+    "sentry_runtime_dsn_present": false,
+    "frontend_dsn_found_in_assets": false
+  },
+  "health": {
+    "app": {
+      "http_status": 200,
+      "status": "healthy",
+      "diagnosis": null,
+      "version": "7aa3285"
+    },
+    "auth": {
+      "http_status": 200,
+      "status": "healthy",
+      "diagnosis": "none",
+      "version": "7aa3285"
+    },
+    "database": {
+      "http_status": 200,
+      "status": "healthy",
+      "diagnosis": "none",
+      "version": "7aa3285"
+    }
+  },
+  "local_uptime_container_found": false,
+  "voucher_readonly": {
+    "toggles": {
+      "voucher_loyalty_enabled": "false",
+      "voucher_winback_enabled": "false",
+      "voucher_expiry_reminder_enabled": "false"
+    },
+    "voucher_count": 0
+  }
+}

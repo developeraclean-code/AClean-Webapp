@@ -1,0 +1,9 @@
+
+migrations/ — 244 file, rentang 1–241
+
+✓ Tidak ada nomor dobel baru
+  (14 dobel warisan di-baseline, sudah ter-apply: 004, 005, 039, 054, 064, 065, 066, 067, 068, 069, 077, 083, 107, 122)
+
+⚠ 11 nomor GAP (mungkin migrasi belum di-commit): 024, 091, 222, 226, 227, 228, 230, 237, 238, 239, 240
+
+Nomor migrasi berikutnya: 242

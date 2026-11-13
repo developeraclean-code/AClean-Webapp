@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/node";
+import { sentryBeforeSend, monitoringUrl } from "../src/lib/sentryPrivacy.js";
 
 let initialized = false;
 
@@ -8,8 +9,11 @@ export function initSentry() {
   if (process.env.SENTRY_DSN) {
     Sentry.init({
       dsn: process.env.SENTRY_DSN,
-      environment: process.env.VERCEL_ENV || process.env.NODE_ENV || "development",
-      tracesSampleRate: 0.1, // 10% sampling untuk cost efficiency
+      environment: process.env.SENTRY_ENVIRONMENT || process.env.VERCEL_ENV || process.env.NODE_ENV || "development",
+      release: process.env.SOURCE_COMMIT || process.env.ACLEAN_BUILD_SHA || process.env.VERCEL_GIT_COMMIT_SHA,
+      sendDefaultPii: false,
+      beforeSend: sentryBeforeSend,
+      tracesSampleRate: 0, // Error tracking only; no performance transaction payloads.
       attachStacktrace: true,
       includeLocalVariables: false, // Jangan expose local vars untuk security
     });
@@ -25,11 +29,8 @@ export function withSentry(handler) {
     } catch (error) {
       Sentry.captureException(error, {
         tags: {
-          route: req.url,
+          route: monitoringUrl(req.url),
           method: req.method,
-        },
-        extra: {
-          body: req.method === "POST" ? { ...req.body, phone: "[REDACTED]" } : undefined,
         },
       });
       throw error;

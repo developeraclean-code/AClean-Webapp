@@ -299,3 +299,12 @@ if (!isCronJobEnabled(togMap, "my_feature_enabled") || togMap["my_feature_enable
 }
 ```
 Jika hanya cek salah satu → WA bisa bocor ke customer saat toggle OFF.
+
+## Kandidat voucer / monitoring — 12 November 2026
+
+Perbaikan transaksi voucer atomik, role, manfaat dan otomasi ada pada branch
+`codex/voucher-hardening`, migrasi forward 241. **Belum dianggap deployed.**
+Kontrak, pengujian, urutan rilis dan batas rollback dijelaskan dalam
+[catatan kandidat](docs/VOUCHER_HARDENING_2026-11-12.md). Sentry memerlukan DSN
+build/runtime Coolify; [panduan](docs/SENTRY_SETUP.md) membedakan hasil probe
+ingestion lokal dari keterhubungan produksi dan alert dashboard.
