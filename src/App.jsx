@@ -4344,7 +4344,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
       );
       case "tatatertib": return (
         <Suspense fallback={<div style={{ padding: 20, textAlign: "center", color: cs.muted }}>Memuat…</div>}>
-          <TeamGuidelinesView supabase={supabase} currentUser={currentUser} showNotif={showNotif} showConfirm={showConfirm} />
+          <TeamGuidelinesView apiFetch={_apiFetch} supabase={supabase} currentUser={currentUser} showNotif={showNotif} showConfirm={showConfirm} />
         </Suspense>
       );
       case "biaya": return renderExpenses();
