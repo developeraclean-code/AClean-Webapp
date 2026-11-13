@@ -98,3 +98,9 @@ Migrasi bersifat forward-only. Jangan drop tabel audit/kolom atau mengembalikan
 invoice yang sudah memakai voucer secara manual. Jika rilis gagal, tetap OFF,
 perbaiki maju atau deploy build kompatibel dengan 241; build lama mempunyai
 handler klaim terpisah dan tidak aman sebagai rollback fungsional voucer.
+
+Pemeriksaan target 13 November menemukan tabel lab dimiliki supabase_admin,
+sedangkan produksi dimiliki postgres. Migrasi memeriksa pemilik dan grant di
+awal; objek baru selalu dimiliki postgres. Percobaan awal staging dengan role
+postgres di-rollback tanpa perubahan schema/data. Uji native mencakup operator
+supabase_admin, pemilik objek baru, dan eksekusi RPC sebagai service_role.

@@ -12,7 +12,9 @@ try{
  const connect=async()=>{const c=server.getPgClient();await c.connect();clients.push(c);return c;};
  const setup=await connect(),a=await connect(),b=await connect();
  const db={exec:s=>setup.query(s),query:(...v)=>setup.query(...v)};
- await voucherFixture(db);await setup.query(`CREATE FUNCTION fixture_slow_invoice() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN PERFORM pg_sleep(0.15); RETURN NEW; END$$;CREATE TRIGGER fixture_slow_invoice BEFORE UPDATE ON invoices FOR EACH ROW EXECUTE FUNCTION fixture_slow_invoice();`);
+ await voucherFixture(db,{schemaOwner:'supabase_admin'});
+ assert.equal((await setup.query("SELECT count(*)::int n FROM pg_proc p JOIN pg_namespace s ON s.oid=p.pronamespace WHERE s.nspname='public' AND p.proname LIKE '%_241' AND pg_get_userbyid(p.proowner)='postgres'")).rows[0].n,8);
+ for(const c of [a,b])await c.query('SET ROLE service_role');await setup.query(`CREATE FUNCTION fixture_slow_invoice() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN PERFORM pg_sleep(0.15); RETURN NEW; END$$;CREATE TRIGGER fixture_slow_invoice BEFORE UPDATE ON invoices FOR EACH ROW EXECUTE FUNCTION fixture_slow_invoice();`);
  const check=async(name,fn)=>{await fn();passed++;console.log('PASS '+name);};
  await check('simultaneous same request has one save and one replay',async()=>{
   await seed(db);const q=await quote(db);const result=await Promise.all([save(a,q),save(b,q)]);assert.deepEqual(result.map(x=>x.replayed).sort(),[false,true]);

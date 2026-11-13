@@ -2,6 +2,28 @@
 -- Supabase CLI is unavailable on the working Mac; use this repository's numbered migration convention.
 BEGIN;
 
+-- Fail before DDL if the operator does not own the legacy tables. Lab schema
+-- imports retain supabase_admin ownership; production tables belong to postgres.
+DO $$
+DECLARE can_alter boolean; owner_bypasses boolean;
+BEGIN
+ SELECT coalesce(rolsuper,false) INTO can_alter FROM pg_roles WHERE rolname=current_user;
+ IF NOT can_alter AND EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+  WHERE n.nspname='public' AND c.relname IN ('customer_vouchers','invoices') AND pg_get_userbyid(c.relowner)<>current_user) THEN
+  RAISE EXCEPTION 'Migration 241 requires the legacy table owner or a superuser' USING ERRCODE='42501';
+ END IF;
+ SELECT rolsuper OR rolbypassrls INTO owner_bypasses FROM pg_roles WHERE rolname='postgres';
+ IF NOT coalesce(owner_bypasses,false) AND EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+  WHERE n.nspname='public' AND c.relname IN ('customer_vouchers','invoices') AND pg_get_userbyid(c.relowner)<>'postgres') THEN
+  RAISE EXCEPTION 'The internal postgres function owner cannot enforce this transaction on the existing schema' USING ERRCODE='42501';
+ END IF;
+ IF NOT (has_table_privilege('postgres','public.invoices','SELECT') AND has_table_privilege('postgres','public.invoices','UPDATE'))
+ OR NOT (has_table_privilege('postgres','public.customer_vouchers','SELECT') AND has_table_privilege('postgres','public.customer_vouchers','UPDATE'))
+ OR NOT has_table_privilege('postgres','public.user_profiles','SELECT') THEN
+  RAISE EXCEPTION 'Internal postgres grants are incomplete; do not widen browser access' USING ERRCODE='42501';
+ END IF;
+END$$;
+
 CREATE OR REPLACE FUNCTION public.voucher_phone_241(p_phone text)
 RETURNS text LANGUAGE sql IMMUTABLE SET search_path=pg_catalog AS $$
  WITH p AS (SELECT btrim(coalesce(p_phone,'')) raw,regexp_replace(coalesce(p_phone,''),'[^0-9]','','g') n)
@@ -329,5 +351,17 @@ REVOKE ALL ON FUNCTION public.voucher_assert_actor_241(uuid),public.voucher_quot
 GRANT EXECUTE ON FUNCTION public.voucher_assert_actor_241(uuid),public.voucher_quote_241(uuid,text,text,jsonb),
  public.save_invoice_voucher_241(uuid,uuid,text,text,jsonb,timestamptz,text),public.cancel_voucher_241(uuid,uuid,text),
  public.voucher_admin_page_241(uuid,text,text,integer,integer) TO service_role;
+-- Preserve ordinary internal ownership even when a schema owner/superuser runs the migration.
+ALTER TABLE public.voucher_redemptions OWNER TO postgres;
+ALTER TABLE public.voucher_operations OWNER TO postgres;
+ALTER TABLE public.voucher_automation_state OWNER TO postgres;
+ALTER FUNCTION public.voucher_phone_241(text) OWNER TO postgres;
+ALTER FUNCTION public.voucher_assert_actor_241(uuid) OWNER TO postgres;
+ALTER FUNCTION public.voucher_quote_241(uuid,text,text,jsonb) OWNER TO postgres;
+ALTER FUNCTION public.save_invoice_voucher_241(uuid,uuid,text,text,jsonb,timestamptz,text) OWNER TO postgres;
+ALTER FUNCTION public.guard_invoice_voucher_241() OWNER TO postgres;
+ALTER FUNCTION public.cancel_voucher_241(uuid,uuid,text) OWNER TO postgres;
+ALTER FUNCTION public.voucher_admin_page_241(uuid,text,text,integer,integer) OWNER TO postgres;
+ALTER FUNCTION public.issue_vouchers_241(text,integer) OWNER TO postgres;
 NOTIFY pgrst,'reload schema';
 COMMIT;

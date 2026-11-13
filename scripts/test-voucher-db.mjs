@@ -3,7 +3,7 @@ import {readFile} from 'node:fs/promises';
 import {PGlite} from '@electric-sql/pglite';
 import {normalizeVoucherEdit} from '../src/lib/voucherPolicy.js';
 export const owner='10000000-0000-4000-8000-000000000001',admin='10000000-0000-4000-8000-000000000002',tech='10000000-0000-4000-8000-000000000003';
-export async function voucherFixture(db){
+export async function voucherFixture(db,{schemaOwner="postgres"}={}){
  await db.exec(`CREATE ROLE authenticated NOLOGIN;CREATE ROLE anon NOLOGIN;CREATE ROLE service_role NOLOGIN BYPASSRLS;
  CREATE SCHEMA auth;CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$SELECT nullif(current_setting('test.uid',true),'')::uuid$$;
  CREATE TABLE public.user_profiles(id uuid PRIMARY KEY,name text,role text,active boolean NOT NULL DEFAULT true);
@@ -14,9 +14,11 @@ export async function voucherFixture(db){
  CREATE TABLE public.invoices(id text PRIMARY KEY,customer text NOT NULL,phone text,labor bigint DEFAULT 0,material bigint DEFAULT 0,discount bigint DEFAULT 0,total bigint NOT NULL DEFAULT 0,status text NOT NULL DEFAULT 'UNPAID',paid_amount numeric DEFAULT 0,remaining_amount numeric,paid_at timestamptz,withheld_amount numeric DEFAULT 0,trade_in boolean DEFAULT false,trade_in_amount int DEFAULT 0,pph23 boolean DEFAULT false,pph23_amount numeric DEFAULT 0,materials_detail text,job_id text,garansi_expires date,garansi_days integer,created_at timestamptz DEFAULT now(),address text,last_changed_by text,pdf_url text,pdf_generated_at timestamptz,updated_at timestamptz NOT NULL DEFAULT now());
  INSERT INTO user_profiles VALUES('${owner}','Owner Fiktif','Owner',true),('${admin}','Admin Fiktif','Admin',true),('${tech}','Teknisi Fiktif','Teknisi',true);
  GRANT USAGE ON SCHEMA public TO authenticated,anon,service_role;GRANT USAGE ON SCHEMA auth TO authenticated,anon,service_role;
- GRANT ALL ON public.invoices,public.user_profiles,public.customer_vouchers TO service_role;
+ GRANT ALL ON public.invoices,public.user_profiles,public.customer_vouchers,public.orders,public.customers,public.invoice_payments TO service_role;
  GRANT SELECT,INSERT,UPDATE,DELETE ON public.invoices TO authenticated;`);
+ if(schemaOwner==='supabase_admin')await db.exec("CREATE ROLE supabase_admin SUPERUSER;ALTER TABLE invoices OWNER TO supabase_admin;ALTER TABLE customer_vouchers OWNER TO supabase_admin;SET ROLE supabase_admin;");
  await db.exec(await readFile(new URL('../migrations/241_voucher_atomic_security.sql',import.meta.url),'utf8'));
+ if(schemaOwner==='supabase_admin')await db.exec('RESET ROLE;');
  await db.exec(await readFile(new URL('./fixtures/voucher-production-guards.sql',import.meta.url),'utf8'));
 }
 const args=edit=>JSON.stringify(edit);
