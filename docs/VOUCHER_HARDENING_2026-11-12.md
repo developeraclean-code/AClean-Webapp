@@ -1,17 +1,21 @@
 # Perbaikan voucer — kandidat lokal 12 November 2026
 
-Rilis terverifikasi **13 November 2026**. PR #12 di-merge ke main sebagai
-`461e74f`; staging dan produksi menjalankan pin **e91b6c6**. Kode aplikasi pada merge PR #12
-cocok dengan kandidat yang diuji. Perubahan main setelahnya tidak otomatis
-masuk deployment karena pin rilis dipertahankan. Migrasi 241 sudah diterapkan pada keduanya.
-Enam tabel bisnis produksi memiliki fingerprint sama sebelum/sesudah migrasi.
-Worktree utama user tetap tidak diubah; nomor 237–240 saat itu dipesan pekerjaan
-terpisah dan bukan dependensi migrasi ini. Main kemudian menerima migrasi
-237 payment-media recovery pada PR #13; kode PR tersebut tidak termasuk
-deployment e91b6c6 ini.
+Rilis voucer terverifikasi **13 November 2026**. PR #12 di-merge sebagai
+`461e74f`; kandidat **e91b6c6** lulus transaksi staging dan smoke produksi.
+Migrasi 241 diterapkan pada keduanya, dengan enam fingerprint bisnis produksi
+sama sebelum/sesudah migrasi.
 
-Otomasi voucer tetap **OFF**. Auto-deploy serta preview deployment juga **OFF**
-agar push berikutnya tidak melewati persetujuan dan pin rilis yang diuji.
+Setelah penerimaan itu, proses rilis paralel mempromosikan PR #13 payment-media
+recovery ke produksi sebagai **18c6103**. Perubahan tersebut dipertahankan;
+kode handler/policy/modal/migrasi serta logika admin voucer identik dengan
+kandidat e91b6c6. Staging voucer tetap e91b6c6. Verifikasi baca-saja produksi
+terbaru dan receipt Sentry disimpan terpisah dari bukti rilis awal.
+
+Otomasi voucer tetap **OFF**, begitu juga auto-deploy dan preview. Semua pin
+adalah keputusan rilis eksplisit, bukan berarti main terbaru otomatis live.
+Nomor 241 dipilih untuk menghindari pekerjaan lain pada 237–240; main kemudian
+menerima 237 payment-media recovery dari pekerjaan paralel. Tidak ada migrasi
+atau kode pekerjaan lain yang dihapus/diganti.
 
 ## Kontrak produk yang diimplementasikan
 
@@ -148,3 +152,16 @@ sukses, tetapi itu tidak membuktikan retry media sudah pulih. Tidak dilakukan
 replay manual, perubahan pembayaran, atau perubahan penjadwal untuk menutupi
 kegagalan provider. Bukti: `known-provider-issue.json`. Ini tetap catatan
 operasional, terpisah dari penerimaan alur voucer/Sentry/UptimeRobot.
+
+## Verifikasi setelah promosi paralel 18c6103
+
+Produksi 18c6103 dipertahankan. Pemeriksaan kode memastikan handler/policy/modal/
+migrasi serta blok state/admin voucer sama dengan e91b6c6. Login Owner/menu
+voucer/mobile dan tiga health HTTP200 diuji ulang pada source aktif. Metadata
+frontend sempat tertinggal e91b6c6; hanya ACLEAN_BUILD_SHA yang disamakan dan
+source 18c6103 dibangun ulang (deployment gs24tglz5wxzxlkimlrbkp1v).
+Event frontend `1c8668f5e30341fc8b0d619786aeb36c` dan backend
+`90daed0c7a28402093b1c27b280ed894` terbaca di Sentry sebagai release 18c6103 /
+production, tanpa identitas user. UptimeRobot tetap UP. Bukti awal e91b6c6
+tetap historis; bukti terbaru memakai prefix production-current. Tidak ada
+rollback terhadap pekerjaan paralel atau pengujian mutasi bisnis produksi.

@@ -67,5 +67,8 @@
   },
   "release_source_commit": "e91b6c6d70aee8e6a80761717e1e65567f627f10",
   "main_code_merge_commit": "461e74fed31360c62cb45f2a4e85fd8638a06956",
-  "source_files_scope": "Files from release_source_commit; operational documentation may be newer."
+  "source_files_scope": "Hashes remain for tested e91b6c6; current 18c6103 core voucher modules/admin logic compared unchanged. Current runtime receipts are recorded separately.",
+  "current_production_source": "18c61039551c014c1e1779324bf77335da44a7da",
+  "current_production_readonly_passed": true,
+  "voucher_core_unchanged_from_tested_release": true
 }
