@@ -1,0 +1,47 @@
+{
+  "environment": "staging",
+  "passed": true,
+  "uncaught_errors": 0,
+  "route_errors": 0,
+  "unexpected_mutations": [],
+  "benefits": [
+    {
+      "id": "QA241-PCT-20261113",
+      "total": 230000,
+      "discount": 20000,
+      "operations": 1,
+      "voucher_code": "ACL-QA241-PCT"
+    },
+    {
+      "id": "QA241-UNIT-20261113",
+      "total": 150000,
+      "discount": 100000,
+      "operations": 1,
+      "voucher_code": "ACL-QA241-UNIT"
+    }
+  ],
+  "api_requests": [
+    "/api/get-api-token",
+    "/api/validate-voucher",
+    "/api/apply-invoice-voucher",
+    "/api/apply-invoice-voucher",
+    "/api/validate-voucher",
+    "/api/apply-invoice-voucher",
+    "/api/apply-invoice-voucher",
+    "/api/cancel-voucher"
+  ],
+  "outbound_wa_requests": 0,
+  "expected_source": "e91b6c6d70aee8e6a80761717e1e65567f627f10",
+  "frontend_sentry": {
+    "configured": true,
+    "release": "e91b6c6d70aee8e6a80761717e1e65567f627f10",
+    "environment": "staging",
+    "event_id": "2b66c08a94a742bdae336bef70733e03",
+    "flushed": true
+  },
+  "portal": {
+    "status": 200,
+    "codes": []
+  },
+  "mobile_overflow": false
+}

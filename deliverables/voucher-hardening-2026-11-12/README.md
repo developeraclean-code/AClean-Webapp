@@ -19,3 +19,16 @@ Matriks role/unit/API/otomasi/privacy berada pada `src/lib/__tests__/voucher*.te
 dan `sentryPrivacy.test.js`. Tes browser tidak menyentuh jaringan Supabase/WA.
 
 Adapter HTTP dapat diuji ulang dengan `node --test deliverables/voucher-hardening-2026-11-12/http-test.mjs`.
+
+## Penerimaan rilis 13 November
+
+- `staging-browser.json`: uji login/transaksi pada deployment e91b6c6 nyata.
+- `staging-migration.json`, `staging-fixture-cleaned.json`: integritas dataset lab.
+- `production-migration.json`: enam fingerprint bisnis sama dalam transaksi DDL.
+- `production-browser.json`: Owner/menu/health/mobile/Sentry baca-saja.
+- `production-deploy.json`: source pin dan ID deployment produksi.
+- `production-monitoring-receipts.json`: event production dibaca kembali dari
+  Sentry dan status UptimeRobot UP setelah URL diperbaiki.
+- `monitoring-connected-20261113.json`: konfigurasi workflows dan audit awal akun.
+
+Tidak ada event error prioritas tinggi/email percobaan yang sengaja dipicu.

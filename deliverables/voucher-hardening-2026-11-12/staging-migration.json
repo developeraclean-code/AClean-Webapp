@@ -1,0 +1,60 @@
+{
+  "after": {
+    "orders": {
+      "md5": "a9ed9a1425b9bb11ee958be9db8c7d05",
+      "count": 7
+    },
+    "invoices": {
+      "md5": "e96fa3ec9ecede7d7f40587751fea313",
+      "count": 4
+    },
+    "payments": {
+      "md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "count": 0
+    },
+    "customers": {
+      "md5": "b9c8ea43ec813130ca1ffbbc1ccbbdd6",
+      "count": 5
+    },
+    "service_reports": {
+      "md5": "d1c6d1715daa5835de80dbc3e96a464b",
+      "count": 4
+    },
+    "invoice_payments": {
+      "md5": "57470e0238d4f499809cf6537411e6dc",
+      "count": 4
+    }
+  },
+  "before": {
+    "orders": {
+      "md5": "a9ed9a1425b9bb11ee958be9db8c7d05",
+      "count": 7
+    },
+    "invoices": {
+      "md5": "e96fa3ec9ecede7d7f40587751fea313",
+      "count": 4
+    },
+    "payments": {
+      "md5": "d41d8cd98f00b204e9800998ecf8427e",
+      "count": 0
+    },
+    "customers": {
+      "md5": "b9c8ea43ec813130ca1ffbbc1ccbbdd6",
+      "count": 5
+    },
+    "service_reports": {
+      "md5": "d1c6d1715daa5835de80dbc3e96a464b",
+      "count": 4
+    },
+    "invoice_payments": {
+      "md5": "57470e0238d4f499809cf6537411e6dc",
+      "count": 4
+    }
+  },
+  "environment": "staging",
+  "container": "supabase-db",
+  "migration": "241",
+  "source_sha256": "c8c6163537381511e7b11e38782bf92c08d4afacd9a80286b15e83ff479e87b7",
+  "applied_at": "2026-11-13T01:27:45.953659+00:00",
+  "business_data_unchanged": true
+}

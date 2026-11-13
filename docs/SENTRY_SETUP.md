@@ -5,15 +5,26 @@ konfigurasi runtime yang benar-benar telah diperiksa.
 
 ## Bukti saat pemeriksaan
 
-Produksi `app.aclean.id` sehat pada source `d03d85e`, tetapi `SENTRY_DSN` runtime
-kosong dan DSN frontend tidak ditemukan dalam asset hasil build. Karena itu
-keberadaan SDK dalam repo **belum berarti error produksi terkirim**.
-Dua DSN yang sudah tersedia secara lokal menerima event INFO sintetis (HTTP 200).
-Pemeriksaan tersebut tidak membuktikan event muncul di dashboard, aturan alert,
-email penerima, atau instrumentasi container produksi.
+Pemeriksaan awal 12 November menemukan DSN tidak terpasang pada container/build
+produksi. Ini sudah diperbaiki pada rilis **e91b6c6**, 13 November 2026.
+DSN frontend diisi saat build; backend saat runtime. Release dan environment
+terverifikasi dari browser/container serta event yang dibaca kembali di akun
+Sentry `aclean-service`:
 
-Bukti tanpa secret: [monitoring-readonly.json](../deliverables/voucher-hardening-2026-11-12/monitoring-readonly.json)
-dan [sentry-ingestion.json](../deliverables/voucher-hardening-2026-11-12/sentry-ingestion.json).
+| Komponen produksi | Proyek | Event INFO yang terverifikasi |
+| --- | --- | --- |
+| Frontend | javascript-react | `773215db07bb4724bb23e57092312b6a` |
+| Backend | aclean-backend | `b885272bdd6543dd83c5205eb6c9a30b` |
+
+Keduanya berlabel production/release e91b6c6 dan tidak memuat identitas user.
+Dua workflow email untuk issue prioritas tinggi aktif, dengan target issue
+owners/fallback ActiveMembers. Probe INFO tidak menguji pengantaran email ke
+inbox dan tidak sengaja memicu alert prioritas tinggi. Gunakan API workflows /
+detectors untuk akun ini; endpoint alert legacy sempat 404 meski proyek valid.
+
+Bukti: [receipt produksi](../deliverables/voucher-hardening-2026-11-12/production-monitoring-receipts.json).
+Snapshot awal [monitoring-readonly.json](../deliverables/voucher-hardening-2026-11-12/monitoring-readonly.json)
+tetap disimpan sebagai riwayat, bukan kondisi terbaru.
 
 ## Konfigurasi deployment
 

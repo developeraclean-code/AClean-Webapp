@@ -1,0 +1,77 @@
+{
+  "checked_at": "2026-11-13",
+  "uptimerobot": [
+    {
+      "id": 803163682,
+      "url": "https://app.aclean.id/api/health",
+      "status": 2,
+      "interval_seconds": 300,
+      "contact_ids": [
+        "8464743"
+      ],
+      "last_log": {
+        "datetime": 1794533436,
+        "duration": 38,
+        "reason": {
+          "code": "200",
+          "detail": "OK"
+        },
+        "type": 2
+      }
+    }
+  ],
+  "sentry": {
+    "organization": "aclean-service",
+    "workflows": [
+      {
+        "id": "3486383",
+        "name": "Send a notification for high priority issues",
+        "enabled": true,
+        "environment": null,
+        "detector_ids": [
+          "7395580"
+        ],
+        "email_actions": [
+          {
+            "type": "email",
+            "status": "active",
+            "target": "issue_owners"
+          }
+        ]
+      },
+      {
+        "id": "3486407",
+        "name": "Send a notification for high priority issues",
+        "enabled": true,
+        "environment": null,
+        "detector_ids": [
+          "7395623"
+        ],
+        "email_actions": [
+          {
+            "type": "email",
+            "status": "active",
+            "target": "issue_owners"
+          }
+        ]
+      },
+      {
+        "id": "5665261",
+        "name": "Send a notification when pull requests are ready",
+        "enabled": true,
+        "environment": null,
+        "detector_ids": [
+          "10113758"
+        ],
+        "email_actions": [
+          {
+            "type": "email",
+            "status": "active",
+            "target": "issue_owners"
+          }
+        ]
+      }
+    ],
+    "earlier_backend_probe_seen": true
+  }
+}
