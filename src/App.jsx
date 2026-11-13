@@ -4944,6 +4944,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
           customersData={customersData} setCustomersData={setCustomersData}
           ordersData={ordersData}
           invoicesData={invoicesDataMerged} paymentSuggestions={paymentSuggestions}
+          apiHeaders={_apiHeaders}
           priceListData={priceListData}
           onOpenCatalog={() => { setWaPanel(false); setActiveMenu("wa-catalog"); }}
           technicians={teknisiData} duration={hitungDurasi} reports={laporanReports}

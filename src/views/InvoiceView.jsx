@@ -146,7 +146,25 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
         body: JSON.stringify({ base64, filename: `proof_${inv.id}_${Date.now()}.jpg`, reportId: "bukti-" + inv.id, mimeType: "image/jpeg" }),
       });
       const d = await resp.json();
-      if (d.success && d.url) { setUploadedUrl(d.url); setReviewAcknowledged(false); showNotif("✅ Bukti terupload"); }
+      if (d.success && d.url) {
+        setUploadedUrl(d.url); setReviewAcknowledged(false);
+        if (inv.status !== "PAID" && d.key) {
+          try {
+            const queued = await fetch("/api/payment-media-manual-upload", {
+              method: "POST", headers: { ...(await apiHeaders()), "Content-Type": "application/json" },
+              body: JSON.stringify({ invoiceId: inv.id, r2Key: d.key }),
+            });
+            const outcome = await queued.json();
+            if (!queued.ok) throw new Error(outcome.error || "Antrean AI gagal");
+            setUploadedUrl(outcome.proofUrl);
+            showNotif(outcome.queued
+              ? "✅ Bukti tersimpan di R2 dan masuk antrean pemeriksaan AI. Verifikasi pembayaran tetap manual."
+              : "✅ Bukti sudah diproses sebelumnya. Periksa Pending AI atau lampirkan manual.");
+          } catch (queueError) {
+            showNotif("⚠️ Bukti tersimpan, tetapi AI belum terantre: " + queueError.message + ". File tetap dapat dilampirkan manual.");
+          }
+        } else showNotif("✅ Bukti terupload");
+      }
       else showNotif("❌ Upload gagal: " + (d.error || "unknown"));
     } catch (err) { showNotif("❌ " + err.message); }
     finally { setUploading(false); e.target.value = ""; }

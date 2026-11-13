@@ -11,6 +11,7 @@ export default function PaymentInboxHealthPanel({ apiHeaders, inbox, onOpenPendi
   const [health, setHealth] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [retryingId, setRetryingId] = useState(null);
   const loadRef = useRef(null);
   const headersRef = useRef(apiHeaders);
   headersRef.current = apiHeaders;
@@ -45,11 +46,24 @@ export default function PaymentInboxHealthPanel({ apiHeaders, inbox, onOpenPendi
     };
   }, []);
   return <PaymentInboxHealthView health={health} error={error || inbox?.error} busy={busy || inbox?.loading}
-    onRefresh={() => { inbox?.refresh(); loadRef.current?.(true); }} onOpenPending={onOpenPending} pendingCount={pendingCount} />;
+    onRefresh={() => { inbox?.refresh(); loadRef.current?.(true); }} onOpenPending={onOpenPending} pendingCount={pendingCount}
+    retryingId={retryingId} onRetry={async jobId => {
+      if (retryingId) return;
+      setRetryingId(jobId);
+      try {
+        const response = await fetch("/api/payment-media-retry", { method: "POST",
+          headers: { ...(await headersRef.current()), "Content-Type": "application/json" },
+          body: JSON.stringify({ jobId }) });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "Gagal mengantrekan ulang");
+        setError(""); inbox?.refresh(); await loadRef.current?.(true);
+      } catch (e) { setError(e.message); }
+      finally { setRetryingId(null); }
+    }} />;
 }
 
 // Shared read-only presentation, also used by the isolated local preview.
-export function PaymentInboxHealthView({ health, error, busy, onRefresh, onOpenPending, pendingCount }) {
+export function PaymentInboxHealthView({ health, error, busy, onRefresh, onOpenPending, pendingCount, onRetry, retryingId }) {
   const [expanded, setExpanded] = useState(false);
   const [filter, setFilter] = useState("all");
   const worker = health ? paymentWorkerState(health) : null;
@@ -125,6 +139,9 @@ export function PaymentInboxHealthView({ health, error, busy, onRefresh, onOpenP
             <div style={{ color: cs.text, marginTop: 6 }}>Tindak lanjut: {state.action}</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginTop: 6 }}>
               {job.r2_url && <a href={job.r2_url} target="_blank" rel="noreferrer" style={{ color: cs.accent }}>Buka media tersimpan ↗</a>}
+              {state.group === "failed" && /\[WA_MEDIA_(?:HTTP_429|HTTP_5\d\d|TIMEOUT|ETIMEDOUT|ECONNRESET|EAI_AGAIN|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET|ECONNREFUSED|ENETUNREACH|FETCH_FAILED)\]/.test(job.last_error || "")
+                && <button disabled={!!retryingId} onClick={() => onRetry?.(job.id)} style={{ ...buttonStyle, color: cs.accent, opacity: retryingId ? 0.6 : 1 }}>
+                  {retryingId === job.id ? "Mengantrekan…" : "Coba unduh ulang"}</button>}
               {job.has_suggestion && <button onClick={onOpenPending} style={{ ...buttonStyle, color: cs.accent }}>Ke daftar tinjauan</button>}
             </div>
           </article>; })}</div>
