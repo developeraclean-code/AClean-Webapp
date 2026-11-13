@@ -171,7 +171,8 @@ export async function downloadIngressMedia(url, { fetchImpl = fetch, maxBytes = 
   // Some provider media gateways redirect to object storage. Validate every hop
   // before making the next request; no auth headers, cookies or TLS bypass.
   for (let redirects = 0; ; redirects++) {
-    try { response = await fetchImpl(target, { signal, redirect: allowsRedirect ? "manual" : "error" }); }
+    try { response = await fetchImpl(target, { signal, redirect: allowsRedirect ? "manual" : "error",
+      ...(provider === "whacenter" && redirects === 0 ? { headers: { Accept: "image/*,application/pdf;q=0.9,*/*;q=0.1", "User-Agent": "ACleanMediaWorker/1.0" } } : {}) }); }
     catch (error) { throw mediaTransportError(error); }
     if (!allowsRedirect || ![301, 302, 303, 307, 308].includes(response.status)) break;
     try { await response.body?.cancel(); } catch { /* release redirect response */ }
@@ -185,8 +186,13 @@ export async function downloadIngressMedia(url, { fetchImpl = fetch, maxBytes = 
     if (!target) throw mediaDownloadError("REDIRECT_HOST_REJECTED", `Host redirect media belum diizinkan; periksa ${provider === "whacenter" ? "WHACENTER_MEDIA_HOSTS" : "WABLAS_MEDIA_HOSTS"}`);
   }
   if (!response.ok) {
+    const retryAfter = response.status === 429 ? response.headers.get("retry-after") : null;
+    const seconds = /^\d+$/.test(String(retryAfter || "")) ? Number(retryAfter) : null;
+    const dateDelay = retryAfter && seconds === null ? Date.parse(retryAfter) - Date.now() : null;
     try { await response.body?.cancel(); } catch { /* release failure response */ }
-    throw mediaDownloadError(`HTTP_${response.status}`, `${provider === "whacenter" ? "WhaCenter" : provider === "wablas" ? "WABLAS" : "Fonnte"} media HTTP ${response.status}`);
+    const error = mediaDownloadError(`HTTP_${response.status}`, `${provider === "whacenter" ? "WhaCenter" : provider === "wablas" ? "WABLAS" : "Fonnte"} media HTTP ${response.status}`);
+    if (response.status === 429) error.retryAfterMs = Math.min(6 * 3600_000, Math.max(0, seconds !== null ? seconds * 1000 : dateDelay || 0));
+    throw error;
   }
   if (Number(response.headers.get("content-length")) > maxBytes) {
     try { await response.body?.cancel(); } catch { /* release oversized response */ }

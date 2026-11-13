@@ -138,5 +138,24 @@ try {
   await db.exec("UPDATE app_settings SET value='false' WHERE key='wa_payment_detect'");
   assert.equal((await one('SELECT dispatch_payment_media_retry() id')).id,null);assert.equal((await one('SELECT count(*)::int n FROM net.test_requests')).n,1);
  });
+ await check('237 schedules transient WhaCenter retries and restricts manual recovery',async()=>{
+  await db.exec('DELETE FROM payment_suggestions;DELETE FROM wa_payment_media_jobs');
+  await db.exec("ALTER TABLE wa_payment_media_jobs ADD COLUMN provider text NOT NULL DEFAULT 'fonnte'");
+  const migration237=readFileSync(new URL('../migrations/237_payment_media_recovery.sql',import.meta.url),'utf8');
+  await db.exec(migration237);await db.exec(migration237);
+  await insert(900,{status:'FAILED_RETRYABLE',stored:false,age:60,attempts:3});
+  await db.query("UPDATE wa_payment_media_jobs SET provider='whacenter',last_error='[WA_MEDIA_HTTP_429]',next_retry_at=now()+interval '1 hour' WHERE id=$1",[id(900)]);
+  assert.equal(await claim(9000),null);
+  await db.query("UPDATE wa_payment_media_jobs SET next_retry_at=now()-interval '1 second' WHERE id=$1",[id(900)]);
+  const fourth=await claim(9001);assert.equal(fourth.attempts,4);assert.equal(fourth.retry_exhausted,false);
+  await db.query("UPDATE wa_payment_media_jobs SET status='FAILED_PERMANENT',lease_token=NULL,lease_expires_at=NULL WHERE id=$1",[id(900)]);
+  const recovered=await one('SELECT requeue_failed_payment_media_237($1) result',[id(900)]);
+  assert.equal(recovered.result.queued,true);
+  assert.equal((await one('SELECT attempts FROM wa_payment_media_jobs WHERE id=$1',[id(900)])).attempts,0);
+  assert.equal((await one('SELECT requeue_failed_payment_media_237($1) result',[id(900)])).result.queued,false);
+  assert.equal((await one('SELECT count(*)::int n FROM invoice_payments')).n,0);
+  for(const role of ['anon','authenticated'])assert.equal((await one('SELECT has_function_privilege($1,$2,$3) ok',[role,'requeue_failed_payment_media_237(uuid)','EXECUTE'])).ok,false);
+  assert.equal((await one('SELECT has_function_privilege($1,$2,$3) ok',['service_role','requeue_failed_payment_media_237(uuid)','EXECUTE'])).ok,true);
+ });
  console.log(JSON.stringify({passed,syntheticMediaTested:200,productionWrites:0,aiCalls:0,whatsAppSends:0}));
 }finally{await db.close();}

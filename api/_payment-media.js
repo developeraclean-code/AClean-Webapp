@@ -66,6 +66,20 @@ export function parsePaymentClassification(rawText) {
   catch { return null; }
 }
 
+const TRANSIENT_MEDIA_ERROR = /\[WA_MEDIA_(?:HTTP_429|HTTP_5\d\d|TIMEOUT|ETIMEDOUT|ECONNRESET|EAI_AGAIN|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET|ECONNREFUSED|ENETUNREACH|FETCH_FAILED)\]/;
+const PERMANENT_MEDIA_ERROR = /\[WA_MEDIA_(?:HTTP_404|HTTP_400|HTTP_401|HTTP_403|URL_REJECTED|REDIRECT_HOST_REJECTED|TOO_LARGE|EMPTY|PROVIDER_REJECTED)\]/;
+export function paymentMediaDownloadRetry({ job, error, attempt, retryAfterMs = 0, now = Date.now() }) {
+  const transientWhaCenter = job?.provider === "whacenter" && TRANSIENT_MEDIA_ERROR.test(String(error || ""));
+  const ageMs = now - Date.parse(job?.created_at || "");
+  const retryable = !PERMANENT_MEDIA_ERROR.test(String(error || ""))
+    && attempt < (transientWhaCenter ? 7 : 3)
+    && (!transientWhaCenter || (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < 24 * 3600_000));
+  const delays = [1, 5, 15, 30, 60, 120];
+  const delayMs = Math.max(delays[Math.min(Math.max(attempt - 1, 0), delays.length - 1)] * 60_000,
+    Number.isFinite(retryAfterMs) ? Math.min(Math.max(retryAfterMs, 0), 6 * 3600_000) : 0);
+  return { retryable, nextRetryAt: retryable ? new Date(now + delayMs).toISOString() : null };
+}
+
 export async function classifyPaymentMedia({ buffer, mimeType, apiKey, timeoutMs = 12000, fetchImpl = fetch, audit }) {
   if (!buffer?.length) return { ok: false, error: "media buffer kosong", retryable: false };
   if (buffer.length > 10 * 1024 * 1024) return { ok: false, error: "Media melebihi batas 10 MB; periksa manual", retryable: false };
@@ -288,15 +302,16 @@ export async function ensurePaymentSuggestion({ supabaseUrl, serviceKey, job, cl
     media_job_id: job.id,
     phone: job.phone,
     sender_name: job.sender_name || null,
-    raw_message: pendingReason ? `Media WA perlu review manual: ${pendingReason}${lookupWarning ? ` · ${lookupWarning}` : ""}`
+    raw_message: job.provider === "manual" ? `Bukti diunggah manual untuk invoice ${job.invoice_id}; AI membaca file R2. Periksa pengirim dan nominal sebelum konfirmasi.`
+      : pendingReason ? `Media WA perlu review manual: ${pendingReason}${lookupWarning ? ` · ${lookupWarning}` : ""}`
       : match.kind === "multi" ? `Saran alokasi ${match.invoices.length} invoice: ${match.invoices.map(i => i.id).join(", ")}. Periksa sebelum konfirmasi.`
       : `Bukti transfer terdeteksi AI. Periksa invoice dan nominal sebelum konfirmasi.${lookupWarning ? ` ${lookupWarning}` : ""}`,
     amount: classification?.amount ?? null,
     bank: classification?.bank || null,
     transfer_date: classification?.transfer_date || null,
-    invoice_id: invoice?.id || null,
-    order_id: invoice?.job_id || null,
-    match_source: forceReview ? "wa_image_review" : classification ? (match.kind === "multi" ? "wa_image_ai_multi" : "wa_image_ai") : "wa_image_ai_pending",
+    invoice_id: job.provider === "manual" ? job.invoice_id : invoice?.id || null,
+    order_id: job.provider === "manual" ? null : invoice?.job_id || null,
+    match_source: job.provider === "manual" ? "manual_upload_ai" : forceReview ? "wa_image_review" : classification ? (match.kind === "multi" ? "wa_image_ai_multi" : "wa_image_ai") : "wa_image_ai_pending",
     status: "PENDING",
     validation_status: "PENDING",
     source: "image",
@@ -360,7 +375,9 @@ export async function retryOnePaymentMediaJob({ supabaseUrl, serviceKey, apiKey 
     ? normalizePaymentClassification(job) : null;
   let ai;
   if (cached) ai = { ok: true, classification: cached };
-  else if (job.retry_exhausted) ai = { ok: false, error: "Retry AI habis setelah worker terputus; periksa media secara manual" };
+  else if (job.retry_exhausted) ai = { ok: false, error: job.r2_key
+    ? "Retry AI habis setelah worker terputus; periksa media secara manual"
+    : "Jendela unduh media habis; periksa file asli dan lampirkan manual" };
   else {
     // Retry the originating gateway, even if the global selector changed meanwhile.
     // Old jobs predate the provider column and belong to the legacy Fonnte path.
@@ -370,7 +387,7 @@ export async function retryOnePaymentMediaJob({ supabaseUrl, serviceKey, apiKey 
         ? await downloadBufferFromR2(job.r2_key, { timeoutMs: 7000 })
         : { ok: true, ...await downloadIngressMedia(job.source_url, { provider: job.provider || "fonnte", timeoutMs: 7000 }) };
     } catch (error) { media = { ok: false, err: error.waMediaCode
-      ? error.message : "Unduhan media provider gagal [WA_MEDIA_FETCH_FAILED]" }; }
+      ? error.message : "Unduhan media provider gagal [WA_MEDIA_FETCH_FAILED]", retryAfterMs: error.retryAfterMs || 0 }; }
     if (media.ok && !job.r2_key) {
       const staged = await stagePaymentMedia({
         supabaseUrl, serviceKey, sourceUrl: job.source_url, phone: job.phone,
@@ -381,8 +398,9 @@ export async function retryOnePaymentMediaJob({ supabaseUrl, serviceKey, apiKey 
       else activeJob = staged.job;
     }
     if (!media.ok) {
-      const saved = await finish({ status: attempt >= 3 ? "FAILED_PERMANENT" : "FAILED_RETRYABLE", last_error: media.err,
-        next_retry_at: attempt >= 3 ? null : new Date(Date.now() + 15 * 60_000 * 2 ** (attempt - 1)).toISOString() });
+      const retry = paymentMediaDownloadRetry({ job: activeJob, error: media.err, attempt, retryAfterMs: media.retryAfterMs });
+      const saved = await finish({ status: retry.retryable ? "FAILED_RETRYABLE" : "FAILED_PERMANENT", last_error: media.err,
+        next_retry_at: retry.nextRetryAt });
       return { ok: saved.ok, checked: 1, retried: 0, failed: 1, error: saved.error || media.err };
     }
     ai = await classifyPaymentMedia({ buffer: media.buffer, mimeType: activeJob.mime_type || media.mimeType, apiKey, timeoutMs: 9000,

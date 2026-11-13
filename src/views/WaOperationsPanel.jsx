@@ -6,7 +6,7 @@ import { WA_STATES, SEND_STATES, jakartaToday, toJakartaInput, fromJakartaInput,
 import { createWaOrderDraft, invoiceBalance, waMoney } from "../lib/waWorkspace.js";
 
 export default function WaOperationsPanel({ phone, conv, customer, needsLocation, orders, invoices, allInvoices,
-  suggestions, paymentLoading = false, paymentError = "", onRefreshPayments, reports = [], technicians = [], duration, supabase, currentUser, followup, onFollowupSaved,
+  suggestions, paymentLoading = false, paymentError = "", onRefreshPayments, apiHeaders, reports = [], technicians = [], duration, supabase, currentUser, followup, onFollowupSaved,
   insertDraft, onCreateOrder, onAppliedPayments, onSendDocument, onSendReminder, refreshKey,
 }) {
   const [section, setSection] = useState("followup");
@@ -62,6 +62,25 @@ export default function WaOperationsPanel({ phone, conv, customer, needsLocation
     try{await fn();}catch(e){if(mounted.current)setError(e.message || "Operasi gagal. Coba muat ulang.");}
     finally{lock.current=false;if(mounted.current)setBusy(false);}
   };
+  const reloadPaymentEvidence = () => run(async () => {
+    try {
+      if (["Owner", "Admin"].includes(currentUser?.role) && apiHeaders) {
+        const healthResponse = await fetch("/api/payment-media-health", { headers: await apiHeaders() });
+        if (!healthResponse.ok) throw new Error("Status antrean bukti belum tersedia");
+        const health = await healthResponse.json();
+        const failed = (health.incidents || []).filter(job => job.phone === phone && job.status === "FAILED_PERMANENT"
+          && /\[WA_MEDIA_(?:HTTP_429|HTTP_5\d\d|TIMEOUT|ETIMEDOUT|ECONNRESET|EAI_AGAIN|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET|ECONNREFUSED|ENETUNREACH|FETCH_FAILED)\]/.test(job.last_error || "")).slice(0, 5);
+        let queued = 0;
+        for (const job of failed) {
+          const response = await fetch("/api/payment-media-retry", { method: "POST",
+            headers: { ...(await apiHeaders()), "Content-Type": "application/json" }, body: JSON.stringify({ jobId: job.id }) });
+          if (response.ok) queued++;
+        }
+        if (queued) setNotice(`${queued} gambar masuk antrean unduh ulang. Saran pembayaran muncul setelah file dan AI selesai diproses.`);
+        else if (failed.length) setNotice("Unduhan ulang belum dapat dimulai. Periksa rincian Bukti Pembayaran WA di Invoice atau unggah bukti asli.");
+      }
+    } finally { onRefreshPayments?.(); }
+  });
   const searchSlots = () => run(async()=>{
     setSlots([]);
     const day=await loadPlanningRange(supabase,date,date);
@@ -125,7 +144,7 @@ export default function WaOperationsPanel({ phone, conv, customer, needsLocation
       {slots.map(s=><div className="wa-info-card" key={s.date+s.team_slot+s.time}><strong>{s.team_slot}{s.crew.names.length?` (${s.crew.names.join(', ')})`:''} · {s.time}–{s.time_end}</strong><p>{s.date} · {s.crew.detail}</p><div className="wa-button-pair"><button disabled={busy} className="wa-text-button" onClick={()=>chooseSlot(s,true)}>Draf tawaran</button><button disabled={busy} className="wa-text-button" onClick={()=>chooseSlot(s,false)}>Pilih slot</button></div></div>)}
     </div>}
     {section==="payment" && <div className="wa-ops-form"><h4>Cocokkan bukti & invoice</h4>
-      <button className="wa-text-button" disabled={paymentLoading || busy || !!paymentPending} onClick={onRefreshPayments}>Muat ulang bukti & invoice</button>
+      <button className="wa-text-button" disabled={paymentLoading || busy || !!paymentPending} onClick={reloadPaymentEvidence}>Muat ulang bukti & invoice</button>
       {paymentLoading ? <p className="wa-muted">Memuat bukti & invoice…</p> : paymentError ? <p className="wa-ops-error" role="alert">Bukti belum dapat dimuat: {paymentError}. Klik muat ulang.</p> : !suggestions.length?<p className="wa-muted">Tidak ada bukti yang menunggu pemeriksaan pada nomor ini.</p>:<>
         <label>Bukti pembayaran<select aria-label="Bukti pembayaran" value={proofId} disabled={busy || !!paymentPending} onChange={e=>chooseProof(e.target.value)}><option value="">Pilih bukti…</option>{suggestions.map(s=><option key={s.id} value={s.id}>{s.bank || s.sender_name || "Transfer"} · {s.amount?waMoney(s.amount):"Nominal belum terbaca"}</option>)}</select></label>
         {proof && <>

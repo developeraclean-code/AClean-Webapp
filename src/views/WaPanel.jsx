@@ -22,6 +22,7 @@ export default function WaPanel({
   selectedConv, setSelectedConv, waMessages, setWaMessages, waInput, setWaInput,
   customersData, setCustomersData, ordersData, invoicesData = [],
   waProvider, isMobile, currentUser, supabase, showNotif, sendWA, addAgentLog,
+  apiHeaders,
   onCreateOrder, onOpenInvoice, onOpenSchedule,
   technicians = [], duration, reports = [], onAppliedPayments, onSendDocument, sendWorkspaceMessage, onOpenCatalog, priceListData = [],
 }) {
@@ -442,6 +443,7 @@ export default function WaPanel({
             {customerVerified && <WaOperationsPanel key={`${phone}:${customer?.id || "none"}`} phone={phone} conv={selectedConv} customer={customer} needsLocation={needsLocation}
               orders={orders} invoices={customerInvoices} allInvoices={paymentInvoices} suggestions={suggestions}
               paymentLoading={paymentContext.phone !== phone || paymentContext.loading} paymentError={paymentContext.error} onRefreshPayments={()=>setRefreshKey(k=>k+1)} reports={reports}
+              apiHeaders={apiHeaders}
               technicians={technicians} duration={duration} supabase={supabase} currentUser={currentUser}
               followup={followups[phone]} onFollowupSaved={row=>setFollowups(prev=>({...prev,[row.phone]:row}))}
               insertDraft={insertDraft} onCreateOrder={onCreateOrder} onAppliedPayments={(rows,id)=>{

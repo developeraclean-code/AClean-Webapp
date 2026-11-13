@@ -95,6 +95,18 @@ describe("durable receipt contract", () => {
 });
 
 describe("bounded media download", () => {
+  it("honors WhaCenter Retry-After and keeps identification headers off redirects", async () => {
+    const source = "https://app.whacenter.com/api/media?path=synthetic.jpg";
+    const target = "https://cdn.whacenter.com/synthetic.jpg";
+    const fetchImpl = vi.fn(async (url) => String(url) === source
+      ? new Response(null, { status: 302, headers: { location: target } })
+      : new Response(null, { status: 429, headers: { "retry-after": "300" } }));
+    const failure = await downloadIngressMedia(source, { provider: "whacenter", fetchImpl }).catch(error => error);
+    expect(failure.waMediaCode).toBe("WA_MEDIA_HTTP_429");
+    expect(failure.retryAfterMs).toBe(300000);
+    expect(fetchImpl.mock.calls[0][1].headers["User-Agent"]).toBe("ACleanMediaWorker/1.0");
+    expect(fetchImpl.mock.calls[1][1].headers).toBeUndefined();
+  });
   it("does not discard a small but non-empty receipt", async () => {
     const bytes = Buffer.alloc(500, 1);
     const fetchImpl = vi.fn(async () => new Response(bytes, { headers: { "content-type": "image/jpeg" } }));

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   classifyPaymentMedia, ensurePaymentSuggestion, hasPaymentMediaHint, manualPaymentReviewReason, normalizePaymentClassification,
-  parsePaymentClassification, registerPaymentMediaReference, stagePaymentMedia, retryOnePaymentMediaJob, preservePaymentEvidence, PAYMENT_MEDIA_PROMPT,
+  parsePaymentClassification, registerPaymentMediaReference, stagePaymentMedia, retryOnePaymentMediaJob, preservePaymentEvidence, paymentMediaDownloadRetry, PAYMENT_MEDIA_PROMPT,
 } from "../../../api/_payment-media.js";
 import { foto, isSafeFotoKey, sniffWaInboxMimeType } from "../../../api/_handlers/foto.js";
 
@@ -257,6 +257,20 @@ describe("WA payment media classification", () => {
 
 
 describe("durable payment retry", () => {
+  it("backs off WhaCenter 429/timeouts through seven attempts, but ends 404 immediately", () => {
+    const now = Date.parse("2026-11-13T01:00:00Z");
+    const job = { provider: "whacenter", created_at: "2026-11-13T00:00:00Z" };
+    expect(paymentMediaDownloadRetry({ job, error: "WhaCenter media HTTP 429 [WA_MEDIA_HTTP_429]", attempt: 3, now })).toEqual({
+      retryable: true, nextRetryAt: "2026-11-13T01:15:00.000Z",
+    });
+    expect(paymentMediaDownloadRetry({ job, error: "[WA_MEDIA_TIMEOUT]", attempt: 4, retryAfterMs: 45 * 60_000, now }).nextRetryAt)
+      .toBe("2026-11-13T01:45:00.000Z");
+    expect(paymentMediaDownloadRetry({ job, error: "[WA_MEDIA_HTTP_503]", attempt: 6, now }).retryable).toBe(true);
+    expect(paymentMediaDownloadRetry({ job, error: "[WA_MEDIA_UND_ERR_CONNECT_TIMEOUT]", attempt: 3, now }).retryable).toBe(true);
+    expect(paymentMediaDownloadRetry({ job, error: "[WA_MEDIA_TIMEOUT]", attempt: 7, now }).retryable).toBe(false);
+    expect(paymentMediaDownloadRetry({ job, error: "[WA_MEDIA_HTTP_404]", attempt: 1, now }).retryable).toBe(false);
+    expect(paymentMediaDownloadRetry({ job: { ...job, created_at: "2026-11-11T00:00:00Z" }, error: "[WA_MEDIA_HTTP_429]", attempt: 3, now }).retryable).toBe(false);
+  });
   const job = { id: "j1", phone: "6281234567890", r2_url: "/api/foto?key=proof.jpg", category: "bukti_transfer", transfer_amount: 950000, attempts: 2 };
   const invoices = [500000,450000].map((total,n)=>({id:`I${n}`,phone:job.phone,status:"UNPAID",total}));
   const response = data => ({ok:true,json:async()=>data});

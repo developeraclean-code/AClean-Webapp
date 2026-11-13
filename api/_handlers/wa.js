@@ -2369,7 +2369,8 @@ FORMAT JSON SAJA: {"photo_quality":"ok|blur|too_dark|unreadable","tabung_count":
           console.warn("[receive-wa] Image classifier failed:", imgErr.message);
           const queuedJob = stagedMedia?.job || inboundCapture.media_job;
           if (queuedJob?.id) await updatePaymentMediaJob({ supabaseUrl: SU, serviceKey: SK, id: queuedJob.id,
-            patch: { status: "FAILED_RETRYABLE", last_error: String(imgErr.message || "Media pipeline gagal").slice(0,500), next_retry_at: new Date(Date.now()+120000).toISOString() } });
+            patch: { status: "FAILED_RETRYABLE", last_error: String(imgErr.message || "Media pipeline gagal").slice(0,500),
+              next_retry_at: new Date(Date.now()+Math.max(120000, Number(imgErr.retryAfterMs) || 0)).toISOString() } });
           try { Sentry.captureException(imgErr, { tags: { op: "wa_personal_media_pipeline" }, extra: { phone: sender } }); } catch (_) {}
         }
       }
