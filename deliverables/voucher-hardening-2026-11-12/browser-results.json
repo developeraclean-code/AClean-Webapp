@@ -1,0 +1,42 @@
+{
+  "scope": "Actual UI -> real API -> actual SQL migration on fictional local database; native concurrency tested separately",
+  "passed": 9,
+  "results": [
+    {
+      "scenario": "preview-close",
+      "passed": true
+    },
+    {
+      "scenario": "percent-save",
+      "passed": true
+    },
+    {
+      "scenario": "free-unit",
+      "passed": true
+    },
+    {
+      "scenario": "manual-best",
+      "passed": true
+    },
+    {
+      "scenario": "rollback",
+      "passed": true
+    },
+    {
+      "scenario": "uncertain-retry",
+      "passed": true
+    },
+    {
+      "scenario": "stale-preview",
+      "passed": true
+    },
+    {
+      "scenario": "code-change",
+      "passed": true
+    },
+    {
+      "scenario": "admin",
+      "passed": true
+    }
+  ]
+}

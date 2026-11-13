@@ -67,9 +67,21 @@ export default function CustomerPortalView({ token: tokenProp }) {
   const token = tokenProp || "";
   const [portalState, setPortalState] = useState({ phase: "loading", token: null, data: null, error: null });
   const [vouchers, setVouchers] = useState([]);
+  const [voucherError,setVoucherError]=useState(false);
+  const [voucherRetry,setVoucherRetry]=useState(0);
   const [ratingTarget, setRatingTarget] = useState(null); // order yang mau di-rating
   const [ratedOrders, setRatedOrders]   = useState({}); // { order_id: true }
   const [activeLocation, setActiveLocation] = useState(null); // null = lokasi pertama
+
+  useEffect(()=>{
+    if(portalState.phase!=="ready" || portalState.token!==token)return;
+    let cancelled=false;setVoucherError(false);setVouchers([]);
+    fetch(`${API_BASE}/customer-vouchers?token=${encodeURIComponent(token)}`,{signal:AbortSignal.timeout(15000)})
+      .then(async r=>{const data=await r.json();if(!r.ok||!Array.isArray(data.vouchers))throw new Error('Voucher belum tersedia');return data;})
+      .then(data=>{if(!cancelled)setVouchers(data.vouchers);})
+      .catch(()=>{if(!cancelled)setVoucherError(true);});
+    return ()=>{cancelled=true;};
+  },[token,portalState.phase,portalState.token,voucherRetry]);
 
   useEffect(() => {
     let cancelled = false;
@@ -91,15 +103,6 @@ export default function CustomerPortalView({ token: tokenProp }) {
         }
         if (cancelled) return;
         setPortalState({ phase: "ready", token, data: d, error: null });
-        // Fetch vouchers paralel; voucher bersifat tambahan untuk tampilan portal.
-        fetch(`${API_BASE}/customer-vouchers?token=${encodeURIComponent(token)}`)
-          .then(async r => {
-            const v = await r.json();
-            if (!r.ok) throw new Error("Gagal memuat voucher");
-            return v;
-          })
-          .then(v => { if (!cancelled) setVouchers(v.vouchers || []); })
-          .catch(() => {});
         if (window.location.hash === "#rating" && d.orders?.length > 0) {
           const lastDone = d.orders.find(o => ["COMPLETED","INVOICE_APPROVED"].includes(o.status));
           if (lastDone) setRatingTarget(lastDone);
@@ -258,6 +261,7 @@ export default function CustomerPortalView({ token: tokenProp }) {
         )}
 
         {/* VOUCHER */}
+        {voucherError && <div role="alert" style={{padding:12}}>Voucher belum berhasil dimuat. <button onClick={()=>setVoucherRetry(n=>n+1)}>Coba lagi</button></div>}
         {vouchers.length > 0 && (
           <>
             <div style={s.sectionLabel}>Voucher Anda</div>

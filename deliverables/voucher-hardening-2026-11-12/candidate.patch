@@ -1,0 +1,2710 @@
+diff --git a/CLAUDE.md b/CLAUDE.md
+index 4db18b0..cd11d00 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -299,3 +299,12 @@ if (!isCronJobEnabled(togMap, "my_feature_enabled") || togMap["my_feature_enable
+ }
+ ```
+ Jika hanya cek salah satu → WA bisa bocor ke customer saat toggle OFF.
++
++## Kandidat voucer / monitoring — 12 November 2026
++
++Perbaikan transaksi voucer atomik, role, manfaat dan otomasi ada pada branch
++`codex/voucher-hardening`, migrasi forward 241. **Belum dianggap deployed.**
++Kontrak, pengujian, urutan rilis dan batas rollback dijelaskan dalam
++[catatan kandidat](docs/VOUCHER_HARDENING_2026-11-12.md). Sentry memerlukan DSN
++build/runtime Coolify; [panduan](docs/SENTRY_SETUP.md) membedakan hasil probe
++ingestion lokal dari keterhubungan produksi dan alert dashboard.
+diff --git a/Dockerfile b/Dockerfile
+index ffa9e44..1451f54 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -16,8 +16,12 @@ ARG VITE_SUPABASE_URL
+ ARG VITE_SUPABASE_ANON_KEY
+ ARG VITE_R2_CDN_URL=
+ ARG VITE_R2_DIRECT_UPLOAD=false
++ARG SOURCE_COMMIT=
++ARG VITE_SENTRY_ENVIRONMENT=production
+ ARG VITE_SENTRY_DSN=
+-ENV VITE_SUPABASE_URL=${VITE_SUPABASE_URL} \
++ENV VITE_SENTRY_ENVIRONMENT=${VITE_SENTRY_ENVIRONMENT} \
++    VITE_APP_BUILD_SHA=${SOURCE_COMMIT} \
++    VITE_SUPABASE_URL=${VITE_SUPABASE_URL} \
+     VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY} \
+     VITE_R2_CDN_URL=${VITE_R2_CDN_URL} \
+     VITE_R2_DIRECT_UPLOAD=${VITE_R2_DIRECT_UPLOAD} \
+diff --git a/api/[route].js b/api/[route].js
+index 70a0cb5..3fd2db6 100644
+--- a/api/[route].js
++++ b/api/[route].js
+@@ -1,7 +1,7 @@
+ // api/[route].js - AClean Unified API Router
+ import { setCorsHeaders, validateInternalToken } from "./_auth.js";
+ import * as Sentry from "@sentry/node";
+-import { customerVouchers, validateVoucher, claimVoucher, adminVouchers, cancelVoucher } from "./_handlers/voucher.js";
++import { customerVouchers, validateVoucher, claimVoucher, adminVouchers, cancelVoucher, applyInvoiceVoucher } from "./_handlers/voucher.js";
+ import { monitor } from "./_handlers/monitor.js";
+ import { paymentMediaHealth } from "./_payment-health.js";
+ import { customerStatus, submitRating, generateCustomerToken } from "./_handlers/customer.js";
+@@ -22,6 +22,7 @@ const HANDLERS = {
+   "customer-vouchers": customerVouchers,
+   "validate-voucher": validateVoucher,
+   "claim-voucher": claimVoucher,
++  "apply-invoice-voucher": applyInvoiceVoucher,
+   "admin-vouchers": adminVouchers,
+   "cancel-voucher": cancelVoucher,
+   "customer-status": customerStatus,
+diff --git a/api/_handlers/auth-token.js b/api/_handlers/auth-token.js
+index aff006b..c0897c4 100644
+--- a/api/_handlers/auth-token.js
++++ b/api/_handlers/auth-token.js
+@@ -144,12 +144,12 @@ export async function health(req, res) {
+   if (typeof component !== "string" || !["overall", "database", "auth", "app"].includes(component)) {
+     return res.status(400).json({ error: "Komponen health tidak dikenal" });
+   }
+-  // The app-only probe lets an external monitor distinguish a Vercel outage
++  // The app-only probe lets an external monitor distinguish an application/ingress outage
+   // from an upstream Supabase outage without making any database request.
+   if (component === "app") {
+     res.setHeader("Cache-Control", "no-store");
+     return res.status(200).json({ status: "healthy", component: "app", component_status: "ok",
+-      timestamp: new Date().toISOString(), version: (process.env.ACLEAN_BUILD_SHA || process.env.VERCEL_GIT_COMMIT_SHA)?.slice(0, 7) || "dev" });
++      timestamp: new Date().toISOString(), version: (process.env.SOURCE_COMMIT || process.env.ACLEAN_BUILD_SHA || process.env.VERCEL_GIT_COMMIT_SHA)?.slice(0, 7) || "dev" });
+   }
+   const result = await checkHealth();
+   const componentStatus = selectHealthComponent(result, component);
+diff --git a/api/_handlers/voucher.js b/api/_handlers/voucher.js
+index 4b7a0fe..239ceb5 100644
+--- a/api/_handlers/voucher.js
++++ b/api/_handlers/voucher.js
+@@ -1,174 +1,120 @@
+-// api/_handlers/voucher.js — Handler grup voucher (Batch 1 pemecahan router, Jul 2026).
+-// Isi dipindah APA ADANYA dari api/[route].js — bukan endpoint sendiri (prefix _
+-// tidak dihitung serverless function Vercel); di-dispatch oleh api/[route].js.
+-import { checkRateLimit } from "../_auth.js";
+-import { validateAndNormalizePhone, buildPhoneVariants } from "../_validate.js";
+-
+-// ── CUSTOMER-VOUCHERS (PUBLIC — dari portal customer) ──
+-export async function customerVouchers(req, res) {
+-  if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
+-  if (!await checkRateLimit(req, res, 20, 60000)) return;
+-  const token = String(req.query.token || "").trim();
+-  if (!token) return res.status(400).json({ error: "Token diperlukan" });
+-
+-  const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+-  const SK = process.env.SUPABASE_SERVICE_KEY;
+-  if (!SU || !SK) return res.status(500).json({ error: "Server config error" });
+-  const headers = { "apikey": SK, "Authorization": "Bearer " + SK, "Content-Type": "application/json" };
+-
+-  // Validasi token, cek expired
+-  const tokRes = await fetch(`${SU}/rest/v1/customer_tokens?token=eq.${encodeURIComponent(token)}&select=phone,expires_at`, { headers });
+-  const tokRows = tokRes.ok ? await tokRes.json() : [];
+-  if (!tokRows.length) return res.status(404).json({ error: "Token tidak valid" });
+-  if (new Date(tokRows[0].expires_at) < new Date()) return res.status(401).json({ error: "Link portal sudah expired", code: "TOKEN_EXPIRED" });
+-  const { phone } = tokRows[0];
+-
+-  const variants = buildPhoneVariants(phone);
+-  const phoneFilter = variants.map(v => `phone.eq.${encodeURIComponent(v)}`).join(",");
+-
+-  // Ambil voucher aktif (belum diklaim, belum expired)
+-  const today = new Date().toISOString().slice(0, 10);
+-  const vRes = await fetch(
+-    `${SU}/rest/v1/customer_vouchers?or=(${phoneFilter})&claimed_at=is.null&order=created_at.desc&select=id,code,type,value,description,expires_at,created_at`,
+-    { headers }
+-  );
+-  const vouchers = vRes.ok ? await vRes.json() : [];
+-  const active = vouchers.filter(v => !v.expires_at || v.expires_at >= today);
+-
+-  return res.status(200).json({ vouchers: active });
++import Sentry from '../sentry-init.js';
++import { checkRateLimit } from '../_auth.js';
++import { buildPhoneVariants } from '../_validate.js';
++import { normalizeVoucherEdit, voucherTodayWib } from '../../src/lib/voucherPolicy.js';
++
++const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
++const CODE = /^[A-Z0-9][A-Z0-9-]{3,40}$/;
++const fail = (status, message) => Object.assign(new Error(message), { status });
++function config() {
++  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL, key = process.env.SUPABASE_SERVICE_KEY;
++  if (!url || !key) throw fail(503, 'Layanan voucher belum dikonfigurasi');
++  return { url, headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' } };
+ }
+-
+-// ─── validate-voucher (POST, private) ─────────────────────────────────────
+-export async function validateVoucher(req, res) {
+-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+-  const b = req.body || {};
+-  const { code, phone } = b;
+-  if (!code || !phone) return res.status(400).json({ error: "code dan phone wajib diisi" });
+-
+-  const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+-  const SK = process.env.SUPABASE_SERVICE_KEY;
+-  const headers = { "apikey": SK, "Authorization": "Bearer " + SK, "Content-Type": "application/json" };
+-
+-  const vRes = await fetch(
+-    `${SU}/rest/v1/customer_vouchers?code=eq.${encodeURIComponent(code)}&select=*&limit=1`,
+-    { headers }
+-  );
+-  const vList = vRes.ok ? await vRes.json() : [];
+-  const v = vList[0];
+-
+-  if (!v) return res.status(404).json({ error: "Kode voucher tidak ditemukan", code });
+-  if (!v.is_valid) return res.status(400).json({ error: "Voucher sudah dibatalkan", code });
+-  if (v.claimed_at) return res.status(400).json({ error: "Voucher sudah pernah digunakan", claimed_order_id: v.claimed_order_id });
+-
+-  const today = new Date().toISOString().slice(0, 10);
+-  if (v.expires_at && v.expires_at < today) return res.status(400).json({ error: "Voucher sudah expired", expires_at: v.expires_at });
+-
+-  // Validasi phone match (semua variant)
+-  const normalizedPhone = validateAndNormalizePhone(phone);
+-  const variants = normalizedPhone ? buildPhoneVariants(normalizedPhone) : [phone];
+-  const vPhone = validateAndNormalizePhone(v.phone) || v.phone;
+-  const phoneMatch = variants.some(vt => {
+-    const vtn = validateAndNormalizePhone(vt) || vt;
+-    return vtn === vPhone;
+-  });
+-  if (!phoneMatch) return res.status(400).json({ error: "Voucher bukan milik customer ini", code });
+-
+-  const typeLabel = v.type === "discount_pct" ? `Diskon ${v.value}%`
+-    : v.type === "free_unit" ? `${v.value} Unit Cuci Gratis`
+-    : v.type === "free_service" ? "Servis Gratis"
+-    : v.type;
+-
+-  return res.status(200).json({
+-    ok: true, valid: true,
+-    voucher: { id: v.id, code: v.code, type: v.type, value: v.value, type_label: typeLabel, description: v.description, customer_name: v.customer_name, expires_at: v.expires_at },
+-  });
++async function rest(path, { method = 'GET', body } = {}) {
++  const { url, headers } = config();
++  let response;
++  try { response = await fetch(`${url}/rest/v1/${path}`, { method, headers,
++    ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(15000) }); }
++  catch { throw fail(503, 'Layanan voucher sedang tidak tersedia; coba konfirmasi kembali dengan ID transaksi yang sama'); }
++  const data = await response.json().catch(() => null);
++  if (!response.ok) {
++    const code = data?.code;
++    if (code === '42501') throw fail(403, 'Akses voucher ditolak');
++    if (code === 'P0002') throw fail(404, 'Invoice atau voucher tidak ditemukan');
++    if (['40001', '23505'].includes(code)) throw fail(409, 'Invoice atau voucher berubah; muat ulang dan validasi kembali');
++    if (['23514', '22023', '22P02'].includes(code)) {
++      const known = /^(Voucher (sudah|bukan|tidak)|Invoice (sudah|dengan|tidak)|Persentase|Jumlah unit|Jenis voucher|Potongan|Rincian|Ringkasan|Payload|ID transaksi|Validasi hasil)/;
++      throw fail(400, known.test(data?.message || '') ? data.message : 'Permintaan voucher tidak valid');
++    }
++    throw fail(503, 'Database voucher tidak tersedia atau migrasi voucher belum diterapkan');
++  }
++  if (data == null) throw fail(503, 'Respons layanan voucher tidak valid');
++  return data;
+ }
+-
+-// ─── claim-voucher (POST, private) ────────────────────────────────────────
+-export async function claimVoucher(req, res) {
+-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+-  const b = req.body || {};
+-  const { code, invoice_id } = b;
+-  if (!code || !invoice_id) return res.status(400).json({ error: "code dan invoice_id wajib diisi" });
+-
+-  const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+-  const SK = process.env.SUPABASE_SERVICE_KEY;
+-  const headers = { "apikey": SK, "Authorization": "Bearer " + SK, "Content-Type": "application/json", "Prefer": "return=representation" };
+-
+-  // Pastikan belum diklaim
+-  const chkRes = await fetch(`${SU}/rest/v1/customer_vouchers?code=eq.${encodeURIComponent(code)}&select=id,claimed_at,is_valid&limit=1`, { headers });
+-  const chkList = chkRes.ok ? await chkRes.json() : [];
+-  const chk = chkList[0];
+-  if (!chk) return res.status(404).json({ error: "Kode voucher tidak ditemukan" });
+-  if (chk.claimed_at) return res.status(400).json({ error: "Voucher sudah diklaim sebelumnya" });
+-  if (!chk.is_valid) return res.status(400).json({ error: "Voucher sudah dibatalkan" });
+-
+-  const upRes = await fetch(
+-    `${SU}/rest/v1/customer_vouchers?code=eq.${encodeURIComponent(code)}`,
+-    { method: "PATCH", headers, body: JSON.stringify({ claimed_at: new Date().toISOString(), claimed_order_id: invoice_id }) }
+-  );
+-  if (!upRes.ok) return res.status(500).json({ error: "Gagal mengklaim voucher" });
+-
+-  return res.status(200).json({ ok: true, message: "Voucher berhasil diklaim", code, invoice_id });
++const rpc = (name, body) => rest(`rpc/${name}`, { method: 'POST', body });
++async function actor(req) {
++  if (req.appClaims?.role && !['Owner', 'Admin'].includes(req.appClaims.role)) throw fail(403, 'Hanya Owner/Admin aktif');
++  const id = req.appClaims?.userId || req.authUser?.id;
++  if (!UUID.test(id || '')) throw fail(403, 'Identitas Owner/Admin diperlukan');
++  const rows = await rest(`user_profiles?id=eq.${encodeURIComponent(id)}&select=id,name,role,active&limit=1`);
++  const profile = rows[0];
++  if (!profile || profile.id !== id || !profile.active || !['Owner', 'Admin'].includes(profile.role)) throw fail(403, 'Hanya Owner/Admin aktif');
++  return profile;
+ }
+-
+-// ─── admin-vouchers (GET, private) ────────────────────────────────────────
+-export async function adminVouchers(req, res) {
+-  if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
+-
+-  const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+-  const SK = process.env.SUPABASE_SERVICE_KEY;
+-  const headers = { "apikey": SK, "Authorization": "Bearer " + SK, "Content-Type": "application/json" };
+-
+-  const { status: filterStatus, search } = req.query;
+-  const today = new Date().toISOString().slice(0, 10);
+-
+-  let url = `${SU}/rest/v1/customer_vouchers?select=*&order=created_at.desc&limit=200`;
+-  if (filterStatus === "active") {
+-    url += `&claimed_at=is.null&is_valid=eq.true&expires_at=gte.${today}`;
+-  } else if (filterStatus === "claimed") {
+-    url += `&claimed_at=not.is.null`;
+-  } else if (filterStatus === "expired") {
+-    url += `&claimed_at=is.null&expires_at=lt.${today}`;
+-  }
+-  if (search) {
+-    const s = encodeURIComponent(search.trim());
+-    url += `&or=(code.ilike.*${s}*,phone.ilike.*${s}*,customer_name.ilike.*${s}*)`;
+-  }
+-
+-  const vRes = await fetch(url, { headers });
+-  if (!vRes.ok) return res.status(500).json({ error: "Gagal mengambil data voucher" });
+-  const vouchers = await vRes.json();
+-
+-  // Hitung stats ringkas
+-  const allRes = await fetch(`${SU}/rest/v1/customer_vouchers?select=claimed_at,is_valid,expires_at`, { headers });
+-  const all = allRes.ok ? await allRes.json() : [];
+-  const stats = {
+-    total: all.length,
+-    active: all.filter(v => !v.claimed_at && v.is_valid && (!v.expires_at || v.expires_at >= today)).length,
+-    claimed: all.filter(v => v.claimed_at).length,
+-    expired: all.filter(v => !v.claimed_at && v.expires_at && v.expires_at < today).length,
++async function input(req) {
++  const who = await actor(req), body = req.body || {};
++  const code = String(body.code || '').trim().toUpperCase(), invoiceId = String(body.invoice_id || '').trim();
++  if (!CODE.test(code) || !invoiceId || invoiceId.length > 120 || !body.edit) throw fail(400, 'Kode, invoice, dan rincian edit wajib tersedia');
++  const rows = await rest(`invoices?id=eq.${encodeURIComponent(invoiceId)}&select=id,customer,address,phone,updated_at,status&limit=1`);
++  if (!rows[0]) throw fail(404, 'Invoice tidak ditemukan');
++  let edit;
++  try { edit = normalizeVoucherEdit(rows[0], body.edit); } catch (error) { throw fail(400, error.message); }
++  return { who, code, invoiceId, edit, body };
++}
++function privateEndpoint(method, fn) {
++  return async (req, res) => {
++    res.setHeader('Cache-Control', 'private, no-store');
++    if (req.method !== method) return res.status(405).json({ error: 'Method not allowed' });
++    try { return await fn(req, res); }
++    catch (error) { if(!error.status || error.status>=500)Sentry.captureException(error,{tags:{component:'voucher-api',route:req.query?.route,method:req.method}});return res.status(error.status || 503).json({ ok: false, error: error.status ? error.message : 'Layanan voucher gagal; hasil belum terkonfirmasi', uncertain: !error.status || error.status >= 500 }); }
+   };
+-
+-  return res.status(200).json({ ok: true, vouchers, stats });
+ }
+ 
+-// ─── cancel-voucher (POST, private) ───────────────────────────────────────
+-export async function cancelVoucher(req, res) {
+-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+-  const b = req.body || {};
+-  const { id } = b;
+-  if (!id) return res.status(400).json({ error: "id wajib diisi" });
++export const validateVoucher = privateEndpoint('POST', async (req, res) => {
++  const { who, code, invoiceId, edit } = await input(req);
++  const quote = await rpc('voucher_quote_241', { p_actor: who.id, p_invoice: invoiceId, p_code: code, p_edit: edit });
++  const v = quote.voucher;
++  v.type_label = v.type === 'discount_pct' ? `Diskon ${v.value}% jasa` : v.type === 'free_unit' ? `${v.value} unit Cleaning gratis` : 'Jasa gratis';
++  return res.status(200).json({ ok: true, valid: true, voucher: v, quote });
++});
++export const applyInvoiceVoucher = privateEndpoint('POST', async (req, res) => {
++  const { who, code, invoiceId, edit, body } = await input(req);
++  if (!UUID.test(body.request_id || '') || !body.expected_updated_at || !/^[0-9a-f]{64}$/.test(body.quote_hash || '')) throw fail(400, 'ID transaksi dan hasil validasi voucher wajib tersedia');
++  const result = await rpc('save_invoice_voucher_241', { p_actor: who.id, p_request: body.request_id, p_invoice: invoiceId,
++    p_code: code, p_edit: edit, p_expected_at: body.expected_updated_at, p_quote_hash: body.quote_hash });
++  return res.status(200).json({ ok: true, ...result });
++});
++// Old clients must never redeem independently of invoice persistence.
++export const claimVoucher = privateEndpoint('POST', async (req, res) => {
++  await actor(req);
++  return res.status(409).json({ ok: false, code: 'ATOMIC_REDEMPTION_REQUIRED', error: 'Muat ulang aplikasi. Voucher hanya digunakan saat invoice berhasil disimpan.' });
++});
++export const adminVouchers = privateEndpoint('GET', async (req, res) => {
++  const who = await actor(req), q = req.query || {};
++  const offset = Number(q.offset ?? 0), limit = Number(q.limit ?? 50), status = q.status || 'active', search = String(q.search || '').trim();
++  if (!Number.isInteger(offset) || offset < 0 || offset > 1e7 || !Number.isInteger(limit) || limit < 1 || limit > 100 || search.length > 100 || !['active','claimed','expired','cancelled','all'].includes(status)) throw fail(400, 'Filter voucher tidak valid');
++  const data = await rpc('voucher_admin_page_241', { p_actor: who.id, p_status: status, p_search: search, p_offset: offset, p_limit: limit });
++  return res.status(200).json({ ok: true, ...data });
++});
++export const cancelVoucher = privateEndpoint('POST', async (req, res) => {
++  const who = await actor(req), body = req.body || {};
++  if (!UUID.test(body.id || '')) throw fail(400, 'ID voucher tidak valid');
++  const result = await rpc('cancel_voucher_241', { p_actor: who.id, p_id: body.id, p_reason: String(body.reason || '').slice(0,500) || null });
++  return res.status(200).json(result);
++});
+ 
+-  const SU = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+-  const SK = process.env.SUPABASE_SERVICE_KEY;
+-  const headers = { "apikey": SK, "Authorization": "Bearer " + SK, "Content-Type": "application/json" };
+-
+-  const upRes = await fetch(
+-    `${SU}/rest/v1/customer_vouchers?id=eq.${encodeURIComponent(id)}`,
+-    { method: "PATCH", headers, body: JSON.stringify({ is_valid: false }) }
+-  );
+-  if (!upRes.ok) return res.status(500).json({ error: "Gagal membatalkan voucher" });
+-
+-  return res.status(200).json({ ok: true, message: "Voucher dibatalkan" });
++export async function customerVouchers(req, res) {
++  res.setHeader('Cache-Control', 'private, no-store');
++  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
++  if (!await checkRateLimit(req, res, 20, 60000)) return;
++  const token = String(req.query?.token || '').trim();
++  if (!/^[a-f0-9]{48}$/i.test(token)) return res.status(400).json({ error: 'Token portal tidak valid' });
++  try {
++    const rows = await rest(`customer_tokens?token=eq.${encodeURIComponent(token)}&select=phone,expires_at&limit=1`);
++    if (!rows[0]) return res.status(404).json({ error: 'Token portal tidak ditemukan' });
++    if (rows[0].expires_at && Date.parse(rows[0].expires_at) < Date.now()) return res.status(401).json({ error: 'Link portal sudah expired', code: 'TOKEN_EXPIRED' });
++    const variants = buildPhoneVariants(rows[0].phone), all = [], today = voucherTodayWib();
++    if (!variants.length) throw fail(503, 'Identitas portal belum tersedia');
++    for (let offset = 0; ; offset += 100) {
++      const query = new URLSearchParams({ select: 'id,code,type,value,description,expires_at,created_at',
++        or: `(${variants.map(p => `phone.eq.${p}`).join(',')})`, claimed_at: 'is.null', is_valid: 'eq.true',
++        and: `(or(expires_at.is.null,expires_at.gte.${today}))`, order: 'created_at.desc,id', limit: '100', offset: String(offset) });
++      const page = await rest(`customer_vouchers?${query}`);
++      if (!Array.isArray(page)) throw fail(503, 'Respons voucher tidak valid');
++      all.push(...page);
++      if (page.length < 100) break;
++    }
++    return res.status(200).json({ vouchers: all });
++  } catch (error) { return res.status(error.status || 503).json({ error: error.status ? error.message : 'Voucher belum dapat dimuat' }); }
+ }
+diff --git a/api/_health.js b/api/_health.js
+index 351ce1f..1f958e6 100644
+--- a/api/_health.js
++++ b/api/_health.js
+@@ -63,7 +63,7 @@ export function createHealthCheck({ fetchImpl = (...args) => fetch(...args), now
+         timestamp: new Date(now()).toISOString(), duration_ms: now() - started,
+         checks: { supabase, database: supabase, auth, fonnte, whacenter, wablas,
+           ai: providers.length ? `ok:${providers.join(',')}` : 'not_configured' },
+-        version: (env.ACLEAN_BUILD_SHA || env.VERCEL_GIT_COMMIT_SHA)?.slice(0, 7) || 'dev' };
++        version: (env.SOURCE_COMMIT || env.ACLEAN_BUILD_SHA || env.VERCEL_GIT_COMMIT_SHA)?.slice(0, 7) || 'dev' };
+       expiresAt = now() + ttlMs;
+       return cached;
+     })().finally(() => { pending = null; });
+diff --git a/api/_tasks/reminders.js b/api/_tasks/reminders.js
+index 4aceffd..cf60b3c 100644
+--- a/api/_tasks/reminders.js
++++ b/api/_tasks/reminders.js
+@@ -269,106 +269,12 @@ export async function taskServisReminder() {
+       await sb.from("customers").update({ last_rating_request: todayStr }).eq("id", c.id);
+       await log("SERVIS_REMINDER_SENT", `Reminder → ${c.name} (${daysSince} hari sejak servis terakhir)`, "SUCCESS");
+ 
+-      // Win-back voucher jika customer inactive >180 hari dan fitur aktif
+-      if (togMap["voucher_winback_enabled"] === "true" && daysSince >= 180) {
+-        try {
+-          // Cooldown 30 hari per customer untuk winback
+-          const lastWinback = c.last_winback_sent;
+-          if (!lastWinback || Math.floor((Date.now()-new Date(lastWinback).getTime())/86400000) >= 30) {
+-            const { randomBytes } = await import("crypto");
+-            const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+-            const wbCode = "ACL-" + Array.from(randomBytes(6)).map(b => chars[b % chars.length]).join("");
+-            const expiresAt = new Date(Date.now() + 60*24*60*60*1000).toISOString().slice(0,10);
+-            const { error: wbErr } = await sb.from("customer_vouchers").insert({
+-              phone: c.phone, customer_name: c.name,
+-              code: wbCode, type: "discount_pct", value: 10,
+-              description: "Diskon 10% spesial — kami kangen Anda! Gunakan saat servis berikutnya.",
+-              expires_at: expiresAt, trigger: "winback", is_valid: true,
+-            });
+-            if (!wbErr) {
+-              const wbMsg =
+-                `Halo ${c.name}! 💙\n\n` +
+-                `Sudah lama tidak berjumpa — kami kangen pelanggan setia kami!\n\n` +
+-                `Sebagai tanda rindu, kami siapkan voucher spesial untuk Anda:\n\n` +
+-                `🎁 *Diskon 10%* untuk servis berikutnya\n` +
+-                `Kode: *${wbCode}*\n` +
+-                `Berlaku hingga: ${expiresAt}\n\n` +
+-                `Sebutkan kode ini saat booking. Kami siap melayani! ❄️\n— AClean Service`;
+-              await sendWA(c.phone, wbMsg);
+-              await sb.from("customers").update({ last_winback_sent: todayStr }).eq("id", c.id);
+-              await log("WINBACK_VOUCHER", `Win-back ${wbCode} → ${c.name} (${daysSince} hari inactive)`, "SUCCESS");
+-            }
+-          }
+-        } catch(e) { /* winback opsional — tidak blok */ }
+-      }
+     } else skipped++;
+   }
+ 
+   return { sent, skipped };
+ }
+ 
+-// ══════════════════════════════════════════════════
+-// TASK 11: Voucher Expiry Reminder — H-3 sebelum expired
+-// ══════════════════════════════════════════════════
+-export async function taskVoucherExpiryReminder() {
+-  const { data: togData } = await sb.from("app_settings").select("key,value").in("key",["voucher_expiry_reminder_enabled","cron_jobs","customer_portal_enabled","customer_portal_url"]);
+-  const togMap = Object.fromEntries((togData||[]).map(s=>[s.key,s.value]));
+-
+-  if (!isCronJobEnabled(togMap, "voucher_expiry_reminder_enabled") || togMap["voucher_expiry_reminder_enabled"] !== "true") {
+-    await log("VOUCHER_EXPIRY","Dilewati — voucher_expiry_reminder_enabled OFF","INFO");
+-    return { skipped: true };
+-  }
+-
+-  const APP_URL = normalizeAppBaseUrl(togMap["customer_portal_url"] || process.env.APP_URL);
+-  const today = new Date();
+-  const in3days = new Date(today.getTime() + 3*24*60*60*1000).toISOString().slice(0,10);
+-  const todayStr = today.toISOString().slice(0,10);
+-
+-  // Cari voucher: expires dalam 3 hari, belum diklaim, valid, reminder belum dikirim
+-  const { data: vouchers } = await sb.from("customer_vouchers")
+-    .select("id,phone,customer_name,code,type,value,expires_at")
+-    .is("claimed_at", null)
+-    .eq("is_valid", true)
+-    .eq("reminder_sent", false)
+-    .gte("expires_at", todayStr)
+-    .lte("expires_at", in3days)
+-    .limit(100);
+-
+-  if (!vouchers?.length) return { sent: 0, reason: "Tidak ada voucher yang akan expired dalam 3 hari" };
+-
+-  let sent = 0;
+-  for (const v of vouchers) {
+-    if (!v.phone) continue;
+-
+-    const typeLabel = v.type === "discount_pct" ? `Diskon ${v.value}%`
+-      : v.type === "free_unit" ? `${v.value} Unit Cuci Gratis`
+-      : "Voucher Servis";
+-
+-    // Get portal token untuk link
+-    const { data: tokRows } = await sb.from("customer_tokens")
+-      .select("token").eq("phone", v.phone).limit(1);
+-    const token = tokRows?.[0]?.token;
+-    const portalLine = token
+-      ? `\n\nLihat voucher di portal Anda:\n${APP_URL}/status/${token}`
+-      : "";
+-
+-    const msg =
+-      `Halo ${v.customer_name || "Pelanggan"}! ⏰\n\n` +
+-      `Voucher Anda *${typeLabel}* (kode: *${v.code}*) akan habis masa berlakunya pada *${v.expires_at}*.\n\n` +
+-      `Segera gunakan sebelum expired! Sebutkan kode ini saat booking.${portalLine}\n\n` +
+-      `— AClean Service`;
+-
+-    const ok = await sendWA(v.phone, msg);
+-    if (ok) {
+-      sent++;
+-      await sb.from("customer_vouchers").update({ reminder_sent: true }).eq("id", v.id);
+-      await log("VOUCHER_EXPIRY_SENT", `Reminder → ${v.customer_name} kode ${v.code} exp ${v.expires_at}`, "SUCCESS");
+-    }
+-  }
+-
+-  return { sent, total: vouchers.length };
+-}
+-
+ // ══════════════════════════════════════════════════
+ // TASK 12: Laporan Stale Alert — Notif owner jika laporan >3 hari belum diverifikasi
+ // ══════════════════════════════════════════════════
+@@ -770,47 +676,7 @@ export async function taskRatingPrompt() {
+     if (ok) { sent++; await log("RATING_PROMPT_SENT", `Rating WA → ${o.customer} (${o.phone}) job ${o.id}`, "SUCCESS"); }
+     else skipped++;
+ 
+-    // Phase 3B — cek milestone voucher jika fitur aktif
+-    if (togMap["voucher_loyalty_enabled"] === "true") {
+-      try {
+-        const { count } = await sb.from("orders")
+-          .select("id", { count: "exact", head: true })
+-          .eq("phone", o.phone)
+-          .in("status",["COMPLETED","INVOICE_APPROVED"]);
+-
+-        const MILESTONES = [
+-          { at: 2,  type: "discount_pct", value: 5,  desc: "Diskon 5% untuk servis berikutnya — terima kasih sudah kembali!" },
+-          { at: 5,  type: "discount_pct", value: 10, desc: "Diskon 10% untuk servis berikutnya — pelanggan setia ke-5 kali!" },
+-          { at: 10, type: "free_unit",    value: 1,  desc: "1 unit cuci AC GRATIS — terima kasih sudah setia 10 kali servis!" },
+-          { at: 15, type: "discount_pct", value: 15, desc: "Diskon 15% untuk servis berikutnya — VIP Member 15x servis!" },
+-        ];
+-
+-        const milestone = MILESTONES.find(m => m.at === count);
+-        if (milestone) {
+-          const { randomBytes } = await import("crypto");
+-          const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+-          const code = "ACL-" + Array.from(randomBytes(6)).map(b => chars[b % chars.length]).join("");
+-          const expiresAt = new Date(Date.now() + 90*24*60*60*1000).toISOString().slice(0,10);
+-          const { error: insErr } = await sb.from("customer_vouchers").insert({
+-            phone: o.phone, customer_name: o.customer,
+-            code, type: milestone.type, value: milestone.value,
+-            description: milestone.desc, expires_at: expiresAt,
+-            trigger: "milestone", milestone_at: milestone.at, is_valid: true,
+-          });
+-          if (!insErr) {
+-            const voucherMsg =
+-              `🎁 *Voucher Spesial untuk ${o.customer}!*\n\n` +
+-              `${milestone.desc}\n\n` +
+-              `Kode voucher Anda: *${code}*\n` +
+-              `Berlaku hingga: ${expiresAt}\n\n` +
+-              `Lihat voucher di portal: ${APP_URL}/status/${token}\n\n` +
+-              `Sebutkan kode ini saat booking berikutnya 😊\n— AClean Service`;
+-            await sendWA(o.phone, voucherMsg);
+-            await log("VOUCHER_CREATED", `Voucher ${code} → ${o.customer} (milestone ${milestone.at}x)`, "SUCCESS");
+-          }
+-        }
+-      } catch(e) { /* voucher opsional — tidak blok */ }
+-    }
++
+   }
+ 
+   return { sent, skipped };
+diff --git a/api/cron-reminder.js b/api/cron-reminder.js
+index 85bce0b..ba9a35a 100644
+--- a/api/cron-reminder.js
++++ b/api/cron-reminder.js
+@@ -16,7 +16,8 @@ import { taskBackupRetention } from "./_tasks/ops.js";
+ import { taskFieldReportReminder } from "./_tasks/field-reports.js";
+ import { sb, sendWA, log, OWNER_PHONE } from "./_tasks/_shared.js";
+ import { taskCleanup, taskR2Cleanup90d, taskExpenseFotoCleanup30d, taskPaymentProofCleanup90d, taskSnapshotCleanup, taskWaCleanup, taskLogCleanup } from "./_tasks/cleanup.js";
+-import { taskReminder, taskDaily, taskStock, taskServisReminder, taskVoucherExpiryReminder, taskLaporanStaleAlert, taskMaterialPulangReminder, taskWeeklyReport, taskMorningDispatch, taskRatingPrompt } from "./_tasks/reminders.js";
++import { taskReminder, taskDaily, taskStock, taskServisReminder, taskLaporanStaleAlert, taskMaterialPulangReminder, taskWeeklyReport, taskMorningDispatch, taskRatingPrompt } from "./_tasks/reminders.js";
++import { taskVoucherExpiryReminder, taskVoucherLoyalty, taskVoucherWinback } from "./_tasks/vouchers.js";
+ import { taskWaSnapshot, taskWaBackfill, taskScanBuktiBayar, taskRetryPaymentMedia, taskPaymentMediaWatchdog } from "./_tasks/wa-ai.js";
+ import { taskProjectAlerts, taskBackupData, taskPayrollWA, taskBonusEligible, taskMaintenanceContractExpiry, taskMaintenanceFollowupAlert, taskMaintenancePmDue, taskMediaGapAlert, taskDataIntegrityAudit, taskInfraUsageAlert } from "./_tasks/ops.js";
+ 
+@@ -68,7 +69,9 @@ async function taskTickWithLease({ cleanupOnly = false } = {}) {
+     { t: "project-alerts",           fn: taskProjectAlerts,          h: 9 },
+     { t: "morning-dispatch",         fn: taskMorningDispatch,        h: 9 },
+     { t: "reminder",                 fn: taskReminder,               h: 10 },
+-    { t: "voucher-expiry",           fn: taskVoucherExpiryReminder,  h: 10 },
++    { t: "voucher-expiry", fn: taskVoucherExpiryReminder, h: 10, continuable: true, budgetMs: 24000, minimumMs: 22000 },
++    { t: "voucher-loyalty", fn: taskVoucherLoyalty, h: 10, continuable: true, budgetMs: 24000, minimumMs: 22000 },
++    { t: "voucher-winback", fn: taskVoucherWinback, h: 10, continuable: true, budgetMs: 24000, minimumMs: 22000 },
+     { t: "laporan-stale",              fn: taskLaporanStaleAlert,          h: 10 },
+     { t: "maintenance-followup-alert", fn: taskMaintenanceFollowupAlert,   h: 10 },
+     { t: "maintenance-contract-expiry", fn: taskMaintenanceContractExpiry, h: 10, dow: 1 },
+@@ -141,7 +144,17 @@ export default async function handler(req, res) {
+       // Accept App Token (HMAC-signed JWT dari _auth.js signAppToken)
+       if (iToken.split(".").length === 3) {
+         const claims = verifyAppToken(iToken);
+-        if (claims) authorized = true;
++        if (claims) {
++          if (!['Owner','Admin'].includes(claims.role) || !/^[0-9a-f-]{36}$/i.test(claims.userId || '')) return res.status(403).json({error:'Hanya Owner/Admin aktif dapat menjalankan otomasi'});
++          let profile;
++          try {
++            const result=await sb.from('user_profiles').select('id,role,active').eq('id',claims.userId).maybeSingle().abortSignal(AbortSignal.timeout(5000));
++            if(result.error) return res.status(503).json({error:'Pemeriksaan akses otomasi tidak tersedia'});
++            profile=result.data;
++          } catch {return res.status(503).json({error:'Pemeriksaan akses otomasi tidak tersedia'});}
++          if(!profile || profile.id!==claims.userId || profile.active!==true || !['Owner','Admin'].includes(profile.role)) return res.status(403).json({error:'Hanya Owner/Admin aktif dapat menjalankan otomasi'});
++          authorized = true;
++        }
+       } else {
+         const tBuf = Buffer.from(iToken, "utf-8");
+         const sBuf = Buffer.from(internalSecret, "utf-8");
+@@ -199,6 +212,8 @@ export default async function handler(req, res) {
+       "rating-prompt":    taskRatingPrompt,
+       "servis-reminder":  taskServisReminder,
+       "voucher-expiry":   taskVoucherExpiryReminder,
++      "voucher-loyalty": taskVoucherLoyalty,
++      "voucher-winback": taskVoucherWinback,
+       "laporan-stale":              taskLaporanStaleAlert,
+       "maintenance-followup-alert":  taskMaintenanceFollowupAlert,
+       "maintenance-contract-expiry": taskMaintenanceContractExpiry,
+diff --git a/api/sentry-init.js b/api/sentry-init.js
+index 0bd2b9c..705505d 100644
+--- a/api/sentry-init.js
++++ b/api/sentry-init.js
+@@ -1,4 +1,5 @@
+ import * as Sentry from "@sentry/node";
++import { sentryBeforeSend, monitoringUrl } from "../src/lib/sentryPrivacy.js";
+ 
+ let initialized = false;
+ 
+@@ -8,8 +9,11 @@ export function initSentry() {
+   if (process.env.SENTRY_DSN) {
+     Sentry.init({
+       dsn: process.env.SENTRY_DSN,
+-      environment: process.env.VERCEL_ENV || process.env.NODE_ENV || "development",
+-      tracesSampleRate: 0.1, // 10% sampling untuk cost efficiency
++      environment: process.env.SENTRY_ENVIRONMENT || process.env.VERCEL_ENV || process.env.NODE_ENV || "development",
++      release: process.env.SOURCE_COMMIT || process.env.ACLEAN_BUILD_SHA || process.env.VERCEL_GIT_COMMIT_SHA,
++      sendDefaultPii: false,
++      beforeSend: sentryBeforeSend,
++      tracesSampleRate: 0, // Error tracking only; no performance transaction payloads.
+       attachStacktrace: true,
+       includeLocalVariables: false, // Jangan expose local vars untuk security
+     });
+@@ -25,12 +29,9 @@ export function withSentry(handler) {
+     } catch (error) {
+       Sentry.captureException(error, {
+         tags: {
+-          route: req.url,
++          route: monitoringUrl(req.url),
+           method: req.method,
+         },
+-        extra: {
+-          body: req.method === "POST" ? { ...req.body, phone: "[REDACTED]" } : undefined,
+-        },
+       });
+       throw error;
+     }
+diff --git a/docs/SENTRY_SETUP.md b/docs/SENTRY_SETUP.md
+index 02424b4..835e78e 100644
+--- a/docs/SENTRY_SETUP.md
++++ b/docs/SENTRY_SETUP.md
+@@ -1,273 +1,56 @@
+-# Sentry Setup Guide untuk AClean Web App
+-
+-## Overview
+-
+-Sentry adalah error tracking service yang akan otomatis menangkap dan melaporkan error di production. Dengan Sentry, kamu akan:
+-
+-- ✅ Tahu instant saat ada error di production (React crash, API 500, cron job fail)
+-- ✅ Lihat stacktrace lengkap untuk debug cepat
+-- ✅ Dapat alert via email/Slack saat error kritis
+-- ✅ Gratis 5K events/bulan (cukup untuk MVP)
+-
+----
+-
+-## Setup Steps (15 menit)
+-
+-### **1. Buat Sentry Account & Project**
+-
+-1. Buka https://sentry.io/signup/
+-2. Sign up (bisa pakai email atau GitHub)
+-3. Create new Organization (atau use default)
+-4. Click "Create Project" → pilih:
+-   - **For Frontend**: React
+-   - **For Backend**: Node.js
+-
+-Kamu akan get **2 DSN** (satu untuk frontend, satu untuk backend).
+-
+-**Contoh DSN:**
+-```
+-https://examplePublicKey@o0.ingest.sentry.io/0
+-```
+-
+----
+-
+-### **2. Set Environment Variables**
+-
+-Kamu sudah ada placeholder di `.env.local`:
+-
+-```bash
+-# .env.local
+-VITE_SENTRY_DSN=https://your-react-dsn@o0.ingest.sentry.io/123
+-```
+-
+-**Di Vercel Production:**
+-
+-1. Buka https://vercel.com/dashboard
+-2. Pilih project "a-clean-webapp"
+-3. Settings → Environment Variables
+-4. Tambah 2 variables:
+-
+-```
+-VITE_SENTRY_DSN = https://your-react-dsn@o0.ingest.sentry.io/123
+-SENTRY_DSN = https://your-node-dsn@o0.ingest.sentry.io/456
+-```
+-
+-Redeploy Vercel setelah set env vars.
+-
+----
+-
+-### **3. Test Frontend Error Capture**
+-
+-Di dev environment:
+-
+-```bash
+-npm run dev
+-# Buka app di http://localhost:3000
+-# Di browser console, jalankan:
+-console.error("Test Sentry Error");
+-```
+-
+-Atau buat tombol test di React:
+-
+-```jsx
+-<button onClick={() => {
+-  throw new Error("Testing Sentry frontend integration");
+-}}>
+-  Test Sentry Error
+-</button>
+-```
+-
+-Setelah error terjadi, buka Sentry dashboard:
+-```
+-https://sentry.io/organizations/[your-org]/issues/
+-```
+-
+-Harus ada error "Testing Sentry frontend integration" muncul dalam 10 detik.
+-
+----
+-
+-### **4. Test Backend Error Capture**
+-
+-Call API dengan error:
+-
+-```bash
+-# Via curl di dev environment
+-curl -X POST http://localhost:3000/api/send-wa \
+-  -H "Content-Type: application/json" \
+-  -d '{"phone": "invalid", "message": "test"}'
+-```
+-
+-Atau ke production (akan capture ke Sentry):
+-
+-```bash
+-curl -X POST https://app.aclean.id/api/send-wa \
+-  -H "Content-Type: application/json" \
+-  -d '{"phone": "invalid", "message": "test"}'
+-```
+-
+-Error akan muncul di Sentry dashboard dalam 30 detik.
+-
+----
+-
+-### **5. Setup Email Alert (Optional)**
+-
+-1. Buka Sentry dashboard → Settings → Alerts
+-2. Click "Create Alert Rule"
+-3. Set:
+-   - **Trigger**: "When a new issue is detected"
+-   - **Notify**: Select "Email" + email kamu
+-   - **Conditions**: default ok
+-4. Save
+-
+-Sekarang saat ada error baru, kamu akan dapat email notif.
+-
+----
+-
+-## File Changes (Sudah Implemented)
+-
+-| File | Change |
+-|------|--------|
+-| [src/main.jsx](src/main.jsx) | Init Sentry + ErrorBoundary |
+-| [api/_auth.js](api/_auth.js) | Init Sentry backend |
+-| [api/sentry-init.js](api/sentry-init.js) | Reusable Sentry setup |
+-| [api/[route].js](api/[route].js) | Capture API errors |
+-| [api/cron-reminder.js](api/cron-reminder.js) | Capture cron errors |
+-| [.env.local](.env.local) | Added VITE_SENTRY_DSN |
+-
+----
+-
+-## What Gets Captured
+-
+-### **Frontend (React)**
+-- React crashes
+-- Component errors
+-- Uncaught promise rejections
+-- Console errors
+-
+-### **Backend (API)**
+-- API endpoint errors
+-- Validation failures
+-- Database errors
+-- Timeout errors
+-
+-### **Cron Jobs**
+-- Task failures
+-- Database connection timeouts
+-- WhatsApp send failures
+-- Payment verification errors
+-
+----
+-
+-## Viewing Errors in Sentry
+-
+-### **Dashboard**
+-```
+-https://sentry.io/organizations/[your-org]/issues/
+-```
+-
+-**Info yang tersedia per error:**
+-- Stacktrace (exactly where error happened)
+-- Frequency (how many times in last 24h)
+-- Affected users (how many)
+-- Breadcrumb (what happened before error)
+-- Environment (dev vs production)
+-- Browser/device info (untuk frontend)
+-
+-### **Grouping**
+-Errors secara otomatis di-group berdasarkan stacktrace. Jadi 100 "Database connection timeout" errors akan grouped jadi 1 issue — lebih mudah dilacak.
+-
+----
+-
+-## Pricing & Cost Management
+-
+-### **Free Tier**
+-- 5,000 events/month
+-- Unlimited projects
+-- Basic features
+-
+-### **Expected Usage (AClean)**
+-```
+-Estimate:
+-- 10 active users
+-- Daily API calls: ~200
+-- Cron jobs: ~20/day
+-- Errors per day: ~5-10 (expected)
+-
+-Monthly events: ~300-500
+-→ Fits comfortably in free tier ✅
+-```
+-
+-### **If Usage Exceeds 5K/month**
+-Opsi:
+-1. **Upgrade ke $29/month** (unlimited events)
+-2. **Reduce sample rate** (capture hanya 10% errors)
+-3. **Cleanup old issues** (delete resolved issues)
+-
+----
+-
+-## Best Practices
+-
+-### **DO**
+-- ✅ Let Sentry capture all errors (automatic)
+-- ✅ Monitor Sentry dashboard weekly
+-- ✅ Set up email alerts for critical errors
+-- ✅ Review error trends monthly
+-
+-### **DON'T**
+-- ❌ Jangan manually send sensitive data (passwords, API keys)
+-- ❌ Jangan capture full request bodies (phone numbers di-redact otomatis)
+-- ❌ Jangan sample 100% di production (expensive)
+-
+----
+-
+-## Troubleshooting
+-
+-### **Error tidak muncul di Sentry**
+-
+-**Check 1:** DSN dikonfigurasi?
+-```javascript
+-// Browser console
+-console.log(import.meta.env.VITE_SENTRY_DSN);
+-// Harus show DSN, bukan undefined
+-```
+-
+-**Check 2:** Error terjadi setelah Sentry init?
+-- Sentry init di top of `src/main.jsx` — errors sebelumnya tidak caught
+-- Move `initSentry()` paling atas jika perlu
+-
+-**Check 3:** Environment variable di Vercel sudah diset?
+-- Settings → Environment Variables
+-- Verify VITE_SENTRY_DSN ada
+-- Redeploy project
+-
+-### **Terlalu banyak noisy errors**
+-
+-Edit filter di `api/sentry-init.js`:
+-```javascript
+-beforeSend(event, hint) {
+-  // Skip network errors
+-  if (event.exception?.values?.[0]?.type === "NetworkError") return null;
+-  return event;
+-}
+-```
+-
+----
+-
+-## Next Steps
+-
+-1. **Today**: Get DSN, set env vars, test error capture
+-2. **This week**: Monitor Sentry dashboard, check for errors
+-3. **Next month**: Review usage, adjust sampling jika perlu
+-
+----
+-
+-## Helpful Links
+-
+-- Sentry Dashboard: https://sentry.io
+-- Sentry Docs: https://docs.sentry.io
+-- React Integration: https://docs.sentry.io/platforms/javascript/guides/react/
+-- Node.js Integration: https://docs.sentry.io/platforms/node/
+-
+----
+-
+-**Questions?** Check Sentry docs or re-read this guide. Setup already done in code, just need DSN! 🚀
++# Sentry pada Coolify / Supabase self-hosted
++
++Diperbarui 12 November 2026. Panduan ini membedakan kode yang siap dirilis dari
++konfigurasi runtime yang benar-benar telah diperiksa.
++
++## Bukti saat pemeriksaan
++
++Produksi `app.aclean.id` sehat pada source `d03d85e`, tetapi `SENTRY_DSN` runtime
++kosong dan DSN frontend tidak ditemukan dalam asset hasil build. Karena itu
++keberadaan SDK dalam repo **belum berarti error produksi terkirim**.
++Dua DSN yang sudah tersedia secara lokal menerima event INFO sintetis (HTTP 200).
++Pemeriksaan tersebut tidak membuktikan event muncul di dashboard, aturan alert,
++email penerima, atau instrumentasi container produksi.
++
++Bukti tanpa secret: [monitoring-readonly.json](../deliverables/voucher-hardening-2026-11-12/monitoring-readonly.json)
++dan [sentry-ingestion.json](../deliverables/voucher-hardening-2026-11-12/sentry-ingestion.json).
++
++## Konfigurasi deployment
++
++| Variabel | Coolify build | Coolify runtime | Kegunaan |
++| --- | --- | --- | --- |
++| `VITE_SENTRY_DSN` | Ya | Tidak diperlukan | Di-embed Vite ke frontend; perubahan membutuhkan rebuild. DSN publik proyek React, bukan auth token Sentry. |
++| `SENTRY_DSN` | Tidak | Ya | Inisialisasi SDK Node dalam container API. |
++| `VITE_SENTRY_ENVIRONMENT` | Ya | Tidak diperlukan | `staging` atau `production` pada frontend. |
++| `SENTRY_ENVIRONMENT` | Tidak | Ya | `staging` atau `production` pada backend, agar hasil build staging tidak berlabel production. |
++| `SOURCE_COMMIT` | Ya, ARG Docker | Ya | Identitas release dan versi health; utamakan SHA source aktual dibanding pin lama `ACLEAN_BUILD_SHA`. |
++
++Gunakan DSN proyek/environment yang benar pada staging dan production. Jangan
++menambahkan auth token Sentry ke `VITE_*`. Koneksi akun Sentry untuk membaca
++project/events berbeda dari DSN penerimaan dan memerlukan otorisasi tersendiri.
++Tidak perlu menginstal Sentry pada server PostgreSQL: SDK menangkap kegagalan
++aplikasi/API; uptime eksternal mengamati jalur health Auth dan Database API.
++
++Patch ini memasang `beforeSend` bersama untuk menghapus payload bisnis, user,
++header, query, capability portal, variabel lokal, dan breadcrumb console/DOM.
++Pesan exception dibuat generik; jenis error dan frame kode tetap tersedia.
++Performance tracing dimatikan agar payload tersebut tidak ikut mengirim data
++bisnis dan tidak menambah sampling transaksi pada VPS. Source map upload dan
++alert dashboard belum dikonfigurasi melalui patch ini.
++
++## Verifikasi
++
++1. Periksa keberadaan DSN dan scope build/runtime tanpa mencetak nilainya.
++2. Build/deploy kandidat, cocokkan source container, release frontend, dan
++   `/api/health?component=app` dengan SHA yang dirilis.
++3. Jalankan probe INFO sintetis tanpa pelanggan/credential, pastikan HTTP 200.
++   Script lokal: `node scripts/check-sentry-ingestion.mjs /path/to/existing.env`.
++   Script tidak memuat environment ke shell dan hanya mencetak event ID/status.
++4. Dengan akses dashboard yang disetujui, cari event ID dan cocokkan project,
++   environment, release; periksa aturan alert serta penerima. Tidak ada endpoint
++   publik baru yang sengaja memicu error.
++5. Untuk menguji alert, gunakan mekanisme test pada layanan monitoring; jangan
++   mematikan produksi atau menciptakan transaksi pelanggan untuk pengujian.
++
++Referensi SDK resmi: [Node](https://docs.sentry.io/platforms/javascript/guides/node/)
++dan [filtering](https://docs.sentry.io/platforms/javascript/configuration/filtering/).
+diff --git a/docs/SUPABASE_ALERTING.md b/docs/SUPABASE_ALERTING.md
+index 94e8c7d..c77199b 100644
+--- a/docs/SUPABASE_ALERTING.md
++++ b/docs/SUPABASE_ALERTING.md
+@@ -5,7 +5,7 @@ Jangan menjadwalkan monitor utama dengan `pg_cron`: saat database tidak bisa men
+ koneksi, job tersebut juga gagal dan tidak dapat mengirim alert.
+ 
+ Setelah versi ini ter-deploy, buat monitor HTTP GET berikut pada layanan uptime itu.
+-Set tujuan email ke `developer.aclean@gmail`; beri nama persis seperti tabel agar
++Set tujuan email ke alamat notifikasi yang dikonfirmasi Owner; beri nama seperti tabel agar
+ subjek email langsung menunjukkan jalur yang terdampak.
+ 
+ | Nama monitor | URL | Makna HTTP 503 / tidak terjangkau |
+@@ -36,7 +36,15 @@ Respons JSON `/api/health` menyertakan `diagnosis`:
+ - `none`: kedua probe sehat.
+ 
+ Klasifikasi ini menunjukkan **jalur yang gagal**, bukan penyebab host yang pasti.
+-Untuk mengetahui alasan restart, OOM, limit koneksi, atau gangguan pooler,
+-tetap perlukan metrik historis serta log infrastruktur dari Supabase Support.
++Untuk mengetahui alasan restart, OOM, limit koneksi, atau gangguan pooler pada
++VPS self-hosted, periksa metrik VPS, Docker, PostgreSQL, dan proxy.
+ Email baru aktif setelah monitor eksternal dan alamat penerimanya dikonfigurasi;
+ perubahan kode saja tidak mengirim email.
++
++## Pemeriksaan 12 November 2026
++
++Ketiga endpoint di atas merespons HTTP 200 saat diperiksa langsung. Belum ada
++akses terverifikasi ke akun layanan uptime eksternal, sehingga URL monitor,
++status aktif, histori incident dan penerima notifikasi belum dinyatakan benar.
++Tidak ditemukannya container Uptime Kuma di VPS juga tidak membuktikan monitor
++eksternal mati. Bukti: [monitoring-readonly.json](../deliverables/voucher-hardening-2026-11-12/monitoring-readonly.json).
+diff --git a/server/http-app.mjs b/server/http-app.mjs
+index ea93671..bd8d06e 100644
+--- a/server/http-app.mjs
++++ b/server/http-app.mjs
+@@ -1,3 +1,4 @@
++import Sentry, { initSentry } from "../api/sentry-init.js";
+ // Local/self-hosted HTTP adapter for the existing Vercel-style API handlers.
+ // This module deliberately does not load .env files or start a listener on import.
+ import http from 'node:http';
+@@ -133,6 +134,10 @@ export function createAppServer({ unifiedHandler, directHandlers = {}, staticDir
+     } catch (error) {
+       // Exception messages may contain a signed URL or token. Keep console output minimal;
+       // handlers/Sentry own the detailed, access-controlled diagnostics.
++      if (!error.statusCode) {
++        initSentry();
++        Sentry.captureException(error, {tags:{route:pathname,method:req.method,component:'selfhost-api'}});
++      }
+       if (!error.statusCode) console.error('[selfhost-api] Handler failed', {
+         route,
+         errorType: error instanceof Error ? error.name : 'UnknownError',
+diff --git a/src/data/reads.js b/src/data/reads.js
+index 0dcf5ff..e328a54 100644
+--- a/src/data/reads.js
++++ b/src/data/reads.js
+@@ -40,7 +40,7 @@ export const searchOrdersServer = (supabase, query) => {
+     .limit(100);
+ };
+ 
+-const INVOICE_COLS = "id,job_id,customer,phone,address,service,units,labor,material,discount,trade_in,trade_in_amount,total,pph23,pph23_amount,status,due,paid_at,sent,sent_at,created_at,updated_at,follow_up,teknisi,garansi_days,garansi_expires,paid_method,paid_notes,materials_detail,payment_proof_url,repair_gratis,invoice_type,unit_ac_amount,paket_pasang,paid_amount,remaining_amount,withheld_amount,wa_sent_count,wa_last_sent_at,wa_last_sent_mode,wa_last_sent_by,wa_last_sent_method,pdf_url,pdf_generated_at,quotation_id";
++const INVOICE_COLS = "voucher_id,voucher_code,voucher_discount,voucher_manual_discount,id,job_id,customer,phone,address,service,units,labor,material,discount,trade_in,trade_in_amount,total,pph23,pph23_amount,status,due,paid_at,sent,sent_at,created_at,updated_at,follow_up,teknisi,garansi_days,garansi_expires,paid_method,paid_notes,materials_detail,payment_proof_url,repair_gratis,invoice_type,unit_ac_amount,paket_pasang,paid_amount,remaining_amount,withheld_amount,wa_sent_count,wa_last_sent_at,wa_last_sent_mode,wa_last_sent_by,wa_last_sent_method,pdf_url,pdf_generated_at,quotation_id";
+ const ACTIONABLE_INVOICE_STATUSES = ["PENDING_APPROVAL", "APPROVED", "UNPAID", "OVERDUE", "PARTIAL_PAID"];
+ const INVOICE_ACTION_PAGE = 500;
+ 
+diff --git a/src/lib/__tests__/cronTickIntegration.test.js b/src/lib/__tests__/cronTickIntegration.test.js
+index e6f38fb..cadf953 100644
+--- a/src/lib/__tests__/cronTickIntegration.test.js
++++ b/src/lib/__tests__/cronTickIntegration.test.js
+@@ -1,8 +1,10 @@
+ import { afterEach, describe, expect, it, vi } from 'vitest';
+-const state = vi.hoisted(() => ({ runs: [], calls: [], lease: false, budgets: [], elapsed: {} }));
++const state = vi.hoisted(() => ({ runs: [], calls: [], lease: false, budgets: [], elapsed: {}, claims:null, profile:null, profileError:null }));
++vi.mock('../../../api/_auth.js',()=>({verifyAppToken:()=>state.claims,setCorsHeaders(){}}));
+ vi.mock('../../../api/sentry-init.js', () => ({ initSentry() {}, setCronContext() {} }));
+ vi.mock('../../../api/_tasks/_shared.js', () => ({ OWNER_PHONE: '628120000001', sendWA: vi.fn(), log: vi.fn(),
+   sb: { from(table) {
++    if(table==='user_profiles'){const q={select(){return q},eq(){return q},maybeSingle(){return q},abortSignal:async()=>({data:state.profile,error:state.profileError})};return q;}
+     if (table !== 'cron_runs') throw new Error('Unexpected business table: ' + table);
+     const q = { select(){return q;},in(_key,names){q.names=names;return q;},gte(_key,since){q.since=since;return q;},order(){return q;},range(a,b){q.bounds=[a,b];return q;},
+       then(resolve){const rows=state.runs.filter(r=>q.names.includes(r.task_name)&&r.started_at>=q.since).slice(...[q.bounds[0],q.bounds[1]+1]);return Promise.resolve({data:rows}).then(resolve);} };return q;
+@@ -19,14 +21,15 @@ vi.mock('../../../api/_logger.js', () => ({ closeStaleCronRuns: vi.fn(), runWith
+   const result=await fn();state.calls.push(name);state.runs.push({task_name:name,status:result.skipped?'SKIPPED':'SUCCESS',started_at:new Date().toISOString(),metadata:result});return result;
+ } }));
+ vi.mock('../../../api/_tasks/ops.js', () => Object.fromEntries(['taskProjectAlerts','taskBackupData','taskBackupRetention','taskPayrollWA','taskBonusEligible','taskMaintenanceContractExpiry','taskMaintenanceFollowupAlert','taskMaintenancePmDue','taskMediaGapAlert','taskDataIntegrityAudit','taskInfraUsageAlert'].map(n=>[n,async()=>({})])));
++vi.mock('../../../api/_tasks/vouchers.js', () => Object.fromEntries(['taskVoucherLoyalty','taskVoucherWinback','taskVoucherExpiryReminder'].map(n=>[n,async()=>({})])));
+ vi.mock('../../../api/_tasks/reminders.js', () => Object.fromEntries(['taskReminder','taskDaily','taskStock','taskServisReminder','taskVoucherExpiryReminder','taskLaporanStaleAlert','taskMaterialPulangReminder','taskWeeklyReport','taskMorningDispatch','taskRatingPrompt'].map(n=>[n,async()=>({})])));
+ vi.mock('../../../api/_tasks/cleanup.js', () => Object.fromEntries(['taskCleanup','taskR2Cleanup90d','taskExpenseFotoCleanup30d','taskPaymentProofCleanup90d','taskSnapshotCleanup','taskWaCleanup','taskLogCleanup'].map(n=>[n,async()=>({})])));
+ vi.mock('../../../api/_tasks/wa-ai.js', () => Object.fromEntries(['taskWaSnapshot','taskWaBackfill','taskScanBuktiBayar','taskRetryPaymentMedia','taskPaymentMediaWatchdog'].map(n=>[n,async()=>({})])));
+ vi.mock('../../../api/_tasks/field-reports.js', () => ({taskFieldReportReminder:async()=>({})}));
+-import { taskTick } from '../../../api/cron-reminder.js';
++import handler,{ taskTick } from '../../../api/cron-reminder.js';
+ 
+ describe('real dispatcher wiring with isolated task implementations', () => {
+-  afterEach(()=>{vi.useRealTimers();state.runs=[];state.calls=[];state.lease=false;state.budgets=[];state.elapsed={};});
++  afterEach(()=>{vi.useRealTimers();state.runs=[];state.calls=[];state.lease=false;state.budgets=[];state.elapsed={};state.claims=null;state.profile=null;state.profileError=null;vi.unstubAllEnvs();});
+   it('gives the payment retry time for AI plus persistence, without adding tasks or changing its cadence',async()=>{
+     vi.useFakeTimers();vi.setSystemTime(new Date('2026-10-18T10:00:00+07:00'));
+     await taskTick();
+@@ -63,4 +66,11 @@ describe('real dispatcher wiring with isolated task implementations', () => {
+     expect(state.calls).not.toContain('backup');expect(state.calls).not.toContain('data-integrity-audit');
+     expect(state.calls).not.toContain('payment-media-retry');expect(state.calls).not.toContain('daily');expect(results.at(-1).pending).toBe(0);
+   });
++  const response=()=>({setHeader(){},status(code){this.code=code;return this},json(data){this.data=data;return this},end(){return this}});
++  const manual=()=>({method:'POST',headers:{'x-internal-token':'fixture.jwt.token'},query:{task:'voucher-loyalty'}});
++  const actorId='10000000-0000-4000-8000-000000000001';
++  it.each(['Finance','Teknisi','Helper'])('manual cron rejects %s before task work',async role=>{vi.stubEnv('INTERNAL_API_SECRET','fixture');state.claims={userId:actorId,role};const res=response();await handler(manual(),res);expect(res.code).toBe(403);expect(state.calls).toHaveLength(0);});
++  it('manual cron rechecks inactive profiles and dependency failures',async()=>{vi.stubEnv('INTERNAL_API_SECRET','fixture');state.claims={userId:actorId,role:'Owner'};state.profile={id:actorId,role:'Owner',active:false};const denied=response();await handler(manual(),denied);expect(denied.code).toBe(403);state.profileError={message:'down'};const unavailable=response();await handler(manual(),unavailable);expect(unavailable.code).toBe(503);expect(state.calls).toHaveLength(0);});
++  it('active Owner and machine scheduler can run the same guarded voucher task',async()=>{vi.stubEnv('INTERNAL_API_SECRET','fixture');state.claims={userId:actorId,role:'Owner'};state.profile={id:actorId,role:'Owner',active:true};const ownerRes=response();await handler(manual(),ownerRes);expect(ownerRes.data.ok).toBe(true);vi.stubEnv('CRON_SECRET','fixture-cron');state.profileError={message:'must not read profile for scheduler'};const cronRes=response();await handler({method:'POST',headers:{authorization:'Bearer fixture-cron'},query:{task:'voucher-loyalty'}},cronRes);expect(cronRes.data.ok).toBe(true);expect(state.calls).toEqual(['voucher-loyalty','voucher-loyalty']);});
++
+ });
+diff --git a/src/lib/__tests__/healthRoute.test.js b/src/lib/__tests__/healthRoute.test.js
+index 0b7098a..dbb97c0 100644
+--- a/src/lib/__tests__/healthRoute.test.js
++++ b/src/lib/__tests__/healthRoute.test.js
+@@ -1,4 +1,4 @@
+-import { beforeEach, describe, expect, it, vi } from 'vitest';
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+ 
+ vi.mock('../../../api/_health.js', async importOriginal => ({
+   ...(await importOriginal()),
+@@ -20,12 +20,16 @@ beforeEach(() => {
+     checks: { database: 'fail:504', auth: 'ok' } });
+ });
+ 
++afterEach(()=>vi.unstubAllEnvs());
++
+ describe('component health route', () => {
+-  it('checks Vercel reachability without calling Supabase', async () => {
++  it('checks app reachability and actual Coolify SHA without calling Supabase', async () => {
++    vi.stubEnv('SOURCE_COMMIT','1234567-current');vi.stubEnv('ACLEAN_BUILD_SHA','stale-version');
+     const res = response();
+     await health({ method: 'GET', query: { component: 'app' } }, res);
+     expect(res.status).toHaveBeenCalledWith(200);
+     expect(checkHealth).not.toHaveBeenCalled();
++    expect(res.json.mock.calls[0][0].version).toBe('1234567');
+   });
+ 
+   it('keeps healthy Auth distinct from failing database API', async () => {
+diff --git a/src/main.jsx b/src/main.jsx
+index 7a528a7..d6e2453 100644
+--- a/src/main.jsx
++++ b/src/main.jsx
+@@ -4,6 +4,7 @@ import App from './App.jsx'
+ import EmergencyModeView from './views/EmergencyModeView.jsx'
+ import { getEmergencyVaultMeta } from './lib/emergencyVault.js'
+ import * as Sentry from "@sentry/react"
++import { sentryBeforeSend } from "./lib/sentryPrivacy.js"
+ 
+ if ("serviceWorker" in navigator) {
+   window.addEventListener("load", () => {
+@@ -16,14 +17,16 @@ if ("serviceWorker" in navigator) {
+ if (import.meta.env.VITE_SENTRY_DSN) {
+   Sentry.init({
+     dsn: import.meta.env.VITE_SENTRY_DSN,
+-    environment: import.meta.env.MODE,
+-    tracesSampleRate: 1.0,
+-    beforeSend(event, hint) {
++    environment: import.meta.env.VITE_SENTRY_ENVIRONMENT || import.meta.env.MODE,
++    release: import.meta.env.VITE_APP_BUILD_SHA || undefined,
++    sendDefaultPii: false,
++    tracesSampleRate: 0,
++    beforeSend(event) {
+       // Skip noisy errors (optional)
+       if (event.exception?.values?.[0]?.type === "ChunkLoadError") {
+         return null; // Chunk load errors sudah ditangani dengan reload
+       }
+-      return event;
++      return sentryBeforeSend(event);
+     }
+   });
+ }
+diff --git a/src/views/CustomerPortalView.jsx b/src/views/CustomerPortalView.jsx
+index cc4f491..3d3bd91 100644
+--- a/src/views/CustomerPortalView.jsx
++++ b/src/views/CustomerPortalView.jsx
+@@ -67,10 +67,22 @@ export default function CustomerPortalView({ token: tokenProp }) {
+   const token = tokenProp || "";
+   const [portalState, setPortalState] = useState({ phase: "loading", token: null, data: null, error: null });
+   const [vouchers, setVouchers] = useState([]);
++  const [voucherError,setVoucherError]=useState(false);
++  const [voucherRetry,setVoucherRetry]=useState(0);
+   const [ratingTarget, setRatingTarget] = useState(null); // order yang mau di-rating
+   const [ratedOrders, setRatedOrders]   = useState({}); // { order_id: true }
+   const [activeLocation, setActiveLocation] = useState(null); // null = lokasi pertama
+ 
++  useEffect(()=>{
++    if(portalState.phase!=="ready" || portalState.token!==token)return;
++    let cancelled=false;setVoucherError(false);setVouchers([]);
++    fetch(`${API_BASE}/customer-vouchers?token=${encodeURIComponent(token)}`,{signal:AbortSignal.timeout(15000)})
++      .then(async r=>{const data=await r.json();if(!r.ok||!Array.isArray(data.vouchers))throw new Error('Voucher belum tersedia');return data;})
++      .then(data=>{if(!cancelled)setVouchers(data.vouchers);})
++      .catch(()=>{if(!cancelled)setVoucherError(true);});
++    return ()=>{cancelled=true;};
++  },[token,portalState.phase,portalState.token,voucherRetry]);
++
+   useEffect(() => {
+     let cancelled = false;
+     setPortalState({ phase: "loading", token, data: null, error: null });
+@@ -91,15 +103,6 @@ export default function CustomerPortalView({ token: tokenProp }) {
+         }
+         if (cancelled) return;
+         setPortalState({ phase: "ready", token, data: d, error: null });
+-        // Fetch vouchers paralel; voucher bersifat tambahan untuk tampilan portal.
+-        fetch(`${API_BASE}/customer-vouchers?token=${encodeURIComponent(token)}`)
+-          .then(async r => {
+-            const v = await r.json();
+-            if (!r.ok) throw new Error("Gagal memuat voucher");
+-            return v;
+-          })
+-          .then(v => { if (!cancelled) setVouchers(v.vouchers || []); })
+-          .catch(() => {});
+         if (window.location.hash === "#rating" && d.orders?.length > 0) {
+           const lastDone = d.orders.find(o => ["COMPLETED","INVOICE_APPROVED"].includes(o.status));
+           if (lastDone) setRatingTarget(lastDone);
+@@ -258,6 +261,7 @@ export default function CustomerPortalView({ token: tokenProp }) {
+         )}
+ 
+         {/* VOUCHER */}
++        {voucherError && <div role="alert" style={{padding:12}}>Voucher belum berhasil dimuat. <button onClick={()=>setVoucherRetry(n=>n+1)}>Coba lagi</button></div>}
+         {vouchers.length > 0 && (
+           <>
+             <div style={s.sectionLabel}>Voucher Anda</div>
+diff --git a/src/views/EditInvoiceModal.jsx b/src/views/EditInvoiceModal.jsx
+index f62f427..230669f 100644
+--- a/src/views/EditInvoiceModal.jsx
++++ b/src/views/EditInvoiceModal.jsx
+@@ -1,7 +1,9 @@
+-import { useState, useEffect } from "react";
++import { useState, useEffect, useRef } from "react";
+ import { cs } from "../theme/cs.js";
+ import { summarize, checkInvoiceConsistency, describeInconsistency, normalizeLines, categoryOf, LINE_CATEGORY, computePph23, PPH23_RATE, PPH23_RATE_ALT, selectedPph23Rate } from "../lib/invoicing.js";
+ 
++import { voucherEditDraft, voucherRequest } from '../lib/voucherClient.js';
++
+ const PPH23_OPTIONS = [PPH23_RATE, PPH23_RATE_ALT];
+ 
+ export default function EditInvoiceModal({
+@@ -23,14 +25,25 @@ export default function EditInvoiceModal({
+   const [voucherCheckLoading, setVoucherCheckLoading] = useState(false);
+   const [voucherApplied, setVoucherApplied] = useState(null);
+   const [editSaving, setEditSaving] = useState(false);
++  const [saveUncertain, setSaveUncertain] = useState(false);
++  const saveRequest = useRef(null);
++  const checkSequence = useRef(0);
++  const draftVersion = JSON.stringify([editInvoiceForm,editInvoiceItems,editJasaItems]);
++  useEffect(() => {
++    checkSequence.current++;setVoucherCheckLoading(false);
++    if (!saveUncertain && !editSaving) {
++      setVoucherApplied(null); setVoucherCheckResult(null); saveRequest.current = null;
++    }
++  }, [draftVersion]);
+ 
+   useEffect(() => {
++    checkSequence.current++;
+     if (open) {
+       setEditAddType(""); setEditAddSearch("");
+-      setVoucherCheckCode(""); setVoucherCheckResult(null);
+-      setVoucherCheckLoading(false); setVoucherApplied(null);
++      setVoucherCheckCode(editInvoiceData?.voucher_code || ""); setVoucherCheckResult(null);
++      setVoucherCheckLoading(false); setVoucherApplied(null); setSaveUncertain(false); saveRequest.current=null;
+     }
+-  }, [open]);
++  }, [open, editInvoiceData?.id]);
+ 
+   if (!open || !editInvoiceData) return null;
+ 
+@@ -70,12 +83,37 @@ export default function EditInvoiceModal({
+     : selectedPph23Rate(editInvoiceData.labor, editInvoiceData.pph23_amount);
+ 
+   const handleClose = () => {
++    if (editSaving || saveUncertain) return;
+     setEditAddType(""); setEditAddSearch("");
+     onClose();
+   };
+ 
+   const handleSave = async () => {
+     if (editSaving) return;
++    if (voucherApplied || editInvoiceData.voucher_id || saveUncertain) {
++      if (!saveRequest.current && !voucherApplied?.quote) { showNotif('Validasi dan terapkan kembali voucher sebelum menyimpan perubahan.'); return; }
++      if (!saveRequest.current) saveRequest.current = {
++        request_id: crypto.randomUUID(), invoice_id: editInvoiceData.id, code: voucherApplied.code,
++        edit: voucherEditDraft(editInvoiceData,editInvoiceForm,editJasaItems,editInvoiceItems),
++        expected_updated_at: voucherApplied.quote.expected_updated_at, quote_hash: voucherApplied.quote.quote_hash,
++      };
++      setEditSaving(true);
++      try {
++        const result = await voucherRequest('/api/apply-invoice-voucher',saveRequest.current,_apiHeaders);
++        const row=result.invoice;
++        if (!result.ok || !row || row.id!==editInvoiceData.id || row.voucher_code!==saveRequest.current.code) throw Object.assign(new Error('Hasil invoice belum terkonfirmasi'),{uncertain:true});
++        let details=row.materials_detail;try{if(typeof details==='string')details=JSON.parse(details);}catch{details=[];}
++        setInvoicesData(previous=>previous.map(i=>i.id===row.id?{...i,...row,materials_detail:details}:i));
++        setSaveUncertain(false);saveRequest.current=null;
++        addAgentLog('INVOICE_VOUCHER_SAVED',`Invoice ${row.id} dan voucher tersimpan atomik`,'SUCCESS');
++        showNotif('✅ Invoice dan penggunaan voucher berhasil disimpan.');onClose();
++      } catch(error) {
++        setSaveUncertain(Boolean(error.uncertain));
++        if(!error.uncertain){saveRequest.current=null;setVoucherApplied(null);setVoucherCheckResult(null);}
++        showNotif('⚠️ '+error.message);
++      } finally {setEditSaving(false);}
++      return;
++    }
+     const discountFinal = parseInt(editInvoiceForm.discount || 0) || 0;
+     const tradeInFinal = !!editInvoiceForm.trade_in;
+     const tradeInAmtFinal = tradeInFinal ? (parseInt(editInvoiceForm.trade_in_amount) || 0) : 0;
+@@ -141,7 +179,7 @@ export default function EditInvoiceModal({
+           <button onClick={handleClose} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer" }}>×</button>
+         </div>
+ 
+-        <div style={{ display: "grid", gap: 14 }}>
++        <fieldset disabled={editSaving || saveUncertain} style={{ display: "grid", gap: 14, border:0, padding:0, margin:0, minWidth:0 }}>
+ 
+           {/* Atas Nama Invoice */}
+           <div style={{ background: cs.card, border: "1px solid " + cs.accent + "33", borderRadius: 10, padding: "12px 14px", display: "grid", gap: 10 }}>
+@@ -314,33 +352,36 @@ export default function EditInvoiceModal({
+                     <strong style={{ color: "#15803d" }}>{voucherApplied.code}</strong>
+                     <span style={{ color: "#16a34a", marginLeft: 6 }}>{voucherApplied.type_label}</span>
+                   </div>
+-                  <button onClick={() => { setVoucherApplied(null); setVoucherCheckResult(null); setVoucherCheckCode(""); setEditInvoiceForm(f => ({ ...f, discount: 0 })); }}
++                  <button disabled={Boolean(editInvoiceData.voucher_id)} onClick={() => { setVoucherApplied(null); setVoucherCheckResult(null); setVoucherCheckCode("");  }}
+                     style={{ fontSize: 11, color: "#94a3b8", background: "none", border: "none", cursor: "pointer" }}>Hapus</button>
+                 </div>
+               ) : (
+                 <div style={{ display: "flex", gap: 6 }}>
+                   <input value={voucherCheckCode}
+-                    onChange={e => { setVoucherCheckCode(e.target.value.toUpperCase()); setVoucherCheckResult(null); }}
++                    onChange={e => { checkSequence.current++;setVoucherCheckLoading(false);setVoucherCheckCode(e.target.value.toUpperCase()); setVoucherCheckResult(null); }}
+                     placeholder="Kode voucher (cth: ACL-K3M9P2)"
+                     style={{ flex: 1, background: cs.surface, border: "1px solid " + cs.border, borderRadius: 7, padding: "6px 10px", color: cs.text, fontSize: 12, fontFamily: "monospace" }} />
+                   <button disabled={voucherCheckLoading || !voucherCheckCode.trim()}
+                     onClick={async () => {
+                       if (!voucherCheckCode.trim() || !editInvoiceData?.phone) return;
++                      const sequence=++checkSequence.current;
+                       setVoucherCheckLoading(true); setVoucherCheckResult(null);
+                       try {
+-                        const hdrs = await _apiHeaders();
+-                        const r = await fetch("/api/validate-voucher", { method: "POST", headers: hdrs, body: JSON.stringify({ code: voucherCheckCode.trim(), phone: editInvoiceData.phone, invoice_id: editInvoiceData.id }) });
+-                        const d = await r.json();
+-                        if (r.ok && d.valid) setVoucherCheckResult({ valid: true, voucher: d.voucher });
+-                        else setVoucherCheckResult({ error: d.error || "Voucher tidak valid" });
+-                      } catch { setVoucherCheckResult({ error: "Gagal cek voucher" }); }
+-                      finally { setVoucherCheckLoading(false); }
++                        const d = await voucherRequest('/api/validate-voucher',{code:voucherCheckCode.trim(),invoice_id:editInvoiceData.id,edit:voucherEditDraft(editInvoiceData,editInvoiceForm,editJasaItems,editInvoiceItems)},_apiHeaders);
++                        if(sequence!==checkSequence.current)return;
++                        if (d.valid && d.quote) setVoucherCheckResult({ valid:true,voucher:d.voucher,quote:d.quote });
++                        else setVoucherCheckResult({error:'Voucher belum dapat divalidasi'});
++                      } catch (error) { if(sequence===checkSequence.current)setVoucherCheckResult({ error: error.message || "Gagal cek voucher" }); }
++                      finally { if(sequence===checkSequence.current)setVoucherCheckLoading(false); }
+                     }}
+                     style={{ padding: "6px 14px", borderRadius: 7, border: "none", background: voucherCheckLoading ? cs.border : "#f43f5e", color: "#fff", cursor: voucherCheckLoading ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700 }}>
+                     {voucherCheckLoading ? "..." : "Cek"}
+                   </button>
+                 </div>
+               )}
++              <div style={{fontSize:11,color:cs.muted}}>Voucher baru digunakan setelah invoice berhasil disimpan. Manfaat dihitung dari jasa bersih setelah potongan baris/trade-in, tanpa material/biaya tetap. Gunakan potongan terbaik tanpa menumpuk diskon manual; unit gratis memakai Cleaning termurah.</div>
++              {editInvoiceData.voucher_id && !voucherApplied && <div role="status" style={{fontSize:11,color:cs.yellow}}>Invoice sudah memakai {editInvoiceData.voucher_code}. Validasi ulang sebelum menyimpan perubahan.</div>}
++              {voucherApplied?.quote && <div style={{fontSize:12,color:'#16a34a'}}>Potongan final {fmt(voucherApplied.quote.discount)} · Total setelah voucher {fmt(voucherApplied.quote.total)}</div>}
+               {voucherCheckResult?.error && (
+                 <div style={{ marginTop: 6, fontSize: 11, color: "#f87171", padding: "6px 10px", background: "#fef2f2", borderRadius: 6 }}>❌ {voucherCheckResult.error}</div>
+               )}
+@@ -348,17 +389,9 @@ export default function EditInvoiceModal({
+                 <div style={{ marginTop: 6, background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 8, padding: "8px 12px" }}>
+                   <div style={{ fontSize: 12, fontWeight: 700, color: "#15803d", marginBottom: 4 }}>✅ Voucher Valid — {voucherCheckResult.voucher.type_label}</div>
+                   <div style={{ fontSize: 11, color: "#16a34a" }}>{voucherCheckResult.voucher.customer_name} · {voucherCheckResult.voucher.description}</div>
+-                  <button onClick={async () => {
+-                    const v = voucherCheckResult.voucher;
+-                    let discountAmt = 0;
+-                    if (v.type === "discount_pct") discountAmt = Math.round((newTotal * v.value) / 100);
+-                    setEditInvoiceForm(f => ({ ...f, discount: discountAmt }));
+-                    setVoucherApplied(v);
++                  <button onClick={() => {
++                    setVoucherApplied({...voucherCheckResult.voucher,quote:voucherCheckResult.quote});
+                     setVoucherCheckResult(null);
+-                    try {
+-                      const hdrs = await _apiHeaders();
+-                      await fetch("/api/claim-voucher", { method: "POST", headers: hdrs, body: JSON.stringify({ code: v.code, invoice_id: editInvoiceData.id }) });
+-                    } catch { /* silent */ }
+                   }}
+                     style={{ marginTop: 8, padding: "7px 0", width: "100%", borderRadius: 8, border: "none", background: "#16a34a", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                     Terapkan Voucher
+@@ -409,7 +442,7 @@ export default function EditInvoiceModal({
+                     <div style={{ marginTop: 8, fontSize: 12, color: cs.muted, display: "grid", gap: 3 }}>
+                       <div style={{ display: "flex", justifyContent: "space-between" }}><span>Nilai Jasa (DPP)</span><b style={{ color: cs.text, fontFamily: "monospace" }}>{fmt(pph.dpp)}</b></div>
+                       <div style={{ display: "flex", justifyContent: "space-between" }}><span>PPh 23 dipotong</span><b style={{ color: "#0ea5e9", fontFamily: "monospace" }}>- {fmt(pph.amount)}</b></div>
+-                      <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid " + cs.border, paddingTop: 3 }}><span>Diterima AClean (Total tidak berubah)</span><b style={{ color: cs.green, fontFamily: "monospace" }}>{fmt(newTotal)}</b></div>
++                      <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid " + cs.border, paddingTop: 3 }}><span>Diterima AClean (Total tidak berubah)</span><b style={{ color: cs.green, fontFamily: "monospace" }}>{fmt(voucherApplied?.quote?.total ?? newTotal)}</b></div>
+                     </div>
+                   )}
+                 </div>
+@@ -420,7 +453,7 @@ export default function EditInvoiceModal({
+           {/* Total preview */}
+           <div style={{ background: cs.accent + "12", border: "1px solid " + cs.accent + "33", borderRadius: 10, padding: 14 }}>
+             <div style={{ fontSize: 12, color: cs.muted, marginBottom: 4 }}>Total Invoice Baru</div>
+-            <div style={{ fontWeight: 800, fontSize: 22, color: cs.accent, fontFamily: "monospace" }}>{fmt(newTotal)}</div>
++            <div style={{ fontWeight: 800, fontSize: 22, color: cs.accent, fontFamily: "monospace" }}>{fmt(voucherApplied?.quote?.total ?? newTotal)}</div>
+             {(editDiscount > 0 || editTradeIn) && (
+               <div style={{ fontSize: 11, color: "#f43f5e", marginTop: 4 }}>
+                 Potongan: {editDiscount > 0 ? `Discount ${fmt(editDiscount)}` : ""}{editDiscount > 0 && editTradeIn ? " + " : ""}{editTradeIn ? `Trade-In ${fmt(editTradeInAmt)}` : ""}
+@@ -441,15 +474,18 @@ export default function EditInvoiceModal({
+               style={{ width: "100%", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 8, padding: "10px 12px", color: cs.text, fontSize: 13 }} />
+           </div>
+ 
++        </fieldset>
++        {saveUncertain && <p role="alert" style={{color:'#fbbf24'}}>Hasil simpan belum terkonfirmasi. Form dikunci; konfirmasi ulang memakai ID transaksi yang sama.</p>}
++        <div style={{ display:'grid',gap:14 }}>
+           {/* Buttons */}
+           <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10 }}>
+-            <button onClick={handleClose} disabled={editSaving}
++            <button onClick={handleClose} disabled={editSaving || saveUncertain}
+               style={{ padding: "11px", background: cs.surface, border: "1px solid " + cs.border, borderRadius: 10, color: cs.text, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>
+               Batal
+             </button>
+             <button onClick={handleSave} disabled={editSaving}
+               style={{ padding: "11px", background: "linear-gradient(135deg," + cs.accent + ",#3b82f6)", border: "none", borderRadius: 10, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
+-              {editSaving ? "⏳ Menyimpan…" : "💾 Simpan Perubahan"}
++              {editSaving ? "⏳ Menyimpan…" : saveUncertain ? "Konfirmasi ulang hasil simpan" : "💾 Simpan Perubahan"}
+             </button>
+           </div>
+         </div>
+diff --git a/src/views/InvoiceView.jsx b/src/views/InvoiceView.jsx
+index ea43bd6..fb4d6d6 100644
+--- a/src/views/InvoiceView.jsx
++++ b/src/views/InvoiceView.jsx
+@@ -809,19 +809,22 @@ const [voucherStats, setVoucherStats]   = useState(null);
+ const [voucherFilter, setVoucherFilter] = useState("active"); // "all" | "active" | "claimed" | "expired"
+ const [voucherSearch, setVoucherSearch] = useState("");
+ const [voucherLoading, setVoucherLoading] = useState(false);
+-
+-const loadVouchers = async (filter = voucherFilter, search = voucherSearch) => {
+-  setVoucherLoading(true);
++const [voucherError, setVoucherError] = useState("");
++const [voucherPage, setVoucherPage] = useState({offset:0,limit:50,total_filtered:0,has_more:false});
++const voucherSequence = useRef(0);
++const loadVouchers = async (filter = voucherFilter, search = voucherSearch, offset = 0) => {
++  const sequence=++voucherSequence.current;
++  setVoucherLoading(true);setVoucherError("");
+   try {
+-    const hdrs = await apiHeaders();
+-    const params = new URLSearchParams({ status: filter });
+-    if (search.trim()) params.set("search", search.trim());
+-    const r = await fetch("/api/admin-vouchers?" + params.toString(), { headers: hdrs });
+-    const d = r.ok ? await r.json() : {};
+-    setVoucherList(d.vouchers || []);
+-    setVoucherStats(d.stats || null);
+-  } catch { /* silent */ }
+-  finally { setVoucherLoading(false); }
++    const params=new URLSearchParams({status:filter,search:search.trim(),offset:String(offset),limit:"50"});
++    const r=await fetch("/api/admin-vouchers?"+params,{headers:await apiHeaders(),signal:AbortSignal.timeout(15000)});
++    const d=await r.json();
++    if(!r.ok || !Array.isArray(d.vouchers) || !d.stats) throw new Error(d.error||"Respons daftar voucher tidak valid");
++    if(sequence!==voucherSequence.current) return;
++    setVoucherList(d.vouchers);setVoucherStats(d.stats);
++    setVoucherPage({offset:d.offset,limit:d.limit,total_filtered:d.total_filtered,has_more:d.has_more});
++  } catch(error) { if(sequence===voucherSequence.current) setVoucherError(error.message||"Gagal memuat voucher. Coba lagi."); }
++  finally { if(sequence===voucherSequence.current) setVoucherLoading(false); }
+ };
+ const [quoPDFData, setQuoPDFData] = useState(null); // quotation untuk preview PDF
+ const [quoLogoUrl, setQuoLogoUrl] = useState(null);  // logo AClean (data URL) untuk PDF quotation
+@@ -1012,7 +1015,7 @@ return (
+       ].map(t => (
+         <button key={t.key} onClick={() => {
+           setInvoiceSubTab(t.key);
+-          if (t.key === "voucher") loadVouchers("active", "");
++          if (t.key === "voucher") {setVoucherFilter("active");setVoucherSearch("");loadVouchers("active", "");}
+         }}
+           style={{ padding: "7px 18px", borderRadius: "8px 8px 0 0", border: "none", cursor: "pointer", fontSize: 13, fontWeight: invoiceSubTab === t.key ? 800 : 500,
+             background: invoiceSubTab === t.key ? cs.accent + "22" : "transparent",
+@@ -1116,6 +1119,8 @@ return (
+         voucherSearch={voucherSearch}
+         setVoucherSearch={setVoucherSearch}
+         voucherLoading={voucherLoading}
++        voucherError={voucherError}
++        voucherPage={voucherPage}
+         loadVouchers={loadVouchers}
+         apiHeaders={apiHeaders}
+         showNotif={showNotif}
+@@ -1940,7 +1945,7 @@ return (
+             {inv.invoice_type !== "ac_unit_sale" && inv.status !== "PAID" &&
+               (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
+                 <button onClick={() => {
+-                  setEditInvoiceData(inv); setEditInvoiceForm({ labor: inv.labor, material: inv.material, discount: inv.discount || 0, trade_in: inv.trade_in || false, trade_in_amount: inv.trade_in_amount || 250000, pph23: inv.pph23 || false, pph23_rate: selectedPph23Rate(inv.labor, inv.pph23_amount), notes: "" }); const _allItems = parseMD(inv.materials_detail).map((m, idx) => ({ ...m, _idx: idx }));
++                  setEditInvoiceData(inv); setEditInvoiceForm({ labor: inv.labor, material: inv.material, discount: (inv.voucher_id ? inv.voucher_manual_discount : inv.discount) || 0, trade_in: inv.trade_in || false, trade_in_amount: inv.trade_in_amount || 250000, pph23: inv.pph23 || false, pph23_rate: selectedPph23Rate(inv.labor, inv.pph23_amount), notes: "" }); const _allItems = parseMD(inv.materials_detail).map((m, idx) => ({ ...m, _idx: idx }));
+                   // Split via kategori billing (bukan tebak-nama): LABOR/FEE → section jasa, sisanya → material
+                   const _jasaItems = _allItems.filter(m => categoryOf(m) === LINE_CATEGORY.LABOR);
+                   const _matItems = _allItems.filter(m => categoryOf(m) !== LINE_CATEGORY.LABOR);
+@@ -2716,7 +2721,7 @@ return (
+ }
+ 
+ // ── Voucher Admin Tab ──────────────────────────────────────────────────────────
+-function VoucherAdminTab({ voucherList, voucherStats, voucherFilter, setVoucherFilter, voucherSearch, setVoucherSearch, voucherLoading, loadVouchers, apiHeaders, showNotif, fmt }) {
++function VoucherAdminTab({ voucherError, voucherPage, voucherList, voucherStats, voucherFilter, setVoucherFilter, voucherSearch, setVoucherSearch, voucherLoading, loadVouchers, apiHeaders, showNotif, fmt }) {
+   const [cancellingId, setCancellingId] = useState(null);
+ 
+   const handleCancel = async (v) => {
+@@ -2725,15 +2730,16 @@ function VoucherAdminTab({ voucherList, voucherStats, voucherFilter, setVoucherF
+     try {
+       const hdrs = await apiHeaders();
+       const r = await fetch("/api/cancel-voucher", { method: "POST", headers: hdrs, body: JSON.stringify({ id: v.id }) });
+-      if (r.ok) {
++      const result=await r.json();
++      if (r.ok && result.ok) {
+         showNotif(`✅ Voucher ${v.code} dibatalkan`);
+         loadVouchers(voucherFilter, voucherSearch);
+-      } else showNotif("❌ Gagal membatalkan voucher", "error");
++      } else showNotif(result.error || "❌ Gagal membatalkan voucher", "error");
+     } catch { showNotif("❌ Gagal membatalkan voucher", "error"); }
+     finally { setCancellingId(null); }
+   };
+ 
+-  const today = new Date().toISOString().slice(0, 10);
++  const today = localDateWIB();
+   const getVoucherStatus = (v) => {
+     if (v.claimed_at) return { label: "Diklaim", color: "#22c55e", bg: "#f0fdf4" };
+     if (!v.is_valid)  return { label: "Dibatalkan", color: "#94a3b8", bg: "#f1f5f9" };
+@@ -2748,12 +2754,13 @@ function VoucherAdminTab({ voucherList, voucherStats, voucherFilter, setVoucherF
+     <div style={{ display: "grid", gap: 14 }}>
+       {/* Stats */}
+       {voucherStats && (
+-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
++        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(90px, 1fr))", gap: 8 }}>
+           {[
+             { label: "Total", val: voucherStats.total, color: cs.text },
+             { label: "Aktif", val: voucherStats.active, color: "#0ea5e9" },
+             { label: "Diklaim", val: voucherStats.claimed, color: "#22c55e" },
+             { label: "Expired", val: voucherStats.expired, color: "#f87171" },
++            { label: "Dibatalkan", val: voucherStats.cancelled, color: cs.muted },
+           ].map(s => (
+             <div key={s.label} style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
+               <div style={{ fontSize: 20, fontWeight: 800, color: s.color }}>{s.val}</div>
+@@ -2765,11 +2772,11 @@ function VoucherAdminTab({ voucherList, voucherStats, voucherFilter, setVoucherF
+ 
+       {/* Filter + Search */}
+       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+-        <div style={{ display: "flex", gap: 4 }}>
+-          {["active","claimed","expired","all"].map(f => (
++        <div style={{ display: "flex", gap: 4, flexWrap:"wrap" }}>
++          {["active","claimed","expired","cancelled","all"].map(f => (
+             <button key={f} onClick={() => { setVoucherFilter(f); loadVouchers(f, voucherSearch); }}
+               style={{ padding: "6px 14px", borderRadius: 20, border: "1px solid " + (voucherFilter === f ? cs.accent : cs.border), background: voucherFilter === f ? cs.accent + "22" : "transparent", color: voucherFilter === f ? cs.accent : cs.muted, cursor: "pointer", fontSize: 12, fontWeight: voucherFilter === f ? 700 : 400 }}>
+-              {{ active: "Aktif", claimed: "Diklaim", expired: "Expired", all: "Semua" }[f]}
++              {{ active: "Aktif", claimed: "Diklaim", expired: "Expired", cancelled: "Dibatalkan", all: "Semua" }[f]}
+             </button>
+           ))}
+         </div>
+@@ -2783,10 +2790,11 @@ function VoucherAdminTab({ voucherList, voucherStats, voucherFilter, setVoucherF
+         </button>
+       </div>
+ 
++      {voucherError && <div role="alert" style={{color:cs.red}}>Daftar voucher belum berhasil diperbarui: {voucherError} <button onClick={()=>loadVouchers(voucherFilter,voucherSearch,voucherPage.offset)}>Coba lagi</button></div>}
+       {/* List */}
+       {voucherLoading ? (
+         <div style={{ textAlign: "center", padding: 32, color: cs.muted }}>Memuat voucher...</div>
+-      ) : voucherList.length === 0 ? (
++      ) : voucherError ? null : voucherList.length === 0 ? (
+         <div style={{ textAlign: "center", padding: 32, color: cs.muted }}>Tidak ada voucher ditemukan</div>
+       ) : (
+         <div style={{ display: "grid", gap: 6 }}>
+@@ -2819,6 +2827,11 @@ function VoucherAdminTab({ voucherList, voucherStats, voucherFilter, setVoucherF
+           })}
+         </div>
+       )}
++      {!voucherError && <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
++        <button disabled={voucherLoading || voucherPage.offset===0} onClick={()=>loadVouchers(voucherFilter,voucherSearch,Math.max(0,voucherPage.offset-voucherPage.limit))}>Sebelumnya</button>
++        <span>{voucherPage.total_filtered ? voucherPage.offset+1 : 0}–{Math.min(voucherPage.offset+voucherPage.limit,voucherPage.total_filtered)} dari {voucherPage.total_filtered}</span>
++        <button disabled={voucherLoading || !voucherPage.has_more} onClick={()=>loadVouchers(voucherFilter,voucherSearch,voucherPage.offset+voucherPage.limit)}>Berikutnya</button>
++      </div>}
+     </div>
+   );
+ }
+diff --git a/src/views/SettingsView.jsx b/src/views/SettingsView.jsx
+index b656270..bf8f87b 100644
+--- a/src/views/SettingsView.jsx
++++ b/src/views/SettingsView.jsx
+@@ -1244,13 +1244,13 @@ function SettingsView({
+                   {
+                     key: "voucher_loyalty_enabled",
+                     label: "Voucher Loyalty Otomatis",
+-                    desc: "Beri voucher otomatis saat milestone: 2x (diskon 5%), 5x (diskon 10%), 10x (1 unit gratis), 15x (diskon 15%).",
++                    desc: "Milestone order PAID per nomor pelanggan: 2x (5% jasa), 5x (10% jasa), 10x (1 unit Cleaning), 15x (15% jasa). Aktivasi pertama mencatat posisi awal; tidak mengirim hadiah riwayat lama. Tidak bergantung pada fitur rating.",
+                     icon: "🎁",
+                   },
+                   {
+                     key: "voucher_winback_enabled",
+                     label: "Voucher Win-Back (Inactive >180 hari)",
+-                    desc: "Kirim diskon 10% ke customer yang >6 bulan tidak servis. Cooldown 30 hari per customer.",
++                    desc: "Diskon 10% jasa untuk pelanggan ≥180 hari tidak servis dan tanpa order aktif. Satu voucher per periode tidak aktif, dengan jeda minimum 30 hari. Tidak bergantung pada reminder servis.",
+                     icon: "💌",
+                   },
+                   {
+diff --git a/api/_tasks/vouchers.js b/api/_tasks/vouchers.js
+new file mode 100644
+index 0000000..377ab39
+--- /dev/null
++++ b/api/_tasks/vouchers.js
+@@ -0,0 +1,41 @@
++import { createHash } from 'node:crypto';
++import { dispatchWorkspaceMessage, deliverWorkspaceMessage } from '../_wa-workspace.js';
++import { sb, isCronJobEnabled } from './_shared.js';
++import { voucherTodayWib, voucherPhone } from '../../src/lib/voucherPolicy.js';
++
++export function voucherMessageId(id, purpose) {
++  const h=createHash('sha256').update(`aclean-voucher-241:${id}:${purpose}`).digest('hex');
++  return `${h.slice(0,8)}-${h.slice(8,12)}-5${h.slice(13,16)}-a${h.slice(17,20)}-${h.slice(20,32)}`;
++}
++const checked = result => {if(result.error) throw new Error('Database otomasi voucher gagal');return result.data;};
++export async function runVoucherTask(kind, {db=sb,dispatch=dispatchWorkspaceMessage,deliver=payload=>deliverWorkspaceMessage(payload,{timeoutMs:6000}),today=voucherTodayWib()}={}) {
++  const toggle=`voucher_${kind==='expiry'?'expiry_reminder':kind}_enabled`;
++  const settings=checked(await db.from('app_settings').select('key,value').in('key',[toggle,'cron_jobs']));
++  const map=Object.fromEntries((settings||[]).map(s=>[s.key,s.value]));
++  if(map[toggle]!=='true'||!isCronJobEnabled(map,toggle)) return {skipped:true};
++  const issued=kind==='expiry'?{issued:0}:checked(await db.rpc('issue_vouchers_241',{p_kind:kind,p_limit:5}));
++  const flag=kind==='expiry'?'reminder_sent':'issued_message_sent';
++  const state=kind==='expiry'?'reminder_status':'issued_message_status';
++  let query=db.from('customer_vouchers').select('id,phone,customer_name,code,type,value,description,expires_at').eq('is_valid',true).is('claimed_at',null).eq(flag,false).is(state,null);
++  if(kind==='expiry') {
++    const end=new Date(`${today}T00:00:00+07:00`);end.setUTCDate(end.getUTCDate()+3);
++    query=query.gte('expires_at',today).lte('expires_at',voucherTodayWib(end));
++  } else query=query.eq('trigger',kind==='loyalty'?'milestone':'winback').not('issuance_key','is',null).or(`expires_at.is.null,expires_at.gte.${today}`);
++  const vouchers=checked(await query.order('created_at',{ascending:true}).order('id',{ascending:true}).limit(2))||[];
++  // One provider attempt per continuation keeps a cron tick within its budget.
++  const v=vouchers[0];if(!v)return {...issued,sent:0,has_more:Boolean(issued.has_more)};
++  const label=v.type==='discount_pct'?`Diskon ${v.value}% jasa`:v.type==='free_unit'?`${v.value} unit Cleaning gratis`:'Jasa gratis';
++  const message=kind==='expiry'
++    ? `Halo ${v.customer_name||'Pelanggan'}! ⏰\n\nVoucher *${label}* (kode: *${v.code}*) berakhir pada *${v.expires_at}*.\nSebutkan kode saat booking sebelum masa berlaku habis.\n— AClean Service`
++    : `🎁 Halo ${v.customer_name||'Pelanggan'}!\n\n${v.description||label}\nKode voucher: *${v.code}*\n${v.expires_at?`Berlaku hingga ${v.expires_at}.\n`:''}Berlaku untuk jasa sesuai jenis voucher; material/biaya tetap tidak termasuk. Potongan terbaik dipakai tanpa menumpuk diskon manual. Sebutkan kode saat booking berikutnya.\n— AClean Service`;
++  const row=await dispatch(db,voucherMessageId(v.id,kind==='expiry'?'expiry':'issuance'),{phone:voucherPhone(v.phone),kind:'TEXT',customer_id:null,document_id:null,message,url:null,filename:null},'Otomasi voucher',deliver);
++  const status=row.audit_pending?'UNCERTAIN':row.status;
++  if(!['SENDING','ACCEPTED','FAILED','UNCERTAIN'].includes(status))throw new Error('Status pengiriman voucher belum terkonfirmasi');
++  const accepted=status==='ACCEPTED';
++  const updated=await db.from('customer_vouchers').update({[flag]:accepted,[state]:status}).eq('id',v.id).select('id');
++  checked(updated);if(!updated.data?.length)throw new Error('Status pesan voucher belum tersimpan');
++  return {...issued,sent:accepted?1:0,review_required:accepted?0:1,has_more:vouchers.length>1||Boolean(issued.has_more),items_processed:1};
++}
++export const taskVoucherLoyalty=()=>runVoucherTask('loyalty');
++export const taskVoucherWinback=()=>runVoucherTask('winback');
++export const taskVoucherExpiryReminder=()=>runVoucherTask('expiry');
+diff --git a/docs/VOUCHER_HARDENING_2026-11-12.md b/docs/VOUCHER_HARDENING_2026-11-12.md
+new file mode 100644
+index 0000000..6693401
+--- /dev/null
++++ b/docs/VOUCHER_HARDENING_2026-11-12.md
+@@ -0,0 +1,100 @@
++# Perbaikan voucer — kandidat lokal 12 November 2026
++
++Kandidat berada pada branch `codex/voucher-hardening`, berbasis release main
++`d03d85e`. Belum diterapkan ke database, staging, atau produksi. Perubahan lokal
++milik user pada worktree utama tetap dipertahankan. Migrasi 241 menggunakan
++nomor setelah 237–240 yang sedang dipakai worktree keamanan terpisah; tidak
++bergantung pada migrasi tersebut dan tidak menyalinnya ke kandidat ini.
++
++## Kontrak produk yang diimplementasikan
++
++| Bagian | Perilaku |
++| --- | --- |
++| Akses | Owner/Admin aktif di API dan DB; Finance/Teknisi/Helper/anon tidak dapat mengelola voucer. Portal hanya memakai token pelanggan yang valid. |
++| Preview | Baca saja. Terapkan/Hapus/Batal pada form tidak menghabiskan voucer. Perubahan draft membatalkan preview lama. |
++| Simpan | Satu RPC atomik: kunci invoice+voucer, hitung ulang, simpan invoice, redemption, pemakaian dan operasi idempoten. Tidak ada fallback klaim terpisah. |
++| Potongan | Persentase hanya jasa LABOR. Biaya tetap/FEE, part, freon tidak eligible. Potongan baris dan trade-in mengurangi basis jasa terlebih dahulu. |
++| Gratis unit | Unit Cleaning/cuci/pembersihan berharga termurah; jumlah unit bulat sesuai nilai voucer. |
++| Gratis jasa | Seluruh jasa yang masih eligible, tanpa material/FEE. |
++| Diskon manual | Ambil manfaat terbesar, tidak ditumpuk. Voucer baru ditolak bila tidak menambah manfaat, sehingga tidak habis sia-sia. |
++| Pajak | Tetap gross-up PPh 23 yang sudah digunakan sistem, tarif 2% atau 2,5%; tidak mengubah aturan pajak global. |
++| Sudah dibayar | Tolak invoice PAID/PARTIAL_PAID/CANCELLED, paid/withheld positif, atau ledger pembayaran positif, termasuk bila cache invoice belum sinkron. |
++| Total nol | Invoice yang sudah APPROVED/SENT/UNPAID/OVERDUE dengan total nol ditutup PAID karena potongan penuh, paid_amount tetap nol; tidak dibuat pemasukan kas fiktif. DRAFT/PENDING_APPROVAL tetap mengikuti approval. |
++| Edit berikutnya | Terms redemption dibekukan; invoice dengan voucer harus melalui RPC yang sama. Tidak mengganti/melepas voucer lewat update biasa. Pembayaran normal tetap dimungkinkan. |
++| Hasil tidak pasti | Form dikunci; konfirmasi ulang mempertahankan request UUID dan snapshot payload yang sama. UI mengklaim berhasil setelah hasil invoice terkonfirmasi. |
++| Pembatalan | Voucer terpakai tidak dapat dibatalkan. ID tak ada menjadi 404. Pembatalan ulang idempoten; actor/waktu/alasan tersimpan. |
++| Daftar/portal | Statistik seluruh data, pagination 50, filter batal, error/retry terlihat; valid tanpa expiry didukung; batas tanggal memakai WIB. Portal mengecualikan voucer batal. |
++
++Owner menyetujui kebijakan jasa/potongan terbaik dan rilis staging→produksi
++pada 13 November 2026; loyalty disesuaikan menjadi hanya order PAID. Tidak membuat
++menu kampanye/manual issuance baru di luar lingkup perbaikan audit.
++
++## Otomasi
++
++Loyalty dan win-back menjadi task mandiri dalam dispatcher VPS yang sama, tidak
++lagi bergantung pada rating, customer portal, atau keberhasilan reminder servis.
++Pemicu cron manual juga memeriksa Owner/Admin aktif; secret scheduler mesin tidak berubah.
++Kedua sumber toggle (standalone dan cron_jobs) harus mengizinkan pekerjaan.
++Tidak menambah cron eksternal atau penulis kedua.
++
++- Sesuai keputusan Owner 13 November 2026, loyalty menghitung hanya order PAID per nomor kanonik;
++  job_group_id/parent_job_id digabung agar split team tidak menambah milestone.
++  Milestone 2/5/10/15, masa berlaku 90 hari. Aktivasi pertama hanya menyimpan
++  baseline historis. Setelah itu, milestone yang baru dilewati diterbitkan
++  sekali dengan issuance_key unik dan lock transaksi.
++- Win-back: ≥180 hari sejak last_service, tidak ada order aktif/servis lebih
++  baru, jeda minimum 30 hari dan satu voucer per periode last_service. Berlaku
++  60 hari. Pemrosesan dibatasi per batch.
++- Reminder expiry mencakup hari ini sampai H+3 dalam kalender WIB; expiry null
++  tidak dikirimi reminder.
++- Pengumuman dan reminder memakai ID outbox deterministik yang berbeda per
++  tujuan. Hasil UNCERTAIN/SENDING/FAILED memerlukan review outbox; tidak ada
++  resend otomatis dengan ID baru. Tracking gagal setelah provider menerima
++  tidak menggandakan pengiriman pada percobaan ulang.
++- Satu pengiriman per kelanjutan task, timeout provider 6 detik; batch
++  berlanjut pada tick dispatcher berikutnya. Tidak mengubah semua toggle OFF
++  yang saat ini terverifikasi di produksi.
++
++## Bukti pengujian
++
++- Suite umum: 1.791 unit test / 156 file; lint, typecheck, build lulus.
++- PostgreSQL/WASM: 18 pemeriksaan, termasuk guard invoice aktual yang dibaca
++  dari produksi tanpa data pelanggan.
++- Native PostgreSQL: 9 pemeriksaan dengan koneksi bersamaan, replay, satu
++  pemenang lintas invoice, versi stale, lock timeout, pajak, ledger, dedup
++  milestone serta win-back.
++- Browser: 9 alur komponen asli → handler API asli → migrasi/RPC asli pada DB
++  fiktif. Batal preview, persen, unit gratis, diskon manual lebih baik,
++  rollback, respons terpotong setelah commit+retry, preview berubah, kode berubah saat cek masih berjalan, admin
++  pagination/error/retry/cancel lulus.
++- Adapter HTTP self-hosted: 8 pemeriksaan lulus, termasuk routing, body, error aman, dan health tanpa DB.
++- Tidak ada WA nyata, fixture pelanggan produksi, pembayaran historis, atau
++  schema produksi yang dimutasi. Hasil lokal tidak menggantikan staging.
++
++Reproduksi: `node scripts/test-voucher-db.mjs`,
++`node scripts/test-voucher-browser.mjs`, `node scripts/test-voucher-concurrency.mjs`.
++Native test memerlukan `embedded-postgres` yang sudah terpasang atau path modul
++melalui `ACLEAN_EMBEDDED_PG_MODULE`; tidak mengunduhnya otomatis dan tidak
++menerima URL database eksternal. Gunakan Node yang sesuai arsitektur mesin.
++Bukti tersimpan dalam [deliverables](../deliverables/voucher-hardening-2026-11-12/README.md).
++
++## Urutan rilis dan batas rollback
++
++1. Setelah izin rilis eksplisit: commit/push kandidat; tinjau diff dan SHA,
++   periksa backup terenkripsi terakhir serta schema/toggle/isi voucer aktual.
++2. Terapkan migrasi 241 di lab/staging, deploy kandidat staging, uji akun dan
++   alur fiktif, verifikasi tidak ada jalur lama klaim terpisah. Bersihkan fixture
++   staging terpilih sesuai FK tanpa menghapus data lain.
++3. Setelah staging lulus dan izin produksi mencakup migrasi ini: terapkan 241
++   lalu deploy SHA yang sama ke produksi. `INVOICE_COLS` baru memerlukan schema
++   terlebih dahulu. Pertahankan semua toggle otomasi OFF.
++4. Konfigurasikan DSN Sentry pada scope build/runtime yang benar; rebuild dan
++   verifikasi source container, health, bundle frontend dan event sintetis.
++   Periksa konfigurasi uptime eksternal terpisah setelah akses/provider jelas.
++5. Produksi hanya smoke baca saja tanpa klaim pelanggan/WA/pembayaran percobaan.
++   Pengaktifan otomasi bukan bagian implisit dari deploy.
++
++Migrasi bersifat forward-only. Jangan drop tabel audit/kolom atau mengembalikan
++invoice yang sudah memakai voucer secara manual. Jika rilis gagal, tetap OFF,
++perbaiki maju atau deploy build kompatibel dengan 241; build lama mempunyai
++handler klaim terpisah dan tidak aman sebagai rollback fungsional voucer.
+diff --git a/migrations/241_voucher_atomic_security.sql b/migrations/241_voucher_atomic_security.sql
+new file mode 100644
+index 0000000..af1b646
+--- /dev/null
++++ b/migrations/241_voucher_atomic_security.sql
+@@ -0,0 +1,333 @@
++-- Forward-only voucher repair. 237–240 are reserved by the independent security worktree.
++-- Supabase CLI is unavailable on the working Mac; use this repository's numbered migration convention.
++BEGIN;
++
++CREATE OR REPLACE FUNCTION public.voucher_phone_241(p_phone text)
++RETURNS text LANGUAGE sql IMMUTABLE SET search_path=pg_catalog AS $$
++ WITH p AS (SELECT btrim(coalesce(p_phone,'')) raw,regexp_replace(coalesce(p_phone,''),'[^0-9]','','g') n)
++ SELECT CASE WHEN raw LIKE '+%' THEN n WHEN n LIKE '08%' THEN '62'||substr(n,2)
++ WHEN n LIKE '8%' THEN '62'||n ELSE n END FROM p
++$$;
++REVOKE ALL ON FUNCTION public.voucher_phone_241(text) FROM PUBLIC,anon,authenticated;
++GRANT EXECUTE ON FUNCTION public.voucher_phone_241(text) TO service_role;
++
++ALTER TABLE public.customer_vouchers
++ ADD COLUMN IF NOT EXISTS issuance_key text,
++ ADD COLUMN IF NOT EXISTS issued_message_sent boolean NOT NULL DEFAULT false,
++ ADD COLUMN IF NOT EXISTS issued_message_status text CHECK(issued_message_status IN ('SENDING','ACCEPTED','FAILED','UNCERTAIN')),
++ ADD COLUMN IF NOT EXISTS reminder_status text CHECK(reminder_status IN ('SENDING','ACCEPTED','FAILED','UNCERTAIN')),
++ ADD COLUMN IF NOT EXISTS cancelled_at timestamptz,
++ ADD COLUMN IF NOT EXISTS cancelled_by uuid REFERENCES public.user_profiles(id),
++ ADD COLUMN IF NOT EXISTS cancel_reason text;
++CREATE UNIQUE INDEX IF NOT EXISTS customer_vouchers_issuance_241 ON public.customer_vouchers(issuance_key) WHERE issuance_key IS NOT NULL;
++ALTER TABLE public.customer_vouchers ADD CONSTRAINT customer_vouchers_terms_241 CHECK (
++ type IN ('discount_pct','free_unit','free_service') AND
++ ((type='discount_pct' AND value IS NOT NULL AND value>0 AND value<=100) OR
++  (type='free_unit' AND value IS NOT NULL AND value>=1 AND value<=100 AND value=trunc(value)) OR
++  (type='free_service' AND (value IS NULL OR value>0)))
++) NOT VALID;
++REVOKE ALL ON public.customer_vouchers FROM PUBLIC,anon,authenticated;
++GRANT SELECT ON public.customer_vouchers TO authenticated;
++GRANT ALL ON public.customer_vouchers TO service_role;
++ALTER TABLE public.customer_vouchers ENABLE ROW LEVEL SECURITY;
++DO $$DECLARE p record;BEGIN
++ FOR p IN SELECT policyname FROM pg_policies WHERE schemaname='public' AND tablename='customer_vouchers' LOOP
++ EXECUTE format('DROP POLICY %I ON public.customer_vouchers',p.policyname);END LOOP;
++END$$;
++CREATE POLICY voucher_admin_read_241 ON public.customer_vouchers FOR SELECT TO authenticated
++ USING ((SELECT auth.uid()) IS NOT NULL AND (SELECT public.get_my_role()) IN ('Owner','Admin'));
++
++ALTER TABLE public.invoices
++ ADD COLUMN IF NOT EXISTS voucher_id uuid REFERENCES public.customer_vouchers(id),
++ ADD COLUMN IF NOT EXISTS voucher_code text,
++ ADD COLUMN IF NOT EXISTS voucher_discount bigint NOT NULL DEFAULT 0,
++ ADD COLUMN IF NOT EXISTS voucher_manual_discount bigint NOT NULL DEFAULT 0;
++ALTER TABLE public.invoices ADD CONSTRAINT invoices_voucher_amount_241 CHECK(voucher_discount>=0 AND voucher_manual_discount>=0) NOT VALID;
++
++CREATE TABLE public.voucher_redemptions (
++ voucher_id uuid PRIMARY KEY REFERENCES public.customer_vouchers(id),
++ invoice_id text NOT NULL UNIQUE REFERENCES public.invoices(id),
++ actor_id uuid NOT NULL REFERENCES public.user_profiles(id),
++ terms jsonb NOT NULL,
++ manual_discount bigint NOT NULL CHECK(manual_discount>=0),
++ voucher_discount bigint NOT NULL CHECK(voucher_discount>=0),
++ final_discount bigint NOT NULL CHECK(final_discount>=0),
++ created_at timestamptz NOT NULL DEFAULT now(),
++ updated_at timestamptz NOT NULL DEFAULT now()
++);
++CREATE TABLE public.voucher_operations (
++ id uuid PRIMARY KEY,
++ actor_id uuid NOT NULL REFERENCES public.user_profiles(id),
++ invoice_id text NOT NULL REFERENCES public.invoices(id),
++ request_hash text NOT NULL,
++ result jsonb NOT NULL,
++ created_at timestamptz NOT NULL DEFAULT now()
++);
++ALTER TABLE public.voucher_redemptions ENABLE ROW LEVEL SECURITY;
++ALTER TABLE public.voucher_operations ENABLE ROW LEVEL SECURITY;
++REVOKE ALL ON public.voucher_redemptions,public.voucher_operations FROM PUBLIC,anon,authenticated;
++GRANT SELECT ON public.voucher_redemptions,public.voucher_operations TO authenticated;
++GRANT ALL ON public.voucher_redemptions,public.voucher_operations TO service_role;
++CREATE POLICY voucher_redemptions_read_241 ON public.voucher_redemptions FOR SELECT TO authenticated
++ USING ((SELECT auth.uid()) IS NOT NULL AND (SELECT public.get_my_role()) IN ('Owner','Admin'));
++CREATE POLICY voucher_operations_read_241 ON public.voucher_operations FOR SELECT TO authenticated
++ USING ((SELECT auth.uid()) IS NOT NULL AND (SELECT public.get_my_role()) IN ('Owner','Admin'));
++
++CREATE OR REPLACE FUNCTION public.voucher_assert_actor_241(p_actor uuid)
++RETURNS text LANGUAGE plpgsql STABLE SET search_path=pg_catalog,public AS $$
++DECLARE n text;
++BEGIN
++ SELECT name INTO n FROM public.user_profiles WHERE id=p_actor AND active IS TRUE AND role IN ('Owner','Admin');
++ IF n IS NULL THEN RAISE EXCEPTION 'Hanya Owner/Admin aktif' USING ERRCODE='42501'; END IF;
++ RETURN n;
++END$$;
++
++-- The payload is normalized by the server and independently checked here.
++-- Only service_role can execute; no authenticated caller can submit a trusted payload directly.
++CREATE OR REPLACE FUNCTION public.voucher_quote_241(p_actor uuid,p_invoice text,p_code text,p_edit jsonb)
++RETURNS jsonb LANGUAGE plpgsql SET search_path=pg_catalog,public SET timezone='UTC' AS $$
++DECLARE i public.invoices; v public.customer_vouchers; r public.voucher_redemptions;
++ l jsonb; cat text; sub numeric; qty numeric; price numeric; jasa numeric:=0; material numeric:=0;
++ linedisc numeric:=0; eligible numeric:=0; benefit numeric:=0; remaining numeric;
++ manual numeric; trade numeric; available numeric; finaldisc numeric; terms jsonb; q jsonb; hash text;
++BEGIN
++ PERFORM public.voucher_assert_actor_241(p_actor);
++ SELECT * INTO i FROM public.invoices WHERE id=p_invoice;
++ IF NOT FOUND THEN RAISE EXCEPTION 'Invoice tidak ditemukan' USING ERRCODE='P0002'; END IF;
++ IF i.status IN ('PAID','CANCELLED','PARTIAL_PAID') OR coalesce(i.paid_amount,0)>0 OR coalesce(i.withheld_amount,0)>0
++ OR EXISTS(SELECT 1 FROM public.invoice_payments WHERE invoice_id=i.id AND (amount>0 OR withheld_amount>0)) THEN
++ RAISE EXCEPTION 'Voucher tidak dapat mengubah invoice yang sudah menerima pembayaran atau dibatalkan' USING ERRCODE='23514';END IF;
++ SELECT * INTO v FROM public.customer_vouchers WHERE code=upper(btrim(p_code));
++ IF NOT FOUND THEN RAISE EXCEPTION 'Kode voucher tidak ditemukan' USING ERRCODE='P0002';END IF;
++ SELECT * INTO r FROM public.voucher_redemptions WHERE voucher_id=v.id AND invoice_id=i.id;
++ IF i.voucher_id IS NOT NULL AND i.voucher_id<>v.id THEN RAISE EXCEPTION 'Invoice sudah menggunakan voucher lain' USING ERRCODE='23514';END IF;
++ IF public.voucher_phone_241(i.phone)<>public.voucher_phone_241(v.phone) OR public.voucher_phone_241(i.phone)!~'^[0-9]{8,15}$' THEN
++ RAISE EXCEPTION 'Voucher bukan milik pelanggan invoice ini' USING ERRCODE='23514';END IF;
++ IF r.voucher_id IS NULL THEN
++  IF v.is_valid IS NOT TRUE THEN RAISE EXCEPTION 'Voucher sudah dibatalkan' USING ERRCODE='23514';END IF;
++  IF v.claimed_at IS NOT NULL THEN RAISE EXCEPTION 'Voucher sudah digunakan' USING ERRCODE='23514';END IF;
++  IF v.expires_at IS NOT NULL AND v.expires_at<(now() AT TIME ZONE 'Asia/Jakarta')::date THEN RAISE EXCEPTION 'Voucher sudah expired' USING ERRCODE='23514';END IF;
++  IF EXISTS(SELECT 1 FROM public.voucher_redemptions WHERE invoice_id=i.id) THEN RAISE EXCEPTION 'Invoice sudah menggunakan voucher' USING ERRCODE='23514';END IF;
++ END IF;
++ terms:=coalesce(r.terms,jsonb_build_object('type',v.type,'value',v.value));
++ IF jsonb_typeof(p_edit->'lines') IS DISTINCT FROM 'array' OR jsonb_array_length(p_edit->'lines') NOT BETWEEN 1 AND 200
++ OR p_edit->>'policy_version' IS DISTINCT FROM '241-best-jasa' THEN RAISE EXCEPTION 'Payload invoice tidak valid' USING ERRCODE='22023';END IF;
++ FOR l IN SELECT value FROM jsonb_array_elements(p_edit->'lines') LOOP
++  cat:=l->>'category';sub:=(l->>'subtotal')::numeric;qty:=(l->>'jumlah')::numeric;price:=(l->>'harga_satuan')::numeric;
++  IF cat IS NULL OR cat NOT IN ('LABOR','FEE','PART','FREON','DISCOUNT') OR qty IS NULL OR price IS NULL OR sub IS NULL
++  OR qty<=0 OR qty>1000000 OR price<>trunc(price) OR abs(price)>1000000000000 OR abs(sub)>1000000000000
++  OR qty::text IN ('NaN','Infinity','-Infinity') OR price::text IN ('NaN','Infinity','-Infinity')
++  OR sub IS DISTINCT FROM sign(price*qty)*round(abs(price*qty)) OR nullif(btrim(l->>'nama'),'') IS NULL
++  OR sub::text IN ('NaN','Infinity','-Infinity') OR (sub<0 AND cat<>'DISCOUNT') THEN RAISE EXCEPTION 'Rincian item tidak valid' USING ERRCODE='22023';END IF;
++  IF cat IN ('LABOR','FEE') THEN jasa:=jasa+sub;
++  ELSIF cat='DISCOUNT' THEN linedisc:=linedisc+abs(sub);ELSE material:=material+sub;END IF;
++  IF cat='LABOR' AND sub>0 THEN eligible:=eligible+sub;END IF;
++ END LOOP;
++ manual:=(p_edit->>'manual_discount')::numeric;trade:=(p_edit->>'trade_in_amount')::numeric;
++ IF manual IS NULL OR trade IS NULL OR manual<0 OR trade<0 OR manual<>trunc(manual) OR trade<>trunc(trade)
++ OR manual::text IN ('NaN','Infinity','-Infinity') OR trade::text IN ('NaN','Infinity','-Infinity')
++ OR manual>1000000000000 OR trade>2147483647 OR manual+trade+linedisc>jasa+material
++ OR jasa IS DISTINCT FROM (p_edit->>'labor')::numeric OR material IS DISTINCT FROM (p_edit->>'material')::numeric
++ OR linedisc IS DISTINCT FROM (p_edit->>'line_discount')::numeric OR coalesce(p_edit->>'customer','')=''
++ OR (p_edit->>'pph23_rate') IS NULL OR (p_edit->>'pph23_rate')::numeric NOT IN (0.02,0.025)
++ OR ((p_edit->>'pph23')::boolean AND jasa<=0) THEN RAISE EXCEPTION 'Ringkasan invoice tidak valid' USING ERRCODE='22023';END IF;
++ eligible:=greatest(0,eligible-linedisc-trade);
++ IF terms->>'type'='discount_pct' THEN
++  IF (terms->>'value') IS NULL OR (terms->>'value')::numeric<=0 OR (terms->>'value')::numeric>100 THEN RAISE EXCEPTION 'Persentase tidak valid' USING ERRCODE='23514';END IF;
++  benefit:=round(eligible*(terms->>'value')::numeric/100);
++ ELSIF terms->>'type'='free_unit' THEN
++  remaining:=(terms->>'value')::numeric;
++  IF remaining IS NULL OR remaining<1 OR remaining>100 OR remaining<>trunc(remaining) THEN RAISE EXCEPTION 'Jumlah unit tidak valid' USING ERRCODE='23514';END IF;
++  FOR l IN SELECT value FROM jsonb_array_elements(p_edit->'lines') WHERE value->>'category'='LABOR'
++    AND (value->>'subtotal')::numeric>0 AND lower(value->>'nama')~'(cleaning|cuci|pembersihan)'
++    ORDER BY (value->>'harga_satuan')::numeric LOOP
++   qty:=least(remaining,floor((l->>'jumlah')::numeric));benefit:=benefit+qty*(l->>'harga_satuan')::numeric;remaining:=remaining-qty;
++   EXIT WHEN remaining<=0;
++  END LOOP;
++  benefit:=round(benefit);
++ ELSIF terms->>'type'='free_service' THEN benefit:=eligible;
++ ELSE RAISE EXCEPTION 'Jenis voucher tidak didukung' USING ERRCODE='23514';END IF;
++ available:=jasa+material-linedisc-trade;benefit:=least(benefit,eligible,available);finaldisc:=greatest(manual,benefit);
++ IF r.voucher_id IS NULL AND finaldisc<=manual THEN RAISE EXCEPTION 'Voucher tidak menambah potongan; simpan tanpa voucher' USING ERRCODE='23514';END IF;
++ q:=jsonb_build_object('invoice_id',i.id,'expected_updated_at',i.updated_at,'voucher',jsonb_build_object('id',v.id,'code',v.code,'type',terms->>'type','value',terms->'value','description',v.description,'expires_at',v.expires_at),
++ 'already_redeemed',r.voucher_id IS NOT NULL,'benefit',benefit,'manual_discount',manual,'discount',finaldisc,'voucher_discount',finaldisc-manual,'total',available-finaldisc,'labor',jasa,'material',material,'line_discount',linedisc,'policy_version','241-best-jasa');
++ hash:=encode(sha256(convert_to((q||jsonb_build_object('edit',p_edit))::text,'UTF8')),'hex');
++ RETURN q||jsonb_build_object('quote_hash',hash);
++END$$;
++
++CREATE OR REPLACE FUNCTION public.save_invoice_voucher_241(p_actor uuid,p_request uuid,p_invoice text,p_code text,p_edit jsonb,p_expected_at timestamptz,p_quote_hash text)
++RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public SET timezone='UTC' SET lock_timeout='2s' AS $$
++DECLARE who text; i public.invoices; v public.customer_vouchers; q jsonb; fingerprint text; op public.voucher_operations; result jsonb;
++BEGIN
++ who:=public.voucher_assert_actor_241(p_actor);
++ IF p_request IS NULL OR p_expected_at IS NULL THEN RAISE EXCEPTION 'ID transaksi dan versi invoice wajib tersedia' USING ERRCODE='22023';END IF;
++ fingerprint:=encode(sha256(convert_to(jsonb_build_object('actor',p_actor,'invoice',p_invoice,'code',upper(btrim(p_code)),'edit',p_edit,'expected',p_expected_at,'quote',p_quote_hash)::text,'UTF8')),'hex');
++ PERFORM pg_advisory_xact_lock(hashtextextended(p_request::text,241));
++ SELECT * INTO op FROM public.voucher_operations WHERE id=p_request;
++ IF FOUND THEN
++  IF op.actor_id<>p_actor OR op.request_hash<>fingerprint THEN RAISE EXCEPTION 'ID transaksi sudah dipakai untuk permintaan berbeda' USING ERRCODE='23514';END IF;
++  SELECT * INTO i FROM public.invoices WHERE id=op.invoice_id;
++  RETURN op.result||jsonb_build_object('invoice',to_jsonb(i),'replayed',true);
++ END IF;
++ SELECT * INTO i FROM public.invoices WHERE id=p_invoice FOR UPDATE;
++ IF NOT FOUND THEN RAISE EXCEPTION 'Invoice tidak ditemukan' USING ERRCODE='P0002';END IF;
++ IF i.updated_at IS DISTINCT FROM p_expected_at THEN RAISE EXCEPTION 'Invoice berubah; muat ulang dan validasi voucher kembali' USING ERRCODE='40001';END IF;
++ SELECT * INTO v FROM public.customer_vouchers WHERE code=upper(btrim(p_code)) FOR UPDATE;
++ IF NOT FOUND THEN RAISE EXCEPTION 'Voucher tidak ditemukan' USING ERRCODE='P0002';END IF;
++ q:=public.voucher_quote_241(p_actor,p_invoice,p_code,p_edit);
++ IF q->>'quote_hash' IS DISTINCT FROM p_quote_hash THEN RAISE EXCEPTION 'Perhitungan voucher berubah; validasi ulang' USING ERRCODE='40001';END IF;
++ PERFORM set_config('aclean.voucher_write','241',true);
++ UPDATE public.invoices SET
++  labor=(q->>'labor')::bigint,material=(q->>'material')::bigint,
++  discount=(q->>'discount')::bigint,total=(q->>'total')::bigint,remaining_amount=(q->>'total')::numeric,
++  status=CASE WHEN (q->>'total')::numeric=0 AND status IN ('UNPAID','OVERDUE','SENT','APPROVED') THEN 'PAID' ELSE status END,
++  paid_at=CASE WHEN (q->>'total')::numeric=0 AND status IN ('UNPAID','OVERDUE','SENT','APPROVED') THEN clock_timestamp() ELSE paid_at END,
++  trade_in=coalesce((p_edit->>'trade_in')::boolean,false),trade_in_amount=(p_edit->>'trade_in_amount')::integer,
++  pph23=coalesce((p_edit->>'pph23')::boolean,false),
++  pph23_amount=CASE WHEN coalesce((p_edit->>'pph23')::boolean,false) THEN round((q->>'labor')::numeric/(1-(p_edit->>'pph23_rate')::numeric))-(q->>'labor')::numeric ELSE 0 END,
++  materials_detail=(p_edit->'lines')::text,customer=p_edit->>'customer',address=p_edit->>'address',
++  voucher_id=v.id,voucher_code=v.code,voucher_discount=(q->>'voucher_discount')::bigint,voucher_manual_discount=(q->>'manual_discount')::bigint,
++  last_changed_by=who,pdf_url=NULL,pdf_generated_at=NULL,updated_at=clock_timestamp()
++ WHERE id=p_invoice RETURNING * INTO i;
++ -- Existing production invoice guards remain enabled. Never report a result altered by an unexpected trigger.
++ IF i.total<>(q->>'total')::numeric OR i.discount<>(q->>'discount')::numeric OR i.labor<>(q->>'labor')::numeric OR i.material<>(q->>'material')::numeric THEN
++ RAISE EXCEPTION 'Validasi hasil invoice gagal; seluruh transaksi dibatalkan' USING ERRCODE='23514';END IF;
++ INSERT INTO public.voucher_redemptions(voucher_id,invoice_id,actor_id,terms,manual_discount,voucher_discount,final_discount)
++ VALUES(v.id,i.id,p_actor,jsonb_build_object('type',v.type,'value',v.value),(q->>'manual_discount')::bigint,(q->>'voucher_discount')::bigint,(q->>'discount')::bigint)
++ ON CONFLICT(voucher_id) DO UPDATE SET manual_discount=EXCLUDED.manual_discount,voucher_discount=EXCLUDED.voucher_discount,
++ final_discount=EXCLUDED.final_discount,updated_at=clock_timestamp();
++ UPDATE public.customer_vouchers SET claimed_at=coalesce(claimed_at,clock_timestamp()),claimed_order_id=i.id WHERE id=v.id;
++ result:=jsonb_build_object('invoice',to_jsonb(i),'request_id',p_request,'replayed',false,'quote',q);
++ INSERT INTO public.voucher_operations(id,actor_id,invoice_id,request_hash,result) VALUES(p_request,p_actor,i.id,fingerprint,result);
++ PERFORM set_config('aclean.voucher_write','',true);
++ RETURN result;
++END$$;
++ALTER FUNCTION public.save_invoice_voucher_241(uuid,uuid,text,text,jsonb,timestamptz,text) OWNER TO postgres;
++
++CREATE OR REPLACE FUNCTION public.guard_invoice_voucher_241()
++RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,public AS $$
++DECLARE allowed boolean;
++BEGIN
++ allowed:=current_setting('aclean.voucher_write',true)='241' AND current_user=(SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid='public.save_invoice_voucher_241(uuid,uuid,text,text,jsonb,timestamptz,text)'::regprocedure);
++ IF TG_OP='INSERT' THEN
++  IF (NEW.voucher_id IS NOT NULL OR NEW.voucher_code IS NOT NULL OR NEW.voucher_discount<>0 OR NEW.voucher_manual_discount<>0) AND NOT coalesce(allowed,false) THEN RAISE EXCEPTION 'Voucher hanya melalui transaksi atomik' USING ERRCODE='42501';END IF;
++ ELSE
++  IF (NEW.voucher_id,NEW.voucher_code,NEW.voucher_discount,NEW.voucher_manual_discount) IS DISTINCT FROM (OLD.voucher_id,OLD.voucher_code,OLD.voucher_discount,OLD.voucher_manual_discount)
++   AND NOT coalesce(allowed,false) THEN RAISE EXCEPTION 'Metadata voucher dikunci' USING ERRCODE='42501';END IF;
++  IF OLD.voucher_id IS NOT NULL AND (NEW.labor,NEW.material,NEW.discount,NEW.total,NEW.trade_in,NEW.trade_in_amount,NEW.materials_detail,NEW.phone,NEW.customer,NEW.address,NEW.pph23,NEW.pph23_amount)
++   IS DISTINCT FROM (OLD.labor,OLD.material,OLD.discount,OLD.total,OLD.trade_in,OLD.trade_in_amount,OLD.materials_detail,OLD.phone,OLD.customer,OLD.address,OLD.pph23,OLD.pph23_amount)
++   AND NOT coalesce(allowed,false) THEN RAISE EXCEPTION 'Invoice dengan voucher harus diedit melalui transaksi atomik' USING ERRCODE='42501';END IF;
++ END IF;
++ RETURN NEW;
++END$$;
++REVOKE ALL ON FUNCTION public.guard_invoice_voucher_241() FROM PUBLIC,anon,authenticated;
++CREATE TRIGGER trg_guard_invoice_voucher_241 BEFORE INSERT OR UPDATE ON public.invoices FOR EACH ROW EXECUTE FUNCTION public.guard_invoice_voucher_241();
++
++CREATE OR REPLACE FUNCTION public.cancel_voucher_241(p_actor uuid,p_id uuid,p_reason text DEFAULT NULL)
++RETURNS jsonb LANGUAGE plpgsql SET search_path=pg_catalog,public AS $$
++DECLARE v public.customer_vouchers;
++BEGIN
++ PERFORM public.voucher_assert_actor_241(p_actor);
++ SELECT * INTO v FROM public.customer_vouchers WHERE id=p_id FOR UPDATE;
++ IF NOT FOUND THEN RAISE EXCEPTION 'Voucher tidak ditemukan' USING ERRCODE='P0002';END IF;
++ IF v.claimed_at IS NOT NULL THEN RAISE EXCEPTION 'Voucher yang sudah digunakan tidak dapat dibatalkan' USING ERRCODE='23514';END IF;
++ IF v.is_valid IS FALSE THEN RETURN jsonb_build_object('ok',true,'already_cancelled',true);END IF;
++ UPDATE public.customer_vouchers SET is_valid=false,cancelled_at=clock_timestamp(),cancelled_by=p_actor,cancel_reason=left(coalesce(p_reason,'Pembatalan oleh admin'),500) WHERE id=p_id;
++ RETURN jsonb_build_object('ok',true,'already_cancelled',false);
++END$$;
++
++CREATE OR REPLACE FUNCTION public.voucher_admin_page_241(p_actor uuid,p_status text DEFAULT 'active',p_search text DEFAULT '',p_offset integer DEFAULT 0,p_limit integer DEFAULT 50)
++RETURNS jsonb LANGUAGE plpgsql STABLE SET search_path=pg_catalog,public AS $$
++DECLARE rows jsonb;stats jsonb;n bigint;term text;
++BEGIN
++ PERFORM public.voucher_assert_actor_241(p_actor);
++ IF p_status NOT IN ('active','claimed','expired','cancelled','all') OR p_limit NOT BETWEEN 1 AND 100 OR p_offset<0 OR length(p_search)>100 THEN RAISE EXCEPTION 'Filter tidak valid' USING ERRCODE='22023';END IF;
++ term:='%'||replace(replace(replace(btrim(p_search),'\','\\'),'%','\%'),'_','\_')||'%';
++ SELECT jsonb_build_object('total',count(*),'active',count(*) FILTER(WHERE claimed_at IS NULL AND is_valid IS TRUE AND (expires_at IS NULL OR expires_at>=(now() AT TIME ZONE 'Asia/Jakarta')::date)),
++ 'claimed',count(*) FILTER(WHERE claimed_at IS NOT NULL),'cancelled',count(*) FILTER(WHERE claimed_at IS NULL AND is_valid IS NOT TRUE),
++ 'expired',count(*) FILTER(WHERE claimed_at IS NULL AND is_valid IS TRUE AND expires_at<(now() AT TIME ZONE 'Asia/Jakarta')::date)) INTO stats FROM public.customer_vouchers;
++ WITH f AS (SELECT * FROM public.customer_vouchers WHERE
++  (p_search='' OR code ILIKE term OR phone ILIKE term OR customer_name ILIKE term) AND
++  (p_status='all' OR (p_status='claimed' AND claimed_at IS NOT NULL) OR (p_status='cancelled' AND claimed_at IS NULL AND is_valid IS NOT TRUE)
++   OR (p_status='expired' AND claimed_at IS NULL AND is_valid IS TRUE AND expires_at<(now() AT TIME ZONE 'Asia/Jakarta')::date)
++   OR (p_status='active' AND claimed_at IS NULL AND is_valid IS TRUE AND (expires_at IS NULL OR expires_at>=(now() AT TIME ZONE 'Asia/Jakarta')::date))))
++ SELECT (SELECT count(*) FROM f),(SELECT coalesce(jsonb_agg(to_jsonb(t)),'[]'::jsonb) FROM (SELECT * FROM f ORDER BY created_at DESC,id LIMIT p_limit OFFSET p_offset)t) INTO n,rows;
++ RETURN jsonb_build_object('vouchers',rows,'stats',stats,'total_filtered',n,'offset',p_offset,'limit',p_limit,'has_more',p_offset+p_limit<n);
++END$$;
++
++-- High-water marks prevent retroactive loyalty blasts on first activation.
++CREATE TABLE public.voucher_automation_state (
++ key text PRIMARY KEY, eligible_count integer NOT NULL DEFAULT 0 CHECK(eligible_count>=0), updated_at timestamptz NOT NULL DEFAULT now()
++);
++ALTER TABLE public.voucher_automation_state ENABLE ROW LEVEL SECURITY;
++REVOKE ALL ON public.voucher_automation_state FROM PUBLIC,anon,authenticated;
++GRANT ALL ON public.voucher_automation_state TO service_role;
++
++CREATE OR REPLACE FUNCTION public.issue_vouchers_241(p_kind text,p_limit integer DEFAULT 50)
++RETURNS jsonb LANGUAGE plpgsql SET search_path=pg_catalog,public SET timezone='UTC' AS $$
++DECLARE c record;m record; previous integer; issued integer:=0;baseline boolean:=false;today date:=(now() AT TIME ZONE 'Asia/Jakarta')::date;
++ v_key text; code text; changed integer;
++BEGIN
++ IF p_kind NOT IN ('loyalty','winback') OR p_limit NOT BETWEEN 1 AND 100 THEN RAISE EXCEPTION 'Task voucher tidak valid' USING ERRCODE='22023';END IF;
++ PERFORM pg_advisory_xact_lock(hashtextextended('voucher-issuance-'||p_kind,241));
++ IF p_kind='loyalty' THEN
++  IF NOT EXISTS(SELECT 1 FROM public.voucher_automation_state WHERE key='loyalty-baseline') THEN
++   INSERT INTO public.voucher_automation_state(key,eligible_count)
++   SELECT 'loyalty:'||public.voucher_phone_241(phone),count(DISTINCT coalesce(job_group_id,parent_job_id,id))
++   FROM public.orders WHERE status='PAID' AND public.voucher_phone_241(phone)~'^[0-9]{8,15}$'
++   GROUP BY public.voucher_phone_241(phone);
++   INSERT INTO public.voucher_automation_state(key) VALUES('loyalty-baseline');
++   RETURN jsonb_build_object('issued',0,'baseline_initialized',true);
++  END IF;
++  FOR c IN SELECT public.voucher_phone_241(phone) phone,(array_agg(customer ORDER BY date DESC NULLS LAST,id DESC))[1] name,
++   count(DISTINCT coalesce(job_group_id,parent_job_id,id)) n FROM public.orders
++   WHERE status='PAID' AND public.voucher_phone_241(phone)~'^[0-9]{8,15}$'
++   GROUP BY public.voucher_phone_241(phone) ORDER BY public.voucher_phone_241(phone) LOOP
++   SELECT eligible_count INTO previous FROM public.voucher_automation_state WHERE key='loyalty:'||c.phone;
++   previous:=coalesce(previous,0);
++   FOR m IN SELECT * FROM (VALUES(2,'discount_pct',5,'Diskon 5% jasa — terima kasih sudah kembali!'),(5,'discount_pct',10,'Diskon 10% jasa — pelanggan setia ke-5 kali!'),(10,'free_unit',1,'1 unit Cleaning gratis — terima kasih sudah setia 10 kali!'),(15,'discount_pct',15,'Diskon 15% jasa — VIP 15x servis!')) AS t(at,kind,value,description)
++    WHERE at>previous AND at<=c.n ORDER BY at LOOP
++    IF issued>=p_limit THEN RETURN jsonb_build_object('issued',issued,'has_more',true);END IF;
++    v_key:='loyalty:'||c.phone||':'||m.at;code:='ACL-'||upper(substr(replace(gen_random_uuid()::text,'-',''),1,12));
++    INSERT INTO public.customer_vouchers(phone,customer_name,code,type,value,description,min_orders,expires_at,trigger,milestone_at,is_valid,issuance_key)
++    SELECT c.phone,c.name,code,m.kind,m.value,m.description,m.at,today+90,'milestone',m.at,true,v_key
++    WHERE NOT EXISTS(SELECT 1 FROM public.customer_vouchers v WHERE public.voucher_phone_241(v.phone)=c.phone AND v.milestone_at=m.at AND v.trigger='milestone')
++    ON CONFLICT(issuance_key) WHERE issuance_key IS NOT NULL DO NOTHING;
++    GET DIAGNOSTICS changed=ROW_COUNT;issued:=issued+changed;
++   END LOOP;
++   INSERT INTO public.voucher_automation_state(key,eligible_count) VALUES('loyalty:'||c.phone,c.n)
++   ON CONFLICT(key) DO UPDATE SET eligible_count=greatest(voucher_automation_state.eligible_count,EXCLUDED.eligible_count),updated_at=now();
++  END LOOP;
++ ELSE
++  -- One win-back per last-service episode, with the existing 30-day cooldown preserved.
++  FOR c IN SELECT public.voucher_phone_241(phone) phone,(array_agg(name ORDER BY last_service DESC NULLS LAST,id DESC))[1] name,
++   max(last_service) serviced,max(last_winback_sent) last_sent FROM public.customers
++   WHERE public.voucher_phone_241(phone)~'^[0-9]{8,15}$' GROUP BY public.voucher_phone_241(phone)
++   HAVING max(last_service)<=today-180 AND (max(last_winback_sent) IS NULL OR max(last_winback_sent)<=today-30)
++   ORDER BY max(last_service),public.voucher_phone_241(phone) LOOP
++   IF EXISTS(SELECT 1 FROM public.orders o WHERE public.voucher_phone_241(o.phone)=c.phone AND
++    (o.status NOT IN ('COMPLETED','INVOICE_APPROVED','PAID','CANCELLED','REJECTED') OR o.date>c.serviced)) THEN CONTINUE;END IF;
++   v_key:='winback:'||c.phone||':'||c.serviced;
++   IF EXISTS(SELECT 1 FROM public.customer_vouchers v WHERE v.issuance_key=v_key OR
++    (public.voucher_phone_241(v.phone)=c.phone AND v.trigger='winback' AND v.created_at>now()-interval '30 days')) THEN CONTINUE;END IF;
++   code:='ACL-'||upper(substr(replace(gen_random_uuid()::text,'-',''),1,12));
++   INSERT INTO public.customer_vouchers(phone,customer_name,code,type,value,description,expires_at,trigger,is_valid,issuance_key)
++    VALUES(c.phone,c.name,code,'discount_pct',10,'Diskon 10% jasa — kami kangen Anda!',today+60,'winback',true,v_key) ON CONFLICT(issuance_key) WHERE issuance_key IS NOT NULL DO NOTHING;
++   GET DIAGNOSTICS changed=ROW_COUNT;issued:=issued+changed;
++   IF issued>=p_limit THEN RETURN jsonb_build_object('issued',issued,'has_more',true);END IF;
++  END LOOP;
++ END IF;
++ RETURN jsonb_build_object('issued',issued,'baseline_initialized',baseline,'has_more',false);
++END$$;
++REVOKE ALL ON FUNCTION public.issue_vouchers_241(text,integer) FROM PUBLIC,anon,authenticated;
++GRANT EXECUTE ON FUNCTION public.issue_vouchers_241(text,integer) TO service_role;
++
++-- Internal RPC entrypoints: the API validates session identity; the database repeats active-role checks.
++REVOKE ALL ON FUNCTION public.voucher_assert_actor_241(uuid),public.voucher_quote_241(uuid,text,text,jsonb),
++ public.save_invoice_voucher_241(uuid,uuid,text,text,jsonb,timestamptz,text),public.cancel_voucher_241(uuid,uuid,text),
++ public.voucher_admin_page_241(uuid,text,text,integer,integer) FROM PUBLIC,anon,authenticated;
++GRANT EXECUTE ON FUNCTION public.voucher_assert_actor_241(uuid),public.voucher_quote_241(uuid,text,text,jsonb),
++ public.save_invoice_voucher_241(uuid,uuid,text,text,jsonb,timestamptz,text),public.cancel_voucher_241(uuid,uuid,text),
++ public.voucher_admin_page_241(uuid,text,text,integer,integer) TO service_role;
++NOTIFY pgrst,'reload schema';
++COMMIT;
+diff --git a/scripts/check-sentry-ingestion.mjs b/scripts/check-sentry-ingestion.mjs
+new file mode 100644
+index 0000000..1fb3f83
+--- /dev/null
++++ b/scripts/check-sentry-ingestion.mjs
+@@ -0,0 +1,18 @@
++// Explicit, synthetic INFO event. Reads DSNs in memory; never prints credentials.
++import {readFile} from 'node:fs/promises';
++import * as Sentry from '@sentry/node';
++import {sentryBeforeSend} from '../src/lib/sentryPrivacy.js';
++const file=process.argv[2];if(!file)throw new Error('Pass the existing local environment file explicitly');
++const source=await readFile(file,'utf8');const results=[];
++for(const key of ['VITE_SENTRY_DSN','SENTRY_DSN']){
++ const raw=source.match(new RegExp(`^${key}\\s*=\\s*(.*)$`,'m'))?.[1]?.trim().replace(/^['"]|['"]$/g,'');
++ if(!raw){results.push({component:key,present:false});continue;}
++ let status=null;
++ Sentry.init({dsn:raw,environment:'connectivity-verification',release:'voucher-hardening-local',tracesSampleRate:0,sendDefaultPii:false,sendClientReports:false,beforeSend:sentryBeforeSend,defaultIntegrations:false,transportOptions:{keepAlive:false}});
++ const client=Sentry.getClient();client.on('afterSendEvent',(_,response)=>{status=response?.statusCode||null;});
++ const event_id=Sentry.captureMessage('AClean monitoring connectivity probe',{level:'info',tags:{component:'monitoring-connectivity-probe'}});
++ const flushed=await Sentry.flush(10000);await Sentry.close(2000);
++ results.push({component:key,event_id,http_status:status,flushed,ingestion_accepted:status===200});
++}
++console.log(JSON.stringify({scope:'synthetic local SDK probe to existing DSNs; does not prove production instrumentation or dashboard alerts',results},null,2));
++if(results.some(r=>!r.ingestion_accepted))process.exitCode=1;
+diff --git a/scripts/fixtures/voucher-modal.jsx b/scripts/fixtures/voucher-modal.jsx
+new file mode 100644
+index 0000000..67bc4e5
+--- /dev/null
++++ b/scripts/fixtures/voucher-modal.jsx
+@@ -0,0 +1,9 @@
++import React,{useState} from 'react';import{createRoot}from'react-dom/client';
++import EditInvoiceModal from '../../src/views/EditInvoiceModal.jsx';
++function Fixture(){
++ const initial=window.fixture;
++ const [open,setOpen]=useState(true),[form,setForm]=useState(initial.form),[items,setItems]=useState(initial.items),[jasa,setJasa]=useState(initial.jasa),[invoices,setInvoices]=useState([initial.invoice]);
++ window.fixtureState=()=>({form,invoices,open,notices:window.notices||[]});
++ return <EditInvoiceModal open={open} onClose={()=>setOpen(false)} editInvoiceData={initial.invoice} editInvoiceForm={form} setEditInvoiceForm={setForm} editInvoiceItems={items} setEditInvoiceItems={setItems} editJasaItems={jasa} setEditJasaItems={setJasa} priceListData={[]} inventoryData={[]} customersData={[]} lookupHargaGlobal={()=>0} parseMD={v=>JSON.parse(v||'[]')} fmt={v=>String(v)} currentUser={{role:'Owner',name:'Owner Fiktif'}} supabase={{}} showNotif={v=>(window.notices||=[]).push(v)} addAgentLog={()=>{}} updateInvoice={()=>{throw new Error('Voucher must use atomic endpoint')}} setInvoicesData={setInvoices} auditUserName={()=>'Owner Fiktif'} _apiHeaders={async()=>({'Content-Type':'application/json'})}/>;
++}
++createRoot(document.getElementById('root')).render(<Fixture/>);
+diff --git a/scripts/fixtures/voucher-production-guards.sql b/scripts/fixtures/voucher-production-guards.sql
+new file mode 100644
+index 0000000..629bc8a
+--- /dev/null
++++ b/scripts/fixtures/voucher-production-guards.sql
+@@ -0,0 +1,146 @@
++-- Read-only definition snapshot, 2026-11-12; no customer data.
++CREATE OR REPLACE FUNCTION public.guard_combined_transfer_229()
++ RETURNS trigger
++ LANGUAGE plpgsql
++ SET search_path TO 'public', 'pg_catalog'
++AS $function$
++BEGIN
++  IF TG_TABLE_NAME='invoice_payments' THEN
++    IF TG_OP IN ('UPDATE','DELETE') AND OLD.combined_transfer_detail IS NOT NULL THEN
++      RAISE EXCEPTION 'Alokasi transfer gabungan tidak boleh diubah/dihapus lewat jalur biasa';
++    END IF;
++    -- Custom GUCs can be set by clients. They are never sufficient on their own:
++    -- allow only the security-definer owner to add audit metadata, without
++    -- changing any existing financial field in the same UPDATE.
++    IF TG_OP='UPDATE' AND NEW.combined_transfer_detail IS NOT NULL
++      AND current_setting('app.combined_transfer_write',true)='allowed'
++      AND current_user=(SELECT pg_get_userbyid(proowner) FROM pg_proc
++        WHERE oid='public.confirm_invoice_wa_combined_transfer_atomic(uuid,text,uuid,text,jsonb,date,text,boolean)'::regprocedure)
++      AND (to_jsonb(NEW)-ARRAY['combined_transfer_detail','updated_at']) IS NOT DISTINCT FROM
++          (to_jsonb(OLD)-ARRAY['combined_transfer_detail','updated_at']) THEN
++      RETURN NEW;
++    END IF;
++    IF TG_OP IN ('INSERT','UPDATE') AND NEW.combined_transfer_detail IS NOT NULL THEN
++      RAISE EXCEPTION 'Alokasi transfer gabungan hanya boleh dicatat lewat verifikasi atomik';
++    END IF;
++  ELSE
++    IF TG_OP='DELETE' AND EXISTS(SELECT 1 FROM public.invoice_payments ip WHERE ip.invoice_id=OLD.id AND ip.combined_transfer_detail IS NOT NULL) THEN
++      RAISE EXCEPTION 'Invoice dengan alokasi transfer gabungan tidak boleh dihapus';
++    END IF;
++    IF TG_OP='UPDATE' AND EXISTS(SELECT 1 FROM public.invoice_payments ip WHERE ip.invoice_id=OLD.id AND ip.combined_transfer_detail IS NOT NULL)
++      AND (to_jsonb(NEW)-ARRAY['updated_at','pdf_url','pdf_generated_at','last_changed_by','sent','sent_at','wa_sent_count','wa_last_sent_at','wa_last_sent_by','wa_last_sent_mode','wa_last_sent_method']) IS DISTINCT FROM
++          (to_jsonb(OLD)-ARRAY['updated_at','pdf_url','pdf_generated_at','last_changed_by','sent','sent_at','wa_sent_count','wa_last_sent_at','wa_last_sent_by','wa_last_sent_mode','wa_last_sent_method']) THEN
++      RAISE EXCEPTION 'Invoice dengan alokasi transfer gabungan dikunci untuk perubahan/revert biasa';
++    END IF;
++  END IF;
++  IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
++END $function$;
++
++CREATE OR REPLACE FUNCTION public.guard_invoice_total_against_payments()
++ RETURNS trigger
++ LANGUAGE plpgsql
++ SET search_path TO 'public', 'pg_catalog'
++AS $function$
++DECLARE ledger_total numeric;
++BEGIN
++  SELECT coalesce(sum(amount),0) INTO ledger_total
++    FROM public.invoice_payments WHERE invoice_id=OLD.id;
++  ledger_total:=greatest(ledger_total,coalesce(OLD.paid_amount,0));
++  IF coalesce(NEW.total,0)<ledger_total THEN
++    RAISE EXCEPTION 'Total invoice tidak boleh lebih kecil dari pembayaran yang sudah diterima (%)',ledger_total;
++  END IF;
++  RETURN NEW;
++END $function$;
++
++CREATE OR REPLACE FUNCTION public.guard_reviewed_withholding_212()
++ RETURNS trigger
++ LANGUAGE plpgsql
++ SET search_path TO 'public', 'pg_catalog'
++AS $function$
++BEGIN
++  IF current_setting('app.reviewed_withholding_write',true)='allowed' THEN
++    IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
++  END IF;
++  IF TG_TABLE_NAME='invoice_payments' THEN
++    IF TG_OP IN ('DELETE','UPDATE') THEN
++      IF OLD.withheld_amount>0 THEN RAISE EXCEPTION 'Pembayaran dengan potongan PPh tidak boleh diubah/dihapus lewat jalur biasa; perlukan pembalikan terverifikasi'; END IF;
++    END IF;
++    IF TG_OP IN ('INSERT','UPDATE') THEN
++      IF NEW.withheld_amount>0 OR NEW.withholding_detail IS NOT NULL THEN RAISE EXCEPTION 'Potongan PPh hanya boleh dicatat melalui verifikasi atomik'; END IF;
++    END IF;
++  ELSE
++    IF TG_OP='DELETE' AND OLD.withheld_amount>0 THEN RAISE EXCEPTION 'Invoice dengan potongan PPh tidak boleh dihapus'; END IF;
++    IF TG_OP='INSERT' AND NEW.withheld_amount>0 THEN RAISE EXCEPTION 'Potongan PPh hanya boleh dicatat melalui verifikasi atomik'; END IF;
++    IF TG_OP='UPDATE' THEN
++      IF NEW.withheld_amount IS DISTINCT FROM OLD.withheld_amount OR (OLD.withheld_amount>0 AND
++        (to_jsonb(NEW)-ARRAY['updated_at','pdf_url','pdf_generated_at','last_changed_by','sent','sent_at','wa_sent_count','wa_last_sent_at','wa_last_sent_by','wa_last_sent_mode','wa_last_sent_method','wa_last_sent_batch']) IS DISTINCT FROM
++        (to_jsonb(OLD)-ARRAY['updated_at','pdf_url','pdf_generated_at','last_changed_by','sent','sent_at','wa_sent_count','wa_last_sent_at','wa_last_sent_by','wa_last_sent_mode','wa_last_sent_method','wa_last_sent_batch'])) THEN
++        RAISE EXCEPTION 'Invoice dengan potongan PPh dikunci untuk perubahan/revert biasa; perlukan pembalikan terverifikasi';
++      END IF;
++    END IF;
++  END IF;
++  IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
++END $function$;
++
++CREATE OR REPLACE FUNCTION public.trigger_fix_invoice_on_insert()
++ RETURNS trigger
++ LANGUAGE plpgsql
++ SECURITY DEFINER
++ SET search_path TO 'public', 'pg_catalog'
++AS $function$
++DECLARE
++  v_items jsonb;
++BEGIN
++  -- Hanya proses jika materials_detail kosong/null
++  IF NEW.materials_detail IS NOT NULL AND NEW.materials_detail != 'null' AND NEW.materials_detail != '[]' THEN
++    -- Sudah ada data, fix garansi saja jika perlu
++    IF NEW.garansi_expires IS NULL AND NEW.garansi_days IS NOT NULL THEN
++      NEW.garansi_expires := (NEW.created_at + (NEW.garansi_days || ' days')::interval)::date;
++    END IF;
++    RETURN NEW;
++  END IF;
++
++  -- Cari materials_json dari laporan terkait (ambil yang paling baru)
++  SELECT jsonb_agg(
++    jsonb_build_object(
++      'nama',         m->>'nama',
++      'jumlah',       (m->>'jumlah')::numeric,
++      'satuan',       COALESCE(m->>'satuan','pcs'),
++      'harga_satuan', COALESCE((m->>'harga_satuan')::numeric, 0),
++      'subtotal',     COALESCE((m->>'harga_satuan')::numeric, 0) * COALESCE((m->>'jumlah')::numeric, 1),
++      'keterangan',   COALESCE(m->>'keterangan', '')
++    ) ORDER BY CASE COALESCE(m->>'keterangan','')
++      WHEN 'jasa'   THEN 1
++      WHEN 'repair' THEN 2
++      ELSE 3 END
++  )
++  INTO v_items
++  FROM (
++    SELECT materials_json FROM service_reports
++    WHERE job_id = NEW.job_id
++      AND materials_json IS NOT NULL
++      AND materials_json != '[]'
++    ORDER BY created_at DESC LIMIT 1
++  ) r,
++  jsonb_array_elements(r.materials_json::jsonb) m
++  WHERE (m->>'nama') IS NOT NULL AND (m->>'nama') != '';
++
++  IF v_items IS NOT NULL AND jsonb_array_length(v_items) > 0 THEN
++    NEW.materials_detail := v_items::text;
++  END IF;
++
++  -- Fix garansi_expires
++  IF NEW.garansi_expires IS NULL AND NEW.garansi_days IS NOT NULL THEN
++    NEW.garansi_expires := (NEW.created_at + (NEW.garansi_days || ' days')::interval)::date;
++  END IF;
++
++  RETURN NEW;
++END;
++$function$;
++
++CREATE TRIGGER auto_fix_invoice_materials BEFORE INSERT ON public.invoices FOR EACH ROW EXECUTE FUNCTION trigger_fix_invoice_on_insert();
++CREATE TRIGGER auto_fix_invoice_materials_update BEFORE UPDATE ON public.invoices FOR EACH ROW EXECUTE FUNCTION trigger_fix_invoice_on_insert();
++CREATE TRIGGER trg_guard_combined_transfer_229 BEFORE DELETE OR UPDATE ON public.invoices FOR EACH ROW EXECUTE FUNCTION guard_combined_transfer_229();
++CREATE TRIGGER trg_guard_invoice_total_against_payments BEFORE UPDATE OF total ON public.invoices FOR EACH ROW WHEN ((new.total IS DISTINCT FROM old.total)) EXECUTE FUNCTION guard_invoice_total_against_payments();
++CREATE TRIGGER trg_guard_reviewed_withholding_212 BEFORE INSERT OR DELETE OR UPDATE ON public.invoices FOR EACH ROW EXECUTE FUNCTION guard_reviewed_withholding_212();
++
+diff --git a/scripts/test-voucher-browser.mjs b/scripts/test-voucher-browser.mjs
+new file mode 100644
+index 0000000..b386bcd
+--- /dev/null
++++ b/scripts/test-voucher-browser.mjs
+@@ -0,0 +1,88 @@
++// Browser -> real API handlers -> actual migration/RPCs on disposable PostgreSQL/WASM.
++// All people, tokens and invoices are fictional; no .env is read.
++import assert from 'node:assert/strict';import{readFile,writeFile,mkdir}from'node:fs/promises';import{createServer}from'node:http';import{fileURLToPath}from'node:url';
++import{build}from'esbuild';import{chromium,expect}from'@playwright/test';import{PGlite}from'@electric-sql/pglite';
++import{voucherFixture,seed,owner}from'./test-voucher-db.mjs';
++process.env.SUPABASE_URL='https://voucher-db.invalid';process.env.SUPABASE_SERVICE_KEY='fixture-only';
++const api=await import('../api/_handlers/voucher.js');
++const result=[];let db,scenario,dropResponse=false,apiFailure=false,requests=[];
++const originalFetch=globalThis.fetch;
++globalThis.fetch=async(url,options={})=>{
++ if(!String(url).startsWith('https://voucher-db.invalid/'))throw new Error('External network forbidden');
++ const u=new URL(url),table=u.pathname.split('/').at(-1),args=options.body?JSON.parse(options.body):{};
++ try{
++  let data;
++  if(u.pathname.includes('/rpc/')){
++   const entries=Object.entries(args);data=(await db.query(`SELECT public.${table}(${entries.map(([key],i)=>`${key} => $${i+1}`).join(',')}) AS r`,entries.map(([,value])=>typeof value==='object'?JSON.stringify(value):value))).rows[0].r;
++  }else if(table==='user_profiles')data=(await db.query('SELECT id,name,role,active FROM user_profiles WHERE id=$1',[u.searchParams.get('id').slice(3)])).rows;
++  else if(table==='invoices')data=(await db.query('SELECT * FROM invoices WHERE id=$1',[u.searchParams.get('id').slice(3)])).rows;
++  else throw new Error('Unimplemented fixture route');
++  return new Response(JSON.stringify(data),{status:200});
++ }catch(e){return new Response(JSON.stringify({code:e.code||'FIXTURE_ERROR',message:e.message}),{status:400});}
++};
++const bundle=(await build({entryPoints:[fileURLToPath(new URL('./fixtures/voucher-modal.jsx',import.meta.url))],bundle:true,write:false,jsx:'automatic',define:{'process.env.NODE_ENV':'"test"'}})).outputFiles[0].text;
++const invoiceSource=await readFile(new URL('../src/views/InvoiceView.jsx',import.meta.url),'utf8');
++const adminFn=invoiceSource.slice(invoiceSource.indexOf('function VoucherAdminTab('),invoiceSource.indexOf('\nexport default memo(InvoiceView)'));
++const adminState=invoiceSource.slice(invoiceSource.indexOf('const [voucherList,'),invoiceSource.indexOf('const [quoPDFData'));
++const adminFixture=`import React,{useState,useRef,useEffect}from'react';import{createRoot}from'react-dom/client';import{cs}from'./src/theme/cs.js';import{getLocalDate as localDateWIB}from'./src/lib/dateTime.js';${adminFn}\nfunction Fixture(){const apiHeaders=async()=>({'Content-Type':'application/json'});${adminState}\nuseEffect(()=>{loadVouchers()},[]);return <VoucherAdminTab {...{voucherList,voucherStats,voucherFilter,setVoucherFilter,voucherSearch,setVoucherSearch,voucherLoading,voucherError,voucherPage,loadVouchers,apiHeaders,showNotif:()=>{},fmt:String}}/>;}createRoot(document.getElementById('root')).render(<Fixture/>);`;
++const adminBundle=(await build({stdin:{contents:adminFixture,resolveDir:process.cwd(),loader:'jsx'},bundle:true,write:false,jsx:'automatic',define:{'process.env.NODE_ENV':'"test"'}})).outputFiles[0].text;
++let initial;
++const server=createServer(async(req,res)=>{
++ const u=new URL(req.url,'http://localhost');
++ if(u.pathname==='/bundle.js'){res.setHeader('Content-Type','application/javascript');res.end(scenario==='admin'?adminBundle:bundle);return;}
++ if(u.pathname==='/'){res.setHeader('Content-Type','text/html');res.end(`<html><body><div id="root"></div><script>window.fixture=${JSON.stringify(initial)};</script><script src="/bundle.js"></script></body></html>`);return;}
++ if(!u.pathname.startsWith('/api/')){res.statusCode=404;res.end();return;}
++ try{
++  let body='';for await(const chunk of req)body+=chunk;req.body=body?JSON.parse(body):{};req.appClaims={userId:owner,role:'Owner'};req.query=Object.fromEntries(u.searchParams);requests.push({path:u.pathname,body:req.body});
++  res.status=n=>{res.statusCode=n;return res;};res.json=data=>{if(dropResponse&&u.pathname==='/api/apply-invoice-voucher'){dropResponse=false;res.statusCode=200;res.setHeader('Content-Type','application/json');res.end('{');return res;}res.setHeader('Content-Type','application/json');res.end(JSON.stringify(data));return res;};
++  if(scenario==='code-change' && u.pathname==='/api/validate-voucher')await new Promise(resolve=>setTimeout(resolve,400));
++  if(apiFailure){res.status(503).json({error:'Fixture dependency outage'});return;}
++  const handler={'/api/validate-voucher':api.validateVoucher,'/api/apply-invoice-voucher':api.applyInvoiceVoucher,'/api/admin-vouchers':api.adminVouchers,'/api/cancel-voucher':api.cancelVoucher}[u.pathname];if(!handler)throw new Error('Unexpected route');await handler(req,res);
++ }catch(e){if(!res.writableEnded){res.statusCode=500;res.end(JSON.stringify({error:'Fixture HTTP failure'}));}}
++});
++const browser=await chromium.launch({headless:true});
++try{
++ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const url=`http://127.0.0.1:${server.address().port}`;
++ for(scenario of ['preview-close','percent-save','free-unit','manual-best','rollback','uncertain-retry','stale-preview','code-change','admin']){
++  db=new PGlite();await voucherFixture(db);await seed(db,'A','ACL-FIXTURE',scenario==='free-unit'?'free_unit':'discount_pct',scenario==='free-unit'?1:10);
++  if(scenario==='admin')await db.exec("INSERT INTO customer_vouchers(phone,code,type,value)SELECT '6281234567890','ACL-PAGE-'||lpad(n::text,3,'0'),'discount_pct',5 FROM generate_series(1,110)n");
++  requests=[];apiFailure=false;dropResponse=false;
++  const inv=(await db.query("SELECT * FROM invoices WHERE id='A'")).rows[0];initial={invoice:inv,form:{discount:scenario==='manual-best'?30000:0},items:[{nama:'Material',jumlah:1,harga_satuan:50000,subtotal:50000,keterangan:'barang'}],jasa:[{nama:'Cleaning AC',jumlah:2,harga_satuan:100000,subtotal:200000,keterangan:'jasa'}]};
++  const context=await browser.newContext({viewport:{width:420,height:900}}),page=await context.newPage();let errors=0;page.on('pageerror',()=>errors++);await page.goto(url);
++  if(scenario==='admin'){
++   await expect(page.getByText('1–50 dari 111')).toBeVisible();await page.getByRole('button',{name:'Berikutnya'}).click();await expect(page.getByText('51–100 dari 111')).toBeVisible();
++   apiFailure=true;await page.getByRole('button',{name:'Cari',exact:true}).click();await expect(page.getByRole('alert')).toContainText('belum berhasil');apiFailure=false;await page.getByRole('button',{name:'Coba lagi',exact:true}).click();await expect(page.getByRole('alert')).toHaveCount(0);
++   await page.getByPlaceholder('Cari kode / phone / nama...').fill('ACL-PAGE-001');await page.getByRole('button',{name:'Cari',exact:true}).click();await expect(page.getByText('1–1 dari 1')).toBeVisible();page.on('dialog',d=>d.accept());await page.getByRole('button',{name:'Batalkan',exact:true}).click();await expect.poll(async()=>Number((await db.query("SELECT count(*) n FROM customer_vouchers WHERE code='ACL-PAGE-001' AND is_valid=false")).rows[0].n)).toBe(1);
++  }else{
++   await page.getByPlaceholder('Kode voucher (cth: ACL-K3M9P2)').fill('ACL-FIXTURE');await page.getByRole('button',{name:'Cek',exact:true}).click();
++   if(scenario==='code-change'){
++    await page.getByPlaceholder('Kode voucher (cth: ACL-K3M9P2)').fill('ACL-OTHER');await page.waitForTimeout(700);await expect(page.getByRole('button',{name:'Terapkan Voucher',exact:true})).toHaveCount(0);assert.equal((await db.query('SELECT claimed_at FROM customer_vouchers')).rows[0].claimed_at,null);
++   }else if(scenario==='manual-best'){
++    await expect(page.getByText(/Voucher tidak menambah potongan;/)).toBeVisible();assert.equal((await db.query('SELECT count(*)::int n FROM voucher_redemptions')).rows[0].n,0);
++   }else{
++    await page.getByRole('button',{name:'Terapkan Voucher',exact:true}).click();assert.equal((await db.query('SELECT claimed_at FROM customer_vouchers')).rows[0].claimed_at,null);
++    if(scenario==='preview-close'){await page.getByRole('button',{name:'Batal',exact:true}).click();assert.equal((await db.query('SELECT claimed_at FROM customer_vouchers')).rows[0].claimed_at,null);}
++    else if(scenario==='stale-preview'){
++     // Changing any invoice field invalidates the preview before a save can claim it.
++     await page.getByPlaceholder('Alasan perubahan nilai...').fill('Fixture change');await expect(page.getByRole('button',{name:'Terapkan Voucher',exact:true})).toHaveCount(0);assert.equal((await db.query('SELECT claimed_at FROM customer_vouchers')).rows[0].claimed_at,null);
++    }else{
++     if(scenario==='rollback')await db.exec(`CREATE FUNCTION fixture_fail() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'Fixture claim persistence failure';END$$;CREATE TRIGGER fixture_fail AFTER UPDATE ON customer_vouchers FOR EACH ROW EXECUTE FUNCTION fixture_fail();`);
++     if(scenario==='uncertain-retry')dropResponse=true;
++     await page.getByRole('button',{name:/Simpan Perubahan/}).click();
++     if(['rollback','uncertain-retry'].includes(scenario)){
++      await expect(page.getByRole('alert')).toContainText('belum terkonfirmasi');await expect(page.getByRole('button',{name:'Batal',exact:true})).toBeDisabled();
++      if(scenario==='rollback'){assert.equal((await db.query('SELECT claimed_at FROM customer_vouchers')).rows[0].claimed_at,null);assert.equal(Number((await db.query("SELECT total FROM invoices WHERE id='A'")).rows[0].total),250000);await db.exec('DROP TRIGGER fixture_fail ON customer_vouchers');}
++      await page.getByRole('button',{name:'Konfirmasi ulang hasil simpan'}).click();
++     }
++     await expect.poll(()=>page.evaluate(()=>window.fixtureState().open)).toBe(false);
++     const stored=(await db.query("SELECT total,discount FROM invoices WHERE id='A'")).rows[0];assert.equal(Number(stored.discount),scenario==='free-unit'?100000:20000);assert.equal(Number(stored.total),scenario==='free-unit'?150000:230000);
++     assert.equal((await db.query('SELECT count(*)::int n FROM voucher_operations')).rows[0].n,1);
++     const saveCalls=requests.filter(r=>r.path==='/api/apply-invoice-voucher');assert.equal(new Set(saveCalls.map(r=>r.body.request_id)).size,1);
++    }
++   }
++  }
++  assert.equal(errors,0);assert.equal(requests.some(r=>r.path==='/api/claim-voucher'),false);result.push({scenario,passed:true});console.log('PASS browser '+scenario);await context.close();await db.close();db=null;
++ }
++ await mkdir('deliverables/voucher-hardening-2026-11-12',{recursive:true});await writeFile('deliverables/voucher-hardening-2026-11-12/browser-results.json',JSON.stringify({scope:'Actual UI -> real API -> actual SQL migration on fictional local database; native concurrency tested separately',passed:result.length,results:result},null,2));
++}catch(e){console.error(JSON.stringify({passed:result.length,failed_scenario:scenario,error:e.name,message:e.message.slice(0,1000)}));process.exitCode=1;}
++finally{globalThis.fetch=originalFetch;await db?.close();await browser.close();await new Promise(resolve=>server.close(resolve));}
+diff --git a/scripts/test-voucher-concurrency.mjs b/scripts/test-voucher-concurrency.mjs
+new file mode 100644
+index 0000000..ec981d2
+--- /dev/null
++++ b/scripts/test-voucher-concurrency.mjs
+@@ -0,0 +1,54 @@
++// Native PostgreSQL on a fresh loopback-only instance. No .env or external DB URL.
++import assert from 'node:assert/strict';
++import {mkdtempSync} from 'node:fs';import {tmpdir} from 'node:os';import {join} from 'node:path';import {createServer} from 'node:net';import {randomBytes} from 'node:crypto';
++import {voucherFixture,seed,quote,save,owner,draft} from './test-voucher-db.mjs';
++const {default:EmbeddedPostgres}=await import(process.env.ACLEAN_EMBEDDED_PG_MODULE||'embedded-postgres');
++const port=await new Promise((resolve,reject)=>{const s=createServer();s.on('error',reject);s.listen(0,'127.0.0.1',()=>{const p=s.address().port;s.close(()=>resolve(p));});});
++const root=mkdtempSync(join(tmpdir(),'aclean-voucher-native-'));
++const server=new EmbeddedPostgres({databaseDir:join(root,'db'),port,user:'postgres',password:randomBytes(24).toString('hex'),persistent:true,postgresFlags:['-h','127.0.0.1','-k',root,'-c','shared_buffers=16MB','-c','max_connections=10'],onLog:()=>{},onError:()=>{}});
++const clients=[];let passed=0;
++try{
++ await server.initialise();await server.start();
++ const connect=async()=>{const c=server.getPgClient();await c.connect();clients.push(c);return c;};
++ const setup=await connect(),a=await connect(),b=await connect();
++ const db={exec:s=>setup.query(s),query:(...v)=>setup.query(...v)};
++ await voucherFixture(db);await setup.query(`CREATE FUNCTION fixture_slow_invoice() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN PERFORM pg_sleep(0.15); RETURN NEW; END$$;CREATE TRIGGER fixture_slow_invoice BEFORE UPDATE ON invoices FOR EACH ROW EXECUTE FUNCTION fixture_slow_invoice();`);
++ const check=async(name,fn)=>{await fn();passed++;console.log('PASS '+name);};
++ await check('simultaneous same request has one save and one replay',async()=>{
++  await seed(db);const q=await quote(db);const result=await Promise.all([save(a,q),save(b,q)]);assert.deepEqual(result.map(x=>x.replayed).sort(),[false,true]);
++  assert.equal((await setup.query('SELECT count(*)::int n FROM voucher_operations')).rows[0].n,1);
++ });
++ await check('one voucher raced across two invoices has one winner',async()=>{
++  await seed(db,'B','ACL-RACE');await setup.query("INSERT INTO invoices SELECT (jsonb_populate_record(NULL::invoices,to_jsonb(i)||'{\"id\":\"C\"}'::jsonb)).* FROM invoices i WHERE id='B'");
++  const qa=await quote(db,'B','ACL-RACE'),qb=await quote(db,'C','ACL-RACE');
++  const result=await Promise.allSettled([save(a,qa,'30000000-0000-4000-8000-000000000001'),save(b,qb,'30000000-0000-4000-8000-000000000002')]);
++  assert.equal(result.filter(r=>r.status==='fulfilled').length,1);assert.equal(result.find(r=>r.status==='rejected').reason.code,'23514');
++  assert.equal((await setup.query("SELECT count(*)::int n FROM voucher_redemptions WHERE invoice_id IN ('B','C')")).rows[0].n,1);
++ });
++ await check('concurrent different requests for one invoice cannot overwrite a saved version',async()=>{
++  await seed(db,'D','ACL-SAME');const q=await quote(db,'D','ACL-SAME');const result=await Promise.allSettled([save(a,q,'40000000-0000-4000-8000-000000000001'),save(b,q,'40000000-0000-4000-8000-000000000002')]);assert.equal(result.filter(r=>r.status==='fulfilled').length,1);assert.equal(result.find(r=>r.status==='rejected').reason.code,'40001');
++ });
++ await check('blocked invoice times out rather than waits indefinitely',async()=>{
++  await seed(db,'E','ACL-LOCK');const q=await quote(db,'E','ACL-LOCK');await a.query('BEGIN');await a.query("SELECT id FROM invoices WHERE id='E' FOR UPDATE");
++  try{await assert.rejects(save(b,q,'50000000-0000-4000-8000-000000000001'),e=>e.code==='55P03');}finally{await a.query('ROLLBACK');}
++ });
++ await check('PPh amount is grossed up with the supported legacy alternate rate',async()=>{
++  await seed(db,'F','ACL-TAX');const edit={...draft,pph23:true,pph23_rate:0.025};const q=await quote(db,'F','ACL-TAX',edit);const r=await save(db,q,'60000000-0000-4000-8000-000000000001',edit);assert.equal(Number(r.invoice.pph23_amount),Math.round(200000/.975)-200000);
++ });
++ await check('payment ledger independently blocks discounting even if invoice cache is stale',async()=>{
++  await seed(db,'G','ACL-LEDGER');await setup.query("INSERT INTO invoice_payments(invoice_id,amount)VALUES('G',1)");await assert.rejects(quote(db,'G','ACL-LEDGER'),e=>e.code==='23514');
++ });
++ await check('loyalty baseline includes only PAID and normalized phone without historic awards',async()=>{
++  await setup.query("INSERT INTO orders(id,phone,customer,status,date)VALUES('O1','081234567890','Fiktif','PAID','2026-11-01')");const r=(await setup.query("SELECT issue_vouchers_241('loyalty',5) r")).rows[0].r;assert.equal(r.baseline_initialized,true);assert.equal(r.issued,0);
++ });
++ await check('crossed milestone is issued exactly once under concurrent task calls',async()=>{
++  await setup.query("INSERT INTO orders(id,phone,customer,status,date)VALUES('O2','+6281234567890','Fiktif','COMPLETED','2026-11-02'),('O3','081234567890','Fiktif','INVOICE_APPROVED','2026-11-03')");assert.equal((await setup.query("SELECT issue_vouchers_241('loyalty',5) r")).rows[0].r.issued,0);await setup.query("UPDATE orders SET status='PAID' WHERE id='O2'");const results=await Promise.all([a.query("SELECT issue_vouchers_241('loyalty',5) r"),b.query("SELECT issue_vouchers_241('loyalty',5) r")]);assert.deepEqual(results.map(x=>x.rows[0].r.issued).sort(),[0,1]);
++  assert.equal((await setup.query("SELECT count(*)::int n FROM customer_vouchers WHERE issuance_key='loyalty:6281234567890:2'")).rows[0].n,1);
++ });
++ await check('winback is independent, normalized, avoids active orders and duplicates',async()=>{
++  await setup.query("INSERT INTO customers(id,phone,name,last_service)VALUES('W1','081299999999','Fiktif',(now() AT TIME ZONE 'Asia/Jakarta')::date-181),('W2','081288888888','Fiktif',(now() AT TIME ZONE 'Asia/Jakarta')::date-181);INSERT INTO orders(id,phone,status,date)VALUES('ACTIVE','6281288888888','WORKING',current_date)");
++  const one=(await setup.query("SELECT issue_vouchers_241('winback',5) r")).rows[0].r;const two=(await setup.query("SELECT issue_vouchers_241('winback',5) r")).rows[0].r;assert.equal(one.issued,1);assert.equal(two.issued,0);
++ });
++ console.log(JSON.stringify({passed,failed:0,scope:'native PostgreSQL; concurrent independent connections; fictional records only'}));
++}catch(e){console.error(JSON.stringify({passed,code:e.code||e.name,message:e.message}));process.exitCode=1;}
++finally{for(const c of clients)await c.end().catch(()=>{});await server.stop().catch(()=>{});}
+diff --git a/scripts/test-voucher-db.mjs b/scripts/test-voucher-db.mjs
+new file mode 100644
+index 0000000..6db0fef
+--- /dev/null
++++ b/scripts/test-voucher-db.mjs
+@@ -0,0 +1,57 @@
++import assert from 'node:assert/strict';
++import {readFile} from 'node:fs/promises';
++import {PGlite} from '@electric-sql/pglite';
++import {normalizeVoucherEdit} from '../src/lib/voucherPolicy.js';
++export const owner='10000000-0000-4000-8000-000000000001',admin='10000000-0000-4000-8000-000000000002',tech='10000000-0000-4000-8000-000000000003';
++export async function voucherFixture(db){
++ await db.exec(`CREATE ROLE authenticated NOLOGIN;CREATE ROLE anon NOLOGIN;CREATE ROLE service_role NOLOGIN BYPASSRLS;
++ CREATE SCHEMA auth;CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$SELECT nullif(current_setting('test.uid',true),'')::uuid$$;
++ CREATE TABLE public.user_profiles(id uuid PRIMARY KEY,name text,role text,active boolean NOT NULL DEFAULT true);
++ CREATE FUNCTION public.get_my_role() RETURNS text LANGUAGE sql SECURITY DEFINER STABLE SET search_path=public,pg_catalog AS $$SELECT role FROM user_profiles WHERE id=auth.uid() AND active$$;
++ CREATE TABLE public.customer_vouchers(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),phone text NOT NULL,customer_name text,code text UNIQUE NOT NULL,type text NOT NULL,value numeric,description text,min_orders int DEFAULT 0,expires_at date,claimed_at timestamptz,claimed_order_id text,created_at timestamptz DEFAULT now(),trigger text DEFAULT 'milestone',milestone_at int,is_valid boolean DEFAULT true,reminder_sent boolean DEFAULT false);
++ CREATE TABLE public.invoice_payments(invoice_id text,amount numeric,withheld_amount numeric DEFAULT 0,combined_transfer_detail jsonb);
++ CREATE TABLE public.orders(id text PRIMARY KEY,phone text,customer text,status text,date date,job_group_id text,parent_job_id text);CREATE TABLE public.customers(id text PRIMARY KEY,phone text,name text,last_service date,last_winback_sent date);
++ CREATE TABLE public.invoices(id text PRIMARY KEY,customer text NOT NULL,phone text,labor bigint DEFAULT 0,material bigint DEFAULT 0,discount bigint DEFAULT 0,total bigint NOT NULL DEFAULT 0,status text NOT NULL DEFAULT 'UNPAID',paid_amount numeric DEFAULT 0,remaining_amount numeric,paid_at timestamptz,withheld_amount numeric DEFAULT 0,trade_in boolean DEFAULT false,trade_in_amount int DEFAULT 0,pph23 boolean DEFAULT false,pph23_amount numeric DEFAULT 0,materials_detail text,job_id text,garansi_expires date,garansi_days integer,created_at timestamptz DEFAULT now(),address text,last_changed_by text,pdf_url text,pdf_generated_at timestamptz,updated_at timestamptz NOT NULL DEFAULT now());
++ INSERT INTO user_profiles VALUES('${owner}','Owner Fiktif','Owner',true),('${admin}','Admin Fiktif','Admin',true),('${tech}','Teknisi Fiktif','Teknisi',true);
++ GRANT USAGE ON SCHEMA public TO authenticated,anon,service_role;GRANT USAGE ON SCHEMA auth TO authenticated,anon,service_role;
++ GRANT ALL ON public.invoices,public.user_profiles,public.customer_vouchers TO service_role;
++ GRANT SELECT,INSERT,UPDATE,DELETE ON public.invoices TO authenticated;`);
++ await db.exec(await readFile(new URL('../migrations/241_voucher_atomic_security.sql',import.meta.url),'utf8'));
++ await db.exec(await readFile(new URL('./fixtures/voucher-production-guards.sql',import.meta.url),'utf8'));
++}
++const args=edit=>JSON.stringify(edit);
++export const draft=normalizeVoucherEdit({id:'A',customer:'Customer Fiktif'}, {lines:[{nama:'Cleaning AC',jumlah:2,harga_satuan:100000,subtotal:200000,keterangan:'jasa'},{nama:'Material',jumlah:1,harga_satuan:50000,subtotal:50000,keterangan:'barang'}],manual_discount:0,customer:'Customer Fiktif'});
++export async function seed(db,id='A',code='ACL-FIXTURE',type='discount_pct',value=10){
++ await db.query("INSERT INTO invoices(id,customer,phone,labor,material,total,materials_detail) VALUES($1,'Customer Fiktif','6281234567890',200000,50000,250000,$2)",[id,JSON.stringify(draft.lines)]);
++ await db.query("INSERT INTO customer_vouchers(phone,code,type,value,expires_at) VALUES('081234567890',$1,$2,$3,'2099-12-31')",[code,type,value]);
++}
++export async function quote(db,id='A',code='ACL-FIXTURE',edit=draft,actor=owner){return (await db.query('SELECT voucher_quote_241($1,$2,$3,$4::jsonb) q',[actor,id,code,args(edit)])).rows[0].q;}
++export async function save(db,q,request='20000000-0000-4000-8000-000000000001',edit=draft,actor=owner){return (await db.query('SELECT save_invoice_voucher_241($1,$2,$3,$4,$5::jsonb,$6,$7) r',[actor,request,q.invoice_id,q.voucher.code,args(edit),q.expected_updated_at,q.quote_hash])).rows[0].r;}
++if(process.argv[1]===new URL(import.meta.url).pathname){
++ const db=new PGlite();let passed=0;
++ const check=async(name,fn)=>{await fn();passed++;console.log('PASS '+name);};
++ try{
++  await voucherFixture(db);await seed(db);
++  const q=await quote(db);
++  await check('preview is read-only; percentage excludes materials',async()=>{assert.equal(Number(q.discount),20000);assert.equal(Number(q.total),230000);assert.equal((await db.query('SELECT claimed_at FROM customer_vouchers')).rows[0].claimed_at,null);});
++  await check('technician and inactive actor rejected',async()=>{await assert.rejects(quote(db,'A','ACL-FIXTURE',draft,tech),e=>e.code==='42501');await db.query('UPDATE user_profiles SET active=false WHERE id=$1',[admin]);await assert.rejects(quote(db,'A','ACL-FIXTURE',draft,admin),e=>e.code==='42501');});
++  let first;
++  await check('save claims voucher and invoice atomically',async()=>{first=await save(db,q);assert.equal(Number(first.invoice.total),230000);assert.equal((await db.query('SELECT count(*)::int n FROM voucher_redemptions')).rows[0].n,1);assert.ok((await db.query('SELECT claimed_at FROM customer_vouchers')).rows[0].claimed_at);});
++  await check('same request ID returns replay, changed payload rejected',async()=>{const retry=await save(db,q);assert.equal(retry.replayed,true);await assert.rejects(save(db,q,undefined,{...draft,manual_discount:10}),e=>e.code==='23514');});
++  await check('direct authenticated metadata edit cannot bypass via custom GUC',async()=>{await db.exec(`BEGIN;SET LOCAL ROLE authenticated;SELECT set_config('aclean.voucher_write','241',true);`);await assert.rejects(db.exec("UPDATE invoices SET voucher_discount=1 WHERE id='A'"),e=>e.code==='42501');await db.exec('ROLLBACK;');});
++  await check('table and RPC grants deny direct authenticated/anon mutation',async()=>{for(const role of ['authenticated','anon']){await db.exec('BEGIN;SET LOCAL ROLE '+role+';');await assert.rejects(db.exec("UPDATE customer_vouchers SET value=100"),e=>e.code==='42501');await db.exec('ROLLBACK;');await db.exec('BEGIN;SET LOCAL ROLE '+role+';');await assert.rejects(quote(db),e=>e.code==='42501');await db.exec('ROLLBACK;');}});
++  await check('only active Owner/Admin can SELECT voucher table',async()=>{await db.exec(`BEGIN;SET LOCAL ROLE authenticated;SELECT set_config('test.uid','${tech}',true);`);assert.equal((await db.query('SELECT count(*)::int n FROM customer_vouchers')).rows[0].n,0);await db.exec('ROLLBACK;');await db.exec(`BEGIN;SET LOCAL ROLE authenticated;SELECT set_config('test.uid','${owner}',true);`);assert.equal((await db.query('SELECT count(*)::int n FROM customer_vouchers')).rows[0].n,1);await db.exec('ROLLBACK;');});
++  await check('free unit reduces cheapest Cleaning unit and preserves materials',async()=>{await seed(db,'B','ACL-FREE','free_unit',1);const v=await quote(db,'B','ACL-FREE');assert.equal(Number(v.discount),100000);assert.equal(Number(v.total),150000);});
++  await check('best discount refuses a voucher that adds no benefit',async()=>{await assert.rejects(quote(db,'B','ACL-FREE',{...draft,manual_discount:120000}),e=>e.code==='23514');});
++  await check('expired/wrong phone/paid invoice all rejected without claim',async()=>{await db.exec("UPDATE customer_vouchers SET expires_at='2000-01-01' WHERE code='ACL-FREE'");await assert.rejects(quote(db,'B','ACL-FREE'),e=>e.code==='23514');await db.exec("UPDATE customer_vouchers SET expires_at='2099-01-01',phone='6281299999999' WHERE code='ACL-FREE'");await assert.rejects(quote(db,'B','ACL-FREE'),e=>e.code==='23514');await db.exec("UPDATE customer_vouchers SET phone='081234567890' WHERE code='ACL-FREE';UPDATE invoices SET paid_amount=1 WHERE id='B'");await assert.rejects(quote(db,'B','ACL-FREE'),e=>e.code==='23514');});
++  await check('tracking failure rolls back invoice, redemption and operation',async()=>{await seed(db,'C','ACL-ROLLBACK');const v=await quote(db,'C','ACL-ROLLBACK');await db.exec(`CREATE FUNCTION fixture_fail_claim() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN IF NEW.code='ACL-ROLLBACK' THEN RAISE EXCEPTION 'Fixture write failure';END IF;RETURN NEW;END$$;CREATE TRIGGER fixture_fail AFTER UPDATE ON customer_vouchers FOR EACH ROW EXECUTE FUNCTION fixture_fail_claim();`);await assert.rejects(save(db,v,'20000000-0000-4000-8000-000000000003'));assert.equal(Number((await db.query("SELECT total FROM invoices WHERE id='C'")).rows[0].total),250000);assert.equal((await db.query("SELECT count(*)::int n FROM voucher_redemptions WHERE invoice_id='C'")).rows[0].n,0);});
++  await check('active no-expiry pagination and cancelled counts agree',async()=>{await db.exec("INSERT INTO customer_vouchers(phone,code,type,value,expires_at)VALUES('6281234567890','ACL-NOEXP','discount_pct',5,NULL)");const a=(await db.query("SELECT voucher_admin_page_241($1,'active','ACL-NOEXP',0,1) p",[owner])).rows[0].p;assert.equal(Number(a.total_filtered),1);assert.equal(a.vouchers.length,1);});
++  await check('free service saves only labor discount with production invoice guards enabled',async()=>{await seed(db,'H','ACL-SERVICE','free_service',null);const v=await quote(db,'H','ACL-SERVICE');const r=await save(db,v,'70000000-0000-4000-8000-000000000001');assert.equal(Number(r.invoice.discount),200000);assert.equal(Number(r.invoice.total),50000);});
++  await check('redeemed invoice cannot be financially edited through a direct client UPDATE',async()=>{await db.exec('BEGIN;SET LOCAL ROLE authenticated;');await assert.rejects(db.exec("UPDATE invoices SET total=1 WHERE id='A'"),e=>e.code==='42501');await db.exec('ROLLBACK;');});
++  await check('cancel rejects missing/claimed rows and is idempotent for unused vouchers',async()=>{await assert.rejects(db.query('SELECT cancel_voucher_241($1,$2,NULL)',[owner,'90000000-0000-4000-8000-000000000000']),e=>e.code==='P0002');const used=(await db.query("SELECT id FROM customer_vouchers WHERE code='ACL-FIXTURE'")).rows[0].id;await assert.rejects(db.query('SELECT cancel_voucher_241($1,$2,NULL)',[owner,used]),e=>e.code==='23514');const unused=(await db.query("SELECT id FROM customer_vouchers WHERE code='ACL-NOEXP'")).rows[0].id;await db.query('SELECT cancel_voucher_241($1,$2,NULL)',[owner,unused]);const repeated=(await db.query('SELECT cancel_voucher_241($1,$2,NULL) r',[owner,unused])).rows[0].r;assert.equal(repeated.already_cancelled,true);assert.equal((await db.query('SELECT cancelled_by FROM customer_vouchers WHERE id=$1',[unused])).rows[0].cancelled_by,owner);});
++  await check('SQL rejects missing summaries and unsupported tax rates independently of API',async()=>{await seed(db,'I','ACL-TAMPER');const missing={...draft};delete missing.labor;await assert.rejects(quote(db,'I','ACL-TAMPER',missing),e=>e.code==='22023');await assert.rejects(quote(db,'I','ACL-TAMPER',{...draft,pph23:true,pph23_rate:.99}),e=>e.code==='22023');});
++  await check('admin totals and pages cover more than 200 vouchers without truncation',async()=>{await db.exec("INSERT INTO customer_vouchers(phone,code,type,value)SELECT '6281234567890','ACL-LARGE-'||n,'discount_pct',5 FROM generate_series(1,250)n");const page=(await db.query("SELECT voucher_admin_page_241($1,'active','ACL-LARGE-',200,50) p",[owner])).rows[0].p;assert.equal(Number(page.total_filtered),250);assert.equal(page.vouchers.length,50);assert.equal(page.has_more,false);assert.ok(Number(page.stats.total)>250);});
++  await check('full voucher settles an approved receivable at zero without creating cash income',async()=>{await seed(db,'J','ACL-ZERO','free_service',null);const zero={...draft,lines:[draft.lines[0]],material:0};const q=await quote(db,'J','ACL-ZERO',zero);const r=await save(db,q,'80000000-0000-4000-8000-000000000001',zero);assert.equal(Number(r.invoice.total),0);assert.equal(Number(r.invoice.remaining_amount),0);assert.equal(Number(r.invoice.paid_amount),0);assert.equal(r.invoice.status,'PAID');assert.ok(r.invoice.paid_at);assert.equal((await db.query("SELECT count(*)::int n FROM invoice_payments WHERE invoice_id='J'")).rows[0].n,0);});
++  console.log(JSON.stringify({passed,failed:0,scope:'local PostgreSQL/WASM; no live services'}));
++ }catch(e){console.error(JSON.stringify({passed,error:e.code||e.name,message:e.message}));process.exitCode=1;}finally{await db.close();}
++}
+diff --git a/src/lib/__tests__/sentryPrivacy.test.js b/src/lib/__tests__/sentryPrivacy.test.js
+new file mode 100644
+index 0000000..487c665
+--- /dev/null
++++ b/src/lib/__tests__/sentryPrivacy.test.js
+@@ -0,0 +1,8 @@
++import {it,expect} from 'vitest';
++import {sentryBeforeSend,monitoringUrl} from '../sentryPrivacy.js';
++it('strips capabilities, business details, local variables and identity from telemetry',()=>{
++ const token='a'.repeat(48),secret='DO_NOT_TRANSMIT';
++ const event={user:{email:secret},extra:{body:{phone:secret}},contexts:{auth:secret},request:{headers:{authorization:secret},data:secret,url:`https://app.aclean.id/status/${token}?key=${secret}`},message:secret,tags:{route:`/api/test?token=${secret}`,customer:secret},breadcrumbs:[{category:'console',message:secret},{category:'fetch',data:{url:`/api/test?token=${secret}`,body:secret}}],exception:{values:[{type:'Error',value:secret,stacktrace:{frames:[{filename:`https://app.aclean.id/assets/x.js?token=${secret}`,vars:{password:secret},context_line:secret}]}}]}};
++ const safe=JSON.stringify(sentryBeforeSend(event));expect(safe).not.toContain(secret);expect(safe).not.toContain(token);expect(safe).toContain('/status/[REDACTED]');expect(event.user.email).toBe(secret);
++});
++it('normalizes relative and external URLs without queries or credentials',()=>{expect(monitoringUrl('/api/health?token=test')).toBe('/api/health');expect(monitoringUrl('https://u:p@fixture.invalid/a#secret')).toBe('https://fixture.invalid/a');});
+diff --git a/src/lib/__tests__/voucherApi.test.js b/src/lib/__tests__/voucherApi.test.js
+new file mode 100644
+index 0000000..d978ec0
+--- /dev/null
++++ b/src/lib/__tests__/voucherApi.test.js
+@@ -0,0 +1,27 @@
++import {beforeEach,afterEach,describe,it,expect,vi} from 'vitest';
++vi.mock('../../../api/_auth.js',()=>({checkRateLimit:vi.fn(()=>true)}));
++import {validateVoucher,applyInvoiceVoucher,claimVoucher,cancelVoucher,adminVouchers,customerVouchers} from '../../../api/_handlers/voucher.js';
++const id='10000000-0000-4000-8000-000000000001';
++const body={code:'ACL-FIXTURE',invoice_id:'A',edit:{lines:[{nama:'Cleaning',jumlah:1,harga_satuan:100000,keterangan:'jasa'}]},request_id:'20000000-0000-4000-8000-000000000001',expected_updated_at:'2026-11-12T00:00:00Z',quote_hash:'a'.repeat(64)};
++const req=(patch={})=>({method:'POST',body,appClaims:{userId:id,role:'Owner'},...patch});
++const res=()=>({setHeader:vi.fn(),status(n){this.code=n;return this;},json(data){this.data=data;return this;}});
++const json=(data,status=200)=>new Response(JSON.stringify(data),{status});
++let fetcher;
++beforeEach(()=>{vi.stubEnv('SUPABASE_URL','https://fixture.invalid');vi.stubEnv('SUPABASE_SERVICE_KEY','fixture');fetcher=vi.fn(async(url,opts)=>{
++ if(url.includes('/user_profiles?'))return json([{id,name:'Owner Fiktif',role:'Owner',active:true}]);
++ if(url.includes('/invoices?'))return json([{id:'A',customer:'Fiktif',phone:'6281234567890'}]);
++ if(url.includes('voucher_quote_241'))return json({voucher:{id:'v',code:'ACL-FIXTURE',type:'discount_pct',value:10},discount:10000,total:90000});
++ if(url.includes('save_invoice_voucher_241'))return json({invoice:{id:'A',total:90000,voucher_code:'ACL-FIXTURE'}});
++ return json({ok:true});
++});vi.stubGlobal('fetch',fetcher);});
++afterEach(()=>{vi.unstubAllGlobals();vi.unstubAllEnvs();});
++describe('voucher API guards and atomic entrypoint',()=>{
++ it('preview never claims, server recomputes summary',async()=>{const r=res();await validateVoucher(req(),r);expect(r.code).toBe(200);expect(fetcher.mock.calls.map(c=>c[0]).some(x=>x.includes('save_invoice'))).toBe(false);const p=JSON.parse(fetcher.mock.calls.at(-1)[1].body);expect(p.p_edit.labor).toBe(100000);expect(p.p_edit.material).toBe(0);});
++ it('only one RPC writes invoice and claim',async()=>{const r=res();await applyInvoiceVoucher(req(),r);expect(r.code).toBe(200);const writes=fetcher.mock.calls.filter(c=>c[1].method!=='GET');expect(writes).toHaveLength(1);expect(writes[0][0]).toContain('/rpc/save_invoice_voucher_241');expect(JSON.parse(writes[0][1].body).p_request).toBe(body.request_id);});
++ it.each(['Teknisi','Helper','Finance'])('rejects %s before service access',async role=>{const r=res();await cancelVoucher(req({appClaims:{userId:id,role}}),r);expect(r.code).toBe(403);expect(fetcher).not.toHaveBeenCalled();});
++ it('rechecks deactivated Owner profile',async()=>{fetcher.mockResolvedValueOnce(json([{id,name:'Fiktif',role:'Owner',active:false}]));const r=res();await validateVoucher(req(),r);expect(r.code).toBe(403);expect(fetcher).toHaveBeenCalledTimes(1);});
++ it('dependency failure stays 503, never changes to auth denial or empty list',async()=>{fetcher.mockRejectedValue(new Error('fixture down'));const r=res();await adminVouchers(req({method:'GET',query:{}}),r);expect(r.code).toBe(503);expect(r.data.vouchers).toBeUndefined();});
++ it('legacy standalone claim is rejected without mutation',async()=>{const r=res();await claimVoucher(req(),r);expect(r.code).toBe(409);expect(fetcher.mock.calls.every(c=>c[1].method==='GET')).toBe(true);});
++ it('expired portal denied and cancelled vouchers excluded in database query',async()=>{fetcher.mockImplementation(async url=>url.includes('customer_tokens')?json([{phone:'081234567890',expires_at:null}]):json([]));const r=res();await customerVouchers(req({method:'GET',query:{token:'a'.repeat(48)}}),r);expect(r.code).toBe(200);const u=new URL(fetcher.mock.calls.at(-1)[0]);expect(u.searchParams.get('is_valid')).toBe('eq.true');expect(u.searchParams.get('and')).toContain('expires_at.is.null');});
++ it('portal dependency failure is visible',async()=>{fetcher.mockRejectedValue(new Error('down'));const r=res();await customerVouchers(req({method:'GET',query:{token:'a'.repeat(48)}}),r);expect(r.code).toBe(503);});
++});
+diff --git a/src/lib/__tests__/voucherAutomation.test.js b/src/lib/__tests__/voucherAutomation.test.js
+new file mode 100644
+index 0000000..5b8a4f0
+--- /dev/null
++++ b/src/lib/__tests__/voucherAutomation.test.js
+@@ -0,0 +1,33 @@
++import {beforeEach,describe,it,expect,vi} from 'vitest';
++vi.mock('../../../api/_tasks/_shared.js',()=>({sb:{},isCronJobEnabled:(map,key)=>!map.cron_jobs||JSON.parse(map.cron_jobs).find(j=>j.backendKey===key)?.active!==false}));
++vi.mock('../../../api/_wa-workspace.js',async importOriginal=>({...await importOriginal(),deliverWorkspaceMessage:vi.fn()}));
++import {runVoucherTask,voucherMessageId} from '../../../api/_tasks/vouchers.js';
++import {dispatchWorkspaceMessage} from '../../../api/_wa-workspace.js';
++const voucher={id:'10000000-0000-4000-8000-000000000001',phone:'081234567890',customer_name:'Fiktif',code:'ACL-FIXTURE',type:'discount_pct',value:10,description:'Hadiah fiktif',expires_at:'2099-01-01'};
++function fixture({enabled=true,cronActive=true,updateFail=false,dbFail=false}={}) {
++ const calls=[];
++ const db={rpc:vi.fn(async()=>({data:{issued:1},error:null})),from(table){
++  const q={table,write:false};const chain={};
++  for(const method of ['select','in','eq','is','not','or','gte','lte','order','limit','update'])chain[method]=(...args)=>{calls.push({table,method,args});if(method==='update')q.write=true;return chain;};
++  chain.then=(resolve,reject)=>Promise.resolve(dbFail?{error:{message:'fixture down'}}:table==='app_settings'?{data:['loyalty','winback','expiry_reminder'].map(kind=>({key:`voucher_${kind}_enabled`,value:String(enabled)})).concat([{key:'cron_jobs',value:JSON.stringify([{backendKey:'voucher_loyalty_enabled',active:cronActive}])}])}:q.write?updateFail?{error:{message:'fixture update failure'}}:{data:[{id:voucher.id}]}:{data:[voucher]}).then(resolve,reject);return chain;
++ }};return {db,calls};
++}
++beforeEach(()=>vi.clearAllMocks());
++describe('independent voucher tasks and durable message IDs',()=>{
++ it('standalone OFF or cron OFF never issues or sends',async()=>{for(const option of [{enabled:false},{cronActive:false}]){const {db}=fixture(option),deliver=vi.fn();expect(await runVoucherTask('loyalty',{db,deliver})).toEqual({skipped:true});expect(db.rpc).not.toHaveBeenCalled();expect(deliver).not.toHaveBeenCalled();}});
++ it.each(['loyalty','winback'])('%s runs without rating/portal/service reminder toggles',async kind=>{const {db}=fixture();const dispatch=vi.fn(async()=>({status:'ACCEPTED'}));const r=await runVoucherTask(kind,{db,dispatch});expect(db.rpc).toHaveBeenCalledWith('issue_vouchers_241',{p_kind:kind,p_limit:5});expect(r.sent).toBe(1);expect(dispatch.mock.calls[0][2].kind).toBe('TEXT');});
++ it('database outages are errors, never empty success',async()=>{await expect(runVoucherTask('loyalty',{db:fixture({dbFail:true}).db})).rejects.toThrow(/Database/);});
++ it('an accepted send followed by tracking failure cannot send twice',async()=>{
++  const {db}=fixture({updateFail:true}),outbox=new Map();let providerCalls=0;
++  db.rpc=vi.fn(async(name,args)=>{
++   if(name==='issue_vouchers_241')return {data:{issued:0}};
++   if(name==='claim_wa_send'){const row=outbox.get(args.p_id);if(row)return {data:{claimed:false,row}};const pending={id:args.p_id,status:'SENDING',payload:args.p_payload};outbox.set(args.p_id,pending);return {data:{claimed:true,row:pending}};}
++   const row={...outbox.get(args.p_id),status:args.p_status};outbox.set(args.p_id,row);return {data:row};
++  });
++  const deliver=async()=>{providerCalls++;return {status:'ACCEPTED'};};
++  for(let n=0;n<2;n++)await expect(runVoucherTask('expiry',{db,dispatch:dispatchWorkspaceMessage,deliver})).rejects.toThrow(/Database/);
++  expect(providerCalls).toBe(1);
++ });
++ it('uncertain/audit-pending outcomes are retained for review and never marked sent',async()=>{const {db,calls}=fixture();const r=await runVoucherTask('loyalty',{db,dispatch:async()=>({status:'ACCEPTED',audit_pending:true})});expect(r.review_required).toBe(1);expect(calls.find(c=>c.method==='update').args[0]).toEqual({issued_message_sent:false,issued_message_status:'UNCERTAIN'});});
++ it('expiry boundaries use WIB; issuance and expiry have separate stable IDs',async()=>{const {db,calls}=fixture();await runVoucherTask('expiry',{db,dispatch:async()=>({status:'ACCEPTED'}),today:'2026-11-13'});expect(calls.find(c=>c.method==='lte').args).toEqual(['expires_at','2026-11-16']);expect(voucherMessageId(voucher.id,'issuance')).not.toBe(voucherMessageId(voucher.id,'expiry'));});
++});
+diff --git a/src/lib/__tests__/voucherPolicy.test.js b/src/lib/__tests__/voucherPolicy.test.js
+new file mode 100644
+index 0000000..7108df0
+--- /dev/null
++++ b/src/lib/__tests__/voucherPolicy.test.js
+@@ -0,0 +1,24 @@
++import {describe,it,expect} from 'vitest';
++import {normalizeVoucherEdit,calculateVoucherBenefit,voucherTodayWib,voucherPhone} from '../voucherPolicy.js';
++import {computePph23} from '../invoicing.js';
++const invoice={id:'FIXTURE',customer:'Fiktif'};
++const lines=[{nama:'Cleaning AC',jumlah:2,harga_satuan:100000,keterangan:'jasa'},{nama:'Cleaning AC besar',jumlah:1,harga_satuan:150000,keterangan:'jasa'},{nama:'Transport',jumlah:1,harga_satuan:50000,keterangan:'jasa'},{nama:'Kapasitor',jumlah:1,harga_satuan:200000,keterangan:'barang'}];
++const edit=patch=>normalizeVoucherEdit(invoice,{lines,manual_discount:0,...patch});
++describe('voucher policy',()=>{
++ it('percentage excludes materials and fixed fees',()=>expect(calculateVoucherBenefit({type:'discount_pct',value:10},edit())).toMatchObject({benefit:35000,discount:35000,total:565000}));
++ it('free units use cheapest complete Cleaning units',()=>expect(calculateVoucherBenefit({type:'free_unit',value:3},edit()).benefit).toBe(350000));
++ it('free service excludes material and fixed fees',()=>expect(calculateVoucherBenefit({type:'free_service'},edit()).total).toBe(250000));
++ it('best discount never stacks or lowers a manual discount',()=>{
++   expect(()=>calculateVoucherBenefit({type:'discount_pct',value:10},edit({manual_discount:50000}))).toThrow(/tidak menambah/);
++   expect(calculateVoucherBenefit({type:'discount_pct',value:10},edit({manual_discount:10000}))).toMatchObject({discount:35000,voucher_discount:25000,total:565000});
++ });
++ it('caps benefit after line discount and trade-in; total cannot be negative',()=>{
++  const e=edit({lines:[...lines,{nama:'Potongan',jumlah:1,harga_satuan:-200000,keterangan:'diskon'}],trade_in:true,trade_in_amount:350000});
++  expect(()=>calculateVoucherBenefit({type:'free_service'},e)).toThrow(/tidak menambah/);
++  expect(calculateVoucherBenefit({type:'free_service'},e,{alreadyRedeemed:true})).toMatchObject({benefit:0,total:50000});
++ });
++ it.each([0.02,0.025])('retains existing PPh gross-up for %s',pph23_rate=>expect(edit({pph23:true,pph23_rate}).pph23_amount).toBe(computePph23(400000,pph23_rate).amount));
++ it.each([NaN,Infinity,-1,0.5])('rejects invalid manual amount %s',manual_discount=>expect(()=>edit({manual_discount})).toThrow());
++ it.each([{jumlah:0},{harga_satuan:Infinity},{subtotal:NaN},{subtotal:1},{nama:null}])('rejects tampered line %j',patch=>expect(()=>edit({lines:[{...lines[0],...patch}]})).toThrow());
++ it('uses WIB date at UTC day boundary and canonical phones',()=>{expect(voucherTodayWib(new Date('2026-11-12T18:00:00Z'))).toBe('2026-11-13');expect(voucherPhone('0812 3456 7890')).toBe('6281234567890');expect(voucherPhone('+81 9012345678')).toBe('819012345678');});
++});
+diff --git a/src/lib/sentryPrivacy.js b/src/lib/sentryPrivacy.js
+new file mode 100644
+index 0000000..5e5b0f8
+--- /dev/null
++++ b/src/lib/sentryPrivacy.js
+@@ -0,0 +1,28 @@
++// Applied to frontend and backend events. Operational errors never need portal
++// capabilities, business payloads, credentials, customer names or form contents.
++export function monitoringUrl(value) {
++  if(typeof value!=='string')return value;
++  try {
++    const absolute=/^https?:\/\//i.test(value),u=new URL(value,'https://monitoring.invalid');
++    const path=u.pathname.replace(/\/(?:[a-f0-9]{48}|(?:mtk|ptk)_[a-z0-9]{40})(?=\/|$)/gi,'/[REDACTED]');
++    return (absolute?u.origin:'')+path;
++  } catch{return '[REDACTED]';}
++}
++export function sentryBeforeSend(event) {
++  const result={...event};
++  delete result.user;delete result.extra;delete result.contexts;delete result.fingerprint;delete result.transaction;
++  if(result.request) result.request={method:result.request.method,url:monitoringUrl(result.request.url)};
++  if(result.message)result.message='Application error';
++  if(result.logentry)result.logentry={message:'Application error'};
++  if(result.exception?.values)result.exception={...result.exception,values:result.exception.values.map(v=>({...v,value:v.type||'Application error',stacktrace:v.stacktrace?{...v.stacktrace,frames:v.stacktrace.frames?.map(f=>{
++    const frame={...f,filename:monitoringUrl(f.filename),abs_path:monitoringUrl(f.abs_path)};
++    delete frame.vars;delete frame.pre_context;delete frame.post_context;delete frame.context_line;return frame;
++  })}:undefined}))};
++  result.breadcrumbs=(result.breadcrumbs||[]).filter(b=>['fetch','xhr','http','navigation'].includes(b.category)).map(b=>({
++    category:b.category,type:b.type,level:b.level,timestamp:b.timestamp,
++    data:{method:b.data?.method,status_code:b.data?.status_code,url:monitoringUrl(b.data?.url),from:monitoringUrl(b.data?.from),to:monitoringUrl(b.data?.to)},
++  }));
++  // Do not attach application-defined tags: route is normalized separately.
++  result.tags=result.tags?{route:monitoringUrl(result.tags.route),method:result.tags.method,component:result.tags.component}:undefined;
++  return result;
++}
+diff --git a/src/lib/voucherClient.js b/src/lib/voucherClient.js
+new file mode 100644
+index 0000000..a9c4d48
+--- /dev/null
++++ b/src/lib/voucherClient.js
+@@ -0,0 +1,16 @@
++export function voucherEditDraft(invoice, form, jasa, material) {
++  return { lines: [
++    ...jasa.filter(l => l.nama && Number(l.jumlah)>0).map(({category,...l})=>({...l,keterangan:'jasa'})),
++    ...material.filter(l => l.nama && Number(l.jumlah)>0).map(({category,...l})=>({...l,keterangan:['barang','freon','diskon'].includes(String(l.keterangan||'').toLowerCase())?l.keterangan:'barang'})),
++  ], manual_discount: Number(form.discount || 0), trade_in: Boolean(form.trade_in), trade_in_amount: Number(form.trade_in_amount || 0),
++  pph23: Boolean(form.pph23), pph23_rate: Number(form.pph23_rate || 0.02), customer: form.billing_name ?? invoice.customer,
++  address: form.billing_address ?? invoice.address ?? '' };
++}
++export async function voucherRequest(path, body, apiHeaders, fetchImpl = fetch) {
++  let response;
++  try { response = await fetchImpl(path, { method: 'POST', headers: await apiHeaders(), body: JSON.stringify(body), signal: AbortSignal.timeout(25000) }); }
++  catch { throw Object.assign(new Error('Hasil simpan belum terkonfirmasi. Gunakan tombol konfirmasi ulang; ID transaksi tetap sama.'), { uncertain: true }); }
++  const result = await response.json().catch(() => null);
++  if (!response.ok || !result) throw Object.assign(new Error(result?.error || 'Layanan voucher tidak tersedia'), { uncertain: response.status>=500 || !result, status: response.status });
++  return result;
++}
+diff --git a/src/lib/voucherPolicy.js b/src/lib/voucherPolicy.js
+new file mode 100644
+index 0000000..310c210
+--- /dev/null
++++ b/src/lib/voucherPolicy.js
+@@ -0,0 +1,80 @@
++import { normalizePhone } from './phone.js';
++import { BILLING_CATEGORY, lineCategory, normalizeLines, summarize, computePph23, PPH23_RATE, PPH23_RATE_ALT } from './invoicing.js';
++
++export const VOUCHER_POLICY_VERSION = '241-best-jasa';
++export const voucherTodayWib = (now = new Date()) => now.toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
++const amount = (value, field) => {
++  const n = Number(value ?? 0);
++  if (!Number.isFinite(n) || n < 0 || n > 1e12 || !Number.isInteger(n)) throw new Error(`${field} tidak valid`);
++  return n;
++};
++
++// Shared preview/server normalization. The server always repeats this; client totals are not trusted.
++export function normalizeVoucherEdit(invoice, input) {
++  if (!invoice?.id || !Array.isArray(input?.lines) || !input.lines.length || input.lines.length > 200) throw new Error('Rincian invoice wajib tersedia (maksimum 200 baris)');
++  const lines = normalizeLines(input.lines.map(line => {
++    const qty = Number(line.jumlah), price = Number(line.harga_satuan);
++    if (typeof line.nama !== 'string' || !line.nama.trim() || !Number.isFinite(qty) || qty <= 0 || qty > 1e6 || !Number.isFinite(price) || Math.abs(price) > 1e12 || !Number.isInteger(price)) throw new Error('Jumlah/harga item tidak valid');
++    const product = qty * price;
++    const subtotal = Math.sign(product) * Math.round(Math.abs(product));
++    if (!Number.isSafeInteger(subtotal) || Math.abs(subtotal) > 1e12) throw new Error('Subtotal item tidak valid');
++    if (line.subtotal != null && (!Number.isFinite(Number(line.subtotal)) || Math.abs(Number(line.subtotal) - subtotal) > 1)) throw new Error('Subtotal tidak sesuai jumlah × harga');
++    const row = { ...line, nama: line.nama.trim().slice(0, 240), jumlah: qty, harga_satuan: price, subtotal };
++    if (subtotal < 0 && lineCategory(row) !== BILLING_CATEGORY.DISCOUNT) throw new Error('Nilai negatif hanya untuk potongan');
++    return row;
++  }));
++  const summary = summarize(lines);
++  const manual = amount(input.manual_discount, 'Diskon manual');
++  const trade = input.trade_in ? amount(input.trade_in_amount, 'Trade-in') : 0;
++  if (manual + trade + summary.lineDiscount > summary.grossTotal) throw new Error('Potongan melebihi nilai invoice');
++  const rate = Number(input.pph23_rate ?? 0.02);
++  if (![PPH23_RATE, PPH23_RATE_ALT].includes(rate)) throw new Error('Tarif PPh 23 tidak valid');
++  if (input.pph23 && summary.labor <= 0) throw new Error('PPh 23 memerlukan nilai jasa');
++  const customer = String(input.customer ?? invoice.customer ?? '').trim();
++  if (!customer || customer.length > 240) throw new Error('Nama tagihan tidak valid');
++  return {
++    policy_version: VOUCHER_POLICY_VERSION, lines,
++    labor: amount(summary.labor, 'Jasa'), material: amount(summary.material, 'Material'),
++    line_discount: amount(summary.lineDiscount, 'Potongan baris'), manual_discount: manual,
++    trade_in: Boolean(input.trade_in), trade_in_amount: trade,
++    pph23: Boolean(input.pph23), pph23_rate: rate,
++    pph23_amount: input.pph23 ? computePph23(summary.labor, rate).amount : 0,
++    customer, address: String(input.address ?? invoice.address ?? '').slice(0, 2000),
++  };
++}
++
++export function calculateVoucherBenefit(voucher, edit, { alreadyRedeemed = false } = {}) {
++  const value = Number(voucher.value ?? (voucher.type === 'free_service' ? 1 : 0));
++  const eligible = edit.lines.filter(line => lineCategory(line) === BILLING_CATEGORY.LABOR && line.subtotal > 0);
++  // Existing line reductions/trade-in reduce eligible labor first, so a voucher
++  // cannot turn an already-waived service into a material discount.
++  const eligibleNet=Math.max(0,eligible.reduce((n,l)=>n+l.subtotal,0)-edit.line_discount-edit.trade_in_amount);
++  let benefit = 0;
++  if (voucher.type === 'discount_pct') {
++    if (!(value > 0 && value <= 100)) throw new Error('Persentase voucher tidak valid');
++    benefit = Math.round(eligibleNet * value / 100);
++  } else if (voucher.type === 'free_unit') {
++    if (!Number.isInteger(value) || value < 1 || value > 100) throw new Error('Jumlah unit voucher tidak valid');
++    let remaining = value;
++    for (const line of eligible.filter(l => /cleaning|cuci|pembersihan/i.test(l.nama)).sort((a,b) => a.harga_satuan - b.harga_satuan)) {
++      const qty = Math.min(remaining, Math.floor(line.jumlah));
++      benefit += qty * line.harga_satuan; remaining -= qty;
++      if (!remaining) break;
++    }
++    benefit = Math.round(benefit);
++  } else if (voucher.type === 'free_service') benefit = eligibleNet;
++  else throw new Error('Jenis voucher tidak didukung');
++  const available = Math.max(0, edit.labor + edit.material - edit.line_discount - edit.trade_in_amount);
++  benefit = Math.min(benefit, eligibleNet, available);
++  const discount = Math.max(edit.manual_discount, benefit);
++  const incremental = discount - edit.manual_discount;
++  if (!alreadyRedeemed && incremental <= 0) throw new Error('Voucher tidak menambah potongan. Simpan tanpa voucher agar voucher tetap tersedia.');
++  return { benefit, discount, voucher_discount: incremental, manual_discount: edit.manual_discount,
++    total: available - discount, policy_version: VOUCHER_POLICY_VERSION };
++}
++
++export function voucherPhone(phone) {
++  const value = normalizePhone(phone);
++  if (!/^\d{8,15}$/.test(value)) throw new Error('Nomor pelanggan tidak valid');
++  return value;
++}

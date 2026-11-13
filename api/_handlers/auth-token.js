@@ -144,12 +144,12 @@ export async function health(req, res) {
   if (typeof component !== "string" || !["overall", "database", "auth", "app"].includes(component)) {
     return res.status(400).json({ error: "Komponen health tidak dikenal" });
   }
-  // The app-only probe lets an external monitor distinguish a Vercel outage
+  // The app-only probe lets an external monitor distinguish an application/ingress outage
   // from an upstream Supabase outage without making any database request.
   if (component === "app") {
     res.setHeader("Cache-Control", "no-store");
     return res.status(200).json({ status: "healthy", component: "app", component_status: "ok",
-      timestamp: new Date().toISOString(), version: (process.env.ACLEAN_BUILD_SHA || process.env.VERCEL_GIT_COMMIT_SHA)?.slice(0, 7) || "dev" });
+      timestamp: new Date().toISOString(), version: (process.env.SOURCE_COMMIT || process.env.ACLEAN_BUILD_SHA || process.env.VERCEL_GIT_COMMIT_SHA)?.slice(0, 7) || "dev" });
   }
   const result = await checkHealth();
   const componentStatus = selectHealthComponent(result, component);

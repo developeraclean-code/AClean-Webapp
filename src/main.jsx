@@ -4,6 +4,7 @@ import App from './App.jsx'
 import EmergencyModeView from './views/EmergencyModeView.jsx'
 import { getEmergencyVaultMeta } from './lib/emergencyVault.js'
 import * as Sentry from "@sentry/react"
+import { sentryBeforeSend } from "./lib/sentryPrivacy.js"
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
@@ -16,14 +17,16 @@ if ("serviceWorker" in navigator) {
 if (import.meta.env.VITE_SENTRY_DSN) {
   Sentry.init({
     dsn: import.meta.env.VITE_SENTRY_DSN,
-    environment: import.meta.env.MODE,
-    tracesSampleRate: 1.0,
-    beforeSend(event, hint) {
+    environment: import.meta.env.VITE_SENTRY_ENVIRONMENT || import.meta.env.MODE,
+    release: import.meta.env.VITE_APP_BUILD_SHA || undefined,
+    sendDefaultPii: false,
+    tracesSampleRate: 0,
+    beforeSend(event) {
       // Skip noisy errors (optional)
       if (event.exception?.values?.[0]?.type === "ChunkLoadError") {
         return null; // Chunk load errors sudah ditangani dengan reload
       }
-      return event;
+      return sentryBeforeSend(event);
     }
   });
 }

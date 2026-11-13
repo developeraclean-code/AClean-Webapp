@@ -1244,13 +1244,13 @@ function SettingsView({
                   {
                     key: "voucher_loyalty_enabled",
                     label: "Voucher Loyalty Otomatis",
-                    desc: "Beri voucher otomatis saat milestone: 2x (diskon 5%), 5x (diskon 10%), 10x (1 unit gratis), 15x (diskon 15%).",
+                    desc: "Milestone order PAID per nomor pelanggan: 2x (5% jasa), 5x (10% jasa), 10x (1 unit Cleaning), 15x (15% jasa). Aktivasi pertama mencatat posisi awal; tidak mengirim hadiah riwayat lama. Tidak bergantung pada fitur rating.",
                     icon: "🎁",
                   },
                   {
                     key: "voucher_winback_enabled",
                     label: "Voucher Win-Back (Inactive >180 hari)",
-                    desc: "Kirim diskon 10% ke customer yang >6 bulan tidak servis. Cooldown 30 hari per customer.",
+                    desc: "Diskon 10% jasa untuk pelanggan ≥180 hari tidak servis dan tanpa order aktif. Satu voucher per periode tidak aktif, dengan jeda minimum 30 hari. Tidak bergantung pada reminder servis.",
                     icon: "💌",
                   },
                   {

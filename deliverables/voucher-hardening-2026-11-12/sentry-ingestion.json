@@ -1,0 +1,19 @@
+{
+  "scope": "synthetic local SDK probe to existing DSNs; does not prove production instrumentation or dashboard alerts",
+  "results": [
+    {
+      "component": "VITE_SENTRY_DSN",
+      "event_id": "04741914690449c6bdc0827a6b442577",
+      "http_status": 200,
+      "flushed": true,
+      "ingestion_accepted": true
+    },
+    {
+      "component": "SENTRY_DSN",
+      "event_id": "0d3b7fc9fbae481bb6d90390d85298b3",
+      "http_status": 200,
+      "flushed": true,
+      "ingestion_accepted": true
+    }
+  ]
+}

@@ -5,7 +5,7 @@ Jangan menjadwalkan monitor utama dengan `pg_cron`: saat database tidak bisa men
 koneksi, job tersebut juga gagal dan tidak dapat mengirim alert.
 
 Setelah versi ini ter-deploy, buat monitor HTTP GET berikut pada layanan uptime itu.
-Set tujuan email ke `developer.aclean@gmail`; beri nama persis seperti tabel agar
+Set tujuan email ke alamat notifikasi yang dikonfirmasi Owner; beri nama seperti tabel agar
 subjek email langsung menunjukkan jalur yang terdampak.
 
 | Nama monitor | URL | Makna HTTP 503 / tidak terjangkau |
@@ -36,7 +36,15 @@ Respons JSON `/api/health` menyertakan `diagnosis`:
 - `none`: kedua probe sehat.
 
 Klasifikasi ini menunjukkan **jalur yang gagal**, bukan penyebab host yang pasti.
-Untuk mengetahui alasan restart, OOM, limit koneksi, atau gangguan pooler,
-tetap perlukan metrik historis serta log infrastruktur dari Supabase Support.
+Untuk mengetahui alasan restart, OOM, limit koneksi, atau gangguan pooler pada
+VPS self-hosted, periksa metrik VPS, Docker, PostgreSQL, dan proxy.
 Email baru aktif setelah monitor eksternal dan alamat penerimanya dikonfigurasi;
 perubahan kode saja tidak mengirim email.
+
+## Pemeriksaan 12 November 2026
+
+Ketiga endpoint di atas merespons HTTP 200 saat diperiksa langsung. Belum ada
+akses terverifikasi ke akun layanan uptime eksternal, sehingga URL monitor,
+status aktif, histori incident dan penerima notifikasi belum dinyatakan benar.
+Tidak ditemukannya container Uptime Kuma di VPS juga tidak membuktikan monitor
+eksternal mati. Bukti: [monitoring-readonly.json](../deliverables/voucher-hardening-2026-11-12/monitoring-readonly.json).

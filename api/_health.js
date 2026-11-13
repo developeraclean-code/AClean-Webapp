@@ -63,7 +63,7 @@ export function createHealthCheck({ fetchImpl = (...args) => fetch(...args), now
         timestamp: new Date(now()).toISOString(), duration_ms: now() - started,
         checks: { supabase, database: supabase, auth, fonnte, whacenter, wablas,
           ai: providers.length ? `ok:${providers.join(',')}` : 'not_configured' },
-        version: (env.ACLEAN_BUILD_SHA || env.VERCEL_GIT_COMMIT_SHA)?.slice(0, 7) || 'dev' };
+        version: (env.SOURCE_COMMIT || env.ACLEAN_BUILD_SHA || env.VERCEL_GIT_COMMIT_SHA)?.slice(0, 7) || 'dev' };
       expiresAt = now() + ttlMs;
       return cached;
     })().finally(() => { pending = null; });
