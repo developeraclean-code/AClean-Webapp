@@ -23,7 +23,8 @@ dan [sentry-ingestion.json](../deliverables/voucher-hardening-2026-11-12/sentry-
 | `SENTRY_DSN` | Tidak | Ya | Inisialisasi SDK Node dalam container API. |
 | `VITE_SENTRY_ENVIRONMENT` | Ya | Tidak diperlukan | `staging` atau `production` pada frontend. |
 | `SENTRY_ENVIRONMENT` | Tidak | Ya | `staging` atau `production` pada backend, agar hasil build staging tidak berlabel production. |
-| `SOURCE_COMMIT` | Ya, ARG Docker | Ya | Identitas release dan versi health; utamakan SHA source aktual dibanding pin lama `ACLEAN_BUILD_SHA`. |
+| `SOURCE_COMMIT` | Tidak diperlukan | Ya | SHA source aktual dari Coolify untuk backend dan health. |
+| `ACLEAN_BUILD_SHA` | Ya | Ya | Isi SHA yang sama dengan pin kandidat; build ARG ini menjadi `VITE_APP_BUILD_SHA` untuk release frontend. |
 
 Gunakan DSN proyek/environment yang benar pada staging dan production. Jangan
 menambahkan auth token Sentry ke `VITE_*`. Koneksi akun Sentry untuk membaca

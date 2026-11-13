@@ -36,6 +36,7 @@ const server=createServer(async(req,res)=>{
   let body='';for await(const chunk of req)body+=chunk;req.body=body?JSON.parse(body):{};req.appClaims={userId:owner,role:'Owner'};req.query=Object.fromEntries(u.searchParams);requests.push({path:u.pathname,body:req.body});
   res.status=n=>{res.statusCode=n;return res;};res.json=data=>{if(dropResponse&&u.pathname==='/api/apply-invoice-voucher'){dropResponse=false;res.statusCode=200;res.setHeader('Content-Type','application/json');res.end('{');return res;}res.setHeader('Content-Type','application/json');res.end(JSON.stringify(data));return res;};
   if(scenario==='code-change' && u.pathname==='/api/validate-voucher')await new Promise(resolve=>setTimeout(resolve,400));
+  if(scenario==='admin' && u.pathname==='/api/cancel-voucher')await new Promise(resolve=>setTimeout(resolve,400));
   if(apiFailure){res.status(503).json({error:'Fixture dependency outage'});return;}
   const handler={'/api/validate-voucher':api.validateVoucher,'/api/apply-invoice-voucher':api.applyInvoiceVoucher,'/api/admin-vouchers':api.adminVouchers,'/api/cancel-voucher':api.cancelVoucher}[u.pathname];if(!handler)throw new Error('Unexpected route');await handler(req,res);
  }catch(e){if(!res.writableEnded){res.statusCode=500;res.end(JSON.stringify({error:'Fixture HTTP failure'}));}}
@@ -52,7 +53,7 @@ try{
   if(scenario==='admin'){
    await expect(page.getByText('1–50 dari 111')).toBeVisible();await page.getByRole('button',{name:'Berikutnya'}).click();await expect(page.getByText('51–100 dari 111')).toBeVisible();
    apiFailure=true;await page.getByRole('button',{name:'Cari',exact:true}).click();await expect(page.getByRole('alert')).toContainText('belum berhasil');apiFailure=false;await page.getByRole('button',{name:'Coba lagi',exact:true}).click();await expect(page.getByRole('alert')).toHaveCount(0);
-   await page.getByPlaceholder('Cari kode / phone / nama...').fill('ACL-PAGE-001');await page.getByRole('button',{name:'Cari',exact:true}).click();await expect(page.getByText('1–1 dari 1')).toBeVisible();page.on('dialog',d=>d.accept());await page.getByRole('button',{name:'Batalkan',exact:true}).click();await expect.poll(async()=>Number((await db.query("SELECT count(*) n FROM customer_vouchers WHERE code='ACL-PAGE-001' AND is_valid=false")).rows[0].n)).toBe(1);
+   await page.getByPlaceholder('Cari kode / phone / nama...').fill('ACL-PAGE-001');await page.getByRole('button',{name:'Cari',exact:true}).click();await expect(page.getByText('1–1 dari 1')).toBeVisible();page.on('dialog',d=>d.accept());await page.getByRole('button',{name:'Batalkan',exact:true}).click();await page.getByRole('button',{name:'Dibatalkan',exact:true}).click();await expect(page.getByText('ACL-PAGE-001',{exact:true})).toBeVisible();await expect.poll(async()=>Number((await db.query("SELECT count(*) n FROM customer_vouchers WHERE code='ACL-PAGE-001' AND is_valid=false")).rows[0].n)).toBe(1);
   }else{
    await page.getByPlaceholder('Kode voucher (cth: ACL-K3M9P2)').fill('ACL-FIXTURE');await page.getByRole('button',{name:'Cek',exact:true}).click();
    if(scenario==='code-change'){

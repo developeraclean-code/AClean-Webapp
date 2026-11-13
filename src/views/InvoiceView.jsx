@@ -2751,7 +2751,7 @@ function VoucherAdminTab({ voucherError, voucherPage, voucherList, voucherStats,
     : v.type === "free_unit" ? `${v.value} Unit Gratis` : v.type;
 
   return (
-    <div style={{ display: "grid", gap: 14 }}>
+    <fieldset disabled={cancellingId !== null} style={{ display: "grid", gap: 14, border:0, padding:0, margin:0, minWidth:0 }}>
       {/* Stats */}
       {voucherStats && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(90px, 1fr))", gap: 8 }}>
@@ -2832,7 +2832,7 @@ function VoucherAdminTab({ voucherError, voucherPage, voucherList, voucherStats,
         <span>{voucherPage.total_filtered ? voucherPage.offset+1 : 0}–{Math.min(voucherPage.offset+voucherPage.limit,voucherPage.total_filtered)} dari {voucherPage.total_filtered}</span>
         <button disabled={voucherLoading || !voucherPage.has_more} onClick={()=>loadVouchers(voucherFilter,voucherSearch,voucherPage.offset+voucherPage.limit)}>Berikutnya</button>
       </div>}
-    </div>
+    </fieldset>
   );
 }
 
