@@ -314,3 +314,7 @@ monitor existing kini ke app.aclean.id/api/health, UP, interval/contact sama.
 Kontrak dan bukti: [catatan rilis](docs/VOUCHER_HARDENING_2026-11-12.md),
 [panduan Sentry](docs/SENTRY_SETUP.md), dan
 [uptime](docs/SUPABASE_ALERTING.md). Snapshot bertanggal lebih lama tetap historis.
+
+Main menerima PR #13 payment-media recovery setelah rilis kode voucer; pin
+produksi e91b6c6 tidak otomatis memuat perubahan main berikutnya. Tinjau
+kandidat dan migrasi yang sesuai sebelum melepas pin atau deploy ulang.

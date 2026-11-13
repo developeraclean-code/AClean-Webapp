@@ -1,11 +1,14 @@
 # Perbaikan voucer — kandidat lokal 12 November 2026
 
 Rilis terverifikasi **13 November 2026**. PR #12 di-merge ke main sebagai
-`461e74f`; staging dan produksi menjalankan pin **e91b6c6**. Kode aplikasi main
-cocok dengan kandidat yang diuji. Migrasi 241 sudah diterapkan pada keduanya.
+`461e74f`; staging dan produksi menjalankan pin **e91b6c6**. Kode aplikasi pada merge PR #12
+cocok dengan kandidat yang diuji. Perubahan main setelahnya tidak otomatis
+masuk deployment karena pin rilis dipertahankan. Migrasi 241 sudah diterapkan pada keduanya.
 Enam tabel bisnis produksi memiliki fingerprint sama sebelum/sesudah migrasi.
-Worktree utama user tetap tidak diubah; nomor 237–240 tetap milik pekerjaan
-keamanan terpisah dan bukan dependensi migrasi ini.
+Worktree utama user tetap tidak diubah; nomor 237–240 saat itu dipesan pekerjaan
+terpisah dan bukan dependensi migrasi ini. Main kemudian menerima migrasi
+237 payment-media recovery pada PR #13; kode PR tersebut tidak termasuk
+deployment e91b6c6 ini.
 
 Otomasi voucer tetap **OFF**. Auto-deploy serta preview deployment juga **OFF**
 agar push berikutnya tidak melewati persetujuan dan pin rilis yang diuji.
