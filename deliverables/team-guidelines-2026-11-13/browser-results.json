@@ -1,0 +1,24 @@
+{
+  "passed": true,
+  "checks": [
+    "legacy-text",
+    "text-save-reload",
+    "image-only-upload-reload-and-failure",
+    "edit-mixed-content",
+    "remove-image",
+    "invalid-image",
+    "failed-save-keeps-draft-no-false-success",
+    "lost-response-no-insert-replay",
+    "section-role-scope",
+    "custom-sop-and-static-posters",
+    "admin-add-delete",
+    "staff-read-only-and-sql-rls",
+    "read-error-retry",
+    "duplicate-and-four-image-limit",
+    "mobile-no-horizontal-overflow"
+  ],
+  "uncaught_errors": 0,
+  "external_writes": false,
+  "database": "disposable PostgreSQL/WASM; migration 128 and existing RLS",
+  "r2": "actual upload handler, intercepted HTTP storage"
+}
