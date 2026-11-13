@@ -32,3 +32,5 @@ Adapter HTTP dapat diuji ulang dengan `node --test deliverables/voucher-hardenin
 - `monitoring-connected-20261113.json`: konfigurasi workflows dan audit awal akun.
 
 Tidak ada event error prioritas tinggi/email percobaan yang sengaja dipicu.
+
+`known-provider-issue.json` mencatat HTTP429 media WhaCenter yang sudah terjadi sebelum rilis; bukan klaim semua task integrasi hijau.

@@ -135,3 +135,13 @@ supabase_admin, pemilik objek baru, dan eksekusi RPC sebagai service_role.
 
 Bukti JSON produksi/staging dan receipt akun monitoring berada dalam
 [folder verifikasi](../deliverables/voucher-hardening-2026-11-12/README.md).
+
+## Catatan operasional terpisah
+
+Task `payment-media-retry` menerima `WhaCenter media HTTP 429`. Riwayat pertama
+yang dibaca 13 November 07:25 WIB, sebelum deployment rilis ini selesai
+09:25 WIB; handler media tidak diubah oleh patch. Tick berikutnya 09:40 WIB
+sukses, tetapi itu tidak membuktikan retry media sudah pulih. Tidak dilakukan
+replay manual, perubahan pembayaran, atau perubahan penjadwal untuk menutupi
+kegagalan provider. Bukti: `known-provider-issue.json`. Ini tetap catatan
+operasional, terpisah dari penerimaan alur voucer/Sentry/UptimeRobot.
