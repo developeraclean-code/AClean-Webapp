@@ -723,6 +723,9 @@ const pendingPayments = useMemo(() => (paymentSuggestions || []).filter(row => r
 const [dismissedPayments, setDismissedPayments] = useState([]);
 const pendingPaymentCount = pendingPayments.length;
 const [loadingPendingPayments, setLoadingPendingPayments] = useState(false);
+const [recoveringMedia, setRecoveringMedia] = useState(false);
+const [recoveryNotice, setRecoveryNotice] = useState("");
+const [mediaHealthRefreshKey, setMediaHealthRefreshKey] = useState(0);
 const [pendingSelectedInvoice, setPendingSelectedInvoice] = useState({}); // { suggestion_id: invoice_id }
 const [pendingPaymentBusy, setPendingPaymentBusy] = useState(null);
 const [manualPickerOpen, setManualPickerOpen] = useState({}); // { suggestion_id: bool }
@@ -755,6 +758,28 @@ const loadPendingPayments = async ({ refreshInbox = true } = {}) => {
   } finally {
     setLoadingPendingPayments(false);
   }
+};
+const recoverPaymentMedia = async () => {
+  if (recoveringMedia) return;
+  setRecoveringMedia(true);
+  setRecoveryNotice("");
+  try {
+    const response = await fetch("/api/payment-media-recover", {
+      method: "POST", headers: { ...(await apiHeaders()), "Content-Type": "application/json" }, body: "{}",
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Pemulihan bukti WA gagal");
+    const notice = result.queued > 0
+      ? `${result.queued} dari ${result.eligible} unduhan sementara diantrekan bertahap. ${result.remaining} masih dapat dicoba nanti. Saran muncul setelah file berhasil disimpan dan AI mengenali bukti pembayaran.`
+      : result.cooldown_until
+        ? `Pemulihan sebelumnya masih berjalan. ${result.eligible} job layak dicoba setelah ${new Date(result.cooldown_until).toLocaleTimeString("id-ID", { timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit" })} WIB.`
+        : "Tidak ada unduhan sementara yang dapat dicoba. Periksa rincian media; untuk URL 404 atau file rusak, lampirkan file asli pada invoice.";
+    setRecoveryNotice(notice);
+    await loadPendingPayments();
+    setMediaHealthRefreshKey(key => key + 1);
+  } catch (error) {
+    setRecoveryNotice(`Pemulihan belum dapat dipastikan: ${error.message}. Perbarui status sebelum mencoba lagi.`);
+  } finally { setRecoveringMedia(false); }
 };
 // Load once when Invoice opens so older pending WA proofs are visible on UNPAID
 // cards. A manual refresh is available; no additional background polling.
@@ -1045,7 +1070,7 @@ return (
 
     {/* Quotation sub-view */}
     {["Owner", "Admin"].includes(currentUser?.role) && ["invoice", "pending_ai"].includes(invoiceSubTab) && (
-      <PaymentInboxHealthPanel apiHeaders={apiHeaders} inbox={paymentInbox} pendingCount={pendingPaymentCount} onOpenPending={() => setInvoiceSubTab("pending_ai")} />
+      <PaymentInboxHealthPanel apiHeaders={apiHeaders} inbox={paymentInbox} pendingCount={pendingPaymentCount} refreshKey={mediaHealthRefreshKey} onOpenPending={() => setInvoiceSubTab("pending_ai")} />
     )}
 
     {invoiceSubTab === "quotation" && (
@@ -1526,11 +1551,12 @@ return (
     )}
     {/* Status filter pills — SIM-3 */}
     {invoiceSubTab === "invoice" && (currentUser?.role === "Owner" || currentUser?.role === "Admin") && (
-      <button onClick={loadPendingPayments} disabled={loadingPendingPayments}
-        style={{ alignSelf: "flex-start", background: cs.card, border: "1px solid " + cs.border, color: cs.accent, borderRadius: 8, padding: "6px 10px", cursor: loadingPendingPayments ? "wait" : "pointer", fontSize: 11 }}>
-        {loadingPendingPayments ? "Memuat bukti WA..." : "↻ Perbarui bukti WA"}
+      <button onClick={recoverPaymentMedia} disabled={recoveringMedia || loadingPendingPayments}
+        style={{ alignSelf: "flex-start", background: cs.card, border: "1px solid " + cs.border, color: cs.accent, borderRadius: 8, padding: "6px 10px", cursor: recoveringMedia || loadingPendingPayments ? "wait" : "pointer", fontSize: 11 }}>
+        {recoveringMedia ? "Mengantrekan bukti WA..." : "↻ Coba pulihkan bukti WA"}
       </button>
     )}
+    {recoveryNotice && <div role="status" style={{ color: cs.muted, fontSize: 11, marginTop: -6 }}>{recoveryNotice}</div>}
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
       {[
         ["Semua", cs.muted],

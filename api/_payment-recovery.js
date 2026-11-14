@@ -54,6 +54,37 @@ export async function paymentMediaRetry(req, res) {
   } catch { return res.status(503).json({ error: "Gagal mengantrekan ulang media" }); }
 }
 
+// Recover a bounded set of transient download failures. The database owns
+// eligibility, serialization and spacing so repeated clicks cannot flood the
+// provider or bypass the per-job retry limit.
+export async function paymentMediaRecover(req, res) {
+  if (req.method !== "POST") return res.status(405).json({ error: "POST required" });
+  res.setHeader("Cache-Control", "no-store");
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_KEY;
+  if (!supabaseUrl || !serviceKey) return res.status(503).json({ error: "Database belum dikonfigurasi" });
+  try {
+    const role = await paymentActor(req, supabaseUrl, serviceKey);
+    if (!["owner", "admin"].includes(role)) return res.status(403).json({ error: "Hanya Owner/Admin dapat memulihkan media" });
+    if (!await detectionEnabled(supabaseUrl, serviceKey)) return res.status(409).json({ error: "Deteksi bukti WA sedang dimatikan" });
+    const response = await fetch(`${supabaseUrl}/rest/v1/rpc/requeue_failed_payment_media_batch_243`, {
+      method: "POST", headers: restHeaders(serviceKey), body: "{}", signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) return res.status(503).json({ error: response.status === 404
+      ? "Migrasi pemulihan bukti WA belum tersedia" : "Pemulihan bukti WA belum dapat dijalankan" });
+    const result = await response.json();
+    if (!Number.isSafeInteger(result?.queued) || result.queued < 0 ||
+        !Number.isSafeInteger(result?.eligible) || result.eligible < 0 ||
+        !Number.isSafeInteger(result?.remaining) || result.remaining < 0) {
+      throw new Error("Invalid recovery result");
+    }
+    return res.status(result.queued > 0 ? 202 : 200).json({
+      queued: result.queued, eligible: result.eligible, remaining: result.remaining,
+      cooldown_until: result.cooldown_until || null,
+    });
+  } catch { return res.status(503).json({ error: "Status pemulihan bukti WA belum dapat dipastikan; perbarui status" }); }
+}
+
 // The invoice upload already put a file in R2. Verify its exact key and bytes,
 // then enqueue it for the existing AI worker without fetching any WA URL.
 export async function paymentMediaManualUpload(req, res) {

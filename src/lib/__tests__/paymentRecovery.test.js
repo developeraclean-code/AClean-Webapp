@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { paymentMediaRetry, paymentMediaManualUpload } from "../../../api/_payment-recovery.js";
+import { paymentMediaRetry, paymentMediaRecover, paymentMediaManualUpload } from "../../../api/_payment-recovery.js";
 
 const actor = { appClaims: { userId: "00000000-0000-4000-8000-000000000001" } };
 const reply = value => new Response(JSON.stringify(value), { status: 200 });
@@ -22,6 +22,23 @@ describe("payment recovery endpoints", () => {
     expect(res.code).toBe(202); expect(res.body).toEqual({ queued: true, status: "FAILED_RETRYABLE" });
     expect(network.mock.calls[2][0]).toContain("requeue_failed_payment_media_237");
     expect(network.mock.calls[2][1].method).toBe("POST");
+  });
+  it("runs bounded recovery through the service-only RPC and returns counts without media URLs", async () => {
+    vi.stubEnv("SUPABASE_URL", "https://db.test"); vi.stubEnv("SUPABASE_SERVICE_KEY", "service");
+    const network = vi.fn(async url => String(url).includes("user_profiles") ? reply([{ role: "Owner", active: true }])
+      : String(url).includes("app_settings") ? reply([{ value: "true" }])
+        : reply({ queued: 3, eligible: 18, remaining: 15, cooldown_until: "2026-11-14T03:00:00Z", source_url: "private" }));
+    vi.stubGlobal("fetch", network);
+    const res = response(); await paymentMediaRecover({ ...actor, method: "POST" }, res);
+    expect(res.code).toBe(202);
+    expect(res.body).toEqual({ queued: 3, eligible: 18, remaining: 15, cooldown_until: "2026-11-14T03:00:00Z" });
+    expect(network.mock.calls[2][0]).toContain("requeue_failed_payment_media_batch_243");
+  });
+  it("rejects recovery for a non-admin before calling the batch RPC", async () => {
+    vi.stubEnv("SUPABASE_URL", "https://db.test"); vi.stubEnv("SUPABASE_SERVICE_KEY", "service");
+    const network = vi.fn(async () => reply([{ role: "Finance", active: true }])); vi.stubGlobal("fetch", network);
+    const res = response(); await paymentMediaRecover({ ...actor, method: "POST" }, res);
+    expect(res.code).toBe(403); expect(network).toHaveBeenCalledTimes(1);
   });
   it("refuses a forged key before reading the invoice or R2", async () => {
     vi.stubEnv("SUPABASE_URL", "https://db.test"); vi.stubEnv("SUPABASE_SERVICE_KEY", "service");

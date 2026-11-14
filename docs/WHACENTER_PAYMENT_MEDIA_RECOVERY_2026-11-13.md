@@ -72,3 +72,32 @@ ini. Klasifikasi/suggestion untuk kelima file belum terkonfirmasi karena
 provider masih membatasi unduhan. Tidak ada invoice/ledger yang diubah
 oleh migrasi atau pemulihan job. Jangan menekan retry berulang saat provider
 masih membalas 429; jeda yang disimpan antrean harus dihormati.
+
+## Audit lanjutan 14 November 2026
+
+Pada 09.34 WIB dashboard menampilkan antrean aktif 0 dan gagal otomatis 48.
+Pembacaan database produksi sekitar 09.40 WIB mengelompokkan 48 job terminal:
+18 unduhan sementara (11 HTTP 429, 7 timeout) tanpa objek R2, 22 URL HTTP 404
+(17 WhaCenter dan 5 Fonnte), serta 8 file yang sudah di R2 tetapi gagal
+validasi format gambar (termasuk satu respons AI `invalid_image_format`).
+Tidak ada alasan untuk membuat suggestion otomatis bagi 30 job 404/format
+rusak. Dari 18 kegagalan sementara, 13 sumber berumur kurang dari 24 jam dan
+5 lebih tua tetapi masih dalam batas pemulihan manual tujuh hari. Kedua job
+pelanggan yang diaudit 13 November kembali terminal setelah provider tetap
+menolak unduhan; keduanya belum punya R2 atau suggestion.
+
+Tombol `Perbarui bukti WA` pada Invoice sebelumnya hanya menjalankan pembacaan
+ulang `payment_suggestions`. Perubahan berikutnya mengubah tindakan di posisi
+itu menjadi `Coba pulihkan bukti WA`: endpoint Owner/Admin menjalankan RPC
+service-only `requeue_failed_payment_media_batch_243`, memilih maksimal tiga
+job 429/timeout yang belum punya suggestion, menjadwalkannya berjarak lima
+menit, dan menerapkan jeda batch 15 menit. Migrasi 243 memberi pemulihan manual
+jendela retry 24 jam dari permintaan manual, tetap dengan batas tujuh percobaan
+untuk kegagalan sementara WhaCenter serta maksimal tiga permintaan manual per
+job. UI menyatakan jumlah yang diantrekan dan tidak menyamakan antrean dengan
+AI selesai atau invoice lunas. HTTP 404 dan file rusak memerlukan file asli
+melalui `Lampirkan Bukti`; klasifikasi sukses tetap perlu tinjauan manusia.
+
+Verifikasi kandidat lokal: 1.809 tes unit, 15 kelompok tes SQL sintetis,
+lint, typecheck, check:migrations, dan build lulus. Ini belum merupakan bukti
+bahwa provider akan mengizinkan 18 URL tersebut diunduh pada produksi.

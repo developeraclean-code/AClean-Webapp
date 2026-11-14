@@ -171,5 +171,28 @@ try {
   for(const role of ['anon','authenticated'])assert.equal((await one('SELECT has_function_privilege($1,$2,$3) ok',[role,'claim_wa_payment_media(uuid)','EXECUTE'])).ok,false);
   assert.equal((await one('SELECT has_function_privilege($1,$2,$3) ok',['service_role','claim_wa_payment_media(uuid)','EXECUTE'])).ok,true);
  });
+ await check('243 limits batch recovery, spaces downloads and gives manual jobs a fresh retry window',async()=>{
+  await db.exec('DELETE FROM payment_suggestions;DELETE FROM wa_payment_media_jobs');
+  const migration243=readFileSync(new URL('../migrations/243_payment_media_batch_recovery.sql',import.meta.url),'utf8');
+  await db.exec(migration243);await db.exec(migration243);
+  for(let n=903;n<=906;n++){
+   await insert(n,{status:'FAILED_PERMANENT',stored:false,age:3000,attempts:7});
+   await db.query("UPDATE wa_payment_media_jobs SET provider='whacenter',last_error='[WA_MEDIA_HTTP_429]' WHERE id=$1",[id(n)]);
+  }
+  await insert(907,{status:'FAILED_PERMANENT',stored:false,age:3000,attempts:7});
+  await db.query("UPDATE wa_payment_media_jobs SET provider='whacenter',last_error='[WA_MEDIA_HTTP_404]' WHERE id=$1",[id(907)]);
+  await insert(908,{status:'FAILED_PERMANENT',stored:true,age:3000,attempts:3});
+  await db.query("UPDATE wa_payment_media_jobs SET provider='whacenter',last_error='invalid_image_format' WHERE id=$1",[id(908)]);
+  const batch=(await one('SELECT requeue_failed_payment_media_batch_243() result')).result;
+  assert.deepEqual({queued:batch.queued,eligible:batch.eligible,remaining:batch.remaining},{queued:3,eligible:4,remaining:1});
+  const queued=await q("SELECT next_retry_at FROM wa_payment_media_jobs WHERE status='FAILED_RETRYABLE' ORDER BY next_retry_at");
+  assert.equal(queued.length,3);
+  assert.ok(new Date(queued[1].next_retry_at)-new Date(queued[0].next_retry_at)>=4*60_000);
+  assert.equal((await one('SELECT requeue_failed_payment_media_batch_243() result')).result.queued,0);
+  const recovered=await claim(9090);assert.equal(recovered.retry_exhausted,false);assert.equal(recovered.manual_retry_count,1);
+  assert.equal((await one('SELECT count(*)::int n FROM invoice_payments')).n,0);
+  for(const role of ['anon','authenticated'])assert.equal((await one('SELECT has_function_privilege($1,$2,$3) ok',[role,'requeue_failed_payment_media_batch_243()','EXECUTE'])).ok,false);
+  assert.equal((await one('SELECT has_function_privilege($1,$2,$3) ok',['service_role','requeue_failed_payment_media_batch_243()','EXECUTE'])).ok,true);
+ });
  console.log(JSON.stringify({passed,syntheticMediaTested:200,productionWrites:0,aiCalls:0,whatsAppSends:0}));
 }finally{await db.close();}
