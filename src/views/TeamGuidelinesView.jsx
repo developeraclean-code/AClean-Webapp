@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { Fragment, useState, useEffect, useCallback, useRef } from "react";
 import { cs } from "../theme/cs.js";
 import TeamGuidelineEditor from "../components/TeamGuidelineEditor.jsx";
 import { parseGuidelineContent } from "../lib/teamGuidelineContent.js";
+import { SOP_GUIDELINE_CATEGORIES, normalizeSopGuidelineCategory, sortSopGuidelines } from "../lib/teamGuidelineCategories.js";
 
 // Existing text and uploaded image references share team_guidelines.content.
 // Owner/Admin manage points; other roles read. Static SOP posters stay available.
@@ -29,6 +30,7 @@ export default function TeamGuidelinesView({ supabase, currentUser, showNotif, s
   const [tab, setTab] = useState("tata_tertib");
   const [sub, setSub] = useState("teknisi"); // teknisi | helper (untuk tab role-scoped)
   const [sopKey, setSopKey] = useState(SOP_DOCS[0].key); // dokumen SOP aktif (tab "sop")
+  const [sopCategoryFilter, setSopCategoryFilter] = useState("all");
   const [editId, setEditId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -63,6 +65,9 @@ export default function TeamGuidelinesView({ supabase, currentUser, showNotif, s
   const items = rows
     .filter((r) => r.section === tab && r.role_scope === scope && (canEdit || (r.content || "").trim() !== ""))
     .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  const visibleItems = tab === "sop"
+    ? sortSopGuidelines(items).filter(row => sopCategoryFilter === "all" || normalizeSopGuidelineCategory(row.category) === sopCategoryFilter)
+    : items;
 
   const startEdit = (row) => { setAdding(false); setEditId(row.id); };
   const cancelEdit = () => { setEditId(null); };
@@ -71,21 +76,25 @@ export default function TeamGuidelinesView({ supabase, currentUser, showNotif, s
     if (await load()) { cancelEdit(); cancelAdd(); }
   };
 
-  const savePoint = async (content, row = null) => {
+  const savePoint = async (content, selectedCategory = "umum", row = null) => {
     if (!canEdit || mutationLock.current) throw new Error("Perubahan belum dapat disimpan");
     mutationLock.current = true;
     try {
-      const patch = { content, updated_at: new Date().toISOString(), updated_by: currentUser?.name || null };
+      const category = tab === "sop" ? normalizeSopGuidelineCategory(selectedCategory) : "umum";
+      const patch = { content, category, updated_at: new Date().toISOString(), updated_by: currentUser?.name || null };
+      const maxOrder = rows.filter(r => r.section === tab && r.role_scope === scope
+        && normalizeSopGuidelineCategory(r.category) === category)
+        .reduce((max, r) => Math.max(max, r.sort_order || 0), 0);
+      if (row && normalizeSopGuidelineCategory(row.category) !== category) patch.sort_order = maxOrder + 1;
       let result;
       if (row) result = await supabase.from("team_guidelines").update(patch).eq("id", row.id).select().single();
       else {
-        const maxOrder = rows.filter(r => r.section === tab && r.role_scope === scope)
-          .reduce((max, r) => Math.max(max, r.sort_order || 0), 0);
         result = await supabase.from("team_guidelines").insert({ ...patch, section: tab, role_scope: scope, sort_order: maxOrder + 1 }).select().single();
       }
       if (result.error) throw new Error("Gagal simpan: " + result.error.message);
       if (!result.data?.id) throw new Error("Penyimpanan belum terkonfirmasi. Muat ulang sebelum mencoba lagi.");
       setRows(previous => row ? previous.map(r => r.id === row.id ? result.data : r) : [...previous, result.data]);
+      if (tab === "sop" && sopCategoryFilter !== "all") setSopCategoryFilter(category);
       cancelEdit(); cancelAdd(); showNotif?.("✅ Poin tersimpan");
     } finally { mutationLock.current = false; }
   };
@@ -195,22 +204,49 @@ export default function TeamGuidelinesView({ supabase, currentUser, showNotif, s
 
       {/* Daftar poin */}
       {tab === "sop" && <div style={{ marginTop: 18, marginBottom: 10, color: cs.text, fontWeight: 700 }}>Panduan SOP tambahan</div>}
+      {tab === "sop" && !loading && !loadError && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 12, color: cs.muted, marginBottom: 7 }}>Kategori panduan tambahan</div>
+          <div role="group" style={{ display: "flex", gap: 6, flexWrap: "wrap" }} aria-label="Filter kategori panduan SOP">
+            {[{ key: "all", label: "Semua" }, ...SOP_GUIDELINE_CATEGORIES].map(category => {
+              const count = category.key === "all" ? items.length
+                : items.filter(row => normalizeSopGuidelineCategory(row.category) === category.key).length;
+              const active = sopCategoryFilter === category.key;
+              return <button key={category.key} type="button" disabled={saving} aria-pressed={active}
+                onClick={() => { setSopCategoryFilter(category.key); cancelEdit(); cancelAdd(); }}
+                style={{ padding: "6px 11px", borderRadius: 99, cursor: "pointer", fontSize: 12,
+                  border: "1px solid " + (active ? cs.accent : cs.border),
+                  background: active ? cs.accent + "22" : cs.surface,
+                  color: active ? cs.accent : cs.muted, fontWeight: active ? 700 : 500 }}>
+                {category.label} ({count})
+              </button>;
+            })}
+          </div>
+        </div>
+      )}
       {loading ? (
         <div style={{ textAlign: "center", color: cs.muted, fontSize: 13, padding: 24 }}>Memuat…</div>
       ) : loadError ? (
         <div role="alert" style={{ color: cs.red, padding: 16 }}>{loadError} <button onClick={load}>Coba lagi</button></div>
-      ) : items.length === 0 ? (
+      ) : visibleItems.length === 0 ? (
         <div style={{ background: cs.surface, border: "1px dashed " + cs.border, borderRadius: 12, padding: 20, textAlign: "center", fontSize: 12.5, color: cs.muted }}>
-          Belum ada isi untuk bagian ini.
+          {tab === "sop" && sopCategoryFilter !== "all" ? "Belum ada panduan dalam kategori ini." : "Belum ada isi untuk bagian ini."}
         </div>
       ) : (
         <div style={{ display: "grid", gap: 8 }}>
-          {items.map((row, idx) => {
+          {visibleItems.map((row, idx) => {
             const isEditing = editId === row.id;
             const parsed = parseGuidelineContent(row.content);
             const empty = !parsed.text && !parsed.images.length;
+            const category = normalizeSopGuidelineCategory(row.category);
+            const previousCategory = idx > 0 ? normalizeSopGuidelineCategory(visibleItems[idx - 1].category) : null;
+            const categoryLabel = SOP_GUIDELINE_CATEGORIES.find(option => option.key === category)?.label || "Umum";
             return (
-              <div key={row.id} style={{
+              <Fragment key={row.id}>
+              {tab === "sop" && category !== previousCategory && <div style={{ marginTop: idx ? 10 : 0, color: cs.accent, fontSize: 13, fontWeight: 700 }}>
+                {categoryLabel}
+              </div>}
+              <div style={{
                 background: cs.card, border: "1px solid " + (isEditing ? cs.accent : cs.border),
                 borderRadius: 10, padding: "11px 13px", display: "flex", gap: 11, alignItems: "flex-start",
               }}>
@@ -219,8 +255,10 @@ export default function TeamGuidelinesView({ supabase, currentUser, showNotif, s
                 </span>
                 {isEditing ? (
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <TeamGuidelineEditor key={row.id} content={row.content} apiFetch={apiFetch} onBusyChange={setSaving}
-                      onSave={content => savePoint(content, row)} onCancel={cancelEdit} onReload={reloadAfterSave} />
+                    <TeamGuidelineEditor key={row.id} content={row.content} category={category}
+                      categoryOptions={tab === "sop" ? SOP_GUIDELINE_CATEGORIES : []}
+                      apiFetch={apiFetch} onBusyChange={setSaving}
+                      onSave={(content, selectedCategory) => savePoint(content, selectedCategory, row)} onCancel={cancelEdit} onReload={reloadAfterSave} />
                   </div>
                 ) : (
                   <>
@@ -245,6 +283,7 @@ export default function TeamGuidelinesView({ supabase, currentUser, showNotif, s
                   </>
                 )}
               </div>
+              </Fragment>
             );
           })}
         </div>
@@ -255,8 +294,11 @@ export default function TeamGuidelinesView({ supabase, currentUser, showNotif, s
         <div style={{ marginTop: 12 }}>
           {adding ? (
             <div style={{ background: cs.card, border: "1px solid " + cs.accent, borderRadius: 10, padding: "11px 13px", display: "grid", gap: 8 }}>
-              <TeamGuidelineEditor key={`${tab}-${scope}`} apiFetch={apiFetch} onBusyChange={setSaving}
-                onSave={content => savePoint(content)} onCancel={cancelAdd} onReload={reloadAfterSave} />
+              <TeamGuidelineEditor key={`${tab}-${scope}-${sopCategoryFilter}`}
+                category={tab === "sop" && sopCategoryFilter !== "all" ? sopCategoryFilter : "umum"}
+                categoryOptions={tab === "sop" ? SOP_GUIDELINE_CATEGORIES : []}
+                apiFetch={apiFetch} onBusyChange={setSaving}
+                onSave={(content, selectedCategory) => savePoint(content, selectedCategory)} onCancel={cancelAdd} onReload={reloadAfterSave} />
             </div>
           ) : (
             <button disabled={saving} onClick={() => { setAdding(true); cancelEdit(); }}

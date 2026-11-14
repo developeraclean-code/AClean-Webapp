@@ -12,7 +12,7 @@ menjadi JPEG dengan helper gambar dokumen yang sudah dipakai aplikasi.
 Gunakan edit untuk menghapus atau mengganti gambar. Klik gambar pada daftar
 untuk membuka ukuran penuh.
 
-Tidak ada migrasi atau perubahan RLS. Skema, grant, dan policy produksi dibaca
+Rilis teks/gambar 13 November tidak memakai migrasi atau perubahan RLS. Skema, grant, dan policy produksi dibaca
 secara read-only pada 13 November: `team_guidelines.content` bertipe text,
 RLS aktif, baca melalui `tg_select`, tulis Owner/Admin melalui `tg_admin_all`
 berdasarkan `get_my_role()`. Perubahan ini tidak memperluas hak akses tersebut.
@@ -75,3 +75,26 @@ sequence untuk INSERT. Tidak dibuat poin atau upload gambar percobaan produksi;
 uji penyimpanan/RLS dan upload sintetis tetap berdasarkan 15 alur lokal di atas.
 Bukti: `production-browser-20261114.json` dan `production-runtime-20261114.json`
 pada folder deliverables yang sama.
+
+## Kategori panduan SOP tambahan — 14 November 2026
+
+Panduan SOP tambahan kini mempunyai kategori saat Owner/Admin menambah atau
+mengedit poin: Umum, Cleaning, Cek Unit, Test Press, dan Program & Promo.
+Daftar di bawah poster SOP dikelompokkan menurut kategori dan dapat difilter.
+Poster SOP bawaan tetap memiliki pilihan sendiri. Kategori tidak ditampilkan
+di tab Tata Tertib, Tugas & Kewajiban, atau Jobdesk.
+
+Migrasi 245 menambah kolom `team_guidelines.category` dengan default `umum`
+dan constraint nilai. Konten teks, referensi gambar, role scope,
+dan policy RLS tidak berubah. Satu panduan SOP lama yang berjudul "Bonus Program"
+dipindahkan ke kategori Program & Promo; baris lama lain tetap di Umum. Saat
+poin dipindah kategori melalui edit, urutannya ditempatkan di akhir kategori
+tujuan. Tidak ada objek R2 yang dipindah atau dihapus.
+
+Verifikasi lokal: lint, typecheck, unit, build, pemeriksaan migrasi, serta
+fixture browser/SQL `scripts/test-team-guidelines-browser.mjs` untuk tambah,
+edit, filter, reload, backfill Bonus Program, RLS dan tampilan mobile.
+Hasilnya di `deliverables/team-guidelines-2026-11-13/browser-results.json`;
+pratinjau mobile ada di `sop-categories-mobile.png` pada folder yang sama.
+Status produksi fitur kategori harus diverifikasi terpisah setelah migrasi dan
+deployment; catatan penerimaan sebelumnya hanya untuk fitur teks/gambar.

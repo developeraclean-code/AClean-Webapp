@@ -3,10 +3,11 @@ import { cs } from "../theme/cs.js";
 import { prepareDocumentImage } from "../project/utils/documentAttachments.js";
 import { GUIDELINE_IMAGE_FOLDER, MAX_GUIDELINE_IMAGES, guidelineImageUrl, parseGuidelineContent, serializeGuidelineContent } from "../lib/teamGuidelineContent.js";
 
-export default function TeamGuidelineEditor({ content = "", apiFetch, onSave, onCancel, onBusyChange, onReload }) {
+export default function TeamGuidelineEditor({ content = "", category = "umum", categoryOptions = [], apiFetch, onSave, onCancel, onBusyChange, onReload }) {
   const initial = parseGuidelineContent(content);
   const [text, setText] = useState(initial.text);
   const [images, setImages] = useState(initial.images);
+  const [selectedCategory, setSelectedCategory] = useState(category);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [needsReload, setNeedsReload] = useState(false);
@@ -43,6 +44,13 @@ export default function TeamGuidelineEditor({ content = "", apiFetch, onSave, on
     });
   };
   return <fieldset disabled={busy} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+    {categoryOptions.length > 0 && <label style={{ display: "grid", gap: 6, fontSize: 13, color: cs.text, marginBottom: 10 }}>
+      Kategori panduan SOP
+      <select value={selectedCategory} onChange={event => setSelectedCategory(event.target.value)}
+        style={{ width: "100%", background: cs.surface, border: `1px solid ${cs.border}`, borderRadius: 8, padding: 10, color: cs.text, font: "inherit" }}>
+        {categoryOptions.map(option => <option key={option.key} value={option.key}>{option.label}</option>)}
+      </select>
+    </label>}
     <label style={{ display: "grid", gap: 6, fontSize: 13, color: cs.text }}>
       Teks poin
       <textarea autoFocus value={text} onChange={e => setText(e.target.value)} rows={3} placeholder="Tulis poin baru atau tambahkan gambar…"
@@ -58,7 +66,7 @@ export default function TeamGuidelineEditor({ content = "", apiFetch, onSave, on
       <button type="button" disabled={images.length >= MAX_GUIDELINE_IMAGES} onClick={() => input.current?.click()}
         style={{ padding: "8px 12px", background: cs.surface, color: cs.accent, border: `1px solid ${cs.border}`, borderRadius: 7 }}>+ Tambah Gambar</button>
       <input ref={input} type="file" accept="image/*" aria-label="Pilih gambar poin" hidden onChange={upload} />
-      <button type="button" disabled={needsReload || (!text.trim() && !images.length)} onClick={() => run(() => onSave(serializeGuidelineContent(text, images)), true)}
+      <button type="button" disabled={needsReload || (!text.trim() && !images.length)} onClick={() => run(() => onSave(serializeGuidelineContent(text, images), selectedCategory), true)}
         style={{ padding: "8px 14px", background: cs.green, color: "#fff", border: 0, borderRadius: 7, fontWeight: 700 }}>Simpan Poin</button>
       <button type="button" onClick={onCancel} style={{ padding: "8px 12px", background: cs.surface, color: cs.muted, border: `1px solid ${cs.border}`, borderRadius: 7 }}>Batal</button>
     </div>
