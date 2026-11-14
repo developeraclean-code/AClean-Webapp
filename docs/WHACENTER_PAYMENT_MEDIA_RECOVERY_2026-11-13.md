@@ -101,3 +101,24 @@ melalui `Lampirkan Bukti`; klasifikasi sukses tetap perlu tinjauan manusia.
 Verifikasi kandidat lokal: 1.809 tes unit, 15 kelompok tes SQL sintetis,
 lint, typecheck, check:migrations, dan build lulus. Ini belum merupakan bukti
 bahwa provider akan mengizinkan 18 URL tersebut diunduh pada produksi.
+
+### Rilis dan pemulihan pertama, 14 November 2026 sekitar 09.51 WIB
+
+PR #21 lulus CI lint/typecheck/unit dan Playwright E2E, lalu merged sebagai
+`58445ff886cb5733b9603ab95273b2d813f2e2c5`. Migrasi 243 diterapkan
+ke database produksi; fungsi baru terdaftar, `service_role` memiliki EXECUTE,
+`anon`/`authenticated` tidak, dan fungsi claim memuat jendela manual 24 jam.
+Sebelum tindakan recovery, jumlah terminal tetap 48 dan tidak ada antrean
+aktif. Coolify deployment `nbiamzeo308rqor4yalykbrb` finished pada SHA merge
+yang sama; aplikasi `running:healthy`, `/api/health` mengembalikan HTTP 200
+dengan versi `58445ff`, dan POST anonim ke endpoint recovery ditolak HTTP 401.
+
+Satu panggilan batch terkontrol mengantrekan **3 dari 18** job transient,
+menyisakan 15 yang masih layak dicoba. Setelah transaksi, 45 job tetap
+`FAILED_PERMANENT` dan 3 `FAILED_RETRYABLE` dengan jadwal 09.51, 09.56,
+dan 10.01 WIB. Timer VPS tunggal masih aktif; run payment-media terakhir
+09.50 WIB selesai sukses dengan `checked=0` **sebelum** batch dibuat. Hasil
+download R2, klasifikasi AI, dan suggestion dari tiga job ini belum diverifikasi
+pada checkpoint ini. Jika provider tetap 429/timeout, status dapat kembali
+gagal; jangan menyamakan penurunan angka 48 dengan 3 bukti pembayaran yang
+sudah dikenali.
