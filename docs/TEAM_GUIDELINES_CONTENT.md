@@ -51,6 +51,27 @@ Bukti berada di `deliverables/team-guidelines-2026-11-13/`. Jalankan ulang
 browser dari root repo dengan `node scripts/test-team-guidelines-browser.mjs`.
 Tes tidak membaca `.env` dan tidak menulis data produksi.
 
-Push/merge GitHub tidak mengubah pin deployment Coolify. Fitur ini memerlukan
-deployment versi baru sebelum muncul di produksi. Tidak ada migrasi, perubahan
-env, atau pengaktifan otomasi voucer yang diperlukan untuk fitur ini.
+Push/merge GitHub tidak otomatis mengubah pin deployment Coolify. Tidak ada
+migrasi atau pengaktifan otomasi voucer yang diperlukan untuk fitur ini.
+
+## Penerimaan produksi — 14 November 2026, 09.30 WIB
+
+Produksi ditemukan sudah menjalankan `8d032cc`, hasil merge PR18 yang mencakup
+fitur Tata Tertib PR17. Source tersebut dipertahankan, termasuk perbaikan antrean
+bukti pembayaran. Metadata `ACLEAN_BUILD_SHA` masih 18c6103; nilainya disamakan
+dengan source 8d032cc dan source yang sama dibangun ulang melalui Coolify.
+Deployment `11shkgasuxf6ffcede2qobgw` Finished pada 09.29 WIB, container Healthy.
+Auto-deploy dan preview tetap OFF; tidak ada migrasi atau mutasi bisnis.
+
+Browser Owner produksi lulus membuka menu Tata Tertib, form tambah teks/gambar,
+menguji draft lokal + batal dan memeriksa tambahan SOP. Nol error JavaScript,
+nol request WA atau mutasi bisnis tidak terduga, serta tidak ada overflow mobile.
+Health App/Auth/Database HTTP200 versi 8d032cc. Sentry frontend dikonfigurasi
+untuk production dengan release 8d032cc yang sesuai; pemeriksaan ini membaca
+konfigurasi SDK, bukan mengirim event atau menguji email alert.
+
+Constraint tabel aktual hanya primary key, dan authenticated memiliki USAGE
+sequence untuk INSERT. Tidak dibuat poin atau upload gambar percobaan produksi;
+uji penyimpanan/RLS dan upload sintetis tetap berdasarkan 15 alur lokal di atas.
+Bukti: `production-browser-20261114.json` dan `production-runtime-20261114.json`
+pada folder deliverables yang sama.

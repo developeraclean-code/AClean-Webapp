@@ -1,0 +1,19 @@
+{
+  "checked_at": "2026-11-14T02:30:44.752950+00:00",
+  "deployment": {
+    "deployment_uuid": "11shkgasuxf6ffcede2qobgw",
+    "status": "finished",
+    "commit": "8d032cc5fc4a8ed13f599854de862af2ee9b58d7",
+    "created_at": "2026-11-14T02:26:45.000000Z",
+    "updated_at": "2026-11-14T02:29:49.000000Z"
+  },
+  "application_status": "running:healthy",
+  "source_commit": "8d032cc5fc4a8ed13f599854de862af2ee9b58d7",
+  "build_sha": "8d032cc5fc4a8ed13f599854de862af2ee9b58d7",
+  "container_health": "healthy",
+  "auto_deploy": false,
+  "preview": false,
+  "source_changed": false,
+  "database_changes": false,
+  "scope": "Production source already included Tata Tertib PR17 and payment queue PR18. Rebuilt the same source after aligning frontend Sentry build metadata. No business test fixtures persisted."
+}
