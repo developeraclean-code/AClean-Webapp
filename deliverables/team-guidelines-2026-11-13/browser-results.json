@@ -11,6 +11,7 @@
     "lost-response-no-insert-replay",
     "section-role-scope",
     "custom-sop-and-static-posters",
+    "sop-category-add-edit-filter-reload-mobile",
     "admin-add-delete",
     "staff-read-only-and-sql-rls",
     "read-error-retry",
@@ -19,6 +20,6 @@
   ],
   "uncaught_errors": 0,
   "external_writes": false,
-  "database": "disposable PostgreSQL/WASM; migration 128 and existing RLS",
+  "database": "disposable PostgreSQL/WASM; migrations 128 and 245 with existing RLS",
   "r2": "actual upload handler, intercepted HTTP storage"
 }
