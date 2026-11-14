@@ -122,3 +122,12 @@ download R2, klasifikasi AI, dan suggestion dari tiga job ini belum diverifikasi
 pada checkpoint ini. Jika provider tetap 429/timeout, status dapat kembali
 gagal; jangan menyamakan penurunan angka 48 dengan 3 bukti pembayaran yang
 sudah dikenali.
+
+Pemeriksaan berikutnya 09.57 WIB menjalankan worker untuk dua job yang sudah
+jatuh tempo. Kedua permintaan media kini menerima `WA_MEDIA_HTTP_404` dan
+kembali `FAILED_PERMANENT` pada percobaan pertama setelah recovery; tidak ada
+suggestion yang dibuat dari keduanya. Job batch ketiga masih terjadwal pada
+10.01 WIB. Selama 24 jam sebelumnya terdapat dua job media `DONE` dan dua
+suggestion baru, sehingga bukti ini tidak menunjukkan putusnya seluruh jalur
+AI. Untuk URL yang 404, minta file asli dan gunakan `Lampirkan Bukti` pada
+invoice; jangan memalsukan suggestion dari referensi media yang hilang.
