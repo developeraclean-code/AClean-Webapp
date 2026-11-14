@@ -2,9 +2,9 @@
 // --before, --expected and --batch-id. Never removes the source R2 object.
 import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
-import { extractR2Key } from "../api/_r2-key.js";
-import { downloadBufferFromR2, uploadBufferToR2 } from "../api/_r2-upload.js";
-import { sniffMediaMimeType } from "../api/_media-format.js";
+import { extractR2Key } from "./_r2-key.js";
+import { downloadBufferFromR2, uploadBufferToR2 } from "./_r2-upload.js";
+import { sniffMediaMimeType } from "./_media-format.js";
 
 const args = Object.fromEntries(process.argv.slice(2).map((arg, index, all) =>
   arg.startsWith("--") ? [arg.slice(2), all[index + 1]] : null).filter(Boolean));
