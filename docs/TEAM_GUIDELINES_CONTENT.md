@@ -96,5 +96,21 @@ fixture browser/SQL `scripts/test-team-guidelines-browser.mjs` untuk tambah,
 edit, filter, reload, backfill Bonus Program, RLS dan tampilan mobile.
 Hasilnya di `deliverables/team-guidelines-2026-11-13/browser-results.json`;
 pratinjau mobile ada di `sop-categories-mobile.png` pada folder yang sama.
-Status produksi fitur kategori harus diverifikasi terpisah setelah migrasi dan
-deployment; catatan penerimaan sebelumnya hanya untuk fitur teks/gambar.
+
+### Penerimaan produksi kategori — 14 November 2026, 16.00 WIB
+
+PR #26 digabung ke `main` pada commit `838afba`. CI lint, typecheck, unit,
+dan Playwright E2E lulus. Migrasi 245 diterapkan ke database produksi dalam
+satu transaksi; satu panduan SOP lama “Bonus Program” berubah menjadi
+`program_promo`, tidak ada kategori NULL, dan dua policy RLS tabel tetap sama.
+
+Coolify `aclean-web-production` menyelesaikan deployment
+`yazem4sg3bart36azogwykf9` dengan status Finished dan aplikasi
+`running:healthy`. Endpoint publik `/api/health` mengembalikan `healthy`
+dengan versi `838afba`. Baca melalui PostgREST produksi mengembalikan HTTP 200
+untuk kategori SOP: satu baris `program_promo`.
+
+Browser Owner produksi tidak dapat diperiksa dari sesi ini karena host akses
+browser tidak tersedia. Alur tambah/edit, perpindahan kategori, filter, reload,
+RLS staf, dan tampilan mobile telah lulus pada harness browser lokal; tidak ada
+penulisan atau unggah uji ke produksi.
