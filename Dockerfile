@@ -38,7 +38,6 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
 COPY api ./api
-COPY scripts/archive-payment-suggestions.mjs ./scripts/archive-payment-suggestions.mjs
 COPY server ./server
 # Several API handlers import pure helpers from src/lib at runtime.
 COPY src/lib ./src/lib
