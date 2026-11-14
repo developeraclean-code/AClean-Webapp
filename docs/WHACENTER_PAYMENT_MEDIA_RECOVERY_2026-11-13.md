@@ -131,3 +131,10 @@ suggestion yang dibuat dari keduanya. Job batch ketiga masih terjadwal pada
 suggestion baru, sehingga bukti ini tidak menunjukkan putusnya seluruh jalur
 AI. Untuk URL yang 404, minta file asli dan gunakan `Lampirkan Bukti` pada
 invoice; jangan memalsukan suggestion dari referensi media yang hilang.
+
+Job ketiga dijalankan sekitar 10.02 WIB dan juga menerima
+`WA_MEDIA_HTTP_404`. Ketiga job batch pertama selesai tanpa R2/suggestion,
+sehingga angka terminal kembali 48; 15 job dengan galat sementara terdahulu
+masih memenuhi kriteria pemulihan, tetapi tidak dibuka massal setelah tiga
+URL pertama terbukti 404. Pemulihan terhadap gambar yang sumbernya hilang
+memerlukan file asli, bukan penambahan retry otomatis.
