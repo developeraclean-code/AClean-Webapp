@@ -71,9 +71,12 @@ const PERMANENT_MEDIA_ERROR = /\[WA_MEDIA_(?:HTTP_404|HTTP_400|HTTP_401|HTTP_403
 export function paymentMediaDownloadRetry({ job, error, attempt, retryAfterMs = 0, now = Date.now() }) {
   const transientWhaCenter = job?.provider === "whacenter" && TRANSIENT_MEDIA_ERROR.test(String(error || ""));
   const ageMs = now - Date.parse(job?.created_at || "");
+  const manualAgeMs = now - Date.parse(job?.manual_retry_requested_at || "");
+  const manualWindow = Number(job?.manual_retry_count) > 0 && Number.isFinite(manualAgeMs)
+    && manualAgeMs >= 0 && manualAgeMs < 24 * 3600_000;
   const retryable = !PERMANENT_MEDIA_ERROR.test(String(error || ""))
     && attempt < (transientWhaCenter ? 7 : 3)
-    && (!transientWhaCenter || (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < 24 * 3600_000));
+    && (!transientWhaCenter || manualWindow || (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < 24 * 3600_000));
   const delays = [1, 5, 15, 30, 60, 120];
   const delayMs = Math.max(delays[Math.min(Math.max(attempt - 1, 0), delays.length - 1)] * 60_000,
     Number.isFinite(retryAfterMs) ? Math.min(Math.max(retryAfterMs, 0), 6 * 3600_000) : 0);

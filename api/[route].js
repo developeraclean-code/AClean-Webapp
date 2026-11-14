@@ -4,7 +4,7 @@ import * as Sentry from "@sentry/node";
 import { customerVouchers, validateVoucher, claimVoucher, adminVouchers, cancelVoucher, applyInvoiceVoucher } from "./_handlers/voucher.js";
 import { monitor } from "./_handlers/monitor.js";
 import { paymentMediaHealth } from "./_payment-health.js";
-import { paymentMediaManualUpload, paymentMediaRetry } from "./_payment-recovery.js";
+import { paymentMediaManualUpload, paymentMediaRecover, paymentMediaRetry } from "./_payment-recovery.js";
 import { customerStatus, submitRating, generateCustomerToken } from "./_handlers/customer.js";
 import { testConnection, setWaProvider, health, getLlmConfig, getApiToken, manageUser } from "./_handlers/auth-token.js";
 import { projectDelete, maintenance, mPortal, projectPortal } from "./_handlers/portal.js";
@@ -21,6 +21,7 @@ const HANDLERS = {
   "monitor": monitor,
   "payment-media-health": paymentMediaHealth,
   "payment-media-retry": paymentMediaRetry,
+  "payment-media-recover": paymentMediaRecover,
   "payment-media-manual-upload": paymentMediaManualUpload,
   "customer-vouchers": customerVouchers,
   "validate-voucher": validateVoucher,

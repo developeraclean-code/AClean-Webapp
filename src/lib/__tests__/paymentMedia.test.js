@@ -270,6 +270,11 @@ describe("durable payment retry", () => {
     expect(paymentMediaDownloadRetry({ job, error: "[WA_MEDIA_TIMEOUT]", attempt: 7, now }).retryable).toBe(false);
     expect(paymentMediaDownloadRetry({ job, error: "[WA_MEDIA_HTTP_404]", attempt: 1, now }).retryable).toBe(false);
     expect(paymentMediaDownloadRetry({ job: { ...job, created_at: "2026-11-11T00:00:00Z" }, error: "[WA_MEDIA_HTTP_429]", attempt: 3, now }).retryable).toBe(false);
+    const recovered = { ...job, created_at: "2026-11-11T00:00:00Z", manual_retry_count: 1,
+      manual_retry_requested_at: "2026-11-13T00:45:00Z" };
+    expect(paymentMediaDownloadRetry({ job: recovered, error: "[WA_MEDIA_HTTP_429]", attempt: 3, now }).retryable).toBe(true);
+    expect(paymentMediaDownloadRetry({ job: { ...recovered, manual_retry_requested_at: "2026-11-11T00:00:00Z" },
+      error: "[WA_MEDIA_HTTP_429]", attempt: 3, now }).retryable).toBe(false);
   });
   const job = { id: "j1", phone: "6281234567890", r2_url: "/api/foto?key=proof.jpg", category: "bukti_transfer", transfer_amount: 950000, attempts: 2 };
   const invoices = [500000,450000].map((total,n)=>({id:`I${n}`,phone:job.phone,status:"UNPAID",total}));

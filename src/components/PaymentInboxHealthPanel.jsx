@@ -7,7 +7,7 @@ const count = value => Number.isSafeInteger(value) && value >= 0 ? value.toLocal
 const tone = level => level === "ok" ? cs.green : level === "error" ? cs.red : cs.yellow;
 const buttonStyle = { color: cs.text, background: cs.surface, border: `1px solid ${cs.border}`, borderRadius: 7, padding: "8px 10px", cursor: "pointer", font: "inherit" };
 
-export default function PaymentInboxHealthPanel({ apiHeaders, inbox, onOpenPending, pendingCount }) {
+export default function PaymentInboxHealthPanel({ apiHeaders, inbox, onOpenPending, pendingCount, refreshKey = 0 }) {
   const [health, setHealth] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -45,6 +45,7 @@ export default function PaymentInboxHealthPanel({ apiHeaders, inbox, onOpenPendi
       document.removeEventListener("visibilitychange", resume); window.removeEventListener("focus", resume);
     };
   }, []);
+  useEffect(() => { if (refreshKey > 0) loadRef.current?.(true); }, [refreshKey]);
   return <PaymentInboxHealthView health={health} error={error || inbox?.error} busy={busy || inbox?.loading}
     onRefresh={() => { inbox?.refresh(); loadRef.current?.(true); }} onOpenPending={onOpenPending} pendingCount={pendingCount}
     retryingId={retryingId} onRetry={async jobId => {
