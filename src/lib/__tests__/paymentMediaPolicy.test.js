@@ -24,4 +24,11 @@ describe('payment-only inbox, including historical broad fallbacks', () => {
     expect(isPaymentInboxSuggestion({ match_source: null, amount: 950000 })).toBe(true);
     expect(isPaymentInboxSuggestion({ match_source: 'wa_text_ai', amount: 950000 })).toBe(true);
   });
+  it('shows an explicitly restored item while keeping its original review classification', () => {
+    const row = { match_source: 'wa_image_review', amount: null,
+      raw_message: 'AI mengategorikan media sebagai dokumen',
+      restored_from_archive_at: '2026-11-14T10:00:00Z' };
+    expect(isPaymentInboxSuggestion(row)).toBe(true);
+    expect(row.match_source).toBe('wa_image_review');
+  });
 });

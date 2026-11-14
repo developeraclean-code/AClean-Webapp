@@ -57,7 +57,7 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
         for (let from = 0; ; from += 200) {
           const { data, error } = await supabase
             .from("payment_suggestions")
-            .select("id, phone, sender_name, amount, bank, transfer_date, image_url, created_at, invoice_id, match_source, raw_message, status, ai_extraction_id")
+            .select("id, phone, sender_name, amount, bank, transfer_date, image_url, created_at, invoice_id, match_source, raw_message, status, ai_extraction_id, restored_from_archive_at")
             .eq("status", "PENDING")
             .or(`invoice_id.is.null,invoice_id.eq.${inv.id}`)
             .not("image_url", "is", null)
@@ -171,7 +171,7 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
   };
 
   const chosenUrl = tab === "wa" ? (selSugg?.image_url || "") : tab === "url" ? urlInput.trim() : uploadedUrl;
-  const needsManualReview = tab === "wa" && !!selSugg && (selSugg.match_source === "wa_image_review" || selSugg.status === "DISMISSED"
+  const needsManualReview = tab === "wa" && !!selSugg && (selSugg.match_source === "wa_image_review" || selSugg.restored_from_archive_at || selSugg.status === "DISMISSED"
     || !Number(selSugg.amount) || !samePhone(selSugg.phone, inv.phone));
   const alreadyPaid = inv.status === "PAID";
   const hasAmountDifference = tab === "wa" && !alreadyPaid && Number(selSugg?.amount) > 0
@@ -730,6 +730,42 @@ const [pendingSelectedInvoice, setPendingSelectedInvoice] = useState({}); // { s
 const [pendingPaymentBusy, setPendingPaymentBusy] = useState(null);
 const [manualPickerOpen, setManualPickerOpen] = useState({}); // { suggestion_id: bool }
 const [manualPickerSearch, setManualPickerSearch] = useState({}); // { suggestion_id: search_string }
+const [showArchivedPayments, setShowArchivedPayments] = useState(false);
+const [archivedPayments, setArchivedPayments] = useState([]);
+const [archivedLoading, setArchivedLoading] = useState(false);
+const [archiveBusyId, setArchiveBusyId] = useState(null);
+const loadArchivedPayments = async () => {
+  setArchivedLoading(true);
+  try {
+    const rows = [];
+    for (let from = 0; ; from += 200) {
+      const { data, error } = await supabase.from("payment_suggestion_archives")
+        .select("id,suggestion_id,archive_r2_key,archived_at,payment_suggestions(phone,sender_name,amount,bank,transfer_date)")
+        .is("restored_at", null).order("archived_at", { ascending: false })
+        .range(from, from + 199);
+      if (error) throw error;
+      rows.push(...(data || []));
+      if ((data || []).length < 200) break;
+    }
+    setArchivedPayments(rows);
+  } catch (error) {
+    showNotif?.("Gagal memuat arsip bukti: " + error.message, "error");
+  } finally { setArchivedLoading(false); }
+};
+const restoreArchivedPayment = async (archive) => {
+  if (archiveBusyId) return;
+  if (!await showConfirm({ title: "Pulihkan bukti WA",
+    message: "Kembalikan bukti ini ke Pending AI untuk ditinjau ulang? Pemulihan tidak melunasi invoice." })) return;
+  setArchiveBusyId(archive.id);
+  try {
+    const { error } = await supabase.rpc("restore_payment_suggestion_244", { p_archive_id: archive.id });
+    if (error) throw error;
+    await Promise.all([loadPendingPayments(), loadArchivedPayments()]);
+    showNotif?.("Bukti kembali ke Pending AI. Periksa invoice sebelum menandai lunas.", "success");
+  } catch (error) {
+    showNotif?.("Pemulihan bukti gagal: " + error.message, "error");
+  } finally { setArchiveBusyId(null); }
+};
 const loadPendingPayments = async ({ refreshInbox = true } = {}) => {
   if (!supabase) return;
   setLoadingPendingPayments(true);
@@ -1179,11 +1215,34 @@ return (
           <div style={{ fontSize: 12, color: cs.muted }}>
             Hanya bukti pembayaran. Foto AC, ulasan, invoice/tagihan dan media yang belum teridentifikasi tidak masuk daftar ini. Gangguan pembacaan AI tersedia di Rincian media.
           </div>
+          <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => { setShowArchivedPayments(!showArchivedPayments); if (!showArchivedPayments) loadArchivedPayments(); }}
+            style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, borderRadius: 8, padding: "6px 12px", fontSize: 12, cursor: "pointer" }}>
+            {showArchivedPayments ? "Tutup arsip" : "Arsip bukti"}
+          </button>
           <button onClick={loadPendingPayments} disabled={loadingPendingPayments}
             style={{ background: cs.card, border: "1px solid " + cs.border, color: cs.text, borderRadius: 8, padding: "6px 12px", fontSize: 12, cursor: "pointer" }}>
             {loadingPendingPayments ? "Loading..." : "↻ Refresh"}
           </button>
+          </div>
         </div>
+        {showArchivedPayments && <div style={{ background: cs.card, border: "1px solid " + cs.border, borderRadius: 10, padding: 14 }}>
+          <div style={{ fontWeight: 700, color: cs.text, marginBottom: 8 }}>Arsip bukti WA ({archivedPayments.length})</div>
+          <div style={{ fontSize: 12, color: cs.muted, marginBottom: 10 }}>Salinan media tersimpan di R2. Pulihkan satu bukti untuk meninjaunya kembali di Pending AI.</div>
+          {archivedLoading && <div style={{ color: cs.muted }}>Memuat arsip...</div>}
+          {!archivedLoading && archivedPayments.length === 0 && <div style={{ color: cs.muted }}>Belum ada bukti yang diarsipkan.</div>}
+          {archivedPayments.map(item => <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 0", borderTop: "1px solid " + cs.border }}>
+            <PaymentEvidencePreview url={`/api/foto?key=${encodeURIComponent(item.archive_r2_key)}`} />
+            <div style={{ flex: 1, color: cs.text, fontSize: 12 }}>
+              <b>{item.payment_suggestions?.sender_name || item.payment_suggestions?.phone || "Bukti WA"}</b>
+              <div style={{ color: cs.muted }}>{item.payment_suggestions?.phone || "—"} · {item.payment_suggestions?.amount ? fmt(item.payment_suggestions.amount) : "Nominal belum terbaca"} · {new Date(item.archived_at).toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta" })}</div>
+            </div>
+            <button onClick={() => restoreArchivedPayment(item)} disabled={!!archiveBusyId}
+              style={{ background: cs.surface, border: "1px solid " + cs.border, color: cs.text, borderRadius: 8, padding: "6px 10px", cursor: "pointer" }}>
+              {archiveBusyId === item.id ? "Memulihkan..." : "Pulihkan"}
+            </button>
+          </div>)}
+        </div>}
         {pendingPayments.length === 0 && !loadingPendingPayments && (
           <div style={{ padding: 24, background: cs.card, borderRadius: 10, textAlign: "center", color: cs.muted, fontSize: 13 }}>
             Tidak ada bukti TF menunggu validasi.
@@ -1193,7 +1252,7 @@ return (
           const ai = sug.ai_extractions || {};
           const candidates = findInvoiceCandidates(sug);
           const isTextOnly = sug.source === "text" && !sug.image_url;
-          const isManualRecovery = isTextOnly || sug.match_source === "wa_image_review" || (!!sug.media_job_id && !sug.amount);
+          const isManualRecovery = isTextOnly || sug.match_source === "wa_image_review" || !!sug.restored_from_archive_at || (!!sug.media_job_id && !sug.amount);
           const conf = isManualRecovery ? "REVIEW" : (sug.ai_extractions?.confidence || "?");
           const confColor = conf === "HIGH" ? "#10b981" : conf === "MEDIUM" ? "#f59e0b" : "#ef4444";
           const selected = pendingSelectedInvoice[sug.id] || sug.invoice_id || null;

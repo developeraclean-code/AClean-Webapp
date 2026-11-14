@@ -6,6 +6,9 @@ export function isPaymentEvidenceClassification(classification) {
 // Older broad fallbacks remain in the database for audit, not in the payment inbox.
 // Do not age-filter real receipts: an old unpaid bill still needs its evidence.
 export function isPaymentInboxSuggestion(row) {
+  // An Owner deliberately restored this archived item for manual inspection.
+  // Preserve match_source so invoice confirmation still applies its review gate.
+  if (row?.restored_from_archive_at) return true;
   if (row?.match_source !== "wa_image_review" && row?.match_source !== "wa_image_ai_pending") return true;
   if (/AI mengategorikan media sebagai (?:kerusakan_ac|tidak_relevan|dokumen)\b/.test(row.raw_message || "")) return false;
   if (Number(row.amount) > 0) return true;
