@@ -1,0 +1,43 @@
+{
+  "environment": "production",
+  "passed": true,
+  "uncaught_errors": 0,
+  "route_errors": 0,
+  "unexpected_mutations": [],
+  "benefits": [],
+  "api_requests": [],
+  "outbound_wa_requests": 0,
+  "expected_source": "8d032cc5fc4a8ed13f599854de862af2ee9b58d7",
+  "frontend_sentry": {
+    "configured": true,
+    "release": "8d032cc5fc4a8ed13f599854de862af2ee9b58d7",
+    "environment": "production"
+  },
+  "guidelines": {
+    "add_text": true,
+    "add_image": true,
+    "empty_save_disabled": true,
+    "local_draft_enabled_save": true,
+    "cancel": true,
+    "persisted_test_data": false,
+    "additional_sop": true
+  },
+  "health": {
+    "app": {
+      "http_status": 200,
+      "version": "8d032cc",
+      "status": "healthy"
+    },
+    "auth": {
+      "http_status": 200,
+      "version": "8d032cc",
+      "status": "healthy"
+    },
+    "database": {
+      "http_status": 200,
+      "version": "8d032cc",
+      "status": "healthy"
+    }
+  },
+  "mobile_overflow": false
+}
