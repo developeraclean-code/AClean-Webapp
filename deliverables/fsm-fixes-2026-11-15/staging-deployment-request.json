@@ -1,0 +1,21 @@
+{
+  "environment": "staging",
+  "sha": "28f930a5613a4d55e71ab8383f89559d7dbc8d14",
+  "before": {
+    "uuid": "zqd3lrbkv7b44kzb9fwisulu",
+    "git_branch": "codex/voucher-hardening",
+    "git_commit_sha": "e91b6c6d70aee8e6a80761717e1e65567f627f10",
+    "fqdn": "https://staging.aclean.id",
+    "status": "running:healthy"
+  },
+  "deployment": {
+    "deployments": [
+      {
+        "message": "Application aclean-web-staging deployment queued.",
+        "resource_uuid": "zqd3lrbkv7b44kzb9fwisulu",
+        "deployment_uuid": "auvzuqfi692xxxkahcpk3kda"
+      }
+    ]
+  },
+  "at": "2026-11-15T11:53:58.630537+00:00"
+}

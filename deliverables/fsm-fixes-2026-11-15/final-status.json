@@ -1,0 +1,36 @@
+{
+  "at": "2026-11-15T12:04:52.116225+00:00",
+  "applications": [
+    {
+      "uuid": "zqd3lrbkv7b44kzb9fwisulu",
+      "status": "running:healthy",
+      "git_branch": "codex/fsm-hardening-release-20261115",
+      "git_commit_sha": "28f930a5613a4d55e71ab8383f89559d7dbc8d14",
+      "fqdn": "https://staging.aclean.id",
+      "auto_deploy_enabled": false
+    },
+    {
+      "uuid": "xsehtou4dfqqmjwca1irjkmz",
+      "status": "running:healthy",
+      "git_branch": "main",
+      "git_commit_sha": "196cfdc1f622bf9dbbdc2443cdc12ebbaa7704fc",
+      "fqdn": "https://app.aclean.id,https://status.aclean.id/",
+      "auto_deploy_enabled": false
+    }
+  ],
+  "deployments": [
+    {
+      "deployment_uuid": "auvzuqfi692xxxkahcpk3kda",
+      "status": "finished",
+      "commit": "28f930a5613a4d55e71ab8383f89559d7dbc8d14",
+      "finished_at": "2026-11-15T11:56:55.000000Z"
+    },
+    {
+      "deployment_uuid": "nd2bv2sgnbkeposf8xwzlkfu",
+      "status": "finished",
+      "commit": "196cfdc1f622bf9dbbdc2443cdc12ebbaa7704fc",
+      "finished_at": "2026-11-15T12:03:40.000000Z"
+    }
+  ],
+  "scheduler": "active"
+}

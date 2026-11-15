@@ -1,0 +1,17 @@
+{
+  "environment": "production",
+  "sha": "196cfdc1f622bf9dbbdc2443cdc12ebbaa7704fc",
+  "container": "/xsehtou4dfqqmjwca1irjkmz-20261115T120007",
+  "image": "xsehtou4dfqqmjwca1irjkmz:196cfdc1f622bf9dbbdc2443cdc12ebbaa7704fc",
+  "health": "healthy",
+  "source_commit_matches": true,
+  "build_marker_matches": true,
+  "runtime_helper_hashes_match": true,
+  "html": 200,
+  "javascript_assets": 1,
+  "unauthenticated_api": 401,
+  "checks": [
+    "anonymous RPC denied by actual Data API"
+  ],
+  "at": "2026-11-15T12:04:05.326186+00:00"
+}
