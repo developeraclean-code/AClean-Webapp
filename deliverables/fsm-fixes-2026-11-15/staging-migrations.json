@@ -1,0 +1,149 @@
+{
+  "ok": true,
+  "environment": "staging",
+  "at": "2026-11-15T11:52:19.213088+00:00",
+  "migrations": {
+    "246_fsm_rpc_null_authorization.sql": "5942e4ff18797d7034f94e452daadf367d39e6e8d0a2e55b27c9742c805904ac",
+    "247_fsm_invoice_transactions.sql": "f27b65daf06b5dcfbfca25b27e240a11d86f0cd1e685d40be37076589c993d15",
+    "248_fsm_inventory_serialization.sql": "fd560cb79ddd21099276df736fd6e5cd7c2b69bce9af02a03e7b233508f48215",
+    "249_fsm_atomic_team_split.sql": "74a79e4ba1411b4cf60da5c67c90cf6b8b37613a6ba5e7719f34e75d7f178111"
+  },
+  "verification": {
+    "database": "postgres",
+    "role": "supabase_admin",
+    "business_tables_unchanged": [
+      {
+        "name": "orders",
+        "n": 7,
+        "digest": "985171a4bc547789db79e00235d42231"
+      },
+      {
+        "name": "invoices",
+        "n": 4,
+        "digest": "e427f3c6e28b01f1c16bc4583ab0e50d"
+      },
+      {
+        "name": "invoice_payments",
+        "n": 4,
+        "digest": "205da2d89688e7fd4af0a6fc743a2c05"
+      },
+      {
+        "name": "payment_logs",
+        "n": 0,
+        "digest": "d41d8cd98f00b204e9800998ecf8427e"
+      },
+      {
+        "name": "inventory",
+        "n": 0,
+        "digest": "d41d8cd98f00b204e9800998ecf8427e"
+      },
+      {
+        "name": "inventory_units",
+        "n": 0,
+        "digest": "d41d8cd98f00b204e9800998ecf8427e"
+      },
+      {
+        "name": "inventory_transactions",
+        "n": 0,
+        "digest": "d41d8cd98f00b204e9800998ecf8427e"
+      },
+      {
+        "name": "service_reports",
+        "n": 4,
+        "digest": "4f238fc784d52c065ff6b03bb2e4f3e9"
+      },
+      {
+        "name": "technician_schedule",
+        "n": 0,
+        "digest": "d41d8cd98f00b204e9800998ecf8427e"
+      },
+      {
+        "name": "operational_mutations",
+        "n": 19,
+        "digest": "4b17f39ecd657fd13099cfb31e28251b"
+      }
+    ],
+    "functions": [
+      {
+        "signature": "adjust_inventory_item_atomic(text,numeric,numeric,numeric,text)",
+        "md5": "5ae43ec262121148c7e116fc1e121b84",
+        "anon_execute": false
+      },
+      {
+        "signature": "adjust_inventory_usage_actual_atomic(bigint,numeric,text)",
+        "md5": "f93a0bb3d176d22349bc6cff399c8b08",
+        "anon_execute": false
+      },
+      {
+        "signature": "approve_invoice_atomic(text,timestamp with time zone)",
+        "md5": "f1a422b1dad58c9510e07db506b27715",
+        "anon_execute": false
+      },
+      {
+        "signature": "confirm_material_checkout_atomic(uuid,jsonb,timestamp with time zone,jsonb,jsonb,text,text)",
+        "md5": "512a933937dafce0cba446c7d1bb78e0",
+        "anon_execute": false
+      },
+      {
+        "signature": "create_team_split_atomic(uuid,jsonb)",
+        "md5": "aa4265caec140c091a0193c366c67f8e",
+        "anon_execute": false
+      },
+      {
+        "signature": "delete_invoice_atomic(text,text,text)",
+        "md5": "cda5477265bed49021f9c670ccec5956",
+        "anon_execute": false
+      },
+      {
+        "signature": "link_expense_to_stock(uuid,text,numeric)",
+        "md5": "bd87993563129900e7b24952ab93b3cf",
+        "anon_execute": false
+      },
+      {
+        "signature": "record_invoice_partial_payment_atomic(uuid,text,numeric,text,text,date,text)",
+        "md5": "c83d4ca0309fe27fac836e5b98302585",
+        "anon_execute": false
+      },
+      {
+        "signature": "reopen_material_checkout_atomic(uuid,text,text)",
+        "md5": "514f985640dd64592cdca2a02606d4e9",
+        "anon_execute": false
+      },
+      {
+        "signature": "restock_inventory_atomic(text,numeric,numeric,date,text,boolean,text)",
+        "md5": "732bcd63aa88e1066f556378ae2d856c",
+        "anon_execute": false
+      },
+      {
+        "signature": "restore_inventory_stock()",
+        "md5": "fd7367c803f534b56c0b45a1c3649135",
+        "anon_execute": false
+      },
+      {
+        "signature": "revert_invoice_unpaid_atomic(text,text)",
+        "md5": "bd1c6003dd73ef9d24d1da20e8d6baf2",
+        "anon_execute": false
+      },
+      {
+        "signature": "settle_invoice_atomic(text,uuid,date,text,text,text,text,text)",
+        "md5": "8f80ffde55a401db36efde3b6e516fe1",
+        "anon_execute": false
+      },
+      {
+        "signature": "sync_inventory_from_units()",
+        "md5": "794a1c79e722d4b91749ba56a86aa60f",
+        "anon_execute": false
+      },
+      {
+        "signature": "update_inventory_stock()",
+        "md5": "7ee883db5ba479603402aff1abfa7d23",
+        "anon_execute": false
+      },
+      {
+        "signature": "update_order_workflow_atomic(text,jsonb,text,text)",
+        "md5": "848a72ae8b012771256a1da302b40be3",
+        "anon_execute": false
+      }
+    ]
+  }
+}

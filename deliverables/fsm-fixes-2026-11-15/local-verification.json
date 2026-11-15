@@ -1,0 +1,13 @@
+{
+  "unit-tests": "\n> aclean-webapp@0.18.0 test\n> vitest run\n\n\n RUN  v4.1.7 /private/tmp/aclean-fsm-release-20261115\n\n\n Test Files  160 passed (160)\n      Tests  1824 passed (1824)\n   Start at  18:46:33\n   Duration  3.72s (transform 5.91s, setup 0ms, import 12.35s, tests 5.18s, environment 13ms)\n\n",
+  "lint": "\n> aclean-webapp@0.18.0 lint\n> eslint src\n\n",
+  "typecheck": "\n> aclean-webapp@0.18.0 typecheck\n> tsc --noEmit -p tsconfig.json\n\n",
+  "migration-check": "\n> aclean-webapp@0.18.0 check:migrations\n> node scripts/check-migrations.mjs\n\n\n\u001b[2mmigrations/ \u2014 253 file, rentang 1\u2013249\u001b[0m\n\n\u001b[32m\u2713 Tidak ada nomor dobel baru\u001b[0m\n\u001b[2m  (14 dobel warisan di-baseline, sudah ter-apply: 004, 005, 039, 054, 064, 065, 066, 067, 068, 069, 077, 083, 107, 122)\u001b[0m\n\n\u001b[33m\u26a0 10 nomor GAP (mungkin migrasi belum di-commit): 024, 091, 222, 226, 227, 228, 230, 238, 239, 240\u001b[0m\n\n\u001b[2mNomor migrasi berikutnya: \u001b[32m250\u001b[0m\n\n",
+  "native_database": {
+    "groups": 23,
+    "postgres": "17.6",
+    "real_concurrent_connections": 2,
+    "production_connections": 0
+  },
+  "build": "passed; full output retained locally in build.log"
+}
