@@ -1,0 +1,12 @@
+{
+  "ok": true,
+  "environment": "staging",
+  "at": "2026-11-15T11:56:57.784771+00:00",
+  "checks": {
+    "null_context_commands_denied": 8,
+    "enabled_protection_triggers": 8,
+    "historical_safe_fk": true,
+    "active_owner_no_write_contracts": 3
+  },
+  "business_mutations": 0
+}

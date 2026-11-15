@@ -1,0 +1,24 @@
+{
+  "https://app.aclean.id": {
+    "html": 200,
+    "assets": [
+      {
+        "path": "/assets/index-DjF86vQM.js",
+        "status": 200
+      }
+    ],
+    "app_health": 200,
+    "version": "196cfdc"
+  },
+  "https://status.aclean.id": {
+    "html": 200,
+    "assets": [
+      {
+        "path": "/assets/index-DjF86vQM.js",
+        "status": 200
+      }
+    ],
+    "app_health": 200,
+    "version": "196cfdc"
+  }
+}

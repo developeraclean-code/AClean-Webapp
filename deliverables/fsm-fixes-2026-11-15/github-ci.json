@@ -1,0 +1,18 @@
+{
+  "pull_request": "https://github.com/developeraclean-code/AClean-Webapp/pull/28",
+  "candidate_sha": "28f930a5613a4d55e71ab8383f89559d7dbc8d14",
+  "production_merge_sha": "196cfdc1f622bf9dbbdc2443cdc12ebbaa7704fc",
+  "candidate_tree_equals_production_tree": true,
+  "checks": [
+    {
+      "name": "Quality",
+      "conclusion": "success",
+      "run_id": 43711094252
+    },
+    {
+      "name": "E2E Tests",
+      "conclusion": "success",
+      "run_id": 43711094320
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "ok": true,
+  "environment": "production",
+  "at": "2026-11-15T12:03:11.847080+00:00",
+  "matrix": {
+    "role_contexts": [
+      {
+        "role": "Admin",
+        "active": false,
+        "checks": 4
+      },
+      {
+        "role": "Admin",
+        "active": true,
+        "checks": 4
+      },
+      {
+        "role": "Finance",
+        "active": true,
+        "checks": 4
+      },
+      {
+        "role": "Helper",
+        "active": false,
+        "checks": 4
+      },
+      {
+        "role": "Helper",
+        "active": true,
+        "checks": 4
+      },
+      {
+        "role": "Owner",
+        "active": true,
+        "checks": 4
+      },
+      {
+        "role": "Teknisi",
+        "active": false,
+        "checks": 4
+      },
+      {
+        "role": "Teknisi",
+        "active": true,
+        "checks": 4
+      }
+    ],
+    "checks": 32,
+    "business_mutations": 0,
+    "method": "actual profile contexts under authenticated SQL role; not staff browser logins"
+  }
+}

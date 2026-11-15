@@ -1,0 +1,22 @@
+{
+  "environment": "staging",
+  "sha": "28f930a5613a4d55e71ab8383f89559d7dbc8d14",
+  "container": "/zqd3lrbkv7b44kzb9fwisulu-20261115T115358",
+  "image": "zqd3lrbkv7b44kzb9fwisulu:28f930a5613a4d55e71ab8383f89559d7dbc8d14",
+  "health": "healthy",
+  "source_commit_matches": true,
+  "build_marker_matches": true,
+  "runtime_helper_hashes_match": true,
+  "html": 200,
+  "javascript_assets": 1,
+  "unauthenticated_api": 401,
+  "checks": [
+    "anonymous RPC denied by actual Data API",
+    "real staging Owner login and order read succeeded",
+    "approval missing invoice rejected",
+    "empty team group rejected before writes",
+    "reversal missing invoice rejected",
+    "application session API accepted real staging session"
+  ],
+  "at": "2026-11-15T11:59:08.325164+00:00"
+}

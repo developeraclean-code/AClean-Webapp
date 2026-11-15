@@ -1,0 +1,21 @@
+{
+  "environment": "production",
+  "sha": "196cfdc1f622bf9dbbdc2443cdc12ebbaa7704fc",
+  "before": {
+    "uuid": "xsehtou4dfqqmjwca1irjkmz",
+    "git_branch": "main",
+    "git_commit_sha": "838afba323e80efa40970bb225c918e2e5d85845",
+    "fqdn": "https://app.aclean.id,https://status.aclean.id/",
+    "status": "running:healthy"
+  },
+  "deployment": {
+    "deployments": [
+      {
+        "message": "Application aclean-web-production deployment queued.",
+        "resource_uuid": "xsehtou4dfqqmjwca1irjkmz",
+        "deployment_uuid": "nd2bv2sgnbkeposf8xwzlkfu"
+      }
+    ]
+  },
+  "at": "2026-11-15T12:00:07.215233+00:00"
+}
