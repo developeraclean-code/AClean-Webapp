@@ -1,0 +1,7 @@
+{
+  "adjust_inventory_item_atomic(text,numeric,numeric,numeric,text)": "e1c079c689adbd87722bbf314f933681",
+  "adjust_inventory_usage_actual_atomic(bigint,numeric,text)": "c9bafc3f111c615606b13a8c43a9e3e5",
+  "confirm_material_checkout_atomic(uuid,jsonb,timestamp with time zone,jsonb,jsonb,text,text)": "a1c55c795b9510a606a67c7f81af8a25",
+  "reopen_material_checkout_atomic(uuid,text,text)": "da5f991093b3044405aa0dda947cf09d",
+  "restock_inventory_atomic(text,numeric,numeric,date,text,boolean,text)": "310acff22afa012e91abf7a48ae43d94"
+}

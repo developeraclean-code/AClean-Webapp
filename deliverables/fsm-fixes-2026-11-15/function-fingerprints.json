@@ -1,0 +1,74 @@
+[
+  {
+    "signature": "public.adjust_inventory_item_atomic(text,numeric,numeric,numeric,text)",
+    "name": "adjust_inventory_item_atomic",
+    "original_md5": "0a8a82315657d8e3e13c1a02e61ac870",
+    "patched_md5": "5ae43ec262121148c7e116fc1e121b84"
+  },
+  {
+    "signature": "public.adjust_inventory_usage_actual_atomic(bigint,numeric,text)",
+    "name": "adjust_inventory_usage_actual_atomic",
+    "original_md5": "3405cc232dc6dbed14a9598ce54ab204",
+    "patched_md5": "f93a0bb3d176d22349bc6cff399c8b08"
+  },
+  {
+    "signature": "public.confirm_material_checkout_atomic(uuid,jsonb,timestamp with time zone,jsonb,jsonb,text,text)",
+    "name": "confirm_material_checkout_atomic",
+    "original_md5": "345e9039023ed07a80ea7d5661ce2f0c",
+    "patched_md5": "512a933937dafce0cba446c7d1bb78e0"
+  },
+  {
+    "signature": "public.link_expense_to_stock(uuid,text,numeric)",
+    "name": "link_expense_to_stock",
+    "original_md5": "a28304f3fcc2d5358a721840c8fb93d1",
+    "patched_md5": "bd87993563129900e7b24952ab93b3cf"
+  },
+  {
+    "signature": "public.record_invoice_partial_payment_atomic(uuid,text,numeric,text,text,date,text)",
+    "name": "record_invoice_partial_payment_atomic",
+    "original_md5": "6badf7f920a863a03c7d70ddf4de89bc",
+    "patched_md5": "c83d4ca0309fe27fac836e5b98302585"
+  },
+  {
+    "signature": "public.reopen_material_checkout_atomic(uuid,text,text)",
+    "name": "reopen_material_checkout_atomic",
+    "original_md5": "fb1f787965e96b29b0adc785c3ef8407",
+    "patched_md5": "514f985640dd64592cdca2a02606d4e9"
+  },
+  {
+    "signature": "public.restock_inventory_atomic(text,numeric,numeric,date,text,boolean,text)",
+    "name": "restock_inventory_atomic",
+    "original_md5": "9db3a877816f255a5181876ed029b1db",
+    "patched_md5": "732bcd63aa88e1066f556378ae2d856c"
+  },
+  {
+    "signature": "public.restore_inventory_stock()",
+    "name": "restore_inventory_stock",
+    "original_md5": "b85758feb7e7036aa7f3b1ec2533fdea",
+    "patched_md5": "fd7367c803f534b56c0b45a1c3649135"
+  },
+  {
+    "signature": "public.settle_invoice_atomic(text,uuid,date,text,text,text,text,text)",
+    "name": "settle_invoice_atomic",
+    "original_md5": "d46bef320095929df4f178e7fd2b83d1",
+    "patched_md5": "8f80ffde55a401db36efde3b6e516fe1"
+  },
+  {
+    "signature": "public.sync_inventory_from_units()",
+    "name": "sync_inventory_from_units",
+    "original_md5": "5ccba6f5d937c689a551c3cfee2add63",
+    "patched_md5": "794a1c79e722d4b91749ba56a86aa60f"
+  },
+  {
+    "signature": "public.update_inventory_stock()",
+    "name": "update_inventory_stock",
+    "original_md5": "b192cf120cc91742d59d9a5e8e6bcd5b",
+    "patched_md5": "7ee883db5ba479603402aff1abfa7d23"
+  },
+  {
+    "signature": "public.update_order_workflow_atomic(text,jsonb,text,text)",
+    "name": "update_order_workflow_atomic",
+    "original_md5": "50f01dcb2c0acb8d898ff8e0a0f6c57c",
+    "patched_md5": "848a72ae8b012771256a1da302b40be3"
+  }
+]

@@ -3320,7 +3320,8 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
     // return null = diblok guard/validasi (sudah showNotif sendiri) — jangan timpa
     // dengan toast "sukses" palsu. Return due (truthy) ke caller supaya handleApproveMerged
     // (bulk approve) bisa hitung successCount yang akurat, bukan asal increment.
-    if (due) showNotif(`✅ Invoice ${inv.id} diapprove — belum dikirim ke customer`);
+    if (!due) return null;
+    showNotif(`✅ Invoice ${inv.id} diapprove — belum dikirim ke customer`);
     setModalApproveInv(false); setPendingApproveInv(null);
     return due;
   };
@@ -3342,20 +3343,18 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
     const ok = await showConfirm({
       icon: "↩️", danger: true,
       title: "Revert invoice ke Belum Bayar?",
-      message: `Invoice ${inv.id} (${inv.customer}) akan dikembalikan ke status BELUM BAYAR agar nilainya bisa dikoreksi.\n\n• Pembayaran ${fmt(inv.total)} dibatalkan (catatan/bukti bayar tetap tersimpan)\n• Order terkait kembali ke "Invoice Dikirim"\n• Setelah koreksi nilai, tandai Lunas lagi\n\nLanjutkan?`,
+      message: `Koreksi status invoice ${inv.id} (${inv.customer}).\n\nPembayaran yang sudah tercatat tetap dipertahankan dan tidak dapat direset. Koreksi status hanya dapat dilanjutkan untuk invoice nol tanpa riwayat pembayaran.\n\nLanjutkan pemeriksaan?`,
       confirmText: "Ya, Revert",
     });
     if (!ok) return;
-    const { error, newStatus } = await revertInvoiceToUnpaid(supabase, inv.id, auditUserName());
+    const { error, newStatus, data: savedInvoice, orders: savedOrders } = await revertInvoiceToUnpaid(supabase, inv.id, auditUserName());
     if (error) { showNotif("❌ Gagal revert: " + error.message); return; }
     const st = newStatus || "UNPAID";
-    // Kembalikan order terkait PAID → INVOICE_APPROVED (job_id + invoice_id + anak)
-    supabase.from("orders").update({ status: "INVOICE_APPROVED" }).eq("invoice_id", inv.id).eq("status", "PAID").then(() => {});
-    if (inv.job_id) supabase.from("orders").update({ status: "INVOICE_APPROVED" }).eq("id", inv.job_id).eq("status", "PAID").then(() => {});
+    // Canonical rows already committed together by the RPC.
     setInvoicesData(prev => prev.map(i => i.id === inv.id
-      ? { ...i, status: st, paid_at: null, paid_amount: 0, remaining_amount: inv.total, paid_method: null } : i));
-    setOrdersData(prev => prev.map(o =>
-      (o.invoice_id === inv.id || o.id === inv.job_id) && o.status === "PAID" ? { ...o, status: "INVOICE_APPROVED" } : o));
+      ? { ...i, ...savedInvoice } : i));
+    const changedOrders = new Map((savedOrders || []).map(row => [row.id, row]));
+    setOrdersData(prev => prev.map(o => changedOrders.has(o.id) ? { ...o, ...changedOrders.get(o.id) } : o));
     addAgentLog("INVOICE_REVERTED", `Invoice ${inv.id} (${inv.customer}) direvert PAID→${st} oleh ${currentUser?.name} untuk koreksi nilai`, "WARNING");
     showNotif(`↩️ Invoice ${inv.id} → ${st === "OVERDUE" ? "Terlambat" : "Belum Bayar"}. Sekarang bisa Edit Nilai.`);
   };
@@ -3484,7 +3483,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
   // teams: [{ teknisi, helper, unitIds: [] }]  — minimal 2 tim dgn unit terisi.
   // Return groupId (parent id) atau null jika gagal total.
   // Wrapper (Fase 3, pola ctx): createTeamSplit pindah ke lib/createTeamSplit.
-  const createTeamSplit = (arg) => createTeamSplitLib(arg, { addAgentLog, cekTeknisiAvailableDB, hitungJamSelesai, insertOrder, invalidateCache, normalizePhone, setOrdersData, showNotif, supabase });
+  const createTeamSplit = (arg) => createTeamSplitLib(arg, { addAgentLog, currentUser, hitungJamSelesai, invalidateCache, normalizePhone, setOrdersData, showNotif, supabase });
 
   // ── Connect ARA Brain dari Supabase ──
   const connectAraBrain = async () => {

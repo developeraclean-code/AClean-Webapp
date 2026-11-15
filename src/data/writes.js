@@ -1,3 +1,5 @@
+import { fsmCommand } from "../lib/fsmCommand.js";
+
 // Pure Supabase write functions dengan injeksi `last_changed_by` untuk audit trail.
 // Fokus 5 tabel: orders, invoices, customers, expenses, service_reports.
 // Tabel lain (inventory, user_profiles, price_list, ara_brain, app_settings,
@@ -66,7 +68,7 @@ export const updateInvoice = (supabase, id, fields, userName) => {
 export const markInvoicePaid = async (supabase, id, paidAt, userName, options = {}) => {
   const paymentId = options.paymentId || globalThis.crypto?.randomUUID?.()
     || `00000000-0000-4000-8000-${Date.now().toString().padStart(12,"0").slice(-12)}`;
-  const { data, error } = await supabase.rpc("settle_invoice_atomic", {
+  const { data, error } = await fsmCommand(supabase, "settle_invoice_atomic", {
     p_invoice_id: id,
     p_payment_id: paymentId,
     p_paid_at: String(paidAt || "").slice(0,10),
@@ -76,81 +78,44 @@ export const markInvoicePaid = async (supabase, id, paidAt, userName, options = 
     p_actor_name: userName || null,
     p_mutation_key: options.mutationKey || `invoice-settle:${paymentId}`,
   });
-  if (!error) return { data: data?.invoice || data || null, error: null, result: data || null };
-
-  // Trial lokal sebelum migration 177 dipasang: pertahankan perilaku lama. Error bisnis
-  // dari RPC TIDAK boleh difallback karena dapat menembus guard double-payment.
-  const rpcMissing = error.code === "PGRST202" || error.code === "42883"
-    || /settle_invoice_atomic.*(schema cache|does not exist|not found)/i.test(error.message || "");
-  if (!rpcMissing) return { data: null, error, result: null };
-
-  const { data: inv, error: readError } = await supabase.from("invoices")
-    .select("id,job_id,phone,total,paid_amount,status").eq("id",id).single();
-  if (readError || !inv) return { data:null,error:readError || { message:"Invoice tidak ditemukan" } };
-  if (!["UNPAID","OVERDUE","PARTIAL_PAID","PENDING_APPROVAL"].includes(inv.status)) {
-    return { data:null,error:{ message:`Invoice sudah ${inv.status} — tidak bisa dibayar ulang` } };
+  if (!error) {
+    if (data?.invoice?.id !== id || data.invoice.status !== "PAID") {
+      return { data: null, error: { message: "Pelunasan belum terkonfirmasi; periksa riwayat dengan ID pembayaran yang sama" }, result: null };
+    }
+    return { data: data.invoice, error: null, result: data };
   }
-  const total=Number(inv.total)||0;
-  const legacy = await supabase.from("invoices").update({
-    status:"PAID",paid_at:paidAt,paid_method:options.method || "transfer",
-    paid_amount:total,remaining_amount:0,pdf_url:null,pdf_generated_at:null,
-    ...(options.paymentProofUrl ? { payment_proof_url:options.paymentProofUrl } : {}),
-    last_changed_by:userName,
-  }).eq("id",id).in("status",["UNPAID","OVERDUE","PARTIAL_PAID","PENDING_APPROVAL"]).select().single();
-  if (legacy.error) return legacy;
-  await supabase.from("orders").update({ status:"PAID",last_changed_by:userName }).or(`id.eq.${inv.job_id},invoice_id.eq.${id}`);
-  const remaining=Math.max(0,total-Number(inv.paid_amount||0));
-  if (remaining>0) await supabase.from("invoice_payments").insert({
-    id:paymentId,invoice_id:id,amount:remaining,method:options.method || "transfer",
-    notes:options.notes || "Lunas",paid_at:String(paidAt||"").slice(0,10),recorded_by_name:userName,
-  });
-  if (inv.phone) await supabase.from("customers").update({ last_service:String(paidAt||"").slice(0,10) }).eq("phone",inv.phone);
-  return { data:legacy.data,error:null,result:{ invoice:legacy.data,replayed:false,legacy_fallback:true } };
+
+  // Missing capabilities fail closed: never replace an atomic payment with
+  // separate browser writes. Keep the same payment/request ID when reconciling.
+  return { data: null, error, result: null };
 };
 
-// Revert invoice PAID/PARTIAL_PAID → UNPAID/OVERDUE (Owner only — untuk koreksi nilai).
-// Hanya membalik status + field pembayaran. payment_logs & bukti bayar TIDAK dihapus (audit).
-// Order terkait (PAID → INVOICE_APPROVED) di-handle di caller.
+// Keep posted cash/ledger intact. The RPC rejects financial resets and performs
+// any permitted zero-value status correction with its order changes atomically.
 export const revertInvoiceToUnpaid = async (supabase, id, userName) => {
-  const { data: inv } = await supabase
-    .from("invoices").select("total,status,due").eq("id", id).single();
-  if (!inv) return { data: null, error: { message: "Invoice tidak ditemukan" } };
-
-  const REVERTABLE = ["PAID", "PARTIAL_PAID"];
-  if (!REVERTABLE.includes(inv.status)) {
-    return { data: null, error: { message: `Invoice status ${inv.status} — hanya PAID/PARTIAL yang bisa direvert` } };
-  }
-
-  const total = Number(inv.total) || 0;
-  const isOverdue = inv.due && new Date(inv.due) < new Date();
-  const newStatus = isOverdue ? "OVERDUE" : "UNPAID";
-
-  const { data, error } = await supabase.from("invoices").update({
-    status: newStatus,
-    paid_at: null,
-    paid_amount: 0,
-    remaining_amount: total,
-    paid_method: null,
-    pdf_url: null,
-    pdf_generated_at: null,
-    last_changed_by: `${userName}::REVERT_PAID`,
-  }).eq("id", id).in("status", REVERTABLE).select("id");
-
-  if (!error && (!data || data.length === 0)) {
-    return { data: null, error: { message: "Invoice sudah diproses pengguna lain — refresh halaman" } };
-  }
-  return { data, error, newStatus };
+  try {
+    const { data, error } = await fsmCommand(supabase, "revert_invoice_unpaid_atomic", {
+      p_invoice_id: id, p_actor_name: userName || null,
+    });
+    if (error) return { data: null, error };
+    if (!data?.invoice || !Array.isArray(data.orders)) {
+      return { data: null, error: { message: "Hasil koreksi belum terkonfirmasi; muat ulang invoice sebelum mencoba lagi" } };
+    }
+    return { data: data.invoice, orders: data.orders, error: null, newStatus: data.new_status };
+  } catch (error) { return { data: null, error }; }
 };
 
 export const deleteInvoice = async (supabase, id, userName, reason = "MANUAL_DELETE") => {
-  await supabase.from("invoices").update({ last_changed_by: `${userName}::${reason}` }).eq("id", id);
-  // payment_logs FK NO ACTION — hapus dulu agar invoice bisa dihapus
-  await supabase.from("payment_logs").delete().eq("invoice_id", id);
-  // Untuk invoice AC unit sale, ada order install yang auto-created — clear linkage
-  // Order tidak dihapus (ada laporan teknisi yang link ke order), hanya unset invoice_id
-  await supabase.from("orders").update({ invoice_id: null }).eq("invoice_id", id);
-  // invoice_items + payments akan terhapus via FK CASCADE
-  return supabase.from("invoices").delete().eq("id", id);
+  try {
+    const { data, error } = await fsmCommand(supabase, "delete_invoice_atomic", {
+      p_invoice_id: id, p_actor_name: userName || null, p_reason: reason,
+    });
+    if (error) return { data: null, error };
+    if (data?.deleted !== true || data.id !== id) {
+      return { data: null, error: { message: "Penghapusan belum terkonfirmasi; periksa invoice sebelum mencoba lagi" } };
+    }
+    return { data, error: null };
+  } catch (error) { return { data: null, error }; }
 };
 
 // ───── SERVICE REPORTS ─────
