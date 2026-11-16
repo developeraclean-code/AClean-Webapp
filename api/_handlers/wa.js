@@ -460,6 +460,7 @@ export async function receiveWa(req, res) {
         route: routeProvider, selected_provider: selectedProvider, token_source: tokenSource, token_present: Boolean(provided),
         type: inboundEvent.type, media_field_present: !!wb.media, media_url_allowed: !!inboundEvent.media_url,
         capture_media_requested: inboundEvent.capture_media, sender_is_internal: inboundCapture.sender_is_internal ?? null,
+        is_group: inboundEvent.is_group, member_present: !!inboundEvent.member, review_required: !!inboundEvent.review_reason,
         payment_detect_enabled: inboundCapture.payment_detect_enabled ?? null,
         status: inboundCapture.intake_status, duplicate: inboundCapture.duplicate, queued: !!inboundCapture.media_job?.id }));
       const senderRaw = inboundEvent.sender, memberRaw = inboundEvent.member;
@@ -477,7 +478,7 @@ export async function receiveWa(req, res) {
       wb.isGroup = looksLikeGroup;
       wb.name = inboundEvent.name;
       if (inboundEvent.media_url) wb.url = inboundEvent.media_url;
-      if (!looksLikeGroup && !inboundEvent.processable) {
+      if (!inboundEvent.processable) {
         return res.status(200).json({ ok: true, status: inboundCapture.intake_status, receipt_id: inboundCapture.receipt_id,
           needs_review: !!inboundEvent.review_reason, automated_reply: false });
       }
