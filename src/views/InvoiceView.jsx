@@ -1,4 +1,4 @@
-import { memo, useState, useMemo, useEffect, useRef } from "react";
+import { memo, useState, useMemo, useEffect, useRef, useCallback } from "react";
 import PaymentInboxHealthPanel from "../components/PaymentInboxHealthPanel.jsx";
 import PaymentEvidencePreview from "../components/PaymentEvidencePreview.jsx";
 import { isPaymentInboxSuggestion } from "../lib/paymentMediaPolicy.js";
@@ -16,6 +16,8 @@ import { confirmInvoiceWaWithholding, invoiceCashReceived, paymentWithholdingRev
 import PaymentWithholdingReview from "../components/PaymentWithholdingReview.jsx";
 import { combinedTransferReview, confirmInvoiceWaCombinedTransfer } from "../lib/paymentCombinedTransfer.js";
 import PaymentCombinedTransferReview from "../components/PaymentCombinedTransferReview.jsx";
+import InstallationPaymentReview from "../components/InstallationPaymentReview.jsx";
+import { isInstallationInvoice } from "../lib/installationPayments.js";
 import InvoiceSettlementReview from "../components/InvoiceSettlementReview.jsx";
 import { getLocalDate as localDateWIB } from "../lib/dateTime.js";
 import { groupInvoiceBalance, groupPaymentProof } from "../lib/groupPayment.js";
@@ -29,7 +31,12 @@ import QuotationPDF from "../components/QuotationPDF.jsx";
 // termasuk saran yang pernah diabaikan untuk invoice yang sama dan diperiksa ulang,
 // (URL) tempel link, (UPLOAD) file. Sumber WA memakai satu RPC untuk bukti +
 // pelunasan + ledger; URL/upload tetap melalui markPaid atau attach-only.
-export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid, setInvoicesData, setOrdersData, setPaymentSuggestions, onSuggestionResolved, showNotif, currentUser, auditUserName, addAgentLog, fmt, onClose }) {
+export function AttachProofModal({ inv: initialInvoice, fotoSrc, apiHeaders, supabase, markPaid, setInvoicesData, setOrdersData, setPaymentSuggestions, onSuggestionResolved, showNotif, currentUser, auditUserName, addAgentLog, fmt, onClose }) {
+  const [reviewedInvoice, setReviewedInvoice] = useState(null);
+  const inv = reviewedInvoice ? { ...initialInvoice, ...reviewedInvoice } : initialInvoice;
+  const [installmentMode, setInstallmentMode] = useState(false);
+  const [installmentBlocked, setInstallmentBlocked] = useState(true);
+  const [installmentSaving, setInstallmentSaving] = useState(false);
   const [tab, setTab] = useState("wa");
   const [suggs, setSuggs] = useState([]);
   const [loadingSuggs, setLoadingSuggs] = useState(true);
@@ -45,6 +52,14 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
   const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
   const confirmationRef = useRef({ busy: false, id: null });
+  const acceptInstallmentInvoice = useCallback(fresh => {
+    setReviewedInvoice(previous => ({ ...previous, ...fresh }));
+    setInvoicesData(previous => previous.map(row => row.id === fresh.id ? { ...row, ...fresh } : row));
+    setReviewAcknowledged(false);
+    setAcceptWithholding(false);
+    confirmationRef.current.id = null;
+  }, [setInvoicesData]);
+  const closeModal = () => { if (!busy && !installmentSaving) onClose(); };
 
   const invTail = (inv.phone || "").replace(/\D/g, "").slice(-9);
 
@@ -179,7 +194,8 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
   const hasExcessTransfer = hasAmountDifference && Number(selSugg.amount) > Number(inv.total) - Number(inv.paid_amount || 0);
   const withholdingReview = paymentWithholdingReview(inv, selSugg);
   const combinedReview = combinedTransferReview(inv, selSugg);
-  const canConfirm = !!chosenUrl && reviewAcknowledged && !busy
+  const canConfirm = !!chosenUrl && reviewAcknowledged && !busy && !installmentSaving
+    && (!installmentMode || (!installmentBlocked && !hasAmountDifference))
     && (!hasAmountDifference || ((hasExcessTransfer ? combinedReview.eligible : withholdingReview.eligible)
       && acceptWithholding && withholdingNote.trim().length >= 10 && !!transferDate));
 
@@ -263,7 +279,7 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
   };
 
   const tabBtn = (k, label) => (
-    <button onClick={() => { setTab(k); setReviewAcknowledged(false); }} style={{
+    <button disabled={busy || installmentSaving} onClick={() => { setTab(k); setReviewAcknowledged(false); setInstallmentMode(false); setInstallmentBlocked(true); }} style={{
       flex: 1, padding: "8px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer",
       background: tab === k ? cs.accent : cs.card, color: tab === k ? "#fff" : cs.muted,
       border: "1px solid " + (tab === k ? cs.accent : cs.border), borderRadius: 8,
@@ -271,7 +287,7 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
   );
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 600, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
+    <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 600, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={closeModal}>
       <div onClick={e => e.stopPropagation()} style={{ background: cs.surface, border: "1px solid " + cs.border, borderRadius: 16, padding: 18, width: "100%", maxWidth: 520, maxHeight: "90vh", overflowY: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
           <div>
@@ -279,7 +295,7 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
             <div style={{ fontSize: 12, color: cs.muted, marginTop: 2 }}>{inv.id} · {inv.customer} · {fmt(inv.total)}{alreadyPaid ? " · sudah PAID" : ""}</div>
             <div style={{ fontSize: 11, color: cs.muted, marginTop: 3 }}>{alreadyPaid ? "Simpan bukti saja; pembayaran tidak dicatat ulang." : "Periksa pengirim, nominal dan potongan sebelum pelunasan."}</div>
           </div>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer", lineHeight: 1 }}>×</button>
+          <button disabled={busy || installmentSaving} onClick={closeModal} style={{ background: "none", border: "none", color: cs.muted, fontSize: 22, cursor: "pointer", lineHeight: 1 }}>×</button>
         </div>
 
         <div style={{ display: "flex", gap: 6, margin: "12px 0" }}>
@@ -303,7 +319,8 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
                   const sameNo = invTail && (s.phone || "").replace(/\D/g, "").endsWith(invTail);
                   return (
                     <div key={s.id} onClick={() => {
-                      if (confirmationRef.current.busy) return;
+                      if (confirmationRef.current.busy || installmentSaving) return;
+                      setInstallmentMode(false); setInstallmentBlocked(true);
                       confirmationRef.current.id = null; setSelSugg(sel ? null : s); setReviewAcknowledged(false); setAcceptWithholding(false); setWithholdingNote("");
                       const parsed = s.transfer_date ? new Date(s.transfer_date) : null;
                       setTransferDate(parsed && Number.isFinite(parsed.getTime()) ? new Date(parsed.getTime() + 7 * 3600000).toISOString().slice(0, 10) : localDateWIB());
@@ -338,10 +355,18 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
               Bukti ini perlu ditinjau manual{selSugg?.status === "DISMISSED" ? " karena pernah diabaikan" : ""}.
               {selSugg?.raw_message && <span style={{ display: "block", marginTop: 4 }}>{selSugg.raw_message}</span>}
             </div>}
-            {hasExcessTransfer && <PaymentCombinedTransferReview invoice={inv} suggestion={selSugg}
+            {selSugg && !alreadyPaid && isInstallationInvoice(inv) && !hasExcessTransfer && (hasAmountDifference || installmentMode) && <label style={{ display: "block", marginTop: 12, color: cs.accent, fontSize: 12 }}>
+              <input type="checkbox" role="switch" checked={installmentMode} disabled={busy || installmentSaving}
+                onChange={e => { setInstallmentMode(e.target.checked); setInstallmentBlocked(true); setReviewAcknowledged(false); setAcceptWithholding(false); }} /> Pelunasan bertahap instalasi
+              <span style={{ display: "block", color: cs.muted, marginTop: 4 }}>Untuk paket/DP dan tambahan yang dibayar beberapa kali. Catat penerimaan terdahulu agar sisa tagihan sesuai bukti terakhir.</span>
+            </label>}
+            {installmentMode && <InstallationPaymentReview invoice={inv} proof={selSugg} supabase={supabase} fmt={fmt}
+              actorName={auditUserName ? auditUserName() : currentUser?.name} finalDate={transferDate}
+              onInvoice={acceptInstallmentInvoice} onBlocked={setInstallmentBlocked} onSaving={setInstallmentSaving} />}
+            {hasExcessTransfer && !installmentMode && <PaymentCombinedTransferReview invoice={inv} suggestion={selSugg}
               accepted={acceptWithholding} onAccepted={setAcceptWithholding} note={withholdingNote} onNote={setWithholdingNote}
               paidAt={transferDate} onPaidAt={setTransferDate} disabled={busy} fmt={fmt} />}
-            {hasAmountDifference && !hasExcessTransfer && <PaymentWithholdingReview invoice={inv} suggestion={selSugg}
+            {hasAmountDifference && !hasExcessTransfer && !installmentMode && <PaymentWithholdingReview invoice={inv} suggestion={selSugg}
               accepted={acceptWithholding} onAccepted={setAcceptWithholding} note={withholdingNote} onNote={setWithholdingNote}
               paidAt={transferDate} onPaidAt={setTransferDate} disabled={busy} fmt={fmt} />}
           </div>
@@ -368,13 +393,13 @@ export function AttachProofModal({ inv, fotoSrc, apiHeaders, supabase, markPaid,
         )}
 
         {chosenUrl && <label style={{ display: "block", marginTop: 12, color: cs.yellow, fontSize: 11 }}>
-          <input type="checkbox" checked={reviewAcknowledged} disabled={busy} onChange={e => setReviewAcknowledged(e.target.checked)} /> Saya sudah membuka bukti dan memeriksa pengirim, nominal, dan invoice {inv.id} sebelum {alreadyPaid ? "melampirkan" : "menandai lunas"}.
+          <input type="checkbox" checked={reviewAcknowledged} disabled={busy || installmentSaving || (installmentMode && installmentBlocked)} onChange={e => setReviewAcknowledged(e.target.checked)} /> Saya sudah membuka bukti dan memeriksa pengirim, nominal, dan invoice {inv.id} sebelum {alreadyPaid ? "melampirkan" : "menandai lunas"}.
         </label>}
         <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-          <button onClick={onClose} style={{ flex: 1, background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "11px", borderRadius: 10, cursor: "pointer", fontWeight: 600 }}>Batal</button>
+          <button disabled={busy || installmentSaving} onClick={closeModal} style={{ flex: 1, background: cs.card, border: "1px solid " + cs.border, color: cs.muted, padding: "11px", borderRadius: 10, cursor: "pointer", fontWeight: 600 }}>Batal</button>
           <button onClick={confirm} disabled={!canConfirm}
             style={{ flex: 2, background: canConfirm ? cs.green : cs.surface, border: "none", color: canConfirm ? "#fff" : cs.muted, padding: "11px", borderRadius: 10, cursor: canConfirm ? "pointer" : "not-allowed", fontWeight: 800, fontSize: 13 }}>
-            {busy ? "Proses…" : alreadyPaid ? "✅ Simpan Bukti" : hasExcessTransfer ? `✅ Alokasikan ${fmt(combinedReview.remaining)} & Lunas` : hasAmountDifference ? "✅ Catat Transfer + Potongan & Lunas" : "✅ Simpan Bukti & Tandai Lunas"}
+            {busy ? "Proses…" : alreadyPaid ? "✅ Simpan Bukti" : installmentMode ? "✅ Verifikasi Bukti Terakhir & Lunas" : hasExcessTransfer ? `✅ Alokasikan ${fmt(combinedReview.remaining)} & Lunas` : hasAmountDifference ? "✅ Catat Transfer + Potongan & Lunas" : "✅ Simpan Bukti & Tandai Lunas"}
           </button>
         </div>
       </div>

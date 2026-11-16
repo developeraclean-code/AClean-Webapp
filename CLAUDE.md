@@ -81,6 +81,8 @@ Role hierarchy: **Owner > Admin > Teknisi > Helper**. Enforced in `canAccess()` 
 - Status flow: Draft → APPROVED → UNPAID → PAID / OVERDUE / PARTIAL_PAID
 - Setelah `markInvoicePaid()` → wajib update `orders.status = 'PAID'` di DB juga (App.jsx sudah handle post-3934)
 
+- **Pelunasan bertahap instalasi (kandidat rilis GitHub 16 Nov 2026):** toggle di Lampirkan Bukti WA untuk invoice `Install`/`Instalasi`/`Installation` membuka saldo dan ledger terbaru. Penerimaan terdahulu wajib diisi per transaksi nyata (nominal, tanggal, metode, referensi, konfirmasi belum tercatat), memakai RPC cicilan yang ada. Setelah sisa sesuai bukti terakhir, verifikasi WA tetap manual melalui RPC atomik biasa; nominal AI/total invoice tidak diubah dan selisih bukan PPh. Kegagalan respons menghentikan pencatatan tanpa replay otomatis; periksa ledger sebelum mencatat kembali. Tidak ada migrasi atau rilis produksi oleh perubahan lokal ini. Rincian dan bukti: `docs/INSTALLATION_STAGED_PAYMENTS_2026-11-16.md`.
+
 **Laporan Teknisi:**
 - Max unit per laporan: **30 unit** (naik dari 10 per commit 92e3936)
 - Status: PENDING → SUBMITTED → VERIFIED / REVISION / REJECTED
