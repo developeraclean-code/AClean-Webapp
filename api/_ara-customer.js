@@ -36,6 +36,8 @@ export async function generateCustomerReply({ provider, system, history, fetchIm
 export async function processAraCustomer({ db, phone, message, sourceKey, chatbotOn, autoOn, internal = false, generate = generateCustomerReply, deliver = deliverWorkspaceMessage }) {
   if ((!chatbotOn && !autoOn) || internal || !String(message || "").trim()) return { replied: false, skipped: true };
   if (!/^[0-9]{8,15}$/.test(phone) || !sourceKey) throw new Error("Identitas pesan ARA tidak valid");
+  // Owner-designated manual cases stay unread and produce neither a review draft nor a reply.
+  if (customerDecision(message).handoff) return { replied: false, skipped: true, handoff: true };
   const id = araReviewId(phone, sourceKey);
   const { error: claimError } = await db.from("wa_ara_reviews").insert({ id, phone, policy_version: ARA_POLICY_VERSION });
   if (claimError?.code === "23505") return { replied: false, replayed: true, review_id: id };

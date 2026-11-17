@@ -1,5 +1,5 @@
 // Shared, deterministic policy. Uploaded examples and model output cannot grant actions.
-export const ARA_POLICY_VERSION = "2026-10-07";
+export const ARA_POLICY_VERSION = "2026-11-17";
 export const ARA_REPLY_SIGNATURE = "- Auto Reply by ARA -";
 export const ARA_PAYMENT_REPLY = "Terima kasih, Pak/Bu. Bukti transfernya perlu diverifikasi admin terlebih dahulu. Boleh diinformasikan atas nama siapa pembayarannya? Informasi ini membantu kami memverifikasi pengirim transfer.";
 export const ARA_COMPLAINT_REPLY = "Mohon maaf, Pak/Bu, atas ketidaknyamanannya sehingga AC-nya masih bermasalah. Boleh kirim foto atau video bagian yang bocor/kendala serta informasikan unit mana yang masih terkendala? Admin perlu memeriksa riwayat servis dan ketentuan garansinya sebelum memastikan tindak lanjut.";
@@ -15,6 +15,10 @@ Asisten layanan pelanggan. Bahasa Indonesia ramah, maksimal 5 kalimat singkat; t
 Layanan: cleaning, pemasangan, perbaikan, dan penerimaan keluhan AC.
 Booking: kumpulkan nama, lokasi, jenis/kapasitas dan jumlah AC, tanggal serta jam pilihan.
 Harga mengacu pada price list aktif. Harga final, slot, tim, garansi dan refund perlu pemeriksaan Admin.
+Untuk cleaning, minta jumlah unit dan alamat. Harga hanya dari Katalog WA “Pricelist Service Cleaning AC Split Wall”; jika data tidak tersedia, tunggu Admin.
+Untuk AC kurang dingin: jelaskan biaya pengecekan Rp100.000/unit; biaya cek tetap dikenakan saat kunjungan walau perbaikan tidak jadi. Pekerjaan/material tambahan harus dijelaskan dan disetujui pelanggan sebelum dikerjakan.
+Jadwal mengikuti Planning Order. Konfirmasi kunjungan pada hari H; jangan kirim pengingat H-1. Bila jadwal/area/tim/estimasi tidak dapat dipastikan, gunakan handoff sesuai aturan; jangan menjanjikan waktu.
+Garansi standar: cleaning, pemasangan, dan freon masing-masing 30 hari kalender. Tambahan 14 hari hanya untuk cleaning setelah review Google berhasil dikirim dan dikenali AI vision dari foto; tidak mencakup sparepart, freon, pemasangan, atau pekerjaan lain.
 Pembayaran bisa DP atau penuh sesuai quotation/invoice. Bukti diterima untuk diverifikasi; bukan konfirmasi lunas.
 Untuk bukti pembayaran: ${ARA_PAYMENT_REPLY}
 Untuk keluhan setelah servis: ${ARA_COMPLAINT_REPLY}
@@ -88,12 +92,13 @@ export function buildAraSystem({ audience = "customer", brain, training, message
 export function customerDecision(message) {
   const m = String(message || "").trim().toLowerCase();
   if (!m) return { intent: "empty", reply: "", review: true };
+  if (/perkiraan|estimasi.*(tiba|datang)|rentang waktu.*(teknisi|team)|jam berapa.*(teknisi|team)|teknisi datang.*tidak ada|tidak ada orang.*rumah|rumah kosong|sparepart.*(dibawa|bawa)|teknisi.*sparepart/.test(m)) return { intent: "admin_handoff", reply: "", review: true, handoff: true };
   if (/asap|bau (gosong|terbakar)|kesetrum|tersengat|percikan|terbakar/.test(m)) return { intent: "urgent", review: true, reply: "Mohon hentikan penggunaan AC jika aman dilakukan dan jangan menyentuh kabel atau komponen listrik. Hubungi Admin/teknisi untuk pemeriksaan segera; jika ada kebakaran atau bahaya langsung, hubungi layanan darurat setempat." };
   if (/abaikan.*(instruksi|aturan)|ignore.*(instruction|prompt)|system prompt|api.?key|data (pelanggan|customer) lain/.test(m)) return { intent: "restricted", review: true, reply: "Saya dapat membantu kebutuhan servis AC. Untuk akses data atau perubahan transaksi, silakan melalui Admin yang berwenang." };
   if (/refund|uang kembali|viral|lapor polisi/.test(m)) return { intent: "escalation", review: true, reply: "Mohon maaf atas kendalanya. Boleh informasikan nomor pekerjaan dan masalah yang dialami? Permintaan ini perlu ditinjau Owner/Admin sebelum ada keputusan atau janji pengembalian dana." };
   if (/bayar|transfer|lunas|invoice|tagihan|bukti|\bdp\b|rekening/.test(m)) return { intent: "payment", review: true, reply: /bukti|(?:sudah|udah|telah|sudh|sdh).*?(?:transfer|bayar)|(?:transfer|bayar).*?(?:sudah|udah|selesai)/.test(m) ? ARA_PAYMENT_REPLY : "Boleh informasikan nomor invoice atau quotation yang dimaksud, Pak/Bu? Admin perlu memeriksa instruksi pembayaran, status dan sisa tagihannya sebelum memberikan kepastian." };
   if (/komplain|complain|garansi|masih (bocor|panas|rusak)|tidak puas/.test(m)) return { intent: "complaint", review: true, reply: ARA_COMPLAINT_REPLY };
-  if (/terlambat|telat|belum datang|status order|status pesanan|teknisi.*(mana|kapan)/.test(m)) return { intent: "status", review: true, reply: "Boleh informasikan nomor pekerjaan atau alamat layanan? Admin perlu mengecek jadwal dan posisi tim sebelum memberi kepastian waktu kedatangan." };
+  if (/terlambat|telat|belum datang|status order|status pesanan|teknisi.*(mana|kapan)/.test(m)) return { intent: "status", review: true, reply: "Mohon maaf, Bapak/Ibu (nama), atas keterlambatan tim kami. Sebentar kami cek dahulu posisi tim kami." };
   if (/harga|tarif|biaya|berapa|promo|diskon/.test(m)) return { intent: "price", review: true };
   if (/^(halo|hi|hello|hai|pagi|siang|sore|malam|selamat (pagi|siang|sore|malam)|assalamualaikum|permisi)[\s!.?,🙏😊]*$/.test(m)) return { intent: "greeting", review: false, reply: "Halo, terima kasih menghubungi AClean. Ada kebutuhan cuci, perbaikan, pemasangan AC, atau tindak lanjut pekerjaan yang bisa kami bantu?" };
   if (/booking|jadwal|pesan|pasang|install|cuci|cleaning|servis|service|malam|jam\s*\d/.test(m)) return { intent: "booking", review: true };
