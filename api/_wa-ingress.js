@@ -53,7 +53,30 @@ export function safeWablasMediaUrl(value, { env = process.env } = {}) {
 }
 
 const TYPES = { image: "image", photo: "image", imagemessage: "image", document: "document", file: "document", documentmessage: "document", video: "video", videomessage: "video", audio: "audio", ptt: "audio", sticker: "sticker", text: "text", chat: "text", conversation: "text" };
-const FIELDS = ["provider", "device", "sender", "from", "to", "member", "participant", "group", "isGroup", "type", "name", "message", "text", "caption", "url", "media", "filename", "extension", "mimetype", "timestamp", "inboxid", "id", "message_id", "deviceId", "isFromMe", "groupSubject"];
+const FIELDS = ["provider", "device", "sender", "from", "to", "member", "participant", "group", "isGroup", "type", "name", "message", "text", "caption", "url", "media", "filename", "extension", "mimetype", "timestamp", "inboxid", "id", "message_id", "deviceId", "isFromMe", "groupSubject", "pushName", "message_type", "is_group", "id_group", "lid", "from_jid", "msg_id"];
+const GROUP_JID = /^\d+(?:-\d+)?@g\.us$/;
+const flagOn = value => value === true || value === "true";
+
+function whacenterEnvelope(input) {
+  const group = [input.id_group, input.group, input.sender, input.from]
+    .find(value => typeof value === "string" && GROUP_JID.test(value.trim()));
+  const isGroup = !!group || flagOn(input.is_group) || flagOn(input.isGroup) || !!input.member || !!input.participant;
+  const jid = String(input.from_jid || "").trim();
+  const lid = String(input.lid || (/@lid$/i.test(jid) ? jid.replace(/@lid$/i, "") : "")).trim();
+  const identify = value => {
+    const candidate = String(value || jid || "").trim();
+    // Bare LID must retain its namespace. A distinct real `from` phone remains usable.
+    return lid && candidate === lid ? `${lid}@lid` : candidate;
+  };
+  const from = identify(input.from || input.sender);
+  const member = identify(input.member || input.participant || (GROUP_JID.test(from) ? jid : from));
+  return { ...input, group: group?.trim(), isGroup,
+    sender: isGroup ? group?.trim() : from, from,
+    member: isGroup ? member : undefined,
+    name: input.pushName || input.name,
+    type: input.type || (input.message_type === "media" ? undefined : input.message_type),
+  };
+}
 
 export function normalizeWaIngress(body = {}, { provider = "fonnte", env = process.env } = {}) {
   const input = body && typeof body === "object" && !Array.isArray(body) ? body : {};
@@ -71,7 +94,7 @@ export function normalizeWaIngress(body = {}, { provider = "fonnte", env = proce
     filename: input.file,
     mimetype: input.mimeType,
     groupSubject: input.group?.subject,
-  } : input;
+  } : provider === "whacenter" ? whacenterEnvelope(input) : input;
   const providerName = ["fonnte", "whacenter", "wablas"].includes(provider) ? provider : "fonnte";
   const explicitGroup = [raw.group, raw.sender, raw.from].find(value => typeof value === "string" && (value.endsWith("@g.us") || /^\d+-\d+$/.test(value)));
   const senderRaw = String(explicitGroup || raw.sender || raw.from || raw.group || "").slice(0, 100);
@@ -86,7 +109,8 @@ export function normalizeWaIngress(body = {}, { provider = "fonnte", env = proce
       : safeFonnteMediaUrl;
   const sourceUrl = safeProviderUrl(raw.media) || safeProviderUrl(raw.url) || safeProviderUrl(raw.message);
   const originalType = String(raw.type || "").toLowerCase().replace(/[^a-z]/g, "");
-  const fileName = String(raw.filename || (sourceUrl ? new URL(sourceUrl).pathname : ""));
+  const source = sourceUrl ? new URL(sourceUrl) : null;
+  const fileName = String(raw.filename || (providerName === "whacenter" ? source?.searchParams.get("path") : null) || source?.pathname || "");
   const mime = String(raw.mimetype || "").toLowerCase();
   const documentFile = /\.(pdf|docx?|xlsx?|pptx?|txt|csv|zip|rar)$/i.test(fileName);
   const inferredType = documentFile || mime === "application/pdf" ? "document"
@@ -97,6 +121,12 @@ export function normalizeWaIngress(body = {}, { provider = "fonnte", env = proce
   const candidate = [raw.message, raw.text, raw.caption].find(value => typeof value === "string" && value.trim()) || "";
   const message = validateMessage(candidate) || (sourceUrl ? `[${type}] ${sourceUrl}` : isGroup ? "(empty/system message)" : null);
   let reviewReason = !isGroup && !phone ? "Identitas pengirim belum dapat dipastikan; jangan menebak nomor dari LID." : null;
+  if (providerName === "whacenter" && isGroup) {
+    const memberPhone = memberRaw.includes("@") && !/@(?:s\.whatsapp\.net|c\.us)$/i.test(memberRaw)
+      ? null : validateAndNormalizePhone(memberRaw.replace(/@(?:s\.whatsapp\.net|c\.us)$/i, ""));
+    if (!GROUP_JID.test(senderRaw)) reviewReason = "ID grup WhaCenter belum valid; jangan proses sebagai chat pribadi.";
+    else if (!memberPhone) reviewReason = "Identitas anggota grup belum dapat dipastikan; jangan menebak nomor dari LID.";
+  }
   if (!isGroup && !message) reviewReason ||= "Pesan/media kosong atau format belum dikenali; periksa arsip WA.";
   if (!isGroup && ["image", "document"].includes(type) && !sourceUrl) reviewReason ||= `Foto/dokumen diterima tanpa URL media ${providerName} yang diizinkan; file belum dapat diunduh.`;
   if (!isGroup && type === "document" && documentFile && !/\.pdf$/i.test(fileName)) reviewReason ||= "Dokumen diterima; format ini perlu diperiksa manual dan tidak dianalisis sebagai gambar pembayaran.";
@@ -110,7 +140,7 @@ export function normalizeWaIngress(body = {}, { provider = "fonnte", env = proce
   // Provider IDs/timestamps survive retries. Without any stable identity, keep
   // both identical messages instead of silently dropping a legitimate second one.
   payload.provider = providerName;
-  const stableId = raw.inboxid || raw.id || raw.message_id || raw.timestamp || sourceUrl || randomUUID();
+  const stableId = raw.inboxid || raw.id || raw.message_id || raw.msg_id || raw.timestamp || sourceUrl || randomUUID();
   const eventKey = "wa_" + createHash("sha256").update(JSON.stringify([providerName, String(raw.device || raw.to || ""), phone || senderRaw, memberRaw, String(stableId), type, candidate, sourceUrl])).digest("hex");
   const caption = candidate.trim();
   const operationalPhoto = /^(pagi|pulang|sore|selesai|morning)\s+tas\s*\d{1,2}$/i.test(caption) || /^material\s+(pagi|pulang)$/i.test(caption);

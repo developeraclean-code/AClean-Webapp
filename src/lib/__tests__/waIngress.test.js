@@ -4,6 +4,32 @@ import { captureWaIngress, downloadIngressMedia, normalizeWaIngress, readWaIngre
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const sample = { device: "628000000001", sender: "628000000002", type: "image", url: "https://api.fonnte.com/t/proof.jpg", timestamp: "1792197446" };
 describe("inbound WA normalization", () => {
+  it.each([true, "true"])("routes the documented WhaCenter group envelope (%s) without a customer identity", is_group => {
+    const input = { from: "081234567890", pushName: "Synthetic Rey", is_group, id_group: "628000000001-1460340453@g.us",
+      message_type: "media", message: "Bensin 20k motor Rey", media: "https://app.whacenter.com/api/media?path=receipt.jpg", timestamp: "2026-11-16 10:00:00" };
+    const event = normalizeWaIngress(input, { provider: "whacenter" });
+    expect(event).toMatchObject({ sender: input.id_group, member: input.from, name: input.pushName,
+      phone: null, is_group: true, processable: true, type: "image", capture_media: false, message: input.message });
+    expect(event.payload).toMatchObject({ is_group, id_group: input.id_group, pushName: input.pushName, message_type: "media" });
+    expect(normalizeWaIngress(input, { provider: "whacenter" }).event_key).toBe(event.event_key);
+  });
+  it("never guesses a personal phone or group participant from a bare WhaCenter LID", () => {
+    const input = { from: "12345678901234", lid: "12345678901234", from_jid: "12345678901234@lid", message: "Bensin 20k" };
+    expect(normalizeWaIngress(input, { provider: "whacenter" })).toMatchObject({ phone: null, processable: false });
+    const group = normalizeWaIngress({ ...input, is_group: true, id_group: "120000000001@g.us" }, { provider: "whacenter" });
+    expect(group).toMatchObject({ is_group: true, phone: null, member: input.from_jid, processable: false });
+    expect(group.review_reason).toContain("anggota grup");
+    expect(normalizeWaIngress({ ...input, from: "081234567890" }, { provider: "whacenter" }).phone).toBe("6281234567890");
+  });
+  it.each([undefined, "invalid", "120000000001@g.us.evil"])("keeps a declared group with missing/invalid ID out of personal automation (%s)", id_group => {
+    const event = normalizeWaIngress({ from: sample.sender, is_group: true, id_group, message: "Bensin 20k" }, { provider: "whacenter" });
+    expect(event).toMatchObject({ is_group: true, phone: null, processable: false, capture_media: false });
+  });
+  it.each([["receipt.pdf", "document", true], ["voice.ogg", "audio", false], ["clip.mp4", "video", false], ["bill.docx", "document", false]])("recognizes signed WhaCenter media path %s", (path, type, processable) => {
+    const event = normalizeWaIngress({ from: sample.sender, message_type: "media", media: `https://app.whacenter.com/api/media?path=${path}` }, { provider: "whacenter" });
+    expect(event).toMatchObject({ type, processable });
+    if (["audio", "video"].includes(type)) expect(event.capture_media).toBe(false);
+  });
   it.each(["image", "Image", "imageMessage", "photo"])("captures %s without a caption", type => {
     const event = normalizeWaIngress({ ...sample, type });
     expect(event).toMatchObject({ type: "image", processable: true, capture_media: true, phone: sample.sender });
