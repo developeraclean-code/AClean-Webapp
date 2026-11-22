@@ -19,7 +19,6 @@ import {
   resolveRegularOrderTeam,
   emptyOrderTeamAssignment,
 } from "../lib/teamAssignment.js";
-import QuickScheduleModal from "../components/QuickScheduleModal.jsx";
 import MaintUnitPickerModal from "./MaintUnitPickerModal.jsx";
 import { useAppContext } from "../context/AppContext.js";
 
@@ -1100,7 +1099,6 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
   // Insiden nyata 11 Agu 2026: BAPAK WILLIAM OAK dobel order, selisih 63 ms
   // (WA-1786430901862 dapat laporan, WA-1786430902366 nyangkut PENDING selamanya).
   const savingLock = useRef(false);
-  const [showQuickPaste, setShowQuickPaste] = useState(false);
   const [editId, setEditId] = useState(null);
   const planningFormRef = useRef(null);
   const [weekOffset, setWeekOffset] = useState(0);
@@ -2230,12 +2228,6 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
           <div style={{ fontWeight: 800, fontSize: 15, color: editId ? cs.yellow : continuationFrom ? "#f97316" : cs.text }}>
             {editId ? "✏️ Edit Planning — " + editId : continuationFrom ? `🔗 Buat Order Lanjutan (Hari ${continuationFrom._dayNum})` : "➕ Tambah Planning Order"}
           </div>
-          {!editId && !continuationFrom && (
-            <button onClick={() => setShowQuickPaste(true)} style={{
-              background: cs.accent + "18", border: "1px solid " + cs.accent + "55", color: cs.accent,
-              borderRadius: 6, padding: "6px 12px", fontSize: 12, cursor: "pointer", fontWeight: 700,
-            }}>📋 Tempel Jadwal</button>
-          )}
         </div>
 
         {/* Banner: order lanjutan dari parent */}
@@ -3001,19 +2993,6 @@ export default function OrderInboxView({ ordersData, setOrdersData, customersDat
         </div>
       )}
 
-      {/* ── Modal: Tempel Jadwal (fast entry tanpa AI/API) ── */}
-      <QuickScheduleModal
-        open={showQuickPaste}
-        onClose={() => setShowQuickPaste(false)}
-        TODAY={TODAY}
-        supabase={supabase}
-        insertOrder={insertOrder}
-        showNotif={showNotif}
-        customersData={customersData}
-        setOrdersData={setOrdersData}
-        setCustomersData={setCustomersData}
-        auditUserName={auditUserName}
-      />
     </div>
   );
 }

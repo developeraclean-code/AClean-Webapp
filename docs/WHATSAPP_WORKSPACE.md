@@ -1,5 +1,24 @@
 # WhatsApp Workspace AClean
 
+## Catatan Jadwal Mingguan — 22 November 2026
+
+Menu **Catatan Jadwal** menyediakan buku per minggu, Senin–Sabtu, dengan grup tim
+dan area teks panjang per hari. Permintaan WhatsApp bisa ditangkap sebagai draf,
+lalu operator menentukan hari/jam sebelum pekerjaan masuk pratinjau sinkronisasi.
+Baris seperti `Jam 12: istirahat` tidak dihitung sebagai job. Pratinjau Planning
+Order tetap simulasi; belum ada order atau pesan yang dibuat.
+
+Migrasi `250_shared_weekly_schedule_notes.sql` menyediakan simpan permanen per grup,
+akses Owner/Admin aktif, soft delete, retry idempoten, dan pemeriksaan versi untuk
+mencegah perubahan admin lain tertimpa diam-diam. UI autosave setelah jeda 700 ms,
+memeriksa perubahan remote tiap 20 detik saat tab aktif, dan menawarkan pilihan
+memuat versi remote atau menyimpan draf lokal setelah konflik.
+
+Migrasi ini adalah bagian kandidat dan belum diterapkan ke database produksi. Uji
+PGlite sintetis tersedia lewat `npm run test:weekly-schedule-db`; sebelum rilis,
+terapkan dan verifikasi di backend non-produksi, lalu uji dengan dua akun Owner/Admin.
+Tombol lama **Tempel Jadwal** telah dihapus dari Planning Order.
+
 Buka tombol **WhatsApp** dari dashboard/sidebar (Owner/Admin, pengaturan `wa_monitor_enabled` aktif).
 
 - Desktop: panel maksimal 1280 px, dengan daftar chat, percakapan, dan ringkasan pelanggan. Tombol ↗ memperbesar panel hingga memenuhi layar.

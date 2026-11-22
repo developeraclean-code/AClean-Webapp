@@ -117,6 +117,7 @@ const InvoiceView = lazy(() => import("./views/InvoiceView.jsx"));
 const PriceListView = lazy(() => import("./views/PriceListView.jsx"));
 const WaCatalogView = lazy(() => import("./views/WaCatalogView.jsx"));
 const ScheduleView = lazy(() => import("./views/ScheduleView.jsx"));
+const ScheduleNotesView = lazy(() => import("./views/ScheduleNotesView.jsx"));
 const TeknisiAdminView = lazy(() => import("./views/TeknisiAdminView.jsx"));
 const ReportsView = lazy(() => import("./views/ReportsView.jsx"));
 const LaporanTimView = lazy(() => import("./views/LaporanTimView.jsx"));
@@ -671,6 +672,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
 
   // ── WA panel ──
   const [waPanel, setWaPanel] = useState(false);
+  const [incomingScheduleNote, setIncomingScheduleNote] = useState(null);
   const [waPlanningDraft, setWaPlanningDraft] = useState(null);
   const [schedulePlanRequest, setSchedulePlanRequest] = useState(null);
   const [selectedConv, setSelectedConv] = useState(null);
@@ -3557,6 +3559,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
     { id: "dashboard", icon: "⬡", label: "Dashboard" },
     { id: "finance", icon: "💰", label: "Finance" },
     { id: "wa-inbox", icon: "📌", label: "Planning Order" },
+    { id: "schedule-notes", icon: "🗒️", label: "Catatan Jadwal" },
     { id: "orders", icon: "📋", label: "Order Masuk" },
     { id: "schedule", icon: "📅", label: "Jadwal" },
     { id: "invoice", icon: "🧾", label: "Invoice" },
@@ -4261,6 +4264,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
       case "dashboard": return renderDashboard();
       case "finance": return <FinanceView currentUser={currentUser} ordersData={ordersData} invoicesData={invoicesData} expensesData={expensesData} supabase={supabase} teknisiData={teknisiData} showNotif={showNotif} showConfirm={showConfirm} openWA={openWA} TODAY={TODAY} />;
       case "wa-inbox": return renderOrderInbox();
+      case "schedule-notes": return <ScheduleNotesView currentUser={currentUser} TODAY={TODAY} ordersData={ordersData} incomingNote={incomingScheduleNote} onIncomingConsumed={() => setIncomingScheduleNote(null)} showNotif={showNotif} supabase={supabase} />;
       case "orders": return renderOrders();
       case "schedule": return renderSchedule();
       case "invoice": return renderInvoice();
@@ -5005,6 +5009,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
             setWaPanel(false);
             setActiveMenu("schedule");
           }}
+          onCaptureScheduleNote={note => { setIncomingScheduleNote(note); setWaPanel(false); setActiveMenu("schedule-notes"); showNotif("Permintaan WhatsApp ditambahkan ke Catatan Jadwal."); }}
           waProvider={waProvider} isMobile={isMobile} currentUser={currentUser}
           supabase={supabase} showNotif={showNotif} sendWA={sendWA}
           addAgentLog={addAgentLog}

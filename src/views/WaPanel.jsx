@@ -23,7 +23,7 @@ export default function WaPanel({
   customersData, setCustomersData, ordersData, invoicesData = [],
   waProvider, isMobile, currentUser, supabase, showNotif, sendWA, addAgentLog,
   apiHeaders,
-  onCreateOrder, onOpenInvoice, onOpenSchedule,
+  onCreateOrder, onOpenInvoice, onOpenSchedule, onCaptureScheduleNote,
   technicians = [], duration, reports = [], onAppliedPayments, onSendDocument, sendWorkspaceMessage, onOpenCatalog, priceListData = [],
 }) {
   const [customerLookup, setCustomerLookup] = useState({ rows: [], verified: [], error: '' });
@@ -350,6 +350,17 @@ export default function WaPanel({
     if (needsLocation || !customerVerified) return;
     onCreateOrder(createWaOrderDraft(selectedConv, customer, previous));
   };
+  const captureScheduleNote = () => {
+    const message = [...visibleMessages].reverse().find(item => !["admin", "ara"].includes(item.role));
+    onCaptureScheduleNote?.({
+      id: crypto.randomUUID(),
+      title: `Permintaan jadwal · ${customer?.name || person}`,
+      body: message?.content || selectedConv?.last_message || selectedConv?.last || "Permintaan jadwal dari percakapan WhatsApp.",
+      customer: customer?.name || person,
+      phone: phone || "",
+      address: customer?.address || "",
+    });
+  };
 
   if (!open || !isOwnerAdmin) return null;
   const visibleMessages = waMessages.filter(m => samePhone(m.phone, phone));
@@ -401,7 +412,7 @@ export default function WaPanel({
           <main className="wa-chat" aria-label="Percakapan WhatsApp">
             {!selectedConv ? <div className="wa-welcome"><div className="wa-welcome-icon">◉</div><span className="wa-eyebrow">WHATSAPP × ACLEAN</span><h2>Setiap chat, langkah berikutnya.</h2><p>Pilih percakapan untuk membalas pelanggan, menjadwalkan servis, dan menindaklanjuti pembayaran.</p><div className="wa-welcome-features"><span>↗ Jadwalkan servis</span><span>↻ Reorder</span><span>↗ Pembayaran</span></div><small>Riwayat yang tersedia berasal dari gateway WhatsApp AClean.</small></div> : <>
               <header className="wa-chat-header"><button className="wa-icon-button wa-back" onClick={() => selectConversation(null)} aria-label="Kembali ke daftar chat">‹</button><span className="wa-avatar known">{initials(person)}</span><div className="wa-grow"><h3>{person}</h3><p>{formatPhone(phone)} <span>· {selectedStaff.length ? staffLabel(selectedStaff) : !customerVerified ? "Nama belum terverifikasi" : locations.length ? "Pelanggan terdaftar" : "Kontak baru"}</span></p>{selectedConv.name && selectedConv.name !== person && <small className="wa-whatsapp-alias">Nama WhatsApp: {selectedConv.name}</small>}</div><button className="wa-context-toggle" aria-expanded={contextOpen} onClick={() => setContextOpen(v => !v)}>Aksi pelanggan ☷</button></header>
-              <div className="wa-action-strip"><span className="wa-connected">● {customer?.name || (needsLocation ? "Pilih lokasi di panel aksi" : "WhatsApp AClean")}</span><button disabled={needsLocation || !customerVerified} onClick={() => createOrder(null)}>+ Jadwalkan</button><button disabled={!previousOrder || needsLocation || !customerVerified} onClick={() => createOrder(previousOrder)}>↻ Reorder</button><button onClick={() => { setContextOpen(true); document.getElementById("wa-payments")?.scrollIntoView({ block: "nearest" }); }}>Pembayaran {invoices.length ? `(${invoices.length})` : ""}</button></div>
+              <div className="wa-action-strip"><span className="wa-connected">● {customer?.name || (needsLocation ? "Pilih lokasi di panel aksi" : "WhatsApp AClean")}</span><button disabled={needsLocation || !customerVerified} onClick={() => createOrder(null)}>+ Jadwalkan</button><button disabled={!previousOrder || needsLocation || !customerVerified} onClick={() => createOrder(previousOrder)}>↻ Reorder</button><button onClick={captureScheduleNote}>✎ Catat jadwal</button><button onClick={() => { setContextOpen(true); document.getElementById("wa-payments")?.scrollIntoView({ block: "nearest" }); }}>Pembayaran {invoices.length ? `(${invoices.length})` : ""}</button></div>
               <AraReviewPanel key={phone} supabase={supabase} phone={phone} onCopy={text => insertDraft(text)} />
               {historyError && <div className="wa-error" role="alert">{historyError} <button onClick={() => setRefreshKey(k => k + 1)}>Coba lagi</button></div>}
               <div ref={messageScroll} className="wa-messages" onScroll={() => { const el = messageScroll.current; if (el) stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100; }}>
