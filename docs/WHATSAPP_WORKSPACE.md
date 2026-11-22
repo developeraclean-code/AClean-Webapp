@@ -14,10 +14,20 @@ mencegah perubahan admin lain tertimpa diam-diam. UI autosave setelah jeda 700 m
 memeriksa perubahan remote tiap 20 detik saat tab aktif, dan menawarkan pilihan
 memuat versi remote atau menyimpan draf lokal setelah konflik.
 
-Migrasi ini adalah bagian kandidat dan belum diterapkan ke database produksi. Uji
-PGlite sintetis tersedia lewat `npm run test:weekly-schedule-db`; sebelum rilis,
-terapkan dan verifikasi di backend non-produksi, lalu uji dengan dua akun Owner/Admin.
-Tombol lama **Tempel Jadwal** telah dihapus dari Planning Order.
+Migrasi `250_shared_weekly_schedule_notes.sql` diterapkan ke database Supabase
+self-hosted **Production** pada 22 November 2026 melalui Studio. Pembacaan ulang
+metadata memastikan RLS aktif, satu policy Owner/Admin, anon tanpa hak baca,
+authenticated hanya SELECT langsung, dan perubahan hanya lewat RPC
+`save_schedule_note_block` yang memeriksa profil Owner/Admin aktif. Tabel berisi
+0 baris setelah migrasi; tidak ada job Planning Order yang dibuat dalam proses
+rilis.
+
+Build Coolify Production `c0a3b6bffa777aae64e8745f4928d57727e02d67` berstatus
+Success dan `/api/health` mengembalikan versi `c0a3b6b`. Uji PGlite sintetis
+tersedia lewat `npm run test:weekly-schedule-db`; uji edit bersama memakai dua
+akun Owner/Admin nyata belum dijalankan. Lakukan verifikasi autosave dan konflik
+admin pada catatan uji sebelum memasukkan jadwal operasional. Tombol lama
+**Tempel Jadwal** telah dihapus dari Planning Order.
 
 Buka tombol **WhatsApp** dari dashboard/sidebar (Owner/Admin, pengaturan `wa_monitor_enabled` aktif).
 
