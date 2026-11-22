@@ -145,6 +145,14 @@ export const createOrderWorkflowAtomic = (supabase, order, autoDispatch, userNam
     p_mutation_key: mutationKey || `order-create:${order?.id}`,
   });
 
+export const confirmScheduleNoteTeam = (supabase, noteId, expectedVersion, orders, userName) =>
+  supabase.rpc("confirm_schedule_note_team", {
+    p_note_id: noteId,
+    p_expected_version: expectedVersion,
+    p_orders: orders,
+    p_actor_name: userName || null,
+  });
+
 export const deleteServiceReport = async (supabase, id, userName) => {
   await supabase.from("service_reports").update({ last_changed_by: userName }).eq("id", id);
   return supabase.from("service_reports").delete().eq("id", id);

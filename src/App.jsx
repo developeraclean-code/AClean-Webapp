@@ -61,6 +61,7 @@ import {
   insertCustomer, updateCustomer, deleteCustomer,
   insertKasbonRequest, updateKasbonRequest,
   fetchAcUnitsByCustomer, insertAcUnit, updateAcUnit,
+  confirmScheduleNoteTeam,
 } from "./data/writes.js";
 // Registry unit AC permanen hanya berlaku maju (order >= tanggal ini). Historis dibiarkan.
 const AC_REGISTRY_CUTOFF = "2026-06-25";
@@ -80,6 +81,7 @@ import { buildServiceReportHTML } from "./lib/serviceReportHtml.js";
 import { downloadRekapHarian as downloadRekapHarianLib } from "./lib/reports.js";
 import { createConsolidatedInvoice as createConsolidatedInvoiceLib } from "./lib/consolidatedInvoice.js";
 import { createOrder as createOrderLib } from "./lib/createOrder.js";
+import { scheduleNoteJobsPayload } from "./lib/scheduleNotePlanning.js";
 import { sendToARA as sendToARAImpl } from "./lib/ara.js";
 import { markPaid as markPaidLib } from "./lib/markPaid.js";
 import { handleGroupPayment as handleGroupPaymentLib, createGroupPaymentRequest, groupInvoiceBalance } from "./lib/groupPayment.js";
@@ -3478,6 +3480,34 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
     validatePhone, validatePositiveNumber, validateTime,
   });
 
+  const confirmScheduleNoteTeamOrders = async (date, groupId, expectedVersion, entries) => {
+    const ordersPayload = entries.map(entry => ({
+      ...entry,
+      orderDraftId: `JOB-SN-${crypto.randomUUID()}`,
+      date,
+    }));
+    const { data, error } = await confirmScheduleNoteTeam(
+      supabase, groupId, expectedVersion, scheduleNoteJobsPayload(ordersPayload), auditUserName()
+    );
+    if (error) throw new Error(error.message || "Konfirmasi Planning Order gagal");
+    const orders = Array.isArray(data?.orders) ? data.orders : [];
+    if (!data?.note || orders.length !== entries.length) {
+      throw new Error("Hasil konfirmasi belum lengkap. Muat ulang catatan sebelum mencoba lagi.");
+    }
+    setOrdersData(previous => {
+      const returned = new Map(orders.map(order => [order.id, order]));
+      return [...previous.filter(order => !returned.has(order.id)), ...orders];
+    });
+    const customers = Array.isArray(data.customers) ? data.customers : [];
+    if (customers.length) setCustomersData(previous => {
+      const returned = new Map(customers.map(customer => [customer.id, customer]));
+      return [...previous.filter(customer => !returned.has(customer.id)), ...customers];
+    });
+    invalidateCache("orders");
+    addAgentLog("SCHEDULE_NOTE_CONFIRMED", `${orders.length} Planning Order dibuat dari ${groupId}`, "SUCCESS");
+    return { note: data.note, orders, alreadyConfirmed: Boolean(data.already_confirmed) };
+  };
+
   // ── createTeamSplit: 1 project maintenance PT dipecah jadi N sub-order paralel ──
   // Tiap tim = 1 pasangan teknisi+helper + subset unit. Semua sub-order share
   // job_group_id = id parent (sub-order pertama). Parent = order dgn id === job_group_id.
@@ -4264,7 +4294,7 @@ export default function ACleanWebApp({ onEmergencyActivated }) {
       case "dashboard": return renderDashboard();
       case "finance": return <FinanceView currentUser={currentUser} ordersData={ordersData} invoicesData={invoicesData} expensesData={expensesData} supabase={supabase} teknisiData={teknisiData} showNotif={showNotif} showConfirm={showConfirm} openWA={openWA} TODAY={TODAY} />;
       case "wa-inbox": return renderOrderInbox();
-      case "schedule-notes": return <ScheduleNotesView currentUser={currentUser} TODAY={TODAY} ordersData={ordersData} incomingNote={incomingScheduleNote} onIncomingConsumed={() => setIncomingScheduleNote(null)} showNotif={showNotif} supabase={supabase} />;
+      case "schedule-notes": return <ScheduleNotesView currentUser={currentUser} TODAY={TODAY} ordersData={ordersData} teknisiData={teknisiData} incomingNote={incomingScheduleNote} onIncomingConsumed={() => setIncomingScheduleNote(null)} onConfirmTeam={confirmScheduleNoteTeamOrders} onOpenPlanning={() => setActiveMenu("wa-inbox")} showNotif={showNotif} supabase={supabase} />;
       case "orders": return renderOrders();
       case "schedule": return renderSchedule();
       case "invoice": return renderInvoice();

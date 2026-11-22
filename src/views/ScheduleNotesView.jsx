@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { planningWeek, estimatedEnd } from "../lib/teamPlanning.js";
 import { normalizePhone } from "../lib/phone.js";
+import { scheduleNoteJobErrors } from "../lib/scheduleNotePlanning.js";
 import "./ScheduleNotesView.css";
 
 const STORE_PREFIX = "aclean_week_planner_v1:";
@@ -64,12 +65,13 @@ function parseGroup(group, date) {
     });
 }
 
-export default function ScheduleNotesView({ currentUser, TODAY, ordersData = [], incomingNote, onIncomingConsumed, onSyncDay, showNotif, supabase }) {
+export default function ScheduleNotesView({ currentUser, TODAY, ordersData = [], teknisiData = [], incomingNote, onIncomingConsumed, onConfirmTeam, onOpenPlanning, showNotif, supabase }) {
   const key = localKey(currentUser);
   const [book, setBook] = useState(() => readBook(key));
   const [loadedKey, setLoadedKey] = useState(key);
   const [weekOffset, setWeekOffset] = useState(() => new Date(`${TODAY}T12:00:00Z`).getUTCDay() === 0 ? 1 : 0);
   const [syncDay, setSyncDay] = useState(null);
+  const [syncFocusGroup, setSyncFocusGroup] = useState(null);
   const [syncPreview, setSyncPreview] = useState([]);
   const [syncBusy, setSyncBusy] = useState(false);
   const [incomingDate, setIncomingDate] = useState("");
@@ -102,6 +104,7 @@ export default function ScheduleNotesView({ currentUser, TODAY, ordersData = [],
   const weekStart = days[0]?.date;
   const week = book.weeks[weekStart] || {};
   const teamSlots = useMemo(() => [...new Set(ordersData.map(order => order.team_slot).filter(Boolean))], [ordersData]);
+  const technicians = useMemo(() => [...new Set(teknisiData.filter(person => person.role === "Teknisi" && person.active !== false).map(person => person.name).filter(Boolean))], [teknisiData]);
 
   useEffect(() => { setBook(readBook(key)); setLoadedKey(key); }, [key]);
   useEffect(() => {
@@ -121,7 +124,7 @@ export default function ScheduleNotesView({ currentUser, TODAY, ordersData = [],
           const remoteWeek = {};
           rows.filter(row => !row.is_deleted).forEach(row => {
             remoteWeek[row.day_date] ||= { groups: [], syncRows: {} };
-            remoteWeek[row.day_date].groups.push({ id: row.id, name: row.group_name, text: row.content });
+            remoteWeek[row.day_date].groups.push({ id: row.id, name: row.group_name, text: row.content, planningOrderIds: row.planning_order_ids || [], planningSyncedAt: row.planning_synced_at || null });
             versions.current.set(row.id, row.version);
           });
           setBook(previous => ({ ...previous, weeks: { ...previous.weeks, [weekStart]: remoteWeek } }));
@@ -131,7 +134,7 @@ export default function ScheduleNotesView({ currentUser, TODAY, ordersData = [],
       } else {
         const changedRows = rows.filter(row => {
           const prior = remoteRows.current.get(row.id);
-          return (!prior || row.version > prior.version) && row.updated_by_id !== currentUser?.id;
+          return !prior || row.version > prior.version;
         });
         for (const changed of changedRows) {
           if (dirtyGroups.current.has(changed.id)) queueRemoteChange(changed);
@@ -141,8 +144,8 @@ export default function ScheduleNotesView({ currentUser, TODAY, ordersData = [],
               const groups = target.groups || [];
               const exists = groups.some(group => group.id === changed.id);
               const next = changed.is_deleted ? groups.filter(group => group.id !== changed.id)
-                : exists ? groups.map(group => group.id === changed.id ? { id: changed.id, name: changed.group_name, text: changed.content } : group)
-                  : [...groups, { id: changed.id, name: changed.group_name, text: changed.content }];
+                : exists ? groups.map(group => group.id === changed.id ? { id: changed.id, name: changed.group_name, text: changed.content, planningOrderIds: changed.planning_order_ids || [], planningSyncedAt: changed.planning_synced_at || null } : group)
+                  : [...groups, { id: changed.id, name: changed.group_name, text: changed.content, planningOrderIds: changed.planning_order_ids || [], planningSyncedAt: changed.planning_synced_at || null }];
               return { ...previous, weeks: { ...previous.weeks, [weekStart]: { ...previous.weeks[weekStart], [changed.day_date]: { ...target, groups: next } } } };
             });
             versions.current.set(changed.id, changed.version);
@@ -231,19 +234,25 @@ export default function ScheduleNotesView({ currentUser, TODAY, ordersData = [],
     return () => clearTimeout(timeout);
   }, [book, supabase, weekStart, loadedKey, key]);
   const addTeam = date => updateDay(date, day => ({ ...day, groups: [...(day.groups || []), { id: `${date}-team-${(day.groups || []).length + 1}-${crypto.randomUUID().slice(0, 8)}`, name: `Team ${(day.groups || []).length + 1}`, text: "" }] }));
-  const openSync = date => {
+  const openSync = (date, focusGroupId = null) => {
     const groups = week[date]?.groups || [];
+    const visibleGroups = focusGroupId ? groups.filter(group => group.id === focusGroupId) : groups;
     const dayState = week[date] || emptyDay(date);
     const syncRows = { ...(dayState.syncRows || {}) };
-    const entries = groups.flatMap(group => parseGroup(group, date).map(entry => {
-      const prior = syncRows[entry.id] || {};
+    const entries = visibleGroups.flatMap(group => parseGroup(group, date).map((entry, entryIndex) => {
+      let prior = syncRows[entry.id] || {};
+      // Older browser-only previews used PREVIEW-* IDs. They were never Planning Orders.
+      if (prior.preview || String(prior.orderId || "").startsWith("PREVIEW-")) {
+        delete syncRows[entry.id];
+        prior = {};
+      }
       if (!prior.requestId) syncRows[entry.id] = { ...prior, requestId: entry.requestId };
       const teamMatch = group.name.match(/team\s*0?(\d+)/i);
       const matchingSlot = teamSlots.find(slot => teamMatch && new RegExp(`team\\s*0?${teamMatch[1]}\\b`, "i").test(slot));
-      return { ...entry, ...prior, team_slot: prior.team_slot ?? matchingSlot ?? "", validation: "" };
+      return { ...entry, ...prior, orderId: group.planningOrderIds?.[entryIndex] || null, team_slot: prior.team_slot ?? matchingSlot ?? "", teknisi: prior.teknisi || "", helper: prior.helper || "", validation: "" };
     }));
     setBook(prev => ({ ...prev, weeks: { ...prev.weeks, [weekStart]: { ...(prev.weeks[weekStart] || {}), [date]: { ...dayState, syncRows } } } }));
-    setSyncDay(date); setSyncPreview(entries);
+    setSyncDay(date); setSyncFocusGroup(focusGroupId); setSyncPreview(entries);
   };
   const updatePreview = (id, patch) => {
     setSyncPreview(prev => prev.map(entry => entry.id === id ? { ...entry, ...patch } : entry));
@@ -253,34 +262,46 @@ export default function ScheduleNotesView({ currentUser, TODAY, ordersData = [],
       return { ...prev, weeks: { ...prev.weeks, [weekStart]: { ...currentWeek, [syncDay]: { ...day, syncRows: { ...(day.syncRows || {}), [id]: { ...(day.syncRows?.[id] || {}), ...patch } } } } } };
     });
   };
-  const sync = async () => {
+  const confirmTeam = async groupId => {
     if (!syncPreview.length || syncBusy) return;
+    const entries = syncPreview.filter(row => row.groupId === groupId && !row.orderId);
+    if (!entries.length) return;
+    const invalid = entries.map(entry => ({ entry, errors: scheduleNoteJobErrors(entry) })).filter(item => item.errors.length);
+    if (invalid.length) {
+      showNotif?.(`${invalid.length} job belum valid: ${invalid[0].errors.join(", ")}.`, "error");
+      return;
+    }
+    if (cloudState !== "online" || dirtyGroups.current.has(groupId) || !remoteRows.current.has(groupId)) {
+      showNotif?.("Tunggu catatan tim tersimpan di backend sebelum konfirmasi.", "warning");
+      return;
+    }
+    if (typeof onConfirmTeam !== "function") {
+      showNotif?.("Konfirmasi Planning Order belum tersedia di aplikasi ini.", "error");
+      return;
+    }
     setSyncBusy(true);
     try {
-      const valid = syncPreview.filter(row => !row.orderId && row.customer.trim() && normalizePhone(row.phone).length >= 10);
-      const result = onSyncDay
-        ? await onSyncDay(syncDay, valid)
-        : { saved: valid.map(entry => ({ entryId: entry.id, requestId: entry.requestId, order: { id: `PREVIEW-${entry.requestId.slice(0, 8).toUpperCase()}` }, preview: true })) };
-      const saved = result?.saved || [];
-      if (saved.length) {
-        setBook(prev => {
-          const currentWeek = prev.weeks[weekStart] || {};
-          const day = currentWeek[syncDay] || emptyDay(syncDay);
-          const syncRows = { ...(day.syncRows || {}) };
-          saved.forEach(row => { syncRows[row.entryId] = { ...(syncRows[row.entryId] || {}), requestId: row.requestId, orderId: row.order.id, preview: Boolean(row.preview) }; });
-          return { ...prev, weeks: { ...prev.weeks, [weekStart]: { ...currentWeek, [syncDay]: { ...day, syncRows } } } };
-        });
-        setSyncPreview(prev => prev.map(entry => {
-          const match = saved.find(row => row.requestId === entry.requestId);
-          return match ? { ...entry, orderId: match.order.id, preview: Boolean(match.preview) } : entry;
-        }));
-      }
-      if (result?.error) showNotif?.(`Sebagian job belum tersinkron: ${result.error}`, "error");
-      else {
-        const remaining = syncPreview.filter(entry => !entry.orderId && !saved.some(row => row.requestId === entry.requestId));
-        if (remaining.length) showNotif?.(`${saved.length} job tersimulasi. Lengkapi data ${remaining.length} job yang tersisa.`);
-        else { showNotif?.(`${saved.length} job berhasil disimulasikan. Tidak ada data database yang dibuat.`); setSyncDay(null); }
-      }
+      const result = await onConfirmTeam(syncDay, groupId, versions.current.get(groupId), entries);
+      const confirmedIds = result.note?.planning_order_ids || result.orders.map(order => order.id);
+      const savedRow = result.note;
+      versions.current.set(groupId, savedRow.version);
+      remoteRows.current.set(groupId, savedRow);
+      setBook(previous => {
+        const currentWeek = previous.weeks[weekStart] || {};
+        const day = currentWeek[syncDay] || emptyDay(syncDay);
+        const groups = day.groups.map(group => group.id === groupId
+          ? { ...group, planningOrderIds: confirmedIds, planningSyncedAt: savedRow.planning_synced_at }
+          : group);
+        return { ...previous, weeks: { ...previous.weeks, [weekStart]: { ...currentWeek, [syncDay]: { ...day, groups } } } };
+      });
+      setSyncPreview(previous => previous.map(entry => {
+        if (entry.groupId !== groupId) return entry;
+        const index = entries.findIndex(item => item.id === entry.id);
+        return index < 0 ? entry : { ...entry, orderId: confirmedIds[index] || result.orders[index]?.id, preview: false };
+      }));
+      showNotif?.(result.alreadyConfirmed
+        ? `Tim ini sudah pernah dikonfirmasi. ${confirmedIds.length} Planning Order dimuat.`
+        : `${result.orders.length} Planning Order berhasil dibuat. Tidak ada WA dispatch otomatis.`);
     } catch (error) { showNotif?.(`Sinkronisasi gagal: ${error.message}`, "error"); }
     finally { setSyncBusy(false); }
   };
@@ -304,10 +325,10 @@ export default function ScheduleNotesView({ currentUser, TODAY, ordersData = [],
     setBook(previous => {
       const target = previous.weeks[weekStart]?.[row.day_date] || emptyDay(row.day_date);
       const groups = target.groups || [];
-      const next = row.is_deleted ? groups.filter(group => group.id !== row.id)
+    const next = row.is_deleted ? groups.filter(group => group.id !== row.id)
         : groups.some(group => group.id === row.id)
-          ? groups.map(group => group.id === row.id ? { id: row.id, name: row.group_name, text: row.content } : group)
-          : [...groups, { id: row.id, name: row.group_name, text: row.content }];
+          ? groups.map(group => group.id === row.id ? { id: row.id, name: row.group_name, text: row.content, planningOrderIds: row.planning_order_ids || [], planningSyncedAt: row.planning_synced_at || null } : group)
+          : [...groups, { id: row.id, name: row.group_name, text: row.content, planningOrderIds: row.planning_order_ids || [], planningSyncedAt: row.planning_synced_at || null }];
       return { ...previous, weeks: { ...previous.weeks, [weekStart]: { ...previous.weeks[weekStart], [row.day_date]: { ...target, groups: next } } } };
     });
     dirtyGroups.current.delete(row.id); deletedGroups.current.delete(row.id);
@@ -323,6 +344,12 @@ export default function ScheduleNotesView({ currentUser, TODAY, ordersData = [],
     setBook(previous => ({ ...previous, weeks: { ...previous.weeks } }));
   };
 
+  const previewGroups = [...syncPreview.reduce((groups, entry) => {
+    if (!groups.has(entry.groupId)) groups.set(entry.groupId, { id: entry.groupId, name: entry.groupName, entries: [] });
+    groups.get(entry.groupId).entries.push(entry);
+    return groups;
+  }, new Map()).values()].filter(group => !syncFocusGroup || group.id === syncFocusGroup);
+
   return <main className="week-planner" aria-label="Jadwal manual mingguan">
     <header className="week-planner-header">
       <div><span className="week-planner-eyebrow">ACLEAN · CATATAN JADWAL MANUAL</span><h1>Jadwal Mingguan</h1><p>Satu buku jadwal untuk permintaan WhatsApp dan ketikan manual. Susun pekerjaan per hari dan per tim, lalu sinkronkan satu hari ke Planning Order.</p></div>
@@ -337,34 +364,54 @@ export default function ScheduleNotesView({ currentUser, TODAY, ordersData = [],
     <div className="week-planner-days">
       {days.map((item, index) => {
         const day = week[item.date] || emptyDay(item.date);
-        const allEntries = (day.groups || []).flatMap(group => parseGroup(group, item.date).map(entry => ({ ...entry, ...(day.syncRows?.[entry.id] || {}) })));
+        const allEntries = (day.groups || []).flatMap(group => parseGroup(group, item.date).map((entry, entryIndex) => ({ ...entry, orderId: group.planningOrderIds?.[entryIndex] || null })));
         const synced = allEntries.filter(entry => entry.orderId).length;
         const whatsappJobs = ordersData.filter(order => order.date === item.date && order.source === "whatsapp" && !["CANCELLED", "COMPLETED", "PAID"].includes(order.status)).length;
         return <section className="week-planner-day" key={item.date}>
-          <header className="week-planner-day-header"><div className="week-planner-day-heading"><span>{String(index + 1).padStart(2, "0")}</span><div><h2>{DAYS[index]}</h2><small>{labelDate(item.date, { day: "numeric", month: "long", year: "numeric" })}</small></div></div><div className="week-planner-day-tools"><span>{day.groups?.length || 0} tim · {allEntries.length} job terdeteksi{whatsappJobs ? ` · WA ${whatsappJobs}` : ""}{synced ? ` · ${synced} simulasi` : ""}</span><button className="week-planner-sync" onClick={() => openSync(item.date)} disabled={!allEntries.length}>⇧ Pratinjau sinkronisasi</button></div></header>
+          <header className="week-planner-day-header"><div className="week-planner-day-heading"><span>{String(index + 1).padStart(2, "0")}</span><div><h2>{DAYS[index]}</h2><small>{labelDate(item.date, { day: "numeric", month: "long", year: "numeric" })}</small></div></div><div className="week-planner-day-tools"><span>{day.groups?.length || 0} tim · {allEntries.length} job terdeteksi{whatsappJobs ? ` · WA ${whatsappJobs}` : ""}{synced ? ` · ${synced} masuk Planning` : ""}</span><button className="week-planner-sync" onClick={() => openSync(item.date)} disabled={!allEntries.length}>⇧ Pratinjau hari</button></div></header>
           {whatsappJobs > 0 && <div className="week-planner-wa-jobs">{ordersData.filter(order => order.date === item.date && order.source === "whatsapp" && !["CANCELLED", "COMPLETED", "PAID"].includes(order.status)).map(order => <div key={order.id}><span>WA</span><strong>{order.customer}</strong><small>{order.time || "Jam belum diisi"} · {order.service} · {order.status}</small></div>)}</div>}
-          <div className="week-planner-groups">{(day.groups || []).map((group, groupIndex) => { const groupEntries = parseGroup(group, item.date).map(entry => ({ ...entry, ...(day.syncRows?.[entry.id] || {}) })); return <article className="week-planner-group" key={group.id}>
-            <div className="week-planner-group-head"><span className="week-planner-team-mark">{groupIndex + 1}</span><input value={group.name} onChange={event => updateDay(item.date, current => ({ ...current, groups: current.groups.map(row => row.id === group.id ? { ...row, name: event.target.value } : row) }))} aria-label={`Nama kelompok tim ${DAYS[index]} ${groupIndex + 1}`} placeholder="Nama tim / kategori"/><button aria-label={`Hapus grup ${group.name}`} onClick={() => updateDay(item.date, current => ({ ...current, groups: current.groups.filter(row => row.id !== group.id) }))}>×</button></div>
-            <textarea value={group.text} onChange={event => updateDay(item.date, current => ({ ...current, groups: current.groups.map(row => row.id === group.id ? { ...row, text: event.target.value } : row) }))} placeholder={`Jam 9: nama pelanggan / WhatsApp / layanan dan detail / alamat\nJam 12: istirahat\n\nTulis catatan panjang untuk ${group.name || "tim ini"}…`} rows={8} aria-label={`Catatan ${DAYS[index]} untuk ${group.name}`} />
-            <div className="week-planner-group-foot"><span>{group.text.length.toLocaleString("id-ID")} karakter · {groupEntries.length} job terdeteksi</span>{groupEntries.some(entry => entry.orderId) && <span className="week-planner-synced">✓ {groupEntries.filter(entry => entry.orderId).length} simulasi</span>}</div>
+          <div className="week-planner-groups">{(day.groups || []).map((group, groupIndex) => { const groupEntries = parseGroup(group, item.date).map((entry, entryIndex) => ({ ...entry, orderId: group.planningOrderIds?.[entryIndex] || null })); const isConfirmed = (group.planningOrderIds || []).length > 0; return <article className={`week-planner-group${isConfirmed ? " confirmed" : ""}`} key={group.id}>
+            <div className="week-planner-group-head"><span className="week-planner-team-mark">{groupIndex + 1}</span><input value={group.name} disabled={isConfirmed} onChange={event => updateDay(item.date, current => ({ ...current, groups: current.groups.map(row => row.id === group.id ? { ...row, name: event.target.value } : row) }))} aria-label={`Nama kelompok tim ${DAYS[index]} ${groupIndex + 1}`} placeholder="Nama tim / kategori"/><button aria-label={`Hapus grup ${group.name}`} disabled={isConfirmed} onClick={() => updateDay(item.date, current => ({ ...current, groups: current.groups.filter(row => row.id !== group.id) }))}>×</button></div>
+            <textarea value={group.text} disabled={isConfirmed} onChange={event => updateDay(item.date, current => ({ ...current, groups: current.groups.map(row => row.id === group.id ? { ...row, text: event.target.value } : row) }))} placeholder={`Jam 9: nama pelanggan / WhatsApp / layanan dan detail / alamat\nJam 12: istirahat\n\nTulis catatan panjang untuk ${group.name || "tim ini"}…`} rows={8} aria-label={`Catatan ${DAYS[index]} untuk ${group.name}`} />
+            <div className="week-planner-group-foot"><span>{group.text.length.toLocaleString("id-ID")} karakter · {groupEntries.length} job terdeteksi</span>{isConfirmed && <span className="week-planner-synced">✓ {group.planningOrderIds.length} Planning Order dibuat</span>}</div>
+            {isConfirmed && <button className="week-planner-open-planning" onClick={onOpenPlanning}>Buka Planning Order →</button>}
+            {!isConfirmed && groupEntries.length > 0 && <button className="week-planner-team-confirm" onClick={() => openSync(item.date, group.id)}>Tinjau & konfirmasi tim ini →</button>}
           </article>; })}<button className="week-planner-add-team" onClick={() => addTeam(item.date)}>＋ Tambah grup tim</button></div>
         </section>;
       })}
     </div>
-    <p className="week-planner-footnote">Autosave catatan memakai backend bersama saat migrasi tersedia; browser menyimpan draf lokal sebagai cadangan. Tombol sinkronisasi job masih berupa simulasi dan belum membuat Planning Order.</p>
+    <p className="week-planner-footnote">Catatan tersimpan bersama di backend. Konfirmasi per tim membuat Planning Order sungguhan tanpa mengirim WA dispatch; setelah dibuat, ubah jadwalnya dari Planning Order.</p>
 
     {syncDay && <div className="week-sync-overlay" onMouseDown={event => { if (event.target === event.currentTarget && !syncBusy) setSyncDay(null); }}><section className="week-sync-dialog" role="dialog" aria-modal="true" aria-labelledby="week-sync-title">
-      <header><div><span className="week-planner-eyebrow">SIMULASI LOKAL · TANPA TULIS DATABASE</span><h2 id="week-sync-title">{DAYS[days.findIndex(day => day.date === syncDay)]} · {labelDate(syncDay, { day: "numeric", month: "long", year: "numeric" })}</h2><p>Periksa data yang nantinya menjadi job Planning Order. Belum ada order atau pesan yang dibuat.</p></div><button disabled={syncBusy} aria-label="Tutup" onClick={() => setSyncDay(null)}>×</button></header>
-      <div className="week-sync-list">{syncPreview.map((entry, index) => <article key={entry.id} className={entry.orderId ? "synced" : ""}><div className="week-sync-row-heading"><b>Job {index + 1} · {entry.groupName}</b><span>{entry.orderId ? `✓ ${entry.orderId}` : entry.raw}</span></div>{!entry.orderId && <div className="week-sync-fields">
-        <label>Jam<input type="time" value={entry.time} onChange={event => updatePreview(entry.id, { time: event.target.value, time_end: estimatedEnd(event.target.value, entry.service, entry.units) })}/></label>
-        <label>Pelanggan<input value={entry.customer} onChange={event => updatePreview(entry.id, { customer: event.target.value })}/></label>
-        <label>WhatsApp<input value={entry.phone} onChange={event => updatePreview(entry.id, { phone: event.target.value })} placeholder="628…"/></label>
-        <label>Alamat<input value={entry.address} onChange={event => updatePreview(entry.id, { address: event.target.value })}/></label>
-        <label>Layanan<select value={entry.service} onChange={event => updatePreview(entry.id, { service: event.target.value, time_end: estimatedEnd(entry.time, event.target.value, entry.units) })}><option>Cleaning</option><option>Repair</option><option>Install</option><option>Complain</option><option>Maintenance</option></select></label>
-        <label>Unit<input type="number" min="1" max="100" value={entry.units} onChange={event => updatePreview(entry.id, { units: Number(event.target.value), time_end: estimatedEnd(entry.time, entry.service, Number(event.target.value)) })}/></label>
-        <label>Tim<select value={entry.team_slot} onChange={event => updatePreview(entry.id, { team_slot: event.target.value })}><option value="">Tentukan nanti di Planning</option>{teamSlots.map(slot => <option key={slot}>{slot}</option>)}</select></label>
-      </div>}{!entry.orderId && (!entry.customer.trim() || normalizePhone(entry.phone).length < 10) && <small className="week-sync-error">Lengkapi nama dan nomor WhatsApp sebelum sinkron.</small>}</article>)}</div>
-      <footer><span>{syncPreview.filter(row => !row.orderId).length} job dalam simulasi</span><button disabled={syncBusy} onClick={() => setSyncDay(null)}>Kembali</button><button className="week-planner-sync" disabled={syncBusy || !syncPreview.some(row => !row.orderId && row.customer.trim() && normalizePhone(row.phone).length >= 10)} onClick={sync}>{syncBusy ? "Menyiapkan…" : "Simulasikan job ke Planning"}</button></footer>
+      <header><div><span className="week-planner-eyebrow">KONFIRMASI PLANNING ORDER PER TIM</span><h2 id="week-sync-title">{DAYS[days.findIndex(day => day.date === syncDay)]} · {labelDate(syncDay, { day: "numeric", month: "long", year: "numeric" })}</h2><p>Periksa data. Konfirmasi akan membuat job sungguhan di Planning Order, tanpa mengirim WA dispatch.</p></div><button disabled={syncBusy} aria-label="Tutup" onClick={() => setSyncDay(null)}>×</button></header>
+      <div className="week-sync-list">{previewGroups.map(group => {
+        const pendingEntries = group.entries.filter(entry => !entry.orderId);
+        const groupInvalid = pendingEntries.some(entry => scheduleNoteJobErrors(entry).length);
+        return <section className="week-sync-team" key={group.id}>
+          <h3>{group.name} <span>{group.entries.length} job</span></h3>
+          {group.entries.map((entry, index) => {
+            const errors = scheduleNoteJobErrors(entry);
+            return <article key={entry.id} className={entry.orderId ? "synced" : ""}>
+              <div className="week-sync-row-heading"><b>Job {index + 1}</b><span>{entry.orderId ? `✓ ${entry.orderId}` : entry.raw}</span></div>
+              {!entry.orderId && <div className="week-sync-fields">
+                <label>Jam<input type="time" value={entry.time} onChange={event => updatePreview(entry.id, { time: event.target.value, time_end: estimatedEnd(event.target.value, entry.service, entry.units) })}/></label>
+                <label>Pelanggan<input value={entry.customer} onChange={event => updatePreview(entry.id, { customer: event.target.value })}/></label>
+                <label>WhatsApp<input value={entry.phone} onChange={event => updatePreview(entry.id, { phone: event.target.value })} placeholder="628…"/></label>
+                <label>Alamat<input value={entry.address} onChange={event => updatePreview(entry.id, { address: event.target.value })}/></label>
+                <label>Layanan<select value={entry.service} onChange={event => updatePreview(entry.id, { service: event.target.value, time_end: estimatedEnd(entry.time, event.target.value, entry.units) })}><option>Cleaning</option><option>Repair</option><option>Install</option><option>Complain</option><option>Maintenance</option></select></label>
+                <label>Unit<input type="number" min="1" max="100" value={entry.units} onChange={event => updatePreview(entry.id, { units: Number(event.target.value), time_end: estimatedEnd(entry.time, entry.service, Number(event.target.value)) })}/></label>
+                <label>Tim Planning<select value={entry.team_slot} onChange={event => updatePreview(entry.id, { team_slot: event.target.value })}><option value="">Pilih tim</option>{teamSlots.map(slot => <option key={slot}>{slot}</option>)}</select></label>
+                <label>Teknisi<select value={entry.teknisi} onChange={event => updatePreview(entry.id, { teknisi: event.target.value })}><option value="">Pilih teknisi</option>{technicians.map(name => <option key={name}>{name}</option>)}</select></label>
+              </div>}
+              {!entry.orderId && errors.length > 0 && <small className="week-sync-error">{errors.join(" · ")}</small>}
+            </article>;
+          })}
+          {pendingEntries.length === 0
+            ? <button onClick={onOpenPlanning}>Job sudah dibuat · buka Planning Order →</button>
+            : <button className="week-planner-sync week-sync-confirm" disabled={syncBusy || groupInvalid || cloudState !== "online"} onClick={() => confirmTeam(group.id)}>{syncBusy ? "Menyimpan…" : `Konfirmasi ${pendingEntries.length} job ke Planning Order`}</button>}
+        </section>;
+      })}</div>
+      <footer><span>{syncPreview.filter(row => !row.orderId).length} job menunggu konfirmasi</span><button disabled={syncBusy} onClick={() => setSyncDay(null)}>Tutup</button></footer>
     </section></div>}
   </main>;
 }
