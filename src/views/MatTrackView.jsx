@@ -1974,14 +1974,18 @@ return (
                       {historyUnitId === unit.id && (() => {
                         const unitTxs = transactionsForInventoryUnit(unit, invUnitsData, invTxData)
                           .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+                        const latestAdjustment = unitTxs.find(tx => tx.type === "adjustment");
+                        const visibleUnitTxs = unitTxs.filter(tx => tx.type !== "adjustment" || tx.id === latestAdjustment?.id);
+                        const hiddenAdjustmentCount = unitTxs.length - visibleUnitTxs.length;
                         return (
                           <div style={{ borderTop: "1px solid " + cs.accent + "22", padding: "12px 14px", background: cs.surface }}>
-                            <div style={{ fontSize: 11, fontWeight: 700, color: cs.accent, marginBottom: 8 }}>Riwayat — {unit.unit_label} ({unitTxs.length} transaksi)</div>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: cs.accent, marginBottom: 8 }}>Riwayat — {unit.unit_label} ({visibleUnitTxs.length} ditampilkan)</div>
+                            {hiddenAdjustmentCount > 0 && <div style={{ fontSize: 10, color: cs.muted, marginBottom: 8 }}>Hanya koreksi terbaru yang ditampilkan; {hiddenAdjustmentCount} koreksi lama tetap tersimpan di riwayat data.</div>}
                             {unitTxs.length === 0 ? (
                               <div style={{ fontSize: 11, color: cs.muted, fontStyle: "italic" }}>Belum ada pemakaian tercatat.</div>
                             ) : (
                               <div style={{ display: "grid", gap: 4 }}>
-                                {unitTxs.slice(0, 20).map((tx, ti) => {
+                                {visibleUnitTxs.slice(0, 20).map((tx, ti) => {
                                   const isAdj = tx.type === "adjustment";
                                   const isUsage = tx.qty < 0 && !isAdj;
                                   return (
@@ -1999,7 +2003,7 @@ return (
                                     </div>
                                   );
                                 })}
-                                {unitTxs.length > 20 && <div style={{ fontSize: 10, color: cs.muted, textAlign: "center", padding: 4 }}>+{unitTxs.length - 20} lainnya</div>}
+                                {visibleUnitTxs.length > 20 && <div style={{ fontSize: 10, color: cs.muted, textAlign: "center", padding: 4 }}>+{visibleUnitTxs.length - 20} lainnya</div>}
                               </div>
                             )}
                           </div>
@@ -2021,6 +2025,9 @@ return (
                 <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
                   {archivedUnits.map(unit => {
                     const unitTxs = transactionsForInventoryUnit(unit, invUnitsData, invTxData).sort((a,b) => (b.created_at||"").localeCompare(a.created_at||""));
+                    const latestAdjustment = unitTxs.find(tx => tx.type === "adjustment");
+                    const visibleUnitTxs = unitTxs.filter(tx => tx.type !== "adjustment" || tx.id === latestAdjustment?.id);
+                    const hiddenAdjustmentCount = unitTxs.length - visibleUnitTxs.length;
                     const isShowingHistory = historyUnitId === unit.id;
                     return (
                       <div key={unit.id} style={{ background: cs.surface, borderRadius: 8, border: "1px solid #64748b22", opacity: 0.7 }}>
@@ -2033,7 +2040,7 @@ return (
                           <span style={{ fontSize: 11, color: cs.muted }}>{parseFloat((unit.stock||0).toFixed(1))} {item.unit}</span>
                           <button onClick={() => setHistoryUnitId(isShowingHistory ? null : unit.id)}
                             style={{ fontSize: 11, padding: "3px 8px", borderRadius: 6, background: cs.accent + "15", border: "1px solid " + cs.accent + "33", color: cs.accent, cursor: "pointer" }}>
-                            {isShowingHistory ? "✕" : "Riwayat" + (unitTxs.length > 0 ? " (" + unitTxs.length + ")" : "")}
+                            {isShowingHistory ? "✕" : "Riwayat" + (visibleUnitTxs.length > 0 ? " (" + visibleUnitTxs.length + ")" : "")}
                           </button>
                           <button onClick={() => unarchiveUnit(unit.id)}
                             style={{ fontSize: 11, padding: "3px 8px", borderRadius: 6, background: cs.green + "15", border: "1px solid " + cs.green + "33", color: cs.green, cursor: "pointer" }}>
@@ -2042,9 +2049,10 @@ return (
                         </div>
                         {isShowingHistory && (
                           <div style={{ borderTop: "1px solid #64748b22", padding: "10px 14px", background: cs.card, borderRadius: "0 0 8px 8px" }}>
+                            {hiddenAdjustmentCount > 0 && <div style={{ fontSize: 10, color: cs.muted, marginBottom: 8 }}>Hanya koreksi terbaru yang ditampilkan; {hiddenAdjustmentCount} koreksi lama tetap tersimpan di riwayat data.</div>}
                             {unitTxs.length === 0 ? <div style={{ fontSize: 11, color: cs.muted }}>Belum ada pemakaian.</div> : (
                               <div style={{ display: "grid", gap: 4 }}>
-                                {unitTxs.slice(0,15).map((tx,ti) => {
+                                {visibleUnitTxs.slice(0,15).map((tx,ti) => {
                                   const isAdj = tx.type === "adjustment";
                                   return (
                                     <div key={tx.id||ti} style={{ display: "grid", gridTemplateColumns: "1fr 90px auto", gap: 8, fontSize: 11, padding: "4px 0" }}>
