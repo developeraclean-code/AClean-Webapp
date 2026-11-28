@@ -1,0 +1,2 @@
+import { defineConfig, devices } from '@playwright/test';
+export default defineConfig({ testDir: '.', testMatch: 'quick-estimate.spec.js', workers: 1, retries: 0, timeout: 60000, reporter: 'list', outputDir: '/private/tmp/aclean-estimate-test-results', use: { baseURL: 'http://127.0.0.1:5173', acceptDownloads: true }, projects: [{name:'desktop',use:devices['Desktop Chrome']},{name:'mobile',use:devices['Pixel 7']}] });

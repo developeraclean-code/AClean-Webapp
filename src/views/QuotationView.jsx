@@ -3,6 +3,7 @@ import { cs } from "../theme/cs.js";
 import { formatPhone } from "../lib/phone.js";
 import { QUOTATION_PAYMENT, quotationPaymentDetails } from "../lib/quotation.js";
 import QuotationModal from "./QuotationModal.jsx";
+import QuickEstimateView from "./QuickEstimateView.jsx";
 
 const fmt = (n) => "Rp " + (Number(n) || 0).toLocaleString("id-ID");
 
@@ -45,6 +46,7 @@ export default function QuotationView({
   const [filter, setFilter]           = useState("Semua");
   const [search, setSearch]           = useState("");
   const [showModal, setShowModal]     = useState(false);
+  const [quotationTab, setQuotationTab] = useState("official");
   const [editData, setEditData]       = useState(null);
   const [approvingId, setApprovingId] = useState(null);
   const approvingNow = useRef(new Set());
@@ -327,13 +329,22 @@ export default function QuotationView({
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
         <div style={{ fontWeight: 800, fontSize: 16, color: cs.text }}>📋 Quotation</div>
-        {canEdit && (
+        {canEdit && quotationTab === "official" && (
           <button onClick={() => { setEditData(null); setShowModal(true); }}
             style={{ padding: "8px 18px", borderRadius: 10, border: "none", background: cs.accent, color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
             + Buat Quotation
           </button>
         )}
       </div>
+
+      <div style={{ display: "flex", gap: 6, borderBottom: "1px solid " + cs.border, paddingBottom: 8, flexWrap: "wrap" }}>
+        {[
+          { key: "official", label: "📋 Quotation Resmi" },
+          ...(canEdit ? [{ key: "estimate", label: "⚡ Estimasi Cepat" }] : []),
+        ].map(tab => <button key={tab.key} onClick={() => setQuotationTab(tab.key)} style={{ padding: "7px 14px", borderRadius: 8, border: "1px solid " + (quotationTab === tab.key ? cs.accent : cs.border), cursor: "pointer", fontSize: 12, fontWeight: quotationTab === tab.key ? 800 : 500, background: quotationTab === tab.key ? cs.accent + "22" : cs.card, color: quotationTab === tab.key ? cs.accent : cs.muted }}>{tab.label}</button>)}
+      </div>
+
+      {canEdit && quotationTab === "estimate" ? <QuickEstimateView showNotif={showNotif} /> : <>
 
       {/* Conversion Rate Stats */}
       {canEdit && (quotationsData || []).length > 0 && (() => {
@@ -546,6 +557,7 @@ export default function QuotationView({
           priceListData={priceListData}
         />
       )}
+      </>}
 
       {depositTarget && (
         <div onClick={() => !depositSaving && setDepositTarget(null)} style={{ position: "fixed", inset: 0, zIndex: 1200, background: "#020617cc", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
